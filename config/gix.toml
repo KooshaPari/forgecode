@@ -1,0 +1,21 @@
+# gix (gitoxide) configuration
+
+[defaults]
+    # Commit message template
+    commit_template = "{{title}}\n\n{{body}}\n\n{{footer}}"
+
+[alias]
+    # Shortcuts for common operations
+    co = "checkout"
+    br = "branch"
+    st = "status"
+
+[pager]
+    # Use delta for pretty diffs if available
+    diff = "delta"
+    log = "delta"
+    reflog = "delta"
+
+[credential]
+    # Use gh credential helper
+    helper = "gh auth git-credential"

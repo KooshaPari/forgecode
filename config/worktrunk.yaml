@@ -1,0 +1,37 @@
+# worktrunk configuration
+# Location: ~/.worktrunk.yaml or ./worktrunk.yaml
+
+version: "1"
+
+# Default worktree root
+worktree_root: "worktrees"
+
+# Auto-create parent directories
+auto_mkdir: true
+
+# Prune on exit (default: true)
+auto_prune: true
+
+# Branch naming patterns
+branch_patterns:
+  feature: "feat/{name}"
+  fix: "fix/{name}"
+  chore: "chore/{name}"
+  refactor: "refactor/{name}"
+  docs: "docs/{name}"
+
+# Default base branch
+default_base: "main"
+
+# Auto-delete merged branches
+auto_cleanup: true
+
+# Worktree naming
+# {repo}-{branch} or {branch}
+naming: "{branch}"
+
+# Notifications
+notifications:
+  on_create: true
+  on_delete: true
+  on_prune: true
