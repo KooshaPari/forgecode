@@ -32,6 +32,8 @@ source scripts/setup-aliases.sh
 - Signed commits
 - Claude Code integration
 
+**Composio Pattern**: Consider adding swappable AI backend support (currently Claude Code only)
+
 ## Directory Structure
 
 ```
