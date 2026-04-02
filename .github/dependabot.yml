@@ -1,0 +1,31 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "Phenotype-Enterprise/dependency-team"
+    groups:
+      dev-dependencies:
+        patterns:
+          - "@types/*"
+          - "eslint*"
+          - "prettier*"
+          - "vitest*"
+          - "jest*"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
+    reviewers:
+      - "Phenotype-Enterprise/devops-team"
