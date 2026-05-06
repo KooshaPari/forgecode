@@ -11,6 +11,7 @@
 [![CI Status](https://img.shields.io/github/actions/workflow/status/tailcallhq/forgecode/ci.yml?style=for-the-badge)](https://github.com/tailcallhq/forgecode/actions)
 [![GitHub Release](https://img.shields.io/github/v/release/tailcallhq/forgecode?style=for-the-badge)](https://github.com/tailcallhq/forgecode/releases)
 [![Discord](https://img.shields.io/discord/1044859667798568962?style=for-the-badge&cacheSeconds=120&logo=discord)](https://discord.gg/kRZBPpkgwq)
+[![AI Slop Inside](https://sladge.net/badge.svg)](https://sladge.net)
 
 ---
 
