@@ -15,7 +15,6 @@
   },
   "dependencies": {
     "@ai-sdk/google-vertex": "^4.0.47",
-    "@types/handlebars": "^4.0.40",
     "@types/node": "^24.10.1",
     "@types/tmp": "^0.2.6",
     "@types/yargs": "^17.0.35",
