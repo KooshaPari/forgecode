@@ -16,6 +16,10 @@
 # -------------------------------------------------------------------
 
 name: Close Stale Issues and PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   DAYS_BEFORE_ISSUE_STALE: '30'
   DAYS_BEFORE_ISSUE_CLOSE: '7'
