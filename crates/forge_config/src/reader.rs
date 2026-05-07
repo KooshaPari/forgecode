@@ -130,24 +130,37 @@ impl ConfigReader {
         Ok(config.try_deserialize::<ForgeConfig>()?)
     }
 
-    /// Adds `~/.forge/.forge.toml` as a config source, silently skipping if
-    /// absent.
+    /// Adds `~/.forge/.forge.toml` as a config source.
+    ///
+    /// Skips silently if the file does not exist.
+    /// Returns an error if the file exists but contains invalid TOML.
     pub fn read_global(mut self) -> Self {
         let path = Self::config_path();
-        self.builder = self
-            .builder
-            .add_source(config::File::from(path).required(false));
+        if path.exists() {
+            self.builder = self
+                .builder
+                .add_source(config::File::from(path).required(false));
+        }
         self
     }
 
-    /// Reads `~/.forge/.config.json` (legacy format) and adds it as a source,
-    /// silently skipping errors.
+    /// Reads `~/.forge/.config.json` (legacy format) and adds it as a source.
+    ///
+    /// Silently skips if the file does not exist.
+    /// Emits a warning if the file exists but cannot be read or parsed.
     pub fn read_legacy(self) -> Self {
-        let content = LegacyConfig::read(&Self::config_legacy_path());
-        if let Ok(content) = content {
-            self.read_toml(&content)
-        } else {
-            self
+        let path = Self::config_legacy_path();
+        if !path.exists() {
+            return self;
+        }
+
+        match LegacyConfig::read(&path) {
+            Ok(content) => self.read_toml(&content),
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e,
+                    "failed to read legacy config file; skipping");
+                self
+            }
         }
     }
 }

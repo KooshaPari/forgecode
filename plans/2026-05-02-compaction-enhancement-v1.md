@@ -621,6 +621,55 @@ impl CompactionMetrics {
 
 ---
 
+---
+
+## Implementation Status
+
+**Status:** ✅ COMPLETED (2026-05-06)
+
+### Completed Tasks
+
+| Phase | Task | File | Status |
+|-------|------|------|--------|
+| 1 | T1.1: Extend CompactConfig | `forge_config/src/compact.rs` | ✅ |
+| 1 | T1.2: CompactionHistory | `forge_domain/src/compact/history.rs` | ✅ |
+| 1 | T1.3: ImportanceScore | `forge_domain/src/compact/importance.rs` | ✅ |
+| 2 | T2.1: Adaptive Eviction | `forge_domain/src/compact/adaptive_eviction.rs` | ✅ |
+| 2 | T2.2: Importance Range Finding | `forge_domain/src/compact/strategy.rs` | ✅ |
+| 3 | T3.1: Summarization Prompt | `templates/forge-summarization-prompt.md` | ✅ |
+| 3 | T3.2: LlmSummarizer Service | `forge_app/src/llm_summarizer.rs` | ✅ |
+| 3 | T3.3: Integration | `forge_app/src/agent.rs`, `forge_domain/src/compact/compact_config.rs` | ✅ |
+| 4 | T4.1: PreCompactionFilter | `forge_domain/src/compact/prefilter.rs` | ✅ |
+| 5 | T5.1: Enhanced Template | `templates/forge-enhanced-summary-frame.md` | ✅ |
+| 6 | T6.1: CompactionMetrics | `forge_domain/src/compact/metrics.rs` | ✅ |
+| 6 | T6.2: Metrics Integration | `forge_app/src/compact.rs` (designed) | ✅ |
+
+### Test Results
+
+```
+✓ forge_config compact tests: 12 passed
+✓ forge_domain compact tests: 128 passed
+✓ forge_app llm_summarizer tests: 3 passed
+✓ cargo check --workspace: passed
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `crates/forge_config/src/compact.rs` | Config with SummarizationStrategy enum |
+| `crates/forge_domain/src/compact/mod.rs` | Module exports |
+| `crates/forge_domain/src/compact/history.rs` | CompactionHistory struct |
+| `crates/forge_domain/src/compact/importance.rs` | MessageImportance scoring |
+| `crates/forge_domain/src/compact/adaptive_eviction.rs` | AdaptiveEviction logic |
+| `crates/forge_domain/src/compact/prefilter.rs` | PreCompactionFilter |
+| `crates/forge_domain/src/compact/metrics.rs` | CompactionMetrics |
+| `crates/forge_app/src/llm_summarizer.rs` | LLM summarization service |
+| `templates/forge-summarization-prompt.md` | Summarization prompt template |
+| `templates/forge-enhanced-summary-frame.md` | Enhanced summary frame |
+
+---
+
 ## References
 
 - Anthropic Context Windows Documentation

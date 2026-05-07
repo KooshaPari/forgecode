@@ -105,6 +105,13 @@ async fn run() -> Result<()> {
     let config =
         ForgeConfig::read().context("Failed to read Forge configuration from .forge.toml")?;
 
+    // Validate services_url early so invalid URLs fail at startup rather than
+    // panicking lazily when the gRPC client tries to connect.
+    let _services_url: url::Url = config
+        .services_url
+        .parse()
+        .with_context(|| format!("Invalid services_url: {}", config.services_url))?;
+
     // Handle worktree creation if specified
     let cwd: PathBuf = match (&cli.sandbox, &cli.directory) {
         (Some(sandbox), Some(cli)) => {

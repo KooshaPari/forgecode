@@ -5,10 +5,20 @@
 Currently, `ForgeConfig` is read lazily from disk inside `ForgeEnvironmentInfra` and any parse/deserialization errors are silently swallowed — returning `ForgeConfig::default()` (all-zero values) with only a tracing log that the user never sees. This causes silent breakage of all tool limits and agent parameters when the user's config file is corrupt or invalid.
 
 The goal is to:
-1. Read `ForgeConfig` **once at application startup** in `main.rs`, surfacing any parse error directly to the user before the app proceeds.
-2. Pass the pre-read config through the construction chain to every consumer.
-3. **Remove `get_config()` from the `EnvironmentInfra` trait** entirely — it is no longer needed since config is injected at construction time.
-4. Preserve the `update_environment` write path so that `forge config set` commands continue to work correctly.
+1. Read `ForgeConfig` **once at application startup** in `main.rs`, surfacing any parse error directly to the user before the app proceeds. ✅ **DONE**
+2. Pass the pre-read config through the construction chain to every consumer. ✅ **DONE**
+3. ~~**Remove `get_config()` from the `EnvironmentInfra` trait** entirely — it is no longer needed since config is injected at construction time.~~ **DEFERRED** - The `get_config()` method remains on the trait for runtime config reads (e.g., after `update_environment`). This is a separate optimization that can be done later.
+4. Preserve the `update_environment` write path so that `forge config set` commands continue to work correctly. ✅ **DONE**
+
+## Status: Phase 1-4 Complete
+
+Phases 1-4 have been implemented:
+- **Phase 1**: Config errors are now surfaced (not silently swallowed)
+- **Phase 2**: Config read at startup in main.rs with proper error propagation
+- **Phase 3**: Config threaded through construction chain
+- **Phase 4**: `/new` uses fresh config after `update_environment`
+
+Phases 5-7 are optional optimizations that remain deferred.
 
 ---
 
@@ -60,25 +70,25 @@ The cleanest resolution: `update_environment` returns the updated `ForgeConfig` 
 
 ### Phase 1 — Surface Config Errors in `ForgeConfig::read()`
 
-- [~] Task 1.1. **Fix silent error in `ConfigReader::read_global()`** (`crates/forge_config/src/reader.rs`): The `.required(false)` flag on `config::File::from(path)` silently swallows parse errors for malformed TOML files. Change this so that if the file *exists* but is invalid (e.g., malformed TOML, wrong types), an error is returned. Only missing files should be silently skipped. This may require checking file existence before adding the `config` source, or using a custom file reader that returns `Err` on parse failure but `Ok` on file-not-found.
+- [x] Task 1.1. **Fix silent error in `ConfigReader::read_global()`** (`crates/forge_config/src/reader.rs`): The `.required(false)` flag on `config::File::from(path)` silently swallows parse errors for malformed TOML files. Change this so that if the file *exists* but is invalid (e.g., malformed TOML, wrong types), an error is returned. Only missing files should be silently skipped. This may require checking file existence before adding the `config` source, or using a custom file reader that returns `Err` on parse failure but `Ok` on file-not-found.
 
-- [ ] Task 1.2. **Fix silent skip in `ConfigReader::read_legacy()`** (`crates/forge_config/src/reader.rs`): Currently uses `if let Ok(content) = content { ... } else { self }` — silently ignores errors. Change to at minimum emit a `warn!` log message, or propagate the error. Since legacy JSON is a migration concern, a `warn!` is appropriate rather than a hard error.
+- [x] Task 1.2. **Fix silent skip in `ConfigReader::read_legacy()`** (`crates/forge_config/src/reader.rs`): Currently uses `if let Ok(content) = content { ... } else { self }` — silently ignores errors. Change to at minimum emit a `warn!` log message, or propagate the error. Since legacy JSON is a migration concern, a `warn!` is appropriate rather than a hard error.
 
 - [ ] Task 1.3. **Verify `ForgeConfig::read()` return type** — it already returns `anyhow::Result<ForgeConfig>`. No signature change needed here. The fix is upstream in the reader chain ensuring errors actually reach the `Result::Err` variant.
 
 ### Phase 2 — Read Config Once in `main.rs`
 
-- [ ] Task 2.1. **Call `ForgeConfig::read()` at the top of `main()` in `crates/forge_main/src/main.rs`** before the `UI::init` call. Use `?` propagation so any error is printed to stderr and exits with a non-zero code. The error message from `anyhow` will include the cause (e.g., "invalid TOML at line 12: expected string, found integer"), which is exactly what the user needs to see.
+- [x] Task 2.1. **Call `ForgeConfig::read()` at the top of `main()` in `crates/forge_main/src/main.rs`** before the `UI::init` call. Use `?` propagation so any error is printed to stderr and exits with a non-zero code. The error message from `anyhow` will include the cause (e.g., "invalid TOML at line 12: expected string, found integer"), which is exactly what the user needs to see.
 
-- [ ] Task 2.2. **Thread the `config: ForgeConfig` into the `UI::init` factory closure** in `main.rs`. The closure currently captures `cwd: PathBuf`; it must now also capture `config: ForgeConfig`. Since `ForgeConfig` derives `Clone`, the closure can clone it on each invocation (once at startup, once per `/new` command).
+- [x] Task 2.2. **Thread the `config: ForgeConfig` into the `UI::init` factory closure** in `main.rs`. The closure currently captures `cwd: PathBuf`; it must now also capture `config: ForgeConfig`. Since `ForgeConfig` derives `Clone`, the closure can clone it on each invocation (once at startup, once per `/new` command).
 
   > **Note on `/new` and config freshness**: The closure will capture the **startup config**. After a `forge config set` command, `update_environment` writes to disk and invalidates the `ForgeEnvironmentInfra` internal cache. However, since `get_config()` is being removed from the trait, the stale startup config captured in the closure would be used on the next `/new`. This must be addressed in Phase 4.
 
 ### Phase 3 — Propagate Config Through the Construction Chain
 
-- [ ] Task 3.1. **Change `ForgeAPI::init` signature** (`crates/forge_api/src/forge_api.rs`): Add `config: ForgeConfig` as a parameter. Forward it to `ForgeInfra::new(cwd, config)`. This is the only `impl ForgeAPI<...>` concrete method that constructs the infra stack.
+- [x] Task 3.1. **Change `ForgeAPI::init` signature** (`crates/forge_api/src/forge_api.rs`): Add `config: ForgeConfig` as a parameter. Forward it to `ForgeInfra::new(cwd, config)`. This is the only `impl ForgeAPI<...>` concrete method that constructs the infra stack.
 
-- [ ] Task 3.2. **Change `ForgeInfra::new` signature** (`crates/forge_infra/src/forge_infra.rs`): Add `config: ForgeConfig` as a parameter. Remove the `config_infra.get_config()` call that currently triggers the lazy disk read. Pass `config` directly to:
+- [x] Task 3.2. **Change `ForgeInfra::new` signature** (`crates/forge_infra/src/forge_infra.rs`): Add `config: ForgeConfig` as a parameter. Remove the `config_infra.get_config()` call that currently triggers the lazy disk read. Pass `config` directly to:
   - `ForgeEnvironmentInfra::new(cwd, config)` — seeds the internal cache
   - `ForgeHttpInfra::new(config.clone(), ...)` — already accepts `ForgeConfig`
   - `ForgeDirectoryReaderService::new(config.max_parallel_file_reads)` — already accepts the field
@@ -86,11 +96,11 @@ The cleanest resolution: `update_environment` returns the updated `ForgeConfig` 
 
   Make `ForgeInfra::new` return `anyhow::Result<Self>` to allow `?`-propagation from within.
 
-- [ ] Task 3.3. **Replace `.expect()` with `?` for `services_url` parsing** (`crates/forge_infra/src/forge_infra.rs:73-78`): Now that `ForgeInfra::new` is fallible, convert `config.services_url.parse().expect(...)` to `config.services_url.parse().context("services_url must be a valid URL")?`. This turns a panic into a clean error message at startup.
+- [x] Task 3.3. **Replace `.expect()` with `?` for `services_url` parsing** (`crates/forge_infra/src/forge_infra.rs:73-78`): Now that `ForgeInfra::new` is fallible, convert `config.services_url.parse().expect(...)` to `config.services_url.parse().context("services_url must be a valid URL")?`. This turns a panic into a clean error message at startup.
 
-- [ ] Task 3.4. **Change `ForgeEnvironmentInfra::new` signature** (`crates/forge_infra/src/env.rs`): Add `config: ForgeConfig` parameter. Initialize `cache` as `Arc::new(Mutex::new(Some(config)))` instead of `None`. The `cached_config()` method (`env.rs:125-134`) already handles the `Some` case by returning the cached value — it will simply never need to perform a disk read for the initial config. The read-from-disk path in `read_from_disk()` becomes dead code after this change and can be removed.
+- [x] Task 3.4. **Change `ForgeEnvironmentInfra::new` signature** (`crates/forge_infra/src/env.rs`): Add `config: ForgeConfig` parameter. Initialize `cache` as `Arc::new(Mutex::new(Some(config)))` instead of `None`. The `cached_config()` method (`env.rs:125-134`) already handles the `Some` case by returning the cached value — it will simply never need to perform a disk read for the initial config. The read-from-disk path in `read_from_disk()` becomes dead code after this change and can be removed.
 
-- [ ] Task 3.5. **Update `ForgeAPI::init` call site in `main.rs`** to handle the new `Result<Self>` return from `ForgeInfra::new` (if propagated up through `ForgeAPI::init`). The closure passed to `UI::init` currently produces `A` (not `Result<A>`); if `ForgeAPI::init` becomes fallible, either the closure's return type changes to `Result<A>` and `on_new` handles the error, or the URL validation is done eagerly before the closure is constructed in `main.rs`.
+- [x] Task 3.5. **Update `ForgeAPI::init` call site in `main.rs`** to handle the new `Result<Self>` return from `ForgeInfra::new` (if propagated up through `ForgeAPI::init`). The closure passed to `UI::init` currently produces `A` (not `Result<A>`); if `ForgeAPI::init` becomes fallible, either the closure's return type changes to `Result<A>` and `on_new` handles the error, or the URL validation is done eagerly before the closure is constructed in `main.rs`.
 
   > **Recommended resolution**: Validate `services_url` in `main.rs` by parsing it there using `config.services_url.parse::<Url>().context(...)?` before creating the closure. Pass the parsed `Url` into `ForgeInfra::new` instead of the raw string. This keeps the factory closure infallible (consistent with current `UI<A, F>` design where `F: Fn() -> A`).
 
@@ -98,7 +108,7 @@ The cleanest resolution: `update_environment` returns the updated `ForgeConfig` 
 
 The `/new` closure captures `ForgeConfig` at startup. After `update_environment` writes a new config and invalidates the `ForgeEnvironmentInfra` cache, the next `/new` would reconstruct `ForgeAPI` with the stale startup config. This must be addressed.
 
-- [ ] Task 4.1. **Expose a config-accessor on the existing `API` trait** that the `UI` can use to retrieve the latest config when constructing a new API instance on `/new`. Since `ForgeEnvironmentInfra` still holds the authoritative in-memory cache (updated after `update_environment`), calling `api.get_config()` after an `update_environment` will return the fresh value. The `UI` can call `self.api.get_config()` inside `on_new` to get the latest config, then pass it to the new `ForgeAPI` factory.
+- [x] Task 4.1. **Expose a config-accessor on the existing `API` trait** that the `UI` can use to retrieve the latest config when constructing a new API instance on `/new`. Since `ForgeEnvironmentInfra` still holds the authoritative in-memory cache (updated after `update_environment`), calling `api.get_config()` after an `update_environment` will return the fresh value. The `UI` can call `self.api.get_config()` inside `on_new` to get the latest config, then pass it to the new `ForgeAPI` factory.
 
   Concretely: Change the factory closure stored in `new_api` from `Fn() -> A` to `Fn(ForgeConfig) -> A`. The `UI::on_new` method calls `(self.new_api)(self.api.get_config())` to forward the live config into the new API instance.
 
