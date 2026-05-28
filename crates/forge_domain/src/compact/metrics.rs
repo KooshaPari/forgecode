@@ -75,7 +75,7 @@ impl CompactionEvent {
         duration: Duration,
     ) -> Self {
         let reduction_percent = if tokens_before > 0 {
-            ((tokens_before - tokens_after) as f64 / tokens_before as f64) * 100.0
+            (tokens_before.saturating_sub(tokens_after) as f64 / tokens_before as f64) * 100.0
         } else {
             0.0
         };
@@ -263,6 +263,21 @@ mod tests {
         assert_eq!(metrics.total_tokens_saved(), 40000);
         assert_eq!(metrics.total_messages_saved(), 80);
         assert_eq!(metrics.avg_reduction_percent(), 80.0);
+    }
+
+    #[test]
+    fn test_record_compaction_event_with_more_tokens_after_than_before_does_not_overflow() {
+        let event = CompactionEvent::new(
+            CompactionEventType::Manual,
+            SummaryStrategy::Extract,
+            10,
+            5,
+            1_000,
+            2_000,
+            Duration::from_millis(1),
+        );
+
+        assert_eq!(event.reduction_percent, 0.0);
     }
 
     #[test]

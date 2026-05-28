@@ -16,10 +16,6 @@
 # -------------------------------------------------------------------
 
 name: Bounty Management
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 'on':
   issues:
     types:
@@ -32,6 +28,8 @@ concurrency:
     - opened
     - edited
     - reopened
+  pull_request_target:
+    types:
     - closed
   schedule:
   - cron: '0 2 * * *'
@@ -41,25 +39,25 @@ permissions:
 jobs:
   sync-all-issues:
     name: Sync all bounty issues
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       issues: write
     steps:
     - name: Checkout
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      uses: actions/checkout@v6
     - name: Install npm packages
       run: npm install
     - name: Sync all bounty labels
       run: npx tsx .github/scripts/bounty/src/sync-all-issues.ts --repo ${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --execute
   sync-pr:
     name: Sync PR bounty labels
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       issues: write
       pull-requests: write
     steps:
     - name: Checkout
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      uses: actions/checkout@v6
     - name: Install npm packages
       run: npm install
     - name: Sync bounty labels

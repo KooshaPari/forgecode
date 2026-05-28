@@ -48,15 +48,29 @@ impl DatabasePool {
     pub fn in_memory() -> Result<Self> {
         debug!("Creating in-memory database pool");
 
-        let manager = ConnectionManager::<SqliteConnection>::new(":memory:");
+        // Use a unique temp file as the database backing store for test isolation.
+        // Using a temp file (not :memory:) ensures each pool instance is isolated
+        // from other concurrent test pools. With max_size matching parallelism,
+        // concurrent tasks can each acquire a connection without blocking.
+        let temp_path = std::env::temp_dir().join(format!(
+            "forge_repo_test_{}_{}.db",
+            std::process::id(),
+            std::time::Instant::now().elapsed().as_nanos()
+        ));
+        let manager = ConnectionManager::<SqliteConnection>::new(temp_path.to_string_lossy().as_ref());
+
+        let pool_size = std::thread::available_parallelism()
+            .map(|n| n.get().max(4) as u32)
+            .unwrap_or(4);
 
         let pool = Pool::builder()
-            .max_size(1) // Single connection for in-memory testing
+            .max_size(pool_size)
             .connection_timeout(Duration::from_secs(30))
+            .connection_customizer(Box::new(SqliteCustomizer))
             .build(manager)
             .map_err(|e| anyhow::anyhow!("Failed to create in-memory connection pool: {e}"))?;
 
-        // Run migrations on the in-memory database
+        // Run migrations on the database
         let mut connection = pool
             .get()
             .map_err(|e| anyhow::anyhow!("Failed to get connection for migrations: {e}"))?;

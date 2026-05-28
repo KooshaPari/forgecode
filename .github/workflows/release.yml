@@ -16,10 +16,6 @@
 # -------------------------------------------------------------------
 
 name: Multi Channel Release
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 'on':
   release:
     types:
@@ -40,22 +36,22 @@ jobs:
         - binary_name: forge-x86_64-unknown-linux-musl
           binary_path: target/x86_64-unknown-linux-musl/release/forge
           cross: 'true'
-          os: ubuntu-latest
+          os: ubuntu-24.04
           target: x86_64-unknown-linux-musl
         - binary_name: forge-aarch64-unknown-linux-musl
           binary_path: target/aarch64-unknown-linux-musl/release/forge
           cross: 'true'
-          os: ubuntu-latest
+          os: ubuntu-24.04
           target: aarch64-unknown-linux-musl
         - binary_name: forge-x86_64-unknown-linux-gnu
           binary_path: target/x86_64-unknown-linux-gnu/release/forge
           cross: 'false'
-          os: ubuntu-latest
+          os: ubuntu-24.04
           target: x86_64-unknown-linux-gnu
         - binary_name: forge-aarch64-unknown-linux-gnu
           binary_path: target/aarch64-unknown-linux-gnu/release/forge
           cross: 'true'
-          os: ubuntu-latest
+          os: ubuntu-24.04
           target: aarch64-unknown-linux-gnu
         - binary_name: forge-x86_64-apple-darwin
           binary_path: target/x86_64-apple-darwin/release/forge
@@ -80,19 +76,19 @@ jobs:
         - binary_name: forge-aarch64-linux-android
           binary_path: target/aarch64-linux-android/release/forge
           cross: 'true'
-          os: ubuntu-latest
+          os: ubuntu-24.04
           target: aarch64-linux-android
     steps:
     - name: Checkout Code
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      uses: actions/checkout@v6
     - name: Setup Protobuf Compiler
       if: ${{ matrix.cross == 'false' }}
-      uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
+      uses: arduino/setup-protoc@v3
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
     - name: Setup Cross Toolchain
       if: ${{ matrix.cross == 'false' }}
-      uses: taiki-e/setup-cross-toolchain-action@74847e552ab5bf79fa4393ed975e297ea57d53fa
+      uses: taiki-e/setup-cross-toolchain-action@v1
       with:
         target: ${{ matrix.target }}
     - name: Add Rust target
@@ -102,7 +98,7 @@ jobs:
       if: '!(contains(matrix.target, ''-unknown-linux-'') || contains(matrix.target, ''-android''))'
       run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> $GITHUB_ENV
     - name: Build Binary
-      uses: ClementTsang/cargo-action@2438cc5f3ba4e971289fffca2a00dedea6911f14
+      uses: ClementTsang/cargo-action@v0.0.7
       with:
         command: build --release
         args: '--target ${{ matrix.target }}'
@@ -115,7 +111,7 @@ jobs:
     - name: Copy Binary
       run: cp ${{ matrix.binary_path }} ${{ matrix.binary_name }}
     - name: Upload to Release
-      uses: xresloader/upload-to-github-release@7497a58a53ca2f4450d41ca19fabb22de5c0ed0b
+      uses: xresloader/upload-to-github-release@v1
       with:
         release_id: ${{ github.event.release.id }}
         file: ${{ matrix.binary_name }}
@@ -124,7 +120,7 @@ jobs:
     needs:
     - build_release
     name: npm_release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         repository:
@@ -132,7 +128,7 @@ jobs:
         - antinomyhq/npm-forgecode
     steps:
     - name: Checkout Code
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      uses: actions/checkout@v6
       with:
         repository: ${{ matrix.repository }}
         ref: main
@@ -147,10 +143,10 @@ jobs:
     needs:
     - build_release
     name: homebrew_release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
     - name: Checkout Code
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      uses: actions/checkout@v6
       with:
         repository: antinomyhq/homebrew-code-forge
         ref: main
