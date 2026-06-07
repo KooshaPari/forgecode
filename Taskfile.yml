@@ -1,0 +1,22 @@
+version: '3'
+
+tasks:
+  validate:
+    desc: Type-check TypeScript via tsc
+    cmds:
+      - npx tsc --noEmit
+
+  build:
+    desc: Build TypeScript (compile to JS)
+    cmds:
+      - npx tsc
+
+  test:
+    desc: Run forgecode evaluation suite
+    cmds:
+      - npm run eval
+
+  lint:
+    desc: Run bounty test suite
+    cmds:
+      - npm run test:bounty
