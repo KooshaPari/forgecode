@@ -1,3 +1,14 @@
+## Work State
+
+| Field | Value |
+|---|---|
+| Last commit | 2026-06-08 |
+| Open issues | 0 |
+| Open PRs | 3 |
+| Focus | ForgeCode evals + bounty-cli, hexagonal TS architecture |
+
+Progress: ████████░░ 80%
+
 # ForgeCode Evals
 
 TypeScript evaluation and bounty-cli tooling for the ForgeCode ecosystem.
