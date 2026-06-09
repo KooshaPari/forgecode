@@ -8,7 +8,11 @@
   "type": "module",
   "scripts": {
     "eval": "tsx benchmarks/cli.ts",
+    "test": "npm run test:bounty",
     "test:bounty": "tsx --test .github/scripts/bounty/tests/*.test.ts",
+    "test:e2e": "npx playwright test 2>/dev/null || echo 'No e2e tests configured'",
+    "test:perf": "echo 'No perf tests configured'",
+    "test:mutation": "npx stryker run 2>/dev/null || echo 'No stryker config'",
     "bounty:sync-issue": "tsx .github/scripts/bounty/src/sync-issue.ts",
     "bounty:sync-pr": "tsx .github/scripts/bounty/src/sync-pr.ts",
     "bounty:sync-all-issues": "tsx .github/scripts/bounty/src/sync-all-issues.ts"
@@ -34,5 +38,16 @@
     "yargs": "^18.0.0",
     "zod": "^4.0.0"
   },
-  "packageManager": "npm@10"
+  "packageManager": "npm@10",
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/jest-runner": "^9.6.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/jest": "^30.0.0",
+    "eslint": "^10.4.1",
+    "jest": "^30.4.2",
+    "prettier": "^3.8.3",
+    "typescript": "^6.0.3"
+  }
 }

@@ -1,5 +1,120 @@
-npm error Missing script: "test"
-npm error
-npm error To see a list of scripts, run:
-npm error   npm run
-npm error A complete log of this run can be found in: /Users/kooshapari/.npm/_logs/2026-06-09T02_41_14_283Z-debug-0.log
+
+> forge-code-evals@1.0.0 test
+> npm run test:bounty
+
+
+> forge-code-evals@1.0.0 test:bounty
+> tsx --test .github/scripts/bounty/tests/*.test.ts
+
+▶ computeIssuePatch
+  ▶ no bounty label
+    [32m✔ produces no patch when issue has no bounty labels at all [90m(2.5375ms)[39m[39m
+    [32m✔ removes generic bounty label when no value label present [90m(0.659375ms)[39m[39m
+    [32m✔ removes claimed label when no value label present [90m(0.137708ms)[39m[39m
+  [32m✔ no bounty label [90m(4.457125ms)[39m[39m
+  ▶ has value label, no assignees
+    [32m✔ adds generic label when missing [90m(0.279334ms)[39m[39m
+    [32m✔ recognises legacy label format (no emoji) as a value label [90m(0.102209ms)[39m[39m
+    [32m✔ produces no patch when generic already present and no assignees [90m(0.263584ms)[39m[39m
+    [32m✔ removes claimed when no assignees [90m(0.124541ms)[39m[39m
+  [32m✔ has value label, no assignees [90m(1.094334ms)[39m[39m
+  ▶ has value label and assignees
+    [32m✔ adds both generic and claimed when both missing [90m(0.187ms)[39m[39m
+    [32m✔ produces no patch when generic and claimed both already present [90m(0.087208ms)[39m[39m
+    [32m✔ preserves non-bounty labels untouched [90m(0.115792ms)[39m[39m
+  [32m✔ has value label and assignees [90m(0.556209ms)[39m[39m
+  ▶ rewarded state
+    [32m✔ leaves rewarded label alone (owned by PR sync) [90m(2.036125ms)[39m[39m
+  [32m✔ rewarded state [90m(2.159166ms)[39m[39m
+[32m✔ computeIssuePatch [90m(115.43925ms)[39m[39m
+▶ linkedIssueNumbers
+  [32m✔ returns empty array for null body [90m(0.532ms)[39m[39m
+  [32m✔ parses closes/fixes/resolves keywords [90m(0.121583ms)[39m[39m
+  [32m✔ is case-insensitive [90m(0.048625ms)[39m[39m
+  [32m✔ handles plural forms: close/fix/resolve [90m(0.066833ms)[39m[39m
+  [32m✔ returns empty when no keywords present [90m(0.035458ms)[39m[39m
+[32m✔ linkedIssueNumbers [90m(1.13425ms)[39m[39m
+▶ computePrPatch
+  ▶ label propagation (pre-merge)
+    [32m✔ produces no patch when PR body has no linked issues [90m(0.21175ms)[39m[39m
+    [32m✔ produces no patch when linked issues have no bounty labels [90m(3.989167ms)[39m[39m
+    [32m✔ copies bounty value label from linked issue to PR [90m(0.208333ms)[39m[39m
+    [32m✔ does not duplicate a value label already on the PR [90m(0.114459ms)[39m[39m
+    [32m✔ posts a comment on the linked issue when label is propagated [90m(0.139334ms)[39m[39m
+    [32m✔ does not post a comment when label was already on the PR [90m(0.059208ms)[39m[39m
+    [32m✔ merges value labels from multiple linked issues onto the PR [90m(0.088ms)[39m[39m
+  [32m✔ label propagation (pre-merge) [90m(4.996208ms)[39m[39m
+  ▶ rewarded on merge
+    [32m✔ produces no patch when PR was closed but not merged [90m(7.639334ms)[39m[39m
+    [32m✔ adds rewarded to PR on merge [90m(0.545125ms)[39m[39m
+    [32m✔ adds rewarded to linked issue on merge [90m(0.19825ms)[39m[39m
+    [32m✔ does not add rewarded again when already present [90m(0.069625ms)[39m[39m
+    [32m✔ skips issues with no bounty label when merged PR has a bounty [90m(0.106208ms)[39m[39m
+  [32m✔ rewarded on merge [90m(9.066583ms)[39m[39m
+[32m✔ computePrPatch [90m(14.152583ms)[39m[39m
+[32m✔[39m [36m#1[39m: added [[32mbounty[39m]
+[31m✖[39m [36m#2[39m: removed "[31mbounty: claimed[39m"
+▶ planAllIssues
+  [32m✔ returns empty patch when no issues need changes [90m(7.113ms)[39m[39m
+  [32m✔ plans adds for issues missing the generic bounty label [90m(0.845208ms)[39m[39m
+  [32m✔ plans removal of stale claimed label when issue is unassigned [90m(0.353125ms)[39m[39m
+  [32m✔ collects ops for multiple issues with different needs [90m(0.277125ms)[39m[39m
+[32m✔ planAllIssues [90m(9.659417ms)[39m[39m
+▶ syncAllIssues
+  [32m✔ applies adds and removals across all issues [90m(3.165958ms)[39m[39m
+  [32m✔ returns empty patch when all issues are already in sync [90m(0.268625ms)[39m[39m
+[32m✔ syncAllIssues [90m(3.68525ms)[39m[39m
+[32m✔[39m [36m#42[39m: added [[32mbounty[39m]
+[32m✔[39m [36m#42[39m: added [[32mbounty, bounty: claimed[39m]
+[31m✖[39m [36m#42[39m: removed "[31mbounty: claimed[39m"
+[31m✖[39m [36m#42[39m: removed "[31mbounty[39m"
+[31m✖[39m [36m#42[39m: removed "[31mbounty: claimed[39m"
+[32m✔[39m [36m#42[39m: added [[32mbounty, bounty: claimed[39m]
+▶ syncIssue
+  [32m✔ returns empty patch and makes no API calls when issue is already in sync [90m(34.37875ms)[39m[39m
+  [32m✔ adds generic bounty label when value label is present but generic is missing [90m(19.866583ms)[39m[39m
+  [32m✔ adds both generic and claimed when value label present and issue assigned [90m(0.585083ms)[39m[39m
+  [32m✔ removes claimed when last assignee is removed [90m(2.228417ms)[39m[39m
+  [32m✔ removes both generic and claimed when value label is removed [90m(1.343375ms)[39m[39m
+  [32m✔ does a single batched addLabels call for multiple adds [90m(1.233625ms)[39m[39m
+[32m✔ syncIssue [90m(60.846625ms)[39m[39m
+[32m✔[39m [36m#10[39m: added [[32mbounty: 💰 $500[39m]
+[33m✉[39m [36m#1[39m: posted comment
+[32m✔[39m [36m#10[39m: added [[32mbounty: 💰 $200[39m]
+[33m✉[39m [36m#1[39m: posted comment
+[32m✔[39m [36m#10[39m: added [[32mbounty: 💰 $100, bounty: 💰 $200[39m]
+[33m✉[39m [36m#1[39m: posted comment
+[33m✉[39m [36m#2[39m: posted comment
+Could not fetch linked issue #999: Error: Issue #999 not found in mock, skipping.
+[32m✔[39m [36m#10[39m: added [[32mbounty: 💰 $300[39m]
+[33m✉[39m [36m#1[39m: posted comment
+[32m✔[39m [36m#10[39m: added [[32mbounty: rewarded[39m]
+[32m✔[39m [36m#1[39m: added [[32mbounty: rewarded[39m]
+[31m✖[39m [36m#1[39m: removed "[31mbounty: claimed[39m"
+[32m✔[39m [36m#10[39m: added [[32mbounty: rewarded[39m]
+▶ syncPr
+  ▶ label propagation
+    [32m✔ returns empty patch when PR has no linked issues [90m(2.768958ms)[39m[39m
+    [32m✔ returns empty patch when linked issue has no bounty label [90m(0.616875ms)[39m[39m
+    [32m✔ copies bounty label from linked issue to PR [90m(1.148042ms)[39m[39m
+    [32m✔ skips label already on the PR [90m(0.690292ms)[39m[39m
+    [32m✔ posts comment on linked issue when label is propagated [90m(0.747792ms)[39m[39m
+    [32m✔ does not post comment when label was already on the PR [90m(0.452917ms)[39m[39m
+    [32m✔ fetches multiple linked issues in parallel and merges labels [90m(0.9715ms)[39m[39m
+    [32m✔ skips a linked issue that fails to fetch without aborting [90m(0.934209ms)[39m[39m
+  [32m✔ label propagation [90m(9.505667ms)[39m[39m
+  ▶ rewarded on merge
+    [32m✔ adds rewarded to PR and linked issue on merge [90m(0.50025ms)[39m[39m
+    [32m✔ does not add rewarded again when already present on PR and issue [90m(0.177292ms)[39m[39m
+    [32m✔ does not add rewarded when PR was closed but not merged [90m(0.118541ms)[39m[39m
+    [32m✔ handles merged PR with no linked issues gracefully [90m(0.147167ms)[39m[39m
+  [32m✔ rewarded on merge [90m(1.396708ms)[39m[39m
+[32m✔ syncPr [90m(11.8005ms)[39m[39m
+[34mℹ tests 52[39m
+[34mℹ suites 15[39m
+[34mℹ pass 52[39m
+[34mℹ fail 0[39m
+[34mℹ cancelled 0[39m
+[34mℹ skipped 0[39m
+[34mℹ todo 0[39m
+[34mℹ duration_ms 1920.749917[39m
