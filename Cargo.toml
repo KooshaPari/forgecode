@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/forge-runner",
+  "crates/forge-cli",
+  "crates/governance-resolver",
+  "crates/prompt-library",
+  "crates/skill-manifest",
+  "crates/docs-sync",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.83"
+license = "MIT OR Apache-2.0"
