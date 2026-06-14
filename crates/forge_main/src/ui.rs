@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -515,8 +515,53 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                     ListCommand::Mcp => {
                         self.on_show_mcp_servers(porcelain).await?;
                     }
-                    ListCommand::Conversation => {
-                        self.on_show_conversations(porcelain).await?;
+                    ListCommand::Conversation { parent } => {
+                        if let Some(parent_id) = parent {
+                            let parent_conv = self.validate_conversation_exists(&parent_id).await?;
+                            let children = self.fetch_related_conversations(&parent_conv).await;
+
+                            if children.is_empty() {
+                                self.writeln_title(TitleFormat::info(
+                                    "No child conversations found.",
+                                ))?;
+                            } else {
+                                let mut info = Info::new();
+                                for conv in children.into_iter() {
+                                    let title = conv
+                                        .title
+                                        .as_deref()
+                                        .map(|t| t.to_string())
+                                        .unwrap_or_else(|| markers::EMPTY.to_string());
+
+                                    let duration = chrono::Utc::now().signed_duration_since(
+                                        conv.metadata
+                                            .updated_at
+                                            .unwrap_or(conv.metadata.created_at),
+                                    );
+                                    let duration = std::time::Duration::from_secs(
+                                        (duration.num_minutes() * 60).max(0) as u64,
+                                    );
+                                    let time_ago = if duration.is_zero() {
+                                        "now".to_string()
+                                    } else {
+                                        format!("{} ago", humantime::format_duration(duration))
+                                    };
+
+                                    info = info
+                                        .add_title(conv.id)
+                                        .add_key_value("Title", title)
+                                        .add_key_value("Updated", time_ago);
+                                }
+
+                                let porcelain = Porcelain::from(&info)
+                                    .drop_col(3)
+                                    .truncate(1, 60)
+                                    .uppercase_headers();
+                                self.writeln(porcelain)?;
+                            }
+                        } else {
+                            self.on_show_conversations(porcelain).await?;
+                        }
                     }
                     ListCommand::Cmd => {
                         self.on_show_custom_commands(porcelain).await?;
@@ -969,7 +1014,6 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 )))?;
             }
         }
-
         Ok(())
     }
 
@@ -2012,6 +2056,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
         self.spinner.start(Some("Loading Conversations"))?;
         let max_conversations = self.config.max_conversations;
         let conversations = self.api.get_parent_conversations(Some(max_conversations)).await?;
+        let conversations = Self::user_initiated_conversations(conversations);
         self.spinner.stop(None)?;
 
         if conversations.is_empty() {
@@ -2096,6 +2141,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
     async fn on_show_conversations(&mut self, porcelain: bool) -> anyhow::Result<()> {
         let max_conversations = self.config.max_conversations;
         let conversations = self.api.get_parent_conversations(Some(max_conversations)).await?;
+        let conversations = Self::user_initiated_conversations(conversations);
 
         if conversations.is_empty() {
             return Ok(());

@@ -114,6 +114,8 @@ impl ForgeCommandManager {
                 | "logout"
                 | "retry"
                 | "conversations"
+                | "conversation-tree"
+                | "ct"
                 | "list"
                 | "commit"
                 | "rename"
