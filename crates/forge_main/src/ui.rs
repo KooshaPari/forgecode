@@ -56,6 +56,20 @@ use crate::{TRACKER, banner, tracker};
 // File-specific constants
 const MISSING_AGENT_TITLE: &str = "<missing agent.title>";
 
+/// Detects the source of the conversation based on CLI arguments.
+/// Returns "interactive", "forge-p", "headless", or the subcommand name.
+fn detect_source(cli: &Cli) -> String {
+    if cli.subcommands.is_some() {
+        "subcommand".to_string()
+    } else if cli.prompt.is_some() {
+        "forge-p".to_string()
+    } else if cli.piped_input.is_some() {
+        "headless".to_string()
+    } else {
+        "interactive".to_string()
+    }
+}
+
 /// Conversation dump format used by the /dump command
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 struct ConversationDump {
@@ -838,7 +852,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                     SelectCommand::Conversation { query } => {
                         let max_conversations = self.config.max_conversations;
                         let conversations =
-                            self.api.get_conversations(Some(max_conversations)).await?;
+                            self.api.get_parent_conversations(Some(max_conversations)).await?;
 
                         if !conversations.is_empty()
                             && let Some(conversation) = ConversationSelector::select_conversation(
@@ -1997,7 +2011,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
     async fn list_conversations(&mut self) -> anyhow::Result<()> {
         self.spinner.start(Some("Loading Conversations"))?;
         let max_conversations = self.config.max_conversations;
-        let conversations = self.api.get_conversations(Some(max_conversations)).await?;
+        let conversations = self.api.get_parent_conversations(Some(max_conversations)).await?;
         self.spinner.stop(None)?;
 
         if conversations.is_empty() {
@@ -2032,9 +2046,56 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
         Ok(())
     }
 
+    async fn list_subagents(&mut self) -> anyhow::Result<()> {
+        let parent_id = match self.state.conversation_id {
+            Some(id) => id,
+            None => {
+                self.writeln_title(TitleFormat::error(
+                    "No active session. Start a conversation first.",
+                ))?;
+                return Ok(());
+            }
+        };
+
+        self.spinner.start(Some("Loading Subagents"))?;
+        let conversations = self.api.get_subagents(&parent_id).await?;
+        self.spinner.stop(None)?;
+
+        if conversations.is_empty() {
+            self.writeln_title(TitleFormat::info(
+                "No subagents found for this session.",
+            ))?;
+            return Ok(());
+        }
+
+        if let Some(conversation) = ConversationSelector::select_conversation(
+            &conversations,
+            self.state.conversation_id,
+            None,
+        )
+        .await?
+        {
+            let conversation_id = conversation.id;
+            self.state.conversation_id = Some(conversation_id);
+
+            // Show conversation content
+            self.on_show_last_message(conversation, false).await?;
+
+            // Print log about conversation switching
+            self.writeln_title(TitleFormat::info(format!(
+                "Switched to subagent {}",
+                conversation_id.into_string().bold()
+            )))?;
+
+            // Show conversation info
+            self.on_info(false, Some(conversation_id)).await?;
+        }
+        Ok(())
+    }
+
     async fn on_show_conversations(&mut self, porcelain: bool) -> anyhow::Result<()> {
         let max_conversations = self.config.max_conversations;
-        let conversations = self.api.get_conversations(Some(max_conversations)).await?;
+        let conversations = self.api.get_parent_conversations(Some(max_conversations)).await?;
 
         if conversations.is_empty() {
             return Ok(());
@@ -2086,6 +2147,80 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
         Ok(())
     }
 
+    async fn handle_goal(&mut self, description: Option<String>) -> anyhow::Result<()> {
+        if let Some(desc) = description {
+            self.state.goal = Some(desc.clone());
+            self.writeln_title(TitleFormat::info(format!(
+                "Goal set: {}",
+                desc.bold()
+            )))?;
+        } else {
+            match &self.state.goal {
+                Some(goal) => {
+                    self.writeln_title(TitleFormat::info(format!(
+                        "Current goal: {}",
+                        goal.bold()
+                    )))?;
+                }
+                None => {
+                    self.writeln_title(TitleFormat::info("No goal set. Usage: :goal <description>"))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_loop(&mut self, state: Option<String>) -> anyhow::Result<()> {
+        if let Some(s) = state {
+            let enabled = s.trim().eq_ignore_ascii_case("on");
+            self.state.loop_enabled = enabled;
+            self.writeln_title(TitleFormat::info(format!(
+                "Loop mode {}",
+                if enabled { "enabled".bold() } else { "disabled".bold() }
+            )))?;
+        } else {
+            self.state.loop_enabled = !self.state.loop_enabled;
+            self.writeln_title(TitleFormat::info(format!(
+                "Loop mode {}",
+                if self.state.loop_enabled { "enabled".bold() } else { "disabled".bold() }
+            )))?;
+        }
+        Ok(())
+    }
+
+    async fn handle_parent(&mut self) -> anyhow::Result<()> {
+        let conversation_id = match self.state.conversation_id {
+            Some(id) => id,
+            None => {
+                self.writeln_title(TitleFormat::error(
+                    "No active session. Start a conversation first.",
+                ))?;
+                return Ok(());
+            }
+        };
+
+        let conversation = self.validate_conversation_exists(&conversation_id).await?;
+
+        match conversation.parent_id {
+            Some(parent_id) => {
+                let parent = self.validate_conversation_exists(&parent_id).await?;
+                self.state.conversation_id = Some(parent_id);
+                self.on_show_last_message(parent, false).await?;
+                self.writeln_title(TitleFormat::info(format!(
+                    "Switched to parent conversation {}",
+                    parent_id.into_string().bold()
+                )))?;
+                self.on_info(false, Some(parent_id)).await?;
+            }
+            None => {
+                self.writeln_title(TitleFormat::info(
+                    "This is a root conversation — it has no parent.",
+                ))?;
+            }
+        }
+        Ok(())
+    }
+
     async fn on_command(&mut self, command: AppCommand) -> anyhow::Result<bool> {
         match command {
             AppCommand::Conversations { id } => {
@@ -2103,6 +2238,23 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 } else {
                     self.list_conversations().await?;
                 }
+            }
+            AppCommand::Subagents => {
+                self.list_subagents().await?;
+            }
+            AppCommand::Goal { description } => {
+                let desc = if description.is_empty() {
+                    None
+                } else {
+                    Some(description.join(" ").trim().to_string())
+                };
+                self.handle_goal(desc).await?;
+            }
+            AppCommand::Loop { state } => {
+                self.handle_loop(state).await?;
+            }
+            AppCommand::Parent => {
+                self.handle_parent().await?;
             }
             AppCommand::Compact => {
                 self.spinner.start(Some("Compacting"))?;
@@ -2300,6 +2452,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             }
         }
 
+        self.state.last_activity = std::time::Instant::now();
         Ok(false)
     }
     async fn on_compaction(&mut self) -> Result<(), anyhow::Error> {
@@ -2574,7 +2727,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             // Show conversation picker
             let conversations = self
                 .api
-                .get_conversations(Some(self.config.max_conversations))
+                .get_parent_conversations(Some(self.config.max_conversations))
                 .await?;
 
             if conversations.is_empty() {
@@ -2653,7 +2806,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             // Interactive: show picker then prompt for new name
             let conversations = self
                 .api
-                .get_conversations(Some(self.config.max_conversations))
+                .get_parent_conversations(Some(self.config.max_conversations))
                 .await?;
 
             if conversations.is_empty() {
@@ -3734,7 +3887,8 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
 
             // Check if conversation exists, if not create it
             if self.api.conversation(&id).await?.is_none() {
-                let conversation = Conversation::new(id);
+                let mut conversation = Conversation::new(id);
+                conversation.source = Some(detect_source(&self.cli));
                 self.api.upsert_conversation(conversation).await?;
                 is_new = true;
             }
@@ -3754,10 +3908,12 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             };
 
             let id = conversation.id;
+            conversation.source = Some(detect_source(&self.cli));
             self.api.upsert_conversation(conversation).await?;
             id
         } else {
-            let conversation = Conversation::generate();
+            let mut conversation = Conversation::generate();
+            conversation.source = Some(detect_source(&self.cli));
             let id = conversation.id;
             is_new = true;
             self.api.upsert_conversation(conversation).await?;
@@ -3922,6 +4078,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
         writer.finish()?;
         self.spinner.stop(None)?;
         self.spinner.reset();
+        self.state.last_activity = std::time::Instant::now();
 
         Ok(())
     }
