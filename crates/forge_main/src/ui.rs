@@ -894,10 +894,11 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                             self.select_row_output("Command", query.clone(), rows)?;
                         }
                     }
-                    SelectCommand::Conversation { query } => {
+                    SelectCommand::Conversation { query, .. } => {
                         let max_conversations = self.config.max_conversations;
                         let conversations =
                             self.api.get_parent_conversations(Some(max_conversations)).await?;
+                        let conversations = Self::user_initiated_conversations(conversations);
 
                         if !conversations.is_empty()
                             && let Some(conversation) = ConversationSelector::select_conversation(
@@ -2265,6 +2266,25 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             }
         }
         Ok(())
+    }
+
+    fn user_initiated_conversations(conversations: Vec<Conversation>) -> Vec<Conversation> {
+        let related_ids: HashSet<ConversationId> = conversations
+            .iter()
+            .flat_map(Conversation::related_conversation_ids)
+            .collect();
+
+        conversations
+            .into_iter()
+            .filter(|conversation| {
+                conversation
+                    .context
+                    .as_ref()
+                    .and_then(|context| context.initiator.as_deref())
+                    .is_none_or(|initiator| initiator == "user")
+                    && !related_ids.contains(&conversation.id)
+            })
+            .collect()
     }
 
     async fn on_command(&mut self, command: AppCommand) -> anyhow::Result<bool> {
@@ -3943,7 +3963,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             let content = ForgeFS::read_utf8(path).await?;
 
             // Try to parse as a dump file first (with "conversation" wrapper)
-            let conversation: Conversation = if let Ok(dump) =
+            let mut conversation: Conversation = if let Ok(dump) =
                 serde_json::from_str::<ConversationDump>(&content)
             {
                 dump.conversation
