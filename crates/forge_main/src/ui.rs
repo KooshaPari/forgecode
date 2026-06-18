@@ -37,7 +37,7 @@ use crate::cli::{
 use crate::conversation_selector::ConversationSelector;
 use crate::display_constants::{CommandType, headers, markers, status};
 use crate::editor::ReadLineError;
-use crate::error::{is_cursor_error, UIError};
+use crate::error::{UIError, is_cursor_error};
 use crate::info::Info;
 use crate::input::Console;
 use crate::model::{AppCommand, ForgeCommandManager};
@@ -363,8 +363,8 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                     source = err.source();
                 }
 
-                let _ = self
-                    .writeln_to_stderr(TitleFormat::error(error_message).display().to_string());
+                let _ =
+                    self.writeln_to_stderr(TitleFormat::error(error_message).display().to_string());
             }
         }
     }
