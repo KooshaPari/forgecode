@@ -95,7 +95,25 @@ impl<S: AgentService> EventHandle<EventData<EndPayload>> for TitleGenerationHand
             if rx.is_empty() {
                 handle.abort();
             } else if let Some(title) = rx.await? {
-                conversation.title = Some(title);
+                // Determine prefix based on conversation initiator
+                let prefix = if conversation
+                    .context
+                    .as_ref()
+                    .and_then(|c| c.initiator.as_ref())
+                    .map(|i| i.as_str())
+                    == Some("agent")
+                {
+                    "[SUBAGENT]"
+                } else {
+                    "[PARENT]"
+                };
+                // Strip any existing prefix to avoid double-prefixing
+                let clean_title = title
+                    .trim_start_matches("[SUBAGENT] ")
+                    .trim_start_matches("[PARENT] ")
+                    .trim_start_matches("[SUBAGENT]")
+                    .trim_start_matches("[PARENT]");
+                conversation.title = Some(format!("{} {}", prefix, clean_title));
             }
         }
 

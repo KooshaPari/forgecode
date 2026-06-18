@@ -17,6 +17,10 @@ _eval:
 test:
     npm run test:bounty
 
+# Coverage report (SSOT for how to measure coverage).
+coverage:
+    npx jest --coverage 2>/dev/null || npm test -- --coverage 2>/dev/null || echo "no coverage script"
+
 # Run linting (eslint + prettier check)
 lint:
     npx eslint . --ext .ts
