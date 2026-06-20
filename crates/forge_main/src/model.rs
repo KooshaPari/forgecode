@@ -726,6 +726,24 @@ pub enum AppCommand {
     /// Index the current workspace for semantic code search
     #[strum(props(usage = "Index the current workspace for semantic search"))]
     Index,
+
+    /// Switch tool output to compact mode. Trims whitespace and folds blank
+    /// lines for terminal-friendly display. Triggered with `:output-compact`.
+    #[strum(props(
+        usage = "Switch tool output to compact mode (trim whitespace, fold blanks)"
+    ))]
+    OutputCompact,
+
+    /// Switch tool output to concise mode (default). Minimal output without
+    /// extra trimming. Triggered with `:output-concise`.
+    #[strum(props(usage = "Switch tool output to concise mode (default)"))]
+    OutputConcise,
+
+    /// Switch tool output to verbose mode. Includes metadata, reasoning
+    /// traces, and intermediate computation steps. Triggered with
+    /// `:output-verbose`.
+    #[strum(props(usage = "Switch tool output to verbose mode (include all metadata)"))]
+    OutputVerbose,
 }
 
 impl AppCommand {
@@ -780,6 +798,9 @@ impl AppCommand {
             AppCommand::WorkspaceStatus => "workspace-status",
             AppCommand::WorkspaceInfo => "workspace-info",
             AppCommand::WorkspaceInit => "workspace-init",
+            AppCommand::OutputCompact => "output-compact",
+            AppCommand::OutputConcise => "output-concise",
+            AppCommand::OutputVerbose => "output-verbose",
         }
     }
 
