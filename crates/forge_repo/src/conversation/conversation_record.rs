@@ -938,7 +938,14 @@ impl From<MetricsRecord> for forge_domain::Metrics {
 }
 
 /// Database model for conversations table
-#[derive(Debug, diesel::Queryable, diesel::Selectable, diesel::Insertable, diesel::AsChangeset)]
+#[derive(
+    Debug,
+    diesel::Queryable,
+    diesel::Selectable,
+    diesel::Insertable,
+    diesel::AsChangeset,
+    diesel::QueryableByName,
+)]
 #[diesel(table_name = crate::database::schema::conversations)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub(super) struct ConversationRecord {

@@ -38,6 +38,16 @@ impl OutputMode {
     pub fn is_verbose(&self) -> bool {
         matches!(self, Self::Verbose)
     }
+
+    /// Returns a short human-readable label for this mode, suitable for
+    /// status messages and TUI feedback.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Concise => "concise",
+            Self::Compact => "compact",
+            Self::Verbose => "verbose",
+        }
+    }
 }
 
 /// User-facing configuration for tool output rendering.
