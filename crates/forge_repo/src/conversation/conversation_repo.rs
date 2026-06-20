@@ -48,8 +48,9 @@ impl ConversationRepository for ConversationRepositoryImpl {
         &self,
         conversation: &Conversation,
     ) -> anyhow::Result<()> {
+        let conversation = conversation.clone();
         self.run_with_connection(move |connection, wid| {
-            let record = ConversationRecord::new_ref(conversation, wid);
+            let record = ConversationRecord::new_ref(&conversation, wid);
             diesel::insert_into(conversations::table)
                 .values(&record)
                 .on_conflict(conversations::conversation_id)
