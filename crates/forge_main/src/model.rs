@@ -163,6 +163,8 @@ impl ForgeCommandManager {
                 | "l"
                 | "parent"
                 | "p"
+                | "search"
+                | "sr"
         )
     }
 
@@ -687,6 +689,16 @@ pub enum AppCommand {
     #[command(alias = "p")]
     Parent,
 
+    /// Full-text search over conversation titles and contents (FTS5 BM25).
+    /// Usage: `:search <query>` or `:search "rust refactor"`.
+    #[strum(props(usage = "Search conversation history. Usage: :search <query>"))]
+    #[command(alias = "sr")]
+    Search {
+        /// FTS5 MATCH expression (e.g. "rust refactor", "tokio*").
+        #[arg(trailing_var_arg = true, num_args = 1..)]
+        query: Vec<String>,
+    },
+
     /// Delete a conversation permanently
     #[strum(props(usage = "Delete a conversation permanently"))]
     #[command(skip)]
@@ -775,6 +787,7 @@ impl AppCommand {
             AppCommand::Goal { .. } => "goal",
             AppCommand::Loop { .. } => "loop",
             AppCommand::Parent => "parent",
+            AppCommand::Search { .. } => "search",
             AppCommand::Delete => "delete",
             AppCommand::Rename { .. } => "rename",
             AppCommand::AgentSwitch(agent_id) => agent_id,

@@ -2282,6 +2282,52 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
         Ok(())
     }
 
+    async fn handle_search(&mut self, query_parts: Vec<String>) -> anyhow::Result<()> {
+        let query = query_parts.join(" ").trim().to_string();
+        if query.is_empty() {
+            self.writeln_title(TitleFormat::error(
+                "Usage: :search <query>. Provide a search expression (e.g. :search \"rust refactor\").",
+            ))?;
+            return Ok(());
+        }
+
+        self.spinner.start(Some("Searching"))?;
+        let conversations = self.api.search_conversations(&query, Some(50)).await?;
+        self.spinner.stop(None)?;
+
+        if conversations.is_empty() {
+            self.writeln_title(TitleFormat::info(format!(
+                "No matches for {}",
+                format!("\"{query}\"").bold()
+            )))?;
+            return Ok(());
+        }
+
+        self.writeln_title(TitleFormat::info(format!(
+            "Matches for {} ({}):",
+            format!("\"{query}\"").bold(),
+            conversations.len()
+        )))?;
+
+        if let Some(conversation) = ConversationSelector::select_conversation(
+            &conversations,
+            self.state.conversation_id,
+            None,
+        )
+        .await?
+        {
+            let conversation_id = conversation.id;
+            self.state.conversation_id = Some(conversation_id);
+            self.on_show_last_message(conversation, false).await?;
+            self.writeln_title(TitleFormat::info(format!(
+                "Switched to conversation {}",
+                conversation_id.into_string().bold()
+            )))?;
+            self.on_info(false, Some(conversation_id)).await?;
+        }
+        Ok(())
+    }
+
     fn user_initiated_conversations(conversations: Vec<Conversation>) -> Vec<Conversation> {
         let related_ids: HashSet<ConversationId> = conversations
             .iter()
@@ -2335,6 +2381,9 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             }
             AppCommand::Parent => {
                 self.handle_parent().await?;
+            }
+            AppCommand::Search { query } => {
+                self.handle_search(query).await?;
             }
             AppCommand::Compact => {
                 self.spinner.start(Some("Compacting"))?;
