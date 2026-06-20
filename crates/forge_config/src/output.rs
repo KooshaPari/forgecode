@@ -69,24 +69,20 @@ impl OutputSettings {
             return input.to_string();
         }
         let mut out = String::with_capacity(input.len());
-        let mut prev_blank = false;
+        let mut emitted_any = false;
         for line in input.lines() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
-                if !prev_blank && !out.is_empty() {
-                    out.push('\n');
-                }
-                prev_blank = true;
-            } else {
-                if prev_blank {
-                    out.push('\n');
-                }
-                out.push_str(trimmed);
-                out.push('\n');
-                prev_blank = false;
+                // Skip blank lines entirely; `compact` mode collapses them.
+                continue;
             }
+            if emitted_any {
+                out.push('\n');
+            }
+            out.push_str(trimmed);
+            emitted_any = true;
         }
-        if !out.is_empty() && self.trailing_newline && !out.ends_with('\n') {
+        if self.trailing_newline && emitted_any && !out.ends_with('\n') {
             out.push('\n');
         }
         out
