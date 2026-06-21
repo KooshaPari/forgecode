@@ -263,18 +263,19 @@ impl ConversationRepository for ConversationRepositoryImpl {
         &self,
         query: &str,
         limit: Option<usize>,
-    ) -> anyhow::Result<Option<Vec<Conversation>>> {
+    ) -> anyhow::Result<Vec<Conversation>> {
         let query = query.to_string();
         let limit_value = limit.map(|n| n as i64);
         self.run_with_connection(move |connection, wid| {
             let workspace_id = wid.id() as i64;
-            // FTS5 BM25 search joined back to the base table. `rank` from
-            // bm25() is a negative number where lower = more relevant, so
-            // `ORDER BY rank` (ascending) yields the standard "best match
-            // first" order.
+            // FTS5 BM25 search joined back to the base table on
+            // `conversation_id` (the FTS5 table is content-less, so
+            // `c.rowid = fts.rowid` would not match). `rank` from
+            // `bm25()` is a negative number where lower = more relevant,
+            // so `ORDER BY rank` (ascending) yields "best match first".
             let mut sql = String::from(
                 "SELECT c.* FROM conversations c \
-                 JOIN conversations_fts fts ON c.rowid = fts.rowid \
+                 JOIN conversations_fts fts ON c.conversation_id = fts.conversation_id \
                  WHERE conversations_fts MATCH ? \
                    AND c.workspace_id = ? \
                  ORDER BY fts.rank",
@@ -286,8 +287,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // We can't bind the FTS MATCH expression positionally because
             // diesel::sql_query does not have a typed binding for FTS5's
             // MATCH operator when used as a column. Use the lower-level
-            // `execute` / `load` pattern via `sql_query` so we can read
-            // back the typed rows.
+            // `sql_query` so we can read back the typed rows.
             let mut q = diesel::sql_query(sql).into_boxed();
             q = q.bind::<diesel::sql_types::Text, _>(&query);
             q = q.bind::<diesel::sql_types::BigInt, _>(workspace_id);
@@ -296,13 +296,11 @@ impl ConversationRepository for ConversationRepositoryImpl {
             }
 
             let raw_rows: Vec<ConversationRecord> = q.load(connection)?;
-            if raw_rows.is_empty() {
-                return Ok(None);
-            }
-
-            let conversations: Result<Vec<Conversation>, _> =
-                raw_rows.into_iter().map(Conversation::try_from).collect();
-            Ok(Some(conversations?))
+            let conversations: Result<Vec<Conversation>, _> = raw_rows
+                .into_iter()
+                .map(Conversation::try_from)
+                .collect();
+            Ok(conversations?)
         })
         .await
     }

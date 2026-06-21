@@ -152,8 +152,8 @@ pub trait ConversationRepository: Send + Sync {
     /// current workspace. Backed by the FTS5 virtual table installed by
     /// migration `2026-06-14-000002_add_fts5_to_conversations`.
     ///
-    /// Results are ranked by BM25 (`fts.rank`). Returns `None` if the query
-    /// matches zero rows.
+    /// Results are ranked by BM25 (`fts.rank`). An empty `Vec` means the
+    /// query matched zero rows (use `.is_empty()` on the result).
     ///
     /// # Arguments
     /// * `query` - FTS5 MATCH expression (e.g. `"rust refactor"`, `"tokio*"`).
@@ -168,7 +168,7 @@ pub trait ConversationRepository: Send + Sync {
         &self,
         query: &str,
         limit: Option<usize>,
-    ) -> Result<Option<Vec<Conversation>>>;
+    ) -> Result<Vec<Conversation>>;
 
     /// Reclaims FTS5 segment shadow data by running
     /// `INSERT INTO conversations_fts(conversations_fts) VALUES('optimize')`.

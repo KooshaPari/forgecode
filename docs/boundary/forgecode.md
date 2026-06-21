@@ -5,26 +5,24 @@ source-commit: a1aa44660
 do-not-edit-locally: regenerate via scripts/propagate-intent-to-repos.py
                      or update in the source-of-truth registry repo
 -->
-# forgecode -- Boundary
+# forgecode — Boundary
 
-> Boundary file for forgecode. Filled with real prose 2026-06-19.
+> Stub boundary file generated on 2026-06-20 by `scripts/render-stubs.py`
+> for canonical repos with no curated prompts yet.
 
 ## In Scope
 
-Wrapper config; telemetry; auth shim; version pinning
+> **TODO**: fill in concrete capabilities owned by forgecode.
 
 ## Out of Scope
 
-The upstream Forge CLI itself (lives at https://github.com/kooshapari/forge); model weights; API endpoints
+> **TODO**: list adjacent responsibilities owned elsewhere (cross-link
+> the canonical owning repo).
 
 ## Crossings
 
-forgecode crosses into other Phenotype repos at the following seams:
-
-- **Auth**: depends on AuthKit `typescript/packages/auth-ts/`
-- **Telemetry**: emits OTel traces via pheno-otel
-- **Config**: resolves from `phenotype-config` schema (Pydantic + Zod)
-- **Versioning**: pinned to the pheno-standards `{major.minor}` channel
+> **TODO**: list any repos whose boundaries forgecode overlaps and how
+> the overlap is resolved (port, adapter, shared library).
 
 ## Review cadence
 
@@ -33,6 +31,6 @@ once any prompt binds to this repo.
 
 ## Source-of-Truth
 
-- `phenotype-registry/ECOSYSTEM_MAP.md` section 6 (role classification)
-- `docs/intent/forgecode.md` (intent statement)
-- `docs/registries.md` section 'Capability & Intent SSOT' (registry layer)
+- ECOSYSTEM_MAP.md § 6 (role classification)
+- docs/intent/forgecode.md (intent statement)
+- docs/registries.md (Capability & Intent SSOT layer)

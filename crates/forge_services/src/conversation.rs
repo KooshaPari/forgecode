@@ -107,7 +107,7 @@ impl<S: ConversationRepository> ConversationService for ForgeConversationService
         &self,
         query: &str,
         limit: Option<usize>,
-    ) -> Result<Option<Vec<Conversation>>> {
+    ) -> Result<Vec<Conversation>> {
         self.conversation_repository
             .search_conversations(query, limit)
             .await

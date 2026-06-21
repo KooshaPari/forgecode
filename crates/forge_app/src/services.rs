@@ -286,12 +286,13 @@ pub trait ConversationService: Send + Sync {
     /// Full-text search over conversation titles and context, scoped to the
     /// current workspace. Backed by the FTS5 virtual table installed by
     /// migration `2026-06-14-000002_add_fts5_to_conversations`. Results are
-    /// ranked by BM25.
+    /// ranked by BM25. Empty `Vec` means no matches — use `.is_empty()` on
+    /// the result.
     async fn search_conversations(
         &self,
         query: &str,
         limit: Option<usize>,
-    ) -> anyhow::Result<Option<Vec<Conversation>>>;
+    ) -> anyhow::Result<Vec<Conversation>>;
 
     /// Reclaim FTS5 segment shadow data. Compacts per-segment shadow trees
     /// back into a single segment, reducing query-time shadow-walk cost and
