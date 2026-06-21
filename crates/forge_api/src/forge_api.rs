@@ -235,11 +235,7 @@ impl<
         query: &str,
         limit: Option<usize>,
     ) -> Result<Vec<Conversation>> {
-        Ok(self
-            .services
-            .search_conversations(query, limit)
-            .await?
-            .unwrap_or_default())
+        self.services.search_conversations(query, limit).await
     }
 
     async fn optimize_fts_index(&self) -> Result<()> {

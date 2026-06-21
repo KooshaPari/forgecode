@@ -714,7 +714,7 @@ impl<I: Services> ConversationService for I {
         &self,
         query: &str,
         limit: Option<usize>,
-    ) -> anyhow::Result<Option<Vec<Conversation>>> {
+    ) -> anyhow::Result<Vec<Conversation>> {
         self.conversation_service()
             .search_conversations(query, limit)
             .await

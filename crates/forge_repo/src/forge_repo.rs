@@ -190,7 +190,7 @@ impl<F: Send + Sync> ConversationRepository for ForgeRepo<F> {
         &self,
         query: &str,
         limit: Option<usize>,
-    ) -> anyhow::Result<Option<Vec<Conversation>>> {
+    ) -> anyhow::Result<Vec<Conversation>> {
         self.conversation_repository
             .search_conversations(query, limit)
             .await
