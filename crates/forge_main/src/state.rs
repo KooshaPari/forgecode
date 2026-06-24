@@ -28,6 +28,13 @@ pub struct UIState {
     /// Wrapped in `Arc<Mutex<_>>` so the chat loop can update fields
     /// from the rendering thread without holding a `&mut` on `UI`.
     pub status_bar: StatusBar,
+    /// Global toggle for the compressed tool-output view.
+    /// When `false` (the default), tool outputs are truncated to the
+    /// first 3 lines + a "Ctrl+O to expand" hint. Pressing `Ctrl+O`
+    /// flips this to `true` and the next tool output is shown in full.
+    /// Tracks the latest tool call's expanded state by id, so toggling
+    /// only affects the most recent tool output.
+    pub tool_output_expanded: bool,
 }
 
 impl Default for UIState {
@@ -41,6 +48,7 @@ impl Default for UIState {
             cwd_filter: None,
             sort: ConversationSort::default(),
             status_bar: StatusBar::default(),
+            tool_output_expanded: false,
         }
     }
 }
@@ -144,6 +152,7 @@ impl UIState {
             cwd_filter: None,
             sort: ConversationSort::default(),
             status_bar: StatusBar::new(),
+            tool_output_expanded: false,
         }
     }
 }
