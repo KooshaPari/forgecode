@@ -4589,6 +4589,21 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 }
                 ChatResponseContent::ToolOutput(text) => {
                     writer.finish()?;
+                    // Compress long tool output to 3 lines + a hint, with Ctrl+O to expand
+                    if !self.state.tool_output_expanded {
+                        let lines: Vec<&str> = text.lines().collect();
+                        if lines.len() > 3 {
+                            let preview = lines[..3].join("\n");
+                            self.writeln(preview.dimmed().to_string())?;
+                            self.writeln(
+                                format!(
+                                    "{} [Ctrl+O to expand]",
+                                    format!("... ({} more lines)", lines.len() - 3).dimmed()
+                                )
+                            )?;
+                            return Ok(());
+                        }
+                    }
                     self.writeln(text)?;
                 }
                 ChatResponseContent::Markdown { text, partial: _ } => {
