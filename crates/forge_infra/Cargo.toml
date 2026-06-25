@@ -5,12 +5,22 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+# Minimal `forge` binary for the Ghostty integration surface (PR-5).
+# The full forge CLI lives in `forge_main`; this binary only handles
+# `forge ghostty ...` and depends on `ghostty-kit` (PR-1) and `clap`
+# from the workspace.
+[[bin]]
+name = "forge"
+path = "src/main.rs"
+
 [dependencies]
 forge_snaps.workspace = true
 forge_fs.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+clap.workspace = true
 dirs.workspace = true
+ghostty-kit = { path = "../ghostty-kit" }
 dotenvy.workspace = true
 forge_config.workspace = true
 forge_domain.workspace = true
