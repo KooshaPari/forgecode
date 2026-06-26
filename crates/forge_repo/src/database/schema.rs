@@ -15,5 +15,9 @@ diesel::table! {
         cwd -> Nullable<Text>,
         #[sql_name = "message_count"]
         message_count -> Nullable<Integer>,
+        intent_state -> Text,
+        extracted_at -> Nullable<Timestamp>,
+        memory_id -> Nullable<Text>,
+        intent_hash -> Nullable<Text>,
     }
 }

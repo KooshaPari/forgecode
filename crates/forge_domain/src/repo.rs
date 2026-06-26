@@ -256,6 +256,61 @@ pub trait ConversationRepository: Send + Sync {
         cwd: &str,
         limit: Option<usize>,
     ) -> Result<Option<Vec<Conversation>>>;
+
+    /// Updates the intent_state of a conversation with state machine enforcement.
+    ///
+    /// ADR-103: Intent-gated semantic pruning. Validates that the transition
+    /// from the current state to the new state is allowed before updating.
+    /// Rejects illegal transitions (e.g., trying to prune before verified).
+    ///
+    /// # Arguments
+    /// * `conversation_id` - The conversation to update
+    /// * `new_state` - The target intent state (as string: "pending", "extracting", etc.)
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The conversation doesn't exist
+    /// - The transition from current state to new_state is forbidden
+    /// - The database update fails
+    async fn mark_intent_state(
+        &self,
+        conversation_id: &ConversationId,
+        new_state: &str,
+    ) -> Result<()>;
+
+    /// Lists conversations eligible for pruning (intent_state='verified').
+    ///
+    /// Returns up to `limit` conversations ordered by blob size (largest first)
+    /// to maximize space reclaimed. Used by the pruning batch operator.
+    ///
+    /// # Arguments
+    /// * `workspace_id` - Filter by workspace (optional; if provided, scopes search)
+    /// * `limit` - Maximum number of rows to return
+    ///
+    /// # Errors
+    /// Returns an error if the query fails.
+    async fn list_prune_eligible(
+        &self,
+        workspace_id: Option<i64>,
+        limit: usize,
+    ) -> Result<Vec<Conversation>>;
+
+    /// Marks a conversation as pruned by compressing its context blob.
+    ///
+    /// ADR-103: Pruning is only allowed if current intent_state='verified'.
+    /// Replaces the context blob with a compact JSON summary and sets
+    /// intent_state='pruned'. The summary preserves just enough metadata
+    /// for the conversation to remain queryable without the full blob.
+    ///
+    /// # Arguments
+    /// * `conversation_id` - The conversation to prune
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The conversation doesn't exist
+    /// - Current intent_state != 'verified' (safety guard)
+    /// - The database update fails
+    async fn prune_conversation(&self, conversation_id: &ConversationId) -> Result<()>;
 }
 
 #[async_trait::async_trait]

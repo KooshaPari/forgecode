@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::sync::Arc;
 
 use diesel::prelude::*;
@@ -456,6 +457,140 @@ impl ConversationRepository for ConversationRepositoryImpl {
         })
         .await
     }
+
+    async fn mark_intent_state(
+        &self,
+        conversation_id: &ConversationId,
+        new_state: &str,
+    ) -> anyhow::Result<()> {
+        use crate::conversation::intent::IntentState;
+
+        let conversation_id = conversation_id.into_string();
+        let new_state_str = new_state.to_string();
+        let new_state = IntentState::from_str(new_state)?;
+
+        self.run_with_connection(move |connection, _wid| {
+            // Read current state to validate transition
+            let current_record: Option<ConversationRecord> = conversations::table
+                .filter(conversations::conversation_id.eq(&conversation_id))
+                .first(connection)
+                .optional()?;
+
+            let record = current_record.ok_or_else(|| {
+                anyhow::anyhow!("Conversation {} not found", conversation_id)
+            })?;
+
+            let current_state = IntentState::from_str(&record.intent_state)?;
+
+            // Enforce state machine: can_transition_to returns false for illegal transitions
+            if !current_state.can_transition_to(new_state) {
+                return Err(anyhow::anyhow!(
+                    "Illegal state transition: {} → {}",
+                    current_state,
+                    new_state
+                ));
+            }
+
+            // Update the state
+            let now = chrono::Utc::now().naive_utc();
+            diesel::update(
+                conversations::table
+                    .filter(conversations::conversation_id.eq(&conversation_id)),
+            )
+            .set((
+                conversations::intent_state.eq(&new_state_str),
+                conversations::updated_at.eq(Some(now)),
+            ))
+            .execute(connection)?;
+
+            Ok(())
+        })
+        .await
+    }
+
+    async fn list_prune_eligible(
+        &self,
+        workspace_id: Option<i64>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<Conversation>> {
+        self.run_with_connection(move |connection, wid| {
+            let workspace_id = workspace_id.unwrap_or_else(|| wid.id() as i64);
+            let limit = limit as i64;
+
+            // Use raw SQL to order by context blob size (descending) to prioritize
+            // largest contexts first for maximum space reclamation
+            let sql =
+                "SELECT c.* FROM conversations c \
+                 WHERE c.workspace_id = ? \
+                   AND c.intent_state = 'verified' \
+                   AND c.context IS NOT NULL \
+                 ORDER BY LENGTH(c.context) DESC \
+                 LIMIT ?";
+
+            let records: Vec<ConversationRecord> = diesel::sql_query(sql)
+                .bind::<diesel::sql_types::BigInt, _>(workspace_id)
+                .bind::<diesel::sql_types::BigInt, _>(limit)
+                .load(connection)?;
+
+            let conversations: Result<Vec<Conversation>, _> =
+                records.into_iter().map(Conversation::try_from).collect();
+            conversations
+        })
+        .await
+    }
+
+    async fn prune_conversation(&self, conversation_id: &ConversationId) -> anyhow::Result<()> {
+        use crate::conversation::intent::IntentState;
+
+        let conversation_id = conversation_id.into_string();
+
+        self.run_with_connection(move |connection, _wid| {
+            // Read current state to enforce invariant: only prune from 'verified'
+            let current_record: Option<ConversationRecord> = conversations::table
+                .filter(conversations::conversation_id.eq(&conversation_id))
+                .first(connection)
+                .optional()?;
+
+            let record = current_record.ok_or_else(|| {
+                anyhow::anyhow!("Conversation {} not found", conversation_id)
+            })?;
+
+            let current_state = IntentState::from_str(&record.intent_state)?;
+
+            // Safety guard: only prune if verified
+            if current_state != IntentState::Verified {
+                return Err(anyhow::anyhow!(
+                    "Cannot prune conversation with intent_state='{}'. Must be 'verified'.",
+                    current_state
+                ));
+            }
+
+            // Create a compact summary JSON to replace the full context blob
+            // Preserves just enough metadata for the conversation to remain queryable
+            let compressed_context = serde_json::json!({
+                "type": "compressed",
+                "conversation_id": conversation_id,
+                "pruned_at": chrono::Utc::now().to_rfc3339(),
+                "summary": "Conversation context pruned; full intent stored in MemoryPort"
+            })
+            .to_string();
+
+            let now = chrono::Utc::now().naive_utc();
+            diesel::update(
+                conversations::table
+                    .filter(conversations::conversation_id.eq(&conversation_id)),
+            )
+            .set((
+                conversations::context.eq(compressed_context),
+                conversations::intent_state.eq("pruned"),
+                conversations::updated_at.eq(Some(now)),
+            ))
+            .execute(connection)?;
+
+            Ok(())
+        })
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -697,6 +832,10 @@ mod tests {
             source: None,
             cwd: None,
             message_count: None,
+            intent_state: "pending".to_string(),
+            extracted_at: None,
+            memory_id: None,
+            intent_hash: None,
         };
 
         let actual = Conversation::try_from(fixture)?;
@@ -1145,6 +1284,10 @@ mod tests {
             source: None,
             cwd: None,
             message_count: None,
+            intent_state: "pending".to_string(),
+            extracted_at: None,
+            memory_id: None,
+            intent_hash: None,
         };
 
         let result = Conversation::try_from(fixture);
@@ -1478,5 +1621,83 @@ mod tests {
             actual.values[0],
             forge_domain::ToolValue::Text("[File diff: /src/main.rs]".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn test_prune_conversation_safety_guard() -> anyhow::Result<()> {
+        let repo = repository()?;
+        let context =
+            Context::default().messages(vec![ContextMessage::user("Test content", None).into()]);
+        let conversation = Conversation::new(ConversationId::generate())
+            .title(Some("Test for Pruning".to_string()))
+            .context(Some(context));
+
+        // Insert conversation with default intent_state='pending'
+        repo.upsert_conversation(conversation.clone()).await?;
+
+        // ADR-103: Pruning should fail when intent_state != 'verified'
+        let result = repo.prune_conversation(&conversation.id).await;
+        assert!(result.is_err(), "Pruning should fail when intent_state='pending'");
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Must be 'verified'"),
+            "Error should indicate the requirement for 'verified' state"
+        );
+
+        // Mark as verified
+        repo.mark_intent_state(&conversation.id, "verified").await?;
+
+        // Now pruning should succeed
+        let prune_result = repo.prune_conversation(&conversation.id).await;
+        assert!(prune_result.is_ok(), "Pruning should succeed when intent_state='verified'");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_mark_intent_state_enforces_dag() -> anyhow::Result<()> {
+        let repo = repository()?;
+        let conversation = Conversation::new(ConversationId::generate())
+            .title(Some("Test for State Machine".to_string()));
+
+        repo.upsert_conversation(conversation.clone()).await?;
+
+        // Verify default state is 'pending'
+        let conv = repo.get_conversation(&conversation.id).await?;
+        assert!(conv.is_some());
+
+        // Valid transition: pending → extracting
+        assert!(repo
+            .mark_intent_state(&conversation.id, "extracting")
+            .await
+            .is_ok());
+
+        // Valid transition: extracting → extracted
+        assert!(repo
+            .mark_intent_state(&conversation.id, "extracted")
+            .await
+            .is_ok());
+
+        // Valid transition: extracted → verified
+        assert!(repo
+            .mark_intent_state(&conversation.id, "verified")
+            .await
+            .is_ok());
+
+        // Valid transition: verified → pruned
+        assert!(repo
+            .mark_intent_state(&conversation.id, "pruned")
+            .await
+            .is_ok());
+
+        // Invalid transition: pruned → any state (pruned is final)
+        let result = repo
+            .mark_intent_state(&conversation.id, "verified")
+            .await;
+        assert!(result.is_err(), "Cannot transition from pruned to verified");
+
+        Ok(())
     }
 }

@@ -960,6 +960,10 @@ pub(super) struct ConversationRecord {
     pub source: Option<String>,
     pub cwd: Option<String>,
     pub message_count: Option<i32>,
+    pub intent_state: String,
+    pub extracted_at: Option<chrono::NaiveDateTime>,
+    pub memory_id: Option<String>,
+    pub intent_hash: Option<String>,
 }
 
 impl ConversationRecord {
@@ -999,6 +1003,10 @@ impl ConversationRecord {
             source: conversation.source.clone(),
             cwd: conversation.cwd.clone(),
             message_count,
+            intent_state: "pending".to_string(),
+            extracted_at: None,
+            memory_id: None,
+            intent_hash: None,
         }
     }
 
@@ -1045,6 +1053,10 @@ impl ConversationRecord {
             source: conversation.source.clone(),
             cwd: conversation.cwd.clone(),
             message_count,
+            intent_state: "pending".to_string(),
+            extracted_at: None,
+            memory_id: None,
+            intent_hash: None,
         }
     }
 }
