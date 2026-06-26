@@ -734,6 +734,13 @@ pub enum AppCommand {
         query: Vec<String>,
     },
 
+    /// Show nested conversations spawned by the current conversation
+    #[strum(props(
+        usage = "Show nested conversations spawned by the current conversation [alias: ct]"
+    ))]
+    #[command(name = "conversation-tree", alias = "ct")]
+    ConversationTree,
+
     /// Delete a conversation permanently
     #[strum(props(usage = "Delete a conversation permanently"))]
     #[command(skip)]
@@ -826,6 +833,7 @@ impl AppCommand {
             AppCommand::Cwd { .. } => "cwd",
             AppCommand::Sort { .. } => "sort",
             AppCommand::Search { .. } => "search",
+            AppCommand::ConversationTree => "conversation-tree",
             AppCommand::Delete => "delete",
             AppCommand::Rename { .. } => "rename",
             AppCommand::AgentSwitch(agent_id) => agent_id,
