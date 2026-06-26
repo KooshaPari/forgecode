@@ -8,6 +8,7 @@ use forge_api::ForgeAPI;
 use forge_config::ForgeConfig;
 use forge_domain::TitleFormat;
 use forge_main::{Cli, Sandbox, TitleDisplayExt, TopLevelCommand, UI, tracker};
+use tracing::debug;
 
 /// Enables ENABLE_VIRTUAL_TERMINAL_PROCESSING on the stdout console handle.
 ///
@@ -46,7 +47,21 @@ fn enable_stdout_vt_processing() {
 
 #[tokio::main]
 async fn main() {
-    if let Err(err) = run().await {
+    // Wrap run() in a ctrl_c handler for graceful shutdown.
+    let app_future = run();
+    tokio::pin!(app_future);
+
+    let result = tokio::select! {
+        res = &mut app_future => res,
+        _ = tokio::signal::ctrl_c() => {
+            debug!("received SIGINT, initiating graceful shutdown");
+            // The app value will be dropped when this block exits,
+            // triggering any Drop implementations (e.g., WalCheckpointer).
+            Ok(())
+        }
+    };
+
+    if let Err(err) = result {
         eprintln!("{}", TitleFormat::error(format!("{err}")).display());
         if let Some(cause) = err.chain().nth(1) {
             eprintln!("{cause}");
