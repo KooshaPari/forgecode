@@ -6,7 +6,7 @@
 //! - Prune gate enforcement
 
 #[cfg(test)]
-mod tests {
+mod integration_tests {
     use anyhow::Result;
     use diesel::prelude::*;
     use diesel::sql_types::*;
@@ -433,7 +433,7 @@ mod tests {
             let workspace_id = 1i64;
 
             // Insert conversations in different states
-            for (id, state) in vec![
+            for (id, state) in [
                 ("conv-p1", "pending"),
                 ("conv-p2", "pending"),
                 ("conv-e1", "extracting"),

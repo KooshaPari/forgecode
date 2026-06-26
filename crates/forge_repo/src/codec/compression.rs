@@ -3,7 +3,6 @@
 /// This codec provides lossless, reversible compression of context JSON blobs.
 /// Compression is done with zstd level 3 (fast, ~4x on JSON).
 /// Decompression is automatic and transparent to the caller.
-
 use anyhow::{Context, Result};
 
 /// Compress a string to zstd-compressed bytes (level 3)
