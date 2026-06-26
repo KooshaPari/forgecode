@@ -228,6 +228,32 @@ impl<F: Send + Sync> ConversationRepository for ForgeRepo<F> {
             .get_conversation_snippet(conversation_id, query, token_count)
             .await
     }
+
+    async fn mark_intent_state(
+        &self,
+        conversation_id: &ConversationId,
+        new_state: &str,
+    ) -> anyhow::Result<()> {
+        self.conversation_repository
+            .mark_intent_state(conversation_id, new_state)
+            .await
+    }
+
+    async fn list_prune_eligible(
+        &self,
+        workspace_id: Option<i64>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<Conversation>> {
+        self.conversation_repository
+            .list_prune_eligible(workspace_id, limit)
+            .await
+    }
+
+    async fn prune_conversation(&self, conversation_id: &ConversationId) -> anyhow::Result<()> {
+        self.conversation_repository
+            .prune_conversation(conversation_id)
+            .await
+    }
 }
 
 #[async_trait::async_trait]
