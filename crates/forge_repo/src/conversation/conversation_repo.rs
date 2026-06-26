@@ -96,6 +96,8 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 .set((
                     conversations::title.eq(&record.title),
                     conversations::context.eq(&record.context),
+                    conversations::context_zstd.eq(&record.context_zstd),
+                    conversations::is_compressed.eq(record.is_compressed),
                     conversations::updated_at.eq(record.updated_at),
                     conversations::metrics.eq(&record.metrics),
                     conversations::parent_id.eq(&record.parent_id),
@@ -133,10 +135,17 @@ impl ConversationRepository for ConversationRepositoryImpl {
         limit: Option<usize>,
     ) -> anyhow::Result<Option<Vec<Conversation>>> {
         self.run_with_connection(move |connection, wid| {
+            use diesel::dsl::sql;
+            use diesel::prelude::*;
+
             let workspace_id = wid.id() as i64;
+            // Filter for rows with context data: either plain context column OR compressed context_zstd
+            // Using raw SQL to express: context IS NOT NULL OR is_compressed = 1
             let mut query = conversations::table
                 .filter(conversations::workspace_id.eq(&workspace_id))
-                .filter(conversations::context.is_not_null())
+                .filter(sql::<diesel::sql_types::Bool>(
+                    "context IS NOT NULL OR is_compressed = 1"
+                ))
                 .order(conversations::updated_at.desc())
                 .into_boxed();
 
@@ -159,10 +168,15 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
     async fn get_last_conversation(&self) -> anyhow::Result<Option<Conversation>> {
         self.run_with_connection(move |connection, wid| {
+            use diesel::dsl::sql;
+            use diesel::prelude::*;
+
             let workspace_id = wid.id() as i64;
             let record: Option<ConversationRecord> = conversations::table
                 .filter(conversations::workspace_id.eq(&workspace_id))
-                .filter(conversations::context.is_not_null())
+                .filter(sql::<diesel::sql_types::Bool>(
+                    "context IS NOT NULL OR is_compressed = 1"
+                ))
                 .order(conversations::updated_at.desc())
                 .first(connection)
                 .optional()?;
@@ -784,7 +798,9 @@ mod tests {
 
         assert_eq!(actual.conversation_id, fixture.id.into_string());
         assert_eq!(actual.title, Some("Conversation with Context".to_string()));
-        assert!(actual.context.is_some());
+        // With compression, context is stored in context_zstd and is_compressed=1
+        assert!(actual.context_zstd.is_some() || actual.context.is_some(),
+                "context should be stored in either context_zstd (compressed) or context (plain)");
         Ok(())
     }
 
@@ -825,6 +841,8 @@ mod tests {
             extracted_at: None,
             memory_id: None,
             intent_hash: None,
+            context_zstd: None,
+            is_compressed: 0,
         };
 
         let actual = Conversation::try_from(fixture)?;
@@ -1277,6 +1295,8 @@ mod tests {
             extracted_at: None,
             memory_id: None,
             intent_hash: None,
+            context_zstd: None,
+            is_compressed: 0,
         };
 
         let result = Conversation::try_from(fixture);
