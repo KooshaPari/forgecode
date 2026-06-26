@@ -287,9 +287,8 @@ impl ConversationRepository for ConversationRepositoryImpl {
         self.run_with_connection(move |connection, wid| {
             let workspace_id = wid.id() as i64;
             // FTS5 BM25 search joined back to the base table on
-            // `conversation_id` (the FTS5 table is content-less, so
-            // `c.rowid = fts.rowid` would not match). `bm25()` returns a
-            // negative number where lower = more relevant, so `ORDER BY
+            // `rowid` (now explicit `rowid` column in external-content FTS5).
+            // `bm25()` returns a negative number where lower = more relevant, so `ORDER BY
             // rank_score` (ascending) yields "best match first".
             //
             // We do NOT include `snippet()` here because it would force
@@ -299,7 +298,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
             let mut sql = String::from(
                 "SELECT c.*, bm25(conversations_fts) AS rank_score \
                  FROM conversations c \
-                 JOIN conversations_fts fts ON c.conversation_id = fts.conversation_id \
+                 JOIN conversations_fts fts ON c.rowid = fts.rowid \
                  WHERE conversations_fts MATCH ? \
                    AND c.workspace_id = ? \
                  ORDER BY rank_score",
@@ -339,16 +338,14 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let conversation_id_str = conversation_id.into_string();
         let query = query.to_string();
         self.run_with_connection(move |connection, _wid| {
-            // We pass the conversation_id as a filter so the snippet
-            // function only highlights within that document. The token
-            // count is interpolated directly into the SQL because
-            // SQLite's `snippet()` 6th arg is a literal integer, not a
-            // bind parameter. FTS5 sanitises the MATCH expression; the
-            // integer is bounded by the caller (UI limits to 256).
+            // External-content FTS5 mode: use rowid to join and column index 1 for context.
+            // FTS5 column order: title (0), context (1), cwd (2).
+            // We filter by rowid matching the base conversation ID.
             let sql = format!(
-                "SELECT snippet(conversations_fts, 2, '[', ']', '…', {}) AS s \
+                "SELECT snippet(conversations_fts, 1, '[', ']', '…', {}) AS s \
                  FROM conversations_fts \
-                 WHERE conversation_id = ? AND conversations_fts MATCH ?",
+                 WHERE rowid = (SELECT rowid FROM conversations WHERE conversation_id = ?) \
+                   AND conversations_fts MATCH ?",
                 token_count.min(256)
             );
             let raw: Vec<SnippetRow> = diesel::sql_query(sql)
@@ -376,25 +373,17 @@ impl ConversationRepository for ConversationRepositoryImpl {
     }
 
     async fn refresh_fts_index(&self) -> anyhow::Result<()> {
-        // FTS5's "delete-all" command is invoked as a special INSERT against
-        // the virtual table itself. We then repopulate the contentful index
-        // from `conversations` inside a single transaction so callers can run
-        // this on a cadence without touching the hot write path.
+        // FTS5 external-content mode: trigger 'rebuild' to rescan the base table.
+        // This command is invoked as a special INSERT against the virtual table itself.
+        // For external-content FTS5, 'rebuild' re-indexes from the source table without
+        // storing duplicate content. Call this after VACUUM to ensure rowid stability
+        // (required for implicit rowid mode).
         self.run_with_connection(move |connection, _wid| {
-            connection.transaction(|connection| {
-                diesel::sql_query(
-                    "INSERT INTO conversations_fts(conversations_fts) VALUES('delete-all')",
-                )
-                .execute(connection)?;
-                diesel::sql_query(
-                    "INSERT INTO conversations_fts(conversation_id, title, content, cwd) \
-                     SELECT conversation_id, COALESCE(title,''), COALESCE(context,''), COALESCE(cwd,'') \
-                     FROM conversations \
-                     WHERE context IS NOT NULL",
-                )
-                .execute(connection)?;
-                Ok(())
-            })
+            diesel::sql_query(
+                "INSERT INTO conversations_fts(conversations_fts) VALUES('rebuild')",
+            )
+            .execute(connection)?;
+            Ok(())
         })
         .await
     }
