@@ -90,78 +90,87 @@ fn main() -> Result<()> {
         !args.apply
     );
 
-    // SAFETY GATE 1: Check for running processes
-    info!("SAFETY GATE 1: Checking for running forge processes...");
-    let proc_check = ProcessCheck::check(&db_path)?;
-    if proc_check.has_holders() {
-        error!(
-            "SAFETY GATE 1 FAILED: {} process(es) hold the database",
-            proc_check.count()
-        );
-        eprintln!(
-            "\nREFUSED: Cannot backfill while forge processes hold the database.\n\n\
-             Holding processes (PIDs):\n{}\n\
-             Please close these processes or wait for them to release the database.\n\
-             Run: lsof -t {} | xargs ps -o pid,cmd\n",
-            proc_check.format_pids(),
-            db_path.display()
-        );
-        return Err(anyhow!("Preflight check failed: database is held by active processes"));
-    }
-    info!("✓ No processes hold the database");
-
-    // SAFETY GATE 2: Check disk space
-    info!("SAFETY GATE 2: Checking available disk space...");
-    let db_size = fs::metadata(&db_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
-    let required_space = db_size + (1024 * 1024 * 1024); // +1GB buffer
-    let available = disk_free(&db_path)?;
-
-    if available < required_space {
-        error!(
-            "SAFETY GATE 2 FAILED: Insufficient disk space. Required: {}, Available: {}",
-            format_size(required_space, BINARY),
-            format_size(available, BINARY)
-        );
-        return Err(anyhow!("Insufficient disk space for backfill"));
-    }
-    info!(
-        "✓ Disk space OK (available: {}, required: {})",
-        format_size(available, BINARY),
-        format_size(required_space, BINARY)
-    );
-
-    // Open database
-    info!("Opening database: {}", db_path.display());
-    let mut db = Database::open(&db_path)?;
-
-    // SAFETY GATE 3: Backup
-    info!("SAFETY GATE 3: Backup...");
-    if args.skip_backup {
-        warn!("⚠ Skipping backup (--skip-backup). This is NOT RECOMMENDED.");
+    // DRY RUN: Skip safety gates (read-only operations)
+    if !args.apply {
+        info!("DRY RUN MODE: Opening database in read-only mode (no safety gates needed)");
     } else {
-        let backup_path = if let Some(dir) = args.backup_dir {
-            PathBuf::from(shellexpand::tilde(&dir).to_string())
-                .join(format!(
+        // SAFETY GATE 1: Check for running processes (apply mode only)
+        info!("SAFETY GATE 1: Checking for running forge processes...");
+        let proc_check = ProcessCheck::check(&db_path)?;
+        if proc_check.has_holders() {
+            error!(
+                "SAFETY GATE 1 FAILED: {} process(es) hold the database",
+                proc_check.count()
+            );
+            eprintln!(
+                "\nREFUSED: Cannot backfill while forge processes hold the database.\n\n\
+                 Holding processes (PIDs):\n{}\n\
+                 Please close these processes or wait for them to release the database.\n\
+                 Run: lsof -t {} | xargs ps -o pid,cmd\n",
+                proc_check.format_pids(),
+                db_path.display()
+            );
+            return Err(anyhow!("Preflight check failed: database is held by active processes"));
+        }
+        info!("✓ No processes hold the database");
+
+        // SAFETY GATE 2: Check disk space (apply mode only)
+        info!("SAFETY GATE 2: Checking available disk space...");
+        let db_size = fs::metadata(&db_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        let required_space = db_size + (1024 * 1024 * 1024); // +1GB buffer
+        let available = disk_free(&db_path)?;
+
+        if available < required_space {
+            error!(
+                "SAFETY GATE 2 FAILED: Insufficient disk space. Required: {}, Available: {}",
+                format_size(required_space, BINARY),
+                format_size(available, BINARY)
+            );
+            return Err(anyhow!("Insufficient disk space for backfill"));
+        }
+        info!(
+            "✓ Disk space OK (available: {}, required: {})",
+            format_size(available, BINARY),
+            format_size(required_space, BINARY)
+        );
+
+        // SAFETY GATE 3: Backup (apply mode only)
+        info!("SAFETY GATE 3: Backup...");
+        if args.skip_backup {
+            warn!("⚠ Skipping backup (--skip-backup). This is NOT RECOMMENDED.");
+        } else {
+            let backup_path = if let Some(dir) = args.backup_dir {
+                PathBuf::from(shellexpand::tilde(&dir).to_string())
+                    .join(format!(
+                        ".forge.db.backup-{}",
+                        chrono::Local::now().format("%Y%m%d-%H%M%S")
+                    ))
+            } else {
+                db_path.parent().unwrap_or(Path::new(".")).join(format!(
                     ".forge.db.backup-{}",
                     chrono::Local::now().format("%Y%m%d-%H%M%S")
                 ))
-        } else {
-            db_path.parent().unwrap_or(Path::new(".")).join(format!(
-                ".forge.db.backup-{}",
-                chrono::Local::now().format("%Y%m%d-%H%M%S")
-            ))
-        };
+            };
 
-        info!("Creating backup: {}", backup_path.display());
-        fs::copy(&db_path, &backup_path)?;
-        info!(
-            "✓ Backup created: {} ({} bytes)",
-            backup_path.display(),
-            fs::metadata(&backup_path)?.len()
-        );
+            info!("Creating backup: {}", backup_path.display());
+            fs::copy(&db_path, &backup_path)?;
+            info!(
+                "✓ Backup created: {} ({} bytes)",
+                backup_path.display(),
+                fs::metadata(&backup_path)?.len()
+            );
+        }
     }
+
+    // Open database
+    info!("Opening database: {}", db_path.display());
+    let mut db = if args.apply {
+        Database::open(&db_path)?
+    } else {
+        Database::open_readonly(&db_path)?
+    };
 
     // DRY RUN: Count how many rows would be compressed
     info!("Counting uncompressed rows...");

@@ -25,7 +25,20 @@ pub struct Database {
 
 impl Database {
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_with_mode(path, false)
+    }
+
+    pub fn open_readonly(path: &Path) -> Result<Self> {
+        Self::open_with_mode(path, true)
+    }
+
+    fn open_with_mode(path: &Path, readonly: bool) -> Result<Self> {
         let conn = Connection::open(path)?;
+
+        // Set query_only mode for dry-run (read-only)
+        if readonly {
+            conn.execute("PRAGMA query_only = ON;", [])?;
+        }
 
         // Enable WAL mode and busy timeout
         conn.execute_batch(
