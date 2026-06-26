@@ -86,16 +86,36 @@ fn run_checkpointer(database_path: PathBuf, stop: Arc<AtomicBool>) {
         return;
     }
 
+    // Read configurable constants from environment, with defaults and clamping.
+    let checkpoint_secs = std::env::var("FORGE_WAL_CHECKPOINT_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(5)
+        .max(1);
+
+    let wal_frame_floor = std::env::var("FORGE_WAL_FRAME_FLOOR")
+        .ok()
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(256)
+        .max(0);
+
+    debug!(
+        checkpoint_secs = checkpoint_secs,
+        wal_frame_floor = wal_frame_floor,
+        "WAL checkpointer configuration loaded"
+    );
+
     loop {
-        if sleep_with_stop(&stop, Duration::from_secs(5)) {
+        if sleep_with_stop(&stop, Duration::from_secs(checkpoint_secs)) {
             run_final_checkpoint(&mut connection);
             return;
         }
 
         match wal_checkpoint_passive(&mut connection) {
-            Ok(row) if row.log < 256 => {
+            Ok(row) if row.log < wal_frame_floor => {
                 debug!(
                     log_frames = row.log,
+                    threshold = wal_frame_floor,
                     "WAL checkpoint skipped; log below threshold"
                 );
             }
