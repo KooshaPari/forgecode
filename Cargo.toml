@@ -15,6 +15,8 @@ members = [
   "crates/forge_json_repair",
   "crates/forge_main",
   "crates/forge_markdown_stream",
+  "crates/forge_pheno_shell",
+  "crates/forge_pheno_winterminal",
   "crates/forge_repo",
   "crates/forge_select",
   "crates/forge_services",
@@ -25,7 +27,12 @@ members = [
   "crates/forge_test_kit",
   "crates/forge_tool_macros",
   "crates/forge_tracker",
-  "crates/forge_walker"
+  "crates/forge_walker",
+  "crates/forge3d",
+  "crates/forge_drift",
+  "crates/forge_similarity",
+  "crates/forge_mux",
+  "crates/ghostty-kit",
 ]
 resolver = "2"
 
@@ -193,3 +200,9 @@ forge_markdown_stream = { path = "crates/forge_markdown_stream" }
 forge_config = { path = "crates/forge_config" }
 forge_eventsource = { path = "crates/forge_eventsource" }
 forge_eventsource_stream = { path = "crates/forge_eventsource_stream" }
+
+forge3d = { path = "crates/forge3d" }
+forge_drift = { path = "crates/forge_drift" }
+forge_similarity = { path = "crates/forge_similarity" }
+forge_mux = { path = "crates/forge_mux" }
+ghostty-kit = { path = "crates/ghostty-kit" }

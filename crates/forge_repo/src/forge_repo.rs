@@ -263,8 +263,6 @@ impl<F: Send + Sync> ConversationRepository for ForgeRepo<F> {
             .rewind_conversation(conversation_id)
             .await
     }
-            .await
-    }
 }
 
 #[async_trait::async_trait]
