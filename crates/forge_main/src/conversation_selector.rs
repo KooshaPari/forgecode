@@ -53,8 +53,11 @@ impl<'a> std::fmt::Display for FastConversationRow<'a> {
             format!("{}d ago", duration.num_days())
         };
 
+        // Subagent breadcrumb: show ↳ prefix when conversation has a parent
+        let breadcrumb = if self.conv.parent_id.is_some() { "↳ " } else { "" };
+
         // Fixed-column date alignment (right-aligned in 10-char field)
-        write!(f, "{} {:>10}", title_padded, time_ago)
+        write!(f, "{}{} {:>10}", breadcrumb, title_padded, time_ago)
     }
 }
 
