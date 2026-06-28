@@ -1,9 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/governance-resolver",
   "crates/forge-runner",
   "crates/forge-cli",
-  "crates/governance-resolver",
   "crates/prompt-library",
   "crates/skill-manifest",
   "crates/docs-sync",
