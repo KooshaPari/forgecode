@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{cmp, fmt};
 
 use bstr::ByteSlice;

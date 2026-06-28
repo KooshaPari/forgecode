@@ -2665,6 +2665,27 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
         Ok(())
     }
 
+    async fn handle_review(&mut self) -> anyhow::Result<()> {
+        self.writeln_title(TitleFormat::info(
+            "Review mode: reviewing the current conversation context. (not yet implemented — run the agent's review flow)",
+        ))?;
+        Ok(())
+    }
+
+    async fn handle_test(&mut self) -> anyhow::Result<()> {
+        self.writeln_title(TitleFormat::info(
+            "Test mode: drafting tests for the current changes. (not yet implemented — run the agent's test flow)",
+        ))?;
+        Ok(())
+    }
+
+    async fn handle_think(&mut self) -> anyhow::Result<()> {
+        self.writeln_title(TitleFormat::info(
+            "Think mode: generating structured analysis. (not yet implemented — run the agent's think flow)",
+        ))?;
+        Ok(())
+    }
+
     fn user_initiated_conversations(conversations: Vec<Conversation>) -> Vec<Conversation> {
         let related_ids: HashSet<ConversationId> = conversations
             .iter()
@@ -2743,6 +2764,15 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             }
             AppCommand::Rewind => {
                 self.handle_rewind().await?;
+            }
+            AppCommand::Review => {
+                self.handle_review().await?;
+            }
+            AppCommand::Test => {
+                self.handle_test().await?;
+            }
+            AppCommand::Think => {
+                self.handle_think().await?;
             }
             AppCommand::OutputCompact => {
                 self.apply_output_mode(OutputMode::Compact).await?;

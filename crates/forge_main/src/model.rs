@@ -571,6 +571,21 @@ pub enum AppCommand {
     #[strum(props(usage = "Rewind to the last checkpoint (or session start)"))]
     Rewind,
 
+    /// Review the current code changes.
+    /// This can be triggered with the '/review' command.
+    #[strum(props(usage = "Review current code changes"))]
+    Review,
+
+    /// Run tests for the current workspace.
+    /// This can be triggered with the '/test' command.
+    #[strum(props(usage = "Run tests for the current workspace"))]
+    Test,
+
+    /// Think about a problem before acting.
+    /// This can be triggered with the '/think' command.
+    #[strum(props(usage = "Think about a problem before acting"))]
+    Think,
+
     /// Start a new conversation while preserving history.
     /// This can be triggered with the '/new' command.
     #[strum(props(usage = "Start a new conversation"))]
@@ -883,6 +898,9 @@ impl AppCommand {
             AppCommand::Clear => "clear",
             AppCommand::Init => "init",
             AppCommand::Rewind => "rewind",
+            AppCommand::Review => "review",
+            AppCommand::Test => "test",
+            AppCommand::Think => "think",
         }
     }
 
