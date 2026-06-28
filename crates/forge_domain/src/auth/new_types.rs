@@ -1,10 +1,16 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(
-    Clone, Serialize, Deserialize, derive_more::From, derive_more::Deref, PartialEq, Eq, Hash, Debug,
+    Clone, Serialize, Deserialize, derive_more::From, derive_more::Deref, PartialEq, Eq, Hash,
 )]
 #[serde(transparent)]
 pub struct ApiKey(String);
+
+impl std::fmt::Debug for ApiKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("ApiKey").field(&"<redacted>").finish()
+    }
+}
 
 impl std::fmt::Display for ApiKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -41,22 +47,40 @@ pub fn truncate_key(key: &str) -> String {
 }
 
 #[derive(
-    Clone, Serialize, Deserialize, derive_more::From, derive_more::Deref, PartialEq, Eq, Debug,
+    Clone, Serialize, Deserialize, derive_more::From, derive_more::Deref, PartialEq, Eq,
 )]
 #[serde(transparent)]
 pub struct AuthorizationCode(String);
 
+impl std::fmt::Debug for AuthorizationCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("AuthorizationCode").field(&"<redacted>").finish()
+    }
+}
+
 #[derive(
-    Clone, Serialize, Deserialize, derive_more::From, derive_more::Deref, PartialEq, Eq, Debug,
+    Clone, Serialize, Deserialize, derive_more::From, derive_more::Deref, PartialEq, Eq,
 )]
 #[serde(transparent)]
 pub struct DeviceCode(String);
 
+impl std::fmt::Debug for DeviceCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("DeviceCode").field(&"<redacted>").finish()
+    }
+}
+
 #[derive(
-    Clone, Serialize, Deserialize, derive_more::From, derive_more::Deref, PartialEq, Eq, Debug,
+    Clone, Serialize, Deserialize, derive_more::From, derive_more::Deref, PartialEq, Eq,
 )]
 #[serde(transparent)]
 pub struct PkceVerifier(String);
+
+impl std::fmt::Debug for PkceVerifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("PkceVerifier").field(&"<redacted>").finish()
+    }
+}
 
 #[derive(
     Debug,
@@ -143,16 +167,28 @@ impl From<String> for URLParamSpec {
 pub struct UserCode(String);
 
 #[derive(
-    Clone, Serialize, Deserialize, derive_more::From, derive_more::Deref, PartialEq, Eq, Debug,
+    Clone, Serialize, Deserialize, derive_more::From, derive_more::Deref, PartialEq, Eq,
 )]
 #[serde(transparent)]
 pub struct State(String);
 
+impl std::fmt::Debug for State {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("State").field(&"<redacted>").finish()
+    }
+}
+
 #[derive(
-    Clone, Serialize, Deserialize, derive_more::From, derive_more::Deref, PartialEq, Eq, Debug,
+    Clone, Serialize, Deserialize, derive_more::From, derive_more::Deref, PartialEq, Eq,
 )]
 #[serde(transparent)]
 pub struct RefreshToken(String);
+
+impl std::fmt::Debug for RefreshToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("RefreshToken").field(&"<redacted>").finish()
+    }
+}
 
 #[derive(
     Clone,
@@ -163,10 +199,15 @@ pub struct RefreshToken(String);
     derive_more::Deref,
     PartialEq,
     Eq,
-    Debug,
 )]
 #[serde(transparent)]
 pub struct AccessToken(String);
+
+impl std::fmt::Debug for AccessToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("AccessToken").field(&"<redacted>").finish()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -223,5 +264,68 @@ mod tests {
         let actual = truncate_key(fixture);
         let expected = "1234567890123...8901";
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_api_key_debug_redacts_plaintext() {
+        let secret = "sk-supersecretplaintext1234567890";
+        let key = ApiKey::from(secret.to_string());
+        let debug_output = format!("{:?}", key);
+        assert!(!debug_output.contains(secret), "Debug must not contain plaintext secret");
+        assert!(debug_output.contains("<redacted>"), "Debug must contain <redacted>");
+    }
+
+    #[test]
+    fn test_access_token_debug_redacts_plaintext() {
+        let secret = "gho_supersecretaccesstoken123456";
+        let token = AccessToken::from(secret.to_string());
+        let debug_output = format!("{:?}", token);
+        assert!(!debug_output.contains(secret), "Debug must not contain plaintext access token");
+        assert!(debug_output.contains("<redacted>"), "Debug must contain <redacted>");
+    }
+
+    #[test]
+    fn test_refresh_token_debug_redacts_plaintext() {
+        let secret = "ghr_supersecretrefreshtoken123456";
+        let token = RefreshToken::from(secret.to_string());
+        let debug_output = format!("{:?}", token);
+        assert!(!debug_output.contains(secret), "Debug must not contain plaintext refresh token");
+        assert!(debug_output.contains("<redacted>"), "Debug must contain <redacted>");
+    }
+
+    #[test]
+    fn test_authorization_code_debug_redacts_plaintext() {
+        let secret = "authcode_supersecret_12345678";
+        let code = AuthorizationCode::from(secret.to_string());
+        let debug_output = format!("{:?}", code);
+        assert!(!debug_output.contains(secret), "Debug must not contain plaintext authorization code");
+        assert!(debug_output.contains("<redacted>"), "Debug must contain <redacted>");
+    }
+
+    #[test]
+    fn test_pkce_verifier_debug_redacts_plaintext() {
+        let secret = "pkce_verifier_supersecret_12345678";
+        let verifier = PkceVerifier::from(secret.to_string());
+        let debug_output = format!("{:?}", verifier);
+        assert!(!debug_output.contains(secret), "Debug must not contain plaintext PKCE verifier");
+        assert!(debug_output.contains("<redacted>"), "Debug must contain <redacted>");
+    }
+
+    #[test]
+    fn test_device_code_debug_redacts_plaintext() {
+        let secret = "device_code_supersecret_12345";
+        let code = DeviceCode::from(secret.to_string());
+        let debug_output = format!("{:?}", code);
+        assert!(!debug_output.contains(secret), "Debug must not contain plaintext device code");
+        assert!(debug_output.contains("<redacted>"), "Debug must contain <redacted>");
+    }
+
+    #[test]
+    fn test_state_debug_redacts_plaintext() {
+        let secret = "oauth_state_supersecret_csrf123";
+        let state = State::from(secret.to_string());
+        let debug_output = format!("{:?}", state);
+        assert!(!debug_output.contains(secret), "Debug must not contain plaintext state token");
+        assert!(debug_output.contains("<redacted>"), "Debug must contain <redacted>");
     }
 }

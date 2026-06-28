@@ -627,18 +627,37 @@ impl CodexDeviceStrategy {
 }
 
 /// Response from the OpenAI device auth usercode endpoint
-#[derive(Debug, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 struct CodexDeviceAuthResponse {
     device_auth_id: String,
     user_code: String,
     interval: String,
 }
 
+impl std::fmt::Debug for CodexDeviceAuthResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CodexDeviceAuthResponse")
+            .field("device_auth_id", &self.device_auth_id)
+            .field("user_code", &"<redacted>")
+            .field("interval", &self.interval)
+            .finish()
+    }
+}
+
 /// Response from the OpenAI device auth token polling endpoint
-#[derive(Debug, serde::Deserialize)]
+#[derive(serde::Deserialize)]
 struct CodexDeviceTokenResponse {
     authorization_code: String,
     code_verifier: String,
+}
+
+impl std::fmt::Debug for CodexDeviceTokenResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CodexDeviceTokenResponse")
+            .field("authorization_code", &"<redacted>")
+            .field("code_verifier", &"<redacted>")
+            .finish()
+    }
 }
 
 #[async_trait::async_trait]
