@@ -293,8 +293,8 @@ impl<S: AgentService + EnvironmentInfra<Config = forge_config::ForgeConfig>> Orc
         // Retrieve the number of requests allowed per tick.
         let max_requests_per_turn = self.agent.max_requests_per_turn;
         let tool_context = {
-            let mut ctx = ToolCallContext::new(self.conversation.metrics.clone())
-                .sender(self.sender.clone());
+            let mut ctx =
+                ToolCallContext::new(self.conversation.metrics.clone()).sender(self.sender.clone());
             ctx.set_conversation_id(Some(self.conversation.id));
             ctx.set_parent_id(self.conversation.parent_id);
             ctx.set_source(self.conversation.source.clone());
@@ -544,13 +544,14 @@ where
         // because Drop cannot be async; the underlying SQLite write is fast
         // (a single statement), so this is acceptable.
         if self.dirty
-            && let Some(conversation) = self.conversation.take() {
-                let services = self.services.clone();
-                tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(async {
-                        let _ = services.update(conversation).await;
-                    })
-                });
-            }
+            && let Some(conversation) = self.conversation.take()
+        {
+            let services = self.services.clone();
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    let _ = services.update(conversation).await;
+                })
+            });
+        }
     }
 }

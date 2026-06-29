@@ -20,33 +20,21 @@ fn bench_drift_observe(c: &mut Criterion) {
 
     g.bench_function("observe_exact_match", |b| {
         b.iter(|| {
-            rt.block_on(async {
-                detector
-                    .observe("agent-1", baseline, "default", 1000)
-                    .await
-            })
+            rt.block_on(async { detector.observe("agent-1", baseline, "default", 1000).await })
         });
     });
 
     g.bench_function("observe_similar_prompt", |b| {
         let similar = "build an HTTP server using Rust with tokio and rustls TLS";
         b.iter(|| {
-            rt.block_on(async {
-                detector
-                    .observe("agent-1", similar, "default", 2000)
-                    .await
-            })
+            rt.block_on(async { detector.observe("agent-1", similar, "default", 2000).await })
         });
     });
 
     g.bench_function("observe_disjoint_prompt", |b| {
         let disjoint = "write a Python data pipeline with pandas and dask";
         b.iter(|| {
-            rt.block_on(async {
-                detector
-                    .observe("agent-1", disjoint, "default", 3000)
-                    .await
-            })
+            rt.block_on(async { detector.observe("agent-1", disjoint, "default", 3000).await })
         });
     });
 

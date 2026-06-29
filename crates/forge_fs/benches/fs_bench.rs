@@ -15,9 +15,7 @@ fn bench_forge_fs(c: &mut Criterion) {
     let mut g = c.benchmark_group("forge_fs");
 
     g.bench_function("read_64kib", |b| {
-        b.iter(|| {
-            rt.block_on(async { ForgeFS::read(path.as_path()).await.expect("read ok") })
-        });
+        b.iter(|| rt.block_on(async { ForgeFS::read(path.as_path()).await.expect("read ok") }));
     });
 
     g.bench_function("write_then_read_64kib", |b| {

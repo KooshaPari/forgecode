@@ -23,7 +23,8 @@ fn bench_walk_tempdir(c: &mut Criterion) {
     c.bench_function("walker/walk_200_files", |b| {
         b.iter(|| {
             rt.block_on(async {
-                Walker::min_all().cwd(PathBuf::from(root))
+                Walker::min_all()
+                    .cwd(PathBuf::from(root))
                     .get()
                     .await
                     .expect("walk ok")
