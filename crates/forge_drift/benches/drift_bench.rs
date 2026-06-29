@@ -14,7 +14,7 @@ fn bench_drift_observe(c: &mut Criterion) {
 
     // Pre-populate the index with a baseline prompt
     let baseline = "implement a Rust HTTP server with rustls and tokio";
-    index.observe("agent-1", baseline, 0);
+    index.observe("agent-1", baseline);
 
     let mut g = c.benchmark_group("drift");
 
