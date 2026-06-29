@@ -146,7 +146,9 @@ impl<S> EventStream<S> {
     pub fn new(stream: S) -> Self {
         Self {
             stream: Utf8Stream::new(stream),
-            buffer: String::new(),
+            // Pre-allocate 4 KiB for the line-parsing buffer — enough for a
+            // typical SSE event without triggering a reallocation.
+            buffer: String::with_capacity(4096),
             builder: EventBuilder::default(),
             state: EventStreamState::NotStarted,
             last_event_id: String::new(),

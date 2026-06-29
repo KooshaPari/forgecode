@@ -11,6 +11,12 @@ tokio.workspace = true
 anyhow.workspace = true
 derive_setters.workspace = true
 
+[[bench]]
+name = "walk"
+harness = false
+
 [dev-dependencies]
 pretty_assertions.workspace = true
 tempfile.workspace = true
+criterion.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }

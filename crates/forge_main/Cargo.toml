@@ -37,6 +37,7 @@ tokio-stream.workspace = true
 futures.workspace = true
 colored.workspace = true
 
+mimalloc.workspace = true
 anyhow.workspace = true
 derive_setters.workspace = true
 lazy_static.workspace = true

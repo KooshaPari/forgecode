@@ -9,5 +9,11 @@ rust-version.workspace = true
 futures.workspace = true
 tokio.workspace = true
 
+[[bench]]
+name = "mpsc_stream"
+harness = false
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "time", "test-util"] }
+criterion.workspace = true
+futures.workspace = true

@@ -16,6 +16,12 @@ bstr.workspace = true
 
 forge_domain.workspace = true
 
+[[bench]]
+name = "fs_ops"
+harness = false
+
 [dev-dependencies]
 tempfile = "3.27.0"
 pretty_assertions = "1.4.0"
+criterion.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }

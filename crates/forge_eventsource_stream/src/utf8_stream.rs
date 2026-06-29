@@ -22,7 +22,10 @@ pub struct Utf8Stream<S> {
 
 impl<S> Utf8Stream<S> {
     pub fn new(stream: S) -> Self {
-        Self { stream, buffer: Vec::new(), terminated: false }
+        // Pre-allocate a small buffer sized for a typical SSE chunk (4 KiB).
+        // This avoids repeated reallocations on the first few messages while
+        // keeping memory use bounded for the common case.
+        Self { stream, buffer: Vec::with_capacity(4096), terminated: false }
     }
 }
 

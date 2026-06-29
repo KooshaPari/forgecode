@@ -14,5 +14,10 @@ thiserror.workspace = true
 parking_lot = "0.12"
 tokio.workspace = true
 
+[[bench]]
+name = "drift"
+harness = false
+
 [dev-dependencies]
 tempfile.workspace = true
+criterion.workspace = true

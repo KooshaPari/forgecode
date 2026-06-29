@@ -21,6 +21,11 @@ hash-only = []
 local-onnx = ["fastembed"]
 hosted = ["reqwest"]
 
+[[bench]]
+name = "similarity"
+harness = false
+
 [dev-dependencies]
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
+criterion.workspace = true
