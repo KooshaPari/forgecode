@@ -1,8 +1,8 @@
-/// Shared types used by both forge_similarity and forge_drift.
-///
-/// These live here to break the cyclic dependency:
-///   forge_similarity ← (shared types) → forge_drift
-/// forge_drift imports forge_similarity::config::Tier and friends.
+//! Shared types used by both forge_similarity and forge_drift.
+//!
+//! These live here to break the cyclic dependency:
+//!   forge_similarity ← (shared types) → forge_drift
+//! forge_drift imports forge_similarity::config::Tier and friends.
 
 /// Tier controls the quality of similarity detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

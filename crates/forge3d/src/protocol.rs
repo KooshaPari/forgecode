@@ -176,10 +176,7 @@ mod tests {
     fn error_response_serializes_to_envelope_shape() {
         let resp = Response::Error(ErrorResponse {
             jsonrpc: "2.0".into(),
-            error: ErrorBody {
-                code: -32600,
-                message: "bad".into(),
-            },
+            error: ErrorBody { code: -32600, message: "bad".into() },
             id: serde_json::json!(7),
         });
         let v = resp.to_json();
@@ -220,7 +217,7 @@ mod tests {
     #[tokio::test]
     async fn decode_frame_rejects_oversize_header() {
         // Build a frame whose header advertises > MAX_FRAME_BYTES.
-        let header = (MAX_FRAME_BYTES as u32 + 1).to_be_bytes();
+        let header = (MAX_FRAME_BYTES + 1).to_be_bytes();
         let bytes: Vec<u8> = header.iter().chain(&[0u8; 0]).copied().collect();
         let mut cursor: &[u8] = &bytes;
         let err = decode_frame(&mut cursor).await.unwrap_err();

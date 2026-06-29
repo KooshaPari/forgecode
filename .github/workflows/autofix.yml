@@ -31,8 +31,12 @@ env:
     - main
 jobs:
   lint:
-    name: Lint Fix
+    # Advisory-only: auto-commits style fixes via autofix.ci.
+    # Blocking gates live in lint.yml (fmt --check) and test.yml (nextest).
+    # This job must NOT block merges — it is informational.
+    name: Lint Fix (advisory)
     runs-on: ubuntu-latest
+    continue-on-error: true
     permissions:
       contents: read
     steps:

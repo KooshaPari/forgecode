@@ -39,18 +39,17 @@
 //!   non-Windows hosts (reports `NotInstalled(Reason::NotWindows)`); all API calls
 //!   short-circuit on non-Windows.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // Re-exports
 // ---------------------------------------------------------------------------
 
+pub use config::*;
+pub use detect::*;
 pub use error::*;
 pub use profile::*;
 pub use scheme::*;
-pub use config::*;
-pub use detect::*;
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -108,7 +107,10 @@ pub mod detect {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum InstallState {
-        Installed { version: String, config_path: PathBuf },
+        Installed {
+            version: String,
+            config_path: PathBuf,
+        },
         NotInstalled(Reason),
     }
 
@@ -134,20 +136,22 @@ pub mod detect {
         {
             let local_app_data = std::env::var("LOCALAPPDATA")
                 .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".into());
-            let pkg_dir = Path::new(&local_app_data)
-                .join("Packages");
+            let pkg_dir = Path::new(&local_app_data).join("Packages");
             if let Ok(entries) = std::fs::read_dir(&pkg_dir) {
                 for entry in entries.flatten() {
                     let name = entry.file_name();
                     let name_str = name.to_string_lossy();
-                    if name_str.starts_with("Microsoft.WindowsTerminal") && name_str.ends_with("_8wekyb3d8bbwe") {
+                    if name_str.starts_with("Microsoft.WindowsTerminal")
+                        && name_str.ends_with("_8wekyb3d8bbwe")
+                    {
                         let config_path = entry.path().join("LocalState").join("settings.json");
                         if config_path.exists() {
                             // Attempt to read version from the file
                             let version = std::fs::read_to_string(&config_path)
                                 .ok()
                                 .and_then(|s| {
-                                    serde_json::from_str::<serde_json::Value>(&s).ok()
+                                    serde_json::from_str::<serde_json::Value>(&s)
+                                        .ok()
                                         .and_then(|v| v.get("version")?.as_str().map(String::from))
                                 })
                                 .unwrap_or_else(|| "unknown".into());
@@ -159,10 +163,7 @@ pub mod detect {
             // Fallback to user-profiles.json (legacy Terminal 1.x)
             let fallback = get_default_config_path();
             if fallback.exists() {
-                return InstallState::Installed {
-                    version: "legacy".into(),
-                    config_path: fallback,
-                };
+                return InstallState::Installed { version: "legacy".into(), config_path: fallback };
             }
             InstallState::NotInstalled(Reason::NotInstalled)
         }
@@ -177,7 +178,10 @@ pub mod detect {
     pub fn get_default_config_path() -> PathBuf {
         let local_app_data = std::env::var("LOCALAPPDATA")
             .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".into());
-        Path::new(&local_app_data).join("Microsoft").join("Windows Terminal").join("profiles.json")
+        Path::new(&local_app_data)
+            .join("Microsoft")
+            .join("Windows Terminal")
+            .join("profiles.json")
     }
 
     /// Cross-platform stub for non-Windows (returns a reasonable default for rendering)
@@ -219,12 +223,13 @@ pub mod font {
         }
     }
 
-    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
     pub enum FontWeight {
         Thin,
         ExtraLight,
         Light,
         #[serde(rename = "normal")]
+        #[default]
         Normal,
         Medium,
         SemiBold,
@@ -234,12 +239,12 @@ pub mod font {
         ExtraBlack,
     }
 
-    impl Default for FontWeight {
-        fn default() -> Self { FontWeight::Normal }
+    fn default_font_size() -> f64 {
+        12.0
     }
-
-    fn default_font_size() -> f64 { 12.0 }
-    fn default_font_weight() -> FontWeight { FontWeight::Normal }
+    fn default_font_weight() -> FontWeight {
+        FontWeight::Normal
+    }
 
     use std::collections::HashMap;
 }
@@ -267,7 +272,9 @@ pub mod cursor {
         }
     }
 
-    fn default_cursor_shape() -> CursorShape { CursorShape::Bar }
+    fn default_cursor_shape() -> CursorShape {
+        CursorShape::Bar
+    }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     pub enum CursorShape {
@@ -320,7 +327,9 @@ pub mod background {
         }
     }
 
-    fn default_opacity() -> f64 { 100.0 }
+    fn default_opacity() -> f64 {
+        100.0
+    }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     pub enum ImageStretchMode {
@@ -394,9 +403,10 @@ pub mod profile {
         }
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
     pub enum BellStyle {
         #[serde(rename = "audible")]
+        #[default]
         Audible,
         #[serde(rename = "window")]
         Window,
@@ -409,8 +419,6 @@ pub mod profile {
         #[serde(rename = "none")]
         None,
     }
-
-    impl Default for BellStyle { fn default() -> Self { BellStyle::Audible } }
 }
 
 // ---------------------------------------------------------------------------
@@ -474,16 +482,30 @@ pub mod scheme {
                 background: "#1e1e2e".into(),
                 selection_background: Some("#45475a".into()),
                 cursor_color: Some("#f5e0dc".into()),
-                black: "#45475a".into(), red: "#f38ba8".into(),
-                green: "#a6e3a1".into(), yellow: "#f9e2af".into(),
-                blue: "#89b4fa".into(), magenta: "#f5c2e7".into(),
-                cyan: "#94e2d5".into(), white: "#bac2de".into(),
-                bright_black: "#585b70".into(), bright_red: "#f38ba8".into(),
-                bright_green: "#a6e3a1".into(), bright_yellow: "#f9e2af".into(),
-                bright_blue: "#89b4fa".into(), bright_magenta: "#f5c2e7".into(),
-                bright_cyan: "#94e2d5".into(), bright_white: "#a6adc8".into(),
-                dim_black: None, dim_red: None, dim_green: None, dim_yellow: None,
-                dim_blue: None, dim_magenta: None, dim_cyan: None, dim_white: None,
+                black: "#45475a".into(),
+                red: "#f38ba8".into(),
+                green: "#a6e3a1".into(),
+                yellow: "#f9e2af".into(),
+                blue: "#89b4fa".into(),
+                magenta: "#f5c2e7".into(),
+                cyan: "#94e2d5".into(),
+                white: "#bac2de".into(),
+                bright_black: "#585b70".into(),
+                bright_red: "#f38ba8".into(),
+                bright_green: "#a6e3a1".into(),
+                bright_yellow: "#f9e2af".into(),
+                bright_blue: "#89b4fa".into(),
+                bright_magenta: "#f5c2e7".into(),
+                bright_cyan: "#94e2d5".into(),
+                bright_white: "#a6adc8".into(),
+                dim_black: None,
+                dim_red: None,
+                dim_green: None,
+                dim_yellow: None,
+                dim_blue: None,
+                dim_magenta: None,
+                dim_cyan: None,
+                dim_white: None,
             }
         }
 
@@ -494,16 +516,30 @@ pub mod scheme {
                 background: "#f5f5f5".into(),
                 selection_background: Some("#dce0e8".into()),
                 cursor_color: Some("#dc8a78".into()),
-                black: "#5c5f77".into(), red: "#d20f39".into(),
-                green: "#40a02b".into(), yellow: "#df8e1d".into(),
-                blue: "#1e66f5".into(), magenta: "#ea76cb".into(),
-                cyan: "#179299".into(), white: "#acb0be".into(),
-                bright_black: "#6c6f85".into(), bright_red: "#d20f39".into(),
-                bright_green: "#40a02b".into(), bright_yellow: "#df8e1d".into(),
-                bright_blue: "#1e66f5".into(), bright_magenta: "#ea76cb".into(),
-                bright_cyan: "#179299".into(), bright_white: "#bcc0cc".into(),
-                dim_black: None, dim_red: None, dim_green: None, dim_yellow: None,
-                dim_blue: None, dim_magenta: None, dim_cyan: None, dim_white: None,
+                black: "#5c5f77".into(),
+                red: "#d20f39".into(),
+                green: "#40a02b".into(),
+                yellow: "#df8e1d".into(),
+                blue: "#1e66f5".into(),
+                magenta: "#ea76cb".into(),
+                cyan: "#179299".into(),
+                white: "#acb0be".into(),
+                bright_black: "#6c6f85".into(),
+                bright_red: "#d20f39".into(),
+                bright_green: "#40a02b".into(),
+                bright_yellow: "#df8e1d".into(),
+                bright_blue: "#1e66f5".into(),
+                bright_magenta: "#ea76cb".into(),
+                bright_cyan: "#179299".into(),
+                bright_white: "#bcc0cc".into(),
+                dim_black: None,
+                dim_red: None,
+                dim_green: None,
+                dim_yellow: None,
+                dim_blue: None,
+                dim_magenta: None,
+                dim_cyan: None,
+                dim_white: None,
             }
         }
 
@@ -520,25 +556,54 @@ pub mod scheme {
                 m.insert("cursorColor".into(), cc.clone().into());
             }
             let colors = [
-                "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
-                "brightBlack", "brightRed", "brightGreen", "brightYellow",
-                "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+                "black",
+                "red",
+                "green",
+                "yellow",
+                "blue",
+                "magenta",
+                "cyan",
+                "white",
+                "brightBlack",
+                "brightRed",
+                "brightGreen",
+                "brightYellow",
+                "brightBlue",
+                "brightMagenta",
+                "brightCyan",
+                "brightWhite",
             ];
             let values = [
-                &self.black, &self.red, &self.green, &self.yellow,
-                &self.blue, &self.magenta, &self.cyan, &self.white,
-                &self.bright_black, &self.bright_red, &self.bright_green, &self.bright_yellow,
-                &self.bright_blue, &self.bright_magenta, &self.bright_cyan, &self.bright_white,
+                &self.black,
+                &self.red,
+                &self.green,
+                &self.yellow,
+                &self.blue,
+                &self.magenta,
+                &self.cyan,
+                &self.white,
+                &self.bright_black,
+                &self.bright_red,
+                &self.bright_green,
+                &self.bright_yellow,
+                &self.bright_blue,
+                &self.bright_magenta,
+                &self.bright_cyan,
+                &self.bright_white,
             ];
             for (k, v) in colors.iter().zip(values.iter()) {
                 m.insert(k.to_string(), (*v).clone().into());
             }
             // dim colors
             for (key, val) in [
-                ("dimBlack", &self.dim_black), ("dimRed", &self.dim_red),
-                ("dimGreen", &self.dim_green), ("dimYellow", &self.dim_yellow),
-                ("dimBlue", &self.dim_blue), ("dimMagenta", &self.dim_magenta),
-                ("dimCyan", &self.dim_cyan), ("dimWhite", &self.dim_white),
+                ("dimBlack", &self.dim_black),
+                ("dimRed", &self.dim_red),
+                ("dimGreen", &self.dim_green),
+                ("dimYellow", &self.dim_yellow),
+                ("dimBlue", &self.dim_blue),
+                ("dimMagenta", &self.dim_magenta),
+                ("dimCyan", &self.dim_cyan),
+                ("dimWhite", &self.dim_white),
             ] {
                 if let Some(v) = val {
                     m.insert(key.to_string(), v.clone().into());
@@ -585,7 +650,7 @@ pub mod config {
         }
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct GlobalSettings {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub always_on_top: Option<bool>,
@@ -609,18 +674,6 @@ pub mod config {
         pub use_accent_color_on_titlebar: Option<bool>,
     }
 
-    impl Default for GlobalSettings {
-        fn default() -> Self {
-            Self {
-                always_on_top: None, tab_width_mode: None,
-                show_tabs_in_titlebar: None, word_delimiters: None,
-                copy_on_select: None, confirm_close_all_tabs: None,
-                snap_to_grid_on_resize: None, start_on_user_login: None,
-                theme: None, use_accent_color_on_titlebar: None,
-            }
-        }
-    }
-
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct Action {
         pub keys: String,
@@ -632,22 +685,20 @@ pub mod config {
         pub fn load(path: Option<&Path>) -> Result<Self> {
             let config_path = match path {
                 Some(p) => p.to_path_buf(),
-                None => {
-                    match detect::detect_install() {
-                        InstallState::Installed { config_path, .. } => config_path,
-                        InstallState::NotInstalled(reason) => {
-                            return Err(match reason {
-                                Reason::NotWindows => WinterminalError::NotWindows,
-                                Reason::NotInstalled => WinterminalError::ConfigNotFound(
-                                    detect::get_default_config_path(),
-                                ),
-                                Reason::Unreadable(msg) => {
-                                    WinterminalError::ConfigNotFound(PathBuf::from(msg))
-                                }
-                            });
-                        }
+                None => match detect::detect_install() {
+                    InstallState::Installed { config_path, .. } => config_path,
+                    InstallState::NotInstalled(reason) => {
+                        return Err(match reason {
+                            Reason::NotWindows => WinterminalError::NotWindows,
+                            Reason::NotInstalled => {
+                                WinterminalError::ConfigNotFound(detect::get_default_config_path())
+                            }
+                            Reason::Unreadable(msg) => {
+                                WinterminalError::ConfigNotFound(PathBuf::from(msg))
+                            }
+                        });
                     }
-                }
+                },
             };
 
             if !config_path.exists() {
@@ -663,12 +714,10 @@ pub mod config {
         pub fn save(&self, path: Option<&Path>) -> Result<()> {
             let config_path = match path {
                 Some(p) => p.to_path_buf(),
-                None => {
-                    match detect::detect_install() {
-                        InstallState::Installed { config_path, .. } => config_path,
-                        _ => return Err(WinterminalError::NotWindows),
-                    }
-                }
+                None => match detect::detect_install() {
+                    InstallState::Installed { config_path, .. } => config_path,
+                    _ => return Err(WinterminalError::NotWindows),
+                },
             };
 
             let content = serde_json::to_string_pretty(self)?;
@@ -751,14 +800,13 @@ mod tests {
 
     #[test]
     fn test_upsert_profile_adds_new() {
-        let mut cfg = WinterminalConfig::load(None)
-            .unwrap_or_else(|_| WinterminalConfig {
-                profiles: ProfilesList { list: vec![], default_profile: None },
-                schemes: vec![],
-                actions: vec![],
-                default_profile: None,
-                global: GlobalSettings::default(),
-            });
+        let mut cfg = WinterminalConfig::load(None).unwrap_or_else(|_| WinterminalConfig {
+            profiles: ProfilesList { list: vec![], default_profile: None },
+            schemes: vec![],
+            actions: vec![],
+            default_profile: None,
+            global: GlobalSettings::default(),
+        });
         assert!(cfg.profiles.list.is_empty());
         let p = Profile::default();
         cfg.upsert_profile(p);
@@ -792,11 +840,8 @@ mod tests {
     fn test_save_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("profiles.json");
-        let mut cfg = WinterminalConfig {
-            profiles: ProfilesList {
-                list: vec![Profile::default()],
-                default_profile: None,
-            },
+        let cfg = WinterminalConfig {
+            profiles: ProfilesList { list: vec![Profile::default()], default_profile: None },
             schemes: vec![scheme::Scheme::ghostty_dark()],
             actions: vec![],
             default_profile: None,

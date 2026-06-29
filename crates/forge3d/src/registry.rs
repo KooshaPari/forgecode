@@ -11,7 +11,6 @@
 ///   New agents receive a forward-dated lease (`len = LEASE_MS`).
 ///   Explicit heartbeats set `last_heartbeat = now` (no forward-dating),
 ///   so the agent ages naturally from that point.
-
 use parking_lot::RwLock;
 use std::collections::HashMap;
 
@@ -85,9 +84,7 @@ pub struct Registry {
 
 impl Registry {
     pub fn new() -> Self {
-        Self {
-            inner: RwLock::new(HashMap::new()),
-        }
+        Self { inner: RwLock::new(HashMap::new()) }
     }
 
     /// Register or update an agent.
@@ -107,7 +104,7 @@ impl Registry {
         let now_forward = now_unix_ms + LEASE_MS;
         let mut w = self.inner.write();
 
-        let info = match w.get_mut(agent_id) {
+        match w.get_mut(agent_id) {
             Some(existing) => {
                 existing.pid = pid;
                 existing.lane = lane.to_string();
@@ -127,8 +124,7 @@ impl Registry {
                 w.insert(agent_id.to_string(), info.clone());
                 info
             }
-        };
-        info
+        }
     }
 
     /// Renew the heartbeat for an existing agent.
@@ -176,7 +172,7 @@ impl Registry {
             })
             .cloned()
             .collect();
-        agents.sort_by(|a, b| a.registered_at_unix_ms.cmp(&b.registered_at_unix_ms));
+        agents.sort_by_key(|a| a.registered_at_unix_ms);
         agents
     }
 
@@ -245,7 +241,11 @@ mod tests {
         assert!(r.heartbeat("b", 6000).is_some());
         assert!(r.deregister("b"), "deregister returns true");
         assert!(!r.deregister("b"), "second deregister returns false");
-        assert_eq!(r.list_active(70_000).len(), 0, "nothing alive after deregister");
+        assert_eq!(
+            r.list_active(70_000).len(),
+            0,
+            "nothing alive after deregister"
+        );
     }
 
     #[test]

@@ -37,7 +37,7 @@ use crate::cli::{
 use crate::conversation_selector::ConversationSelector;
 use crate::display_constants::{CommandType, headers, markers, status};
 use crate::editor::ReadLineError;
-use crate::error::{is_cursor_error, UIError};
+use crate::error::{UIError, is_cursor_error};
 use crate::info::Info;
 use crate::input::Console;
 use crate::model::{AppCommand, ForgeCommandManager};
@@ -440,8 +440,8 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                     source = err.source();
                 }
 
-                let _ = self
-                    .writeln_to_stderr(TitleFormat::error(error_message).display().to_string());
+                let _ =
+                    self.writeln_to_stderr(TitleFormat::error(error_message).display().to_string());
             }
         }
     }
@@ -1013,8 +1013,10 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                     }
                     SelectCommand::Conversation { query, .. } => {
                         let max_conversations = self.config.max_conversations;
-                        let conversations =
-                            self.api.get_parent_conversations(Some(max_conversations)).await?;
+                        let conversations = self
+                            .api
+                            .get_parent_conversations(Some(max_conversations))
+                            .await?;
                         let conversations = Self::user_initiated_conversations(conversations);
 
                         if !conversations.is_empty()
@@ -2174,7 +2176,10 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
     async fn list_conversations(&mut self) -> anyhow::Result<()> {
         self.spinner.start(Some("Loading Conversations"))?;
         let max_conversations = self.config.max_conversations;
-        let conversations = self.api.get_parent_conversations(Some(max_conversations)).await?;
+        let conversations = self
+            .api
+            .get_parent_conversations(Some(max_conversations))
+            .await?;
         let conversations = Self::user_initiated_conversations(conversations);
         self.spinner.stop(None)?;
 
@@ -2227,9 +2232,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
         self.spinner.stop(None)?;
 
         if conversations.is_empty() {
-            self.writeln_title(TitleFormat::info(
-                "No subagents found for this session.",
-            ))?;
+            self.writeln_title(TitleFormat::info("No subagents found for this session."))?;
             return Ok(());
         }
 
@@ -2261,7 +2264,10 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
 
     async fn on_show_conversations(&mut self, porcelain: bool) -> anyhow::Result<()> {
         let max_conversations = self.config.max_conversations;
-        let conversations = self.api.get_parent_conversations(Some(max_conversations)).await?;
+        let conversations = self
+            .api
+            .get_parent_conversations(Some(max_conversations))
+            .await?;
         let conversations = Self::user_initiated_conversations(conversations);
 
         if conversations.is_empty() {
@@ -2317,10 +2323,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
     async fn handle_goal(&mut self, description: Option<String>) -> anyhow::Result<()> {
         if let Some(desc) = description {
             self.state.goal = Some(desc.clone());
-            self.writeln_title(TitleFormat::info(format!(
-                "Goal set: {}",
-                desc.bold()
-            )))?;
+            self.writeln_title(TitleFormat::info(format!("Goal set: {}", desc.bold())))?;
         } else {
             match &self.state.goal {
                 Some(goal) => {
@@ -2330,7 +2333,9 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                     )))?;
                 }
                 None => {
-                    self.writeln_title(TitleFormat::info("No goal set. Usage: :goal <description>"))?;
+                    self.writeln_title(TitleFormat::info(
+                        "No goal set. Usage: :goal <description>",
+                    ))?;
                 }
             }
         }
@@ -2343,13 +2348,21 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             self.state.loop_enabled = enabled;
             self.writeln_title(TitleFormat::info(format!(
                 "Loop mode {}",
-                if enabled { "enabled".bold() } else { "disabled".bold() }
+                if enabled {
+                    "enabled".bold()
+                } else {
+                    "disabled".bold()
+                }
             )))?;
         } else {
             self.state.loop_enabled = !self.state.loop_enabled;
             self.writeln_title(TitleFormat::info(format!(
                 "Loop mode {}",
-                if self.state.loop_enabled { "enabled".bold() } else { "disabled".bold() }
+                if self.state.loop_enabled {
+                    "enabled".bold()
+                } else {
+                    "disabled".bold()
+                }
             )))?;
         }
         Ok(())
@@ -2628,9 +2641,8 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             - When to spawn a subagent (multi-file refactor, deep investigation, parallel work)\n\
             - When NOT to spawn a subagent (small edits, in-session work)\n\
             - Which model to use for which kind of subtask\n";
-        std::fs::write(&agents_path, template).map_err(|e| {
-            anyhow::anyhow!("Failed to write {}: {}", agents_path.display(), e)
-        })?;
+        std::fs::write(&agents_path, template)
+            .map_err(|e| anyhow::anyhow!("Failed to write {}: {}", agents_path.display(), e))?;
         self.writeln_title(TitleFormat::info(format!(
             "Wrote {} — review and edit before the next session",
             "AGENTS.md".bold()
@@ -2690,9 +2702,9 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
         self.writeln_title(TitleFormat::info("Optimizing FTS5 search index..."))?;
         match self.api.optimize_fts_index().await {
             Ok(()) => self.writeln_title(TitleFormat::info("FTS5 index optimized."))?,
-            Err(e) => self.writeln_title(TitleFormat::error(&format!(
-                "FTS5 optimize failed: {e}"
-            )))?,
+            Err(e) => {
+                self.writeln_title(TitleFormat::error(format!("FTS5 optimize failed: {e}")))?
+            }
         }
         Ok(())
     }
@@ -4777,12 +4789,10 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                         if lines.len() > 3 {
                             let preview = lines[..3].join("\n");
                             self.writeln(preview.dimmed().to_string())?;
-                            self.writeln(
-                                format!(
-                                    "{} [Ctrl+O to expand]",
-                                    format!("... ({} more lines)", lines.len() - 3).dimmed()
-                                )
-                            )?;
+                            self.writeln(format!(
+                                "{} [Ctrl+O to expand]",
+                                format!("... ({} more lines)", lines.len() - 3).dimmed()
+                            ))?;
                             return Ok(());
                         }
                     }
@@ -4922,10 +4932,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
 
         // Subagent breadcrumb — show parent if this is a spawned session
         if let Some(parent_id) = &conversation.parent_id {
-            info = info.add_key_value(
-                "Spawned by",
-                format!("{} (use /parent to jump)", parent_id),
-            );
+            info = info.add_key_value("Spawned by", format!("{} (use /parent to jump)", parent_id));
         }
 
         // Calculate duration
@@ -5846,13 +5853,13 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
     /// Apply an output mode setting and persist it to the config.
     async fn apply_output_mode(&mut self, mode: OutputMode) -> Result<()> {
         let mut cfg = forge_config::ForgeConfig::read().unwrap_or_default();
-        cfg.output = Some(OutputSettings {
-            mode,
-            ..cfg.output.clone().unwrap_or_default()
-        });
+        cfg.output = Some(OutputSettings { mode, ..cfg.output.clone().unwrap_or_default() });
         let path = forge_config::config_path();
         cfg.write(Some(&path))?;
-        self.writeln_title(TitleFormat::info(format!("Output mode set to: {}", mode.label())))?;
+        self.writeln_title(TitleFormat::info(format!(
+            "Output mode set to: {}",
+            mode.label()
+        )))?;
         Ok(())
     }
 }
