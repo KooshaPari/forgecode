@@ -6,6 +6,12 @@ use forge_domain::{
     AuthContextRequest, AuthContextResponse, AuthMethod, Provider, ProviderId, ProviderRepository,
 };
 
+/// Default lead window before token expiry at which a proactive OAuth refresh is triggered.
+/// Matches the cross-repo contract default (300 s): OmniRoute `TOKEN_EXPIRY_BUFFER = 5*60*1000`,
+/// cliproxy `5 * time.Minute` for most providers.
+/// See: docs/contracts/provider-models/oauth-refresh-policy.schema.json
+const OAUTH_REFRESH_LEAD: chrono::Duration = chrono::Duration::minutes(5);
+
 /// Forge Provider Authentication Service
 #[derive(Clone)]
 pub struct ForgeProviderAuthService<I> {
@@ -147,13 +153,12 @@ where
         &self,
         mut provider: Provider<url::Url>,
     ) -> anyhow::Result<Provider<url::Url>> {
-        // Check if credential needs refresh (5 minute buffer before expiry)
-        if let Some(credential) = &provider.credential {
-            let buffer = chrono::Duration::minutes(5);
-
-            if credential.needs_refresh(buffer) {
-                // Iterate through auth methods and try to refresh
-                for auth_method in &provider.auth_methods {
+        // Check if credential needs refresh using the contract-defined refresh lead
+        if let Some(credential) = &provider.credential
+            && credential.needs_refresh(OAUTH_REFRESH_LEAD)
+        {
+            // Iterate through auth methods and try to refresh
+            for auth_method in &provider.auth_methods {
                     match auth_method {
                         AuthMethod::OAuthDevice(_)
                         | AuthMethod::OAuthCode(_)
@@ -206,7 +211,6 @@ where
                         _ => {}
                     }
                 }
-            }
         }
 
         Ok(provider)
