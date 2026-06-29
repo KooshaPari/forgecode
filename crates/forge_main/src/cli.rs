@@ -1713,8 +1713,11 @@ mod tests {
     #[test]
     fn test_is_interactive_without_flags() {
         let fixture = Cli::parse_from(["forge"]);
+        // With no prompt/piped-input/subcommand flags, interactivity is governed
+        // solely by whether stdin is a TTY. Assert against the real terminal state
+        // so the test is correct both interactively and under piped CI stdin.
         let actual = fixture.is_interactive();
-        let expected = true;
+        let expected = std::io::stdin().is_terminal();
         assert_eq!(actual, expected);
     }
 
