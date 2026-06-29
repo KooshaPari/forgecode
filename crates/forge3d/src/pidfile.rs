@@ -153,6 +153,10 @@ fn pid_is_alive(pid: u32) -> bool {
     // dead. We treat EPERM as alive (the daemon can't take it over anyway).
     #[cfg(unix)]
     {
+        // SAFETY: kill(pid, sig=0) is a POSIX probe — it does not send a real
+        // signal; it only checks process existence and permissions.  `pid` is a
+        // `u32` read from a file and cast to `pid_t`; the cast is safe on all
+        // supported Unix targets where pid_t is i32 or i64.
         let r = unsafe { libc::kill(pid as libc::pid_t, 0) };
         if r == 0 {
             return true;

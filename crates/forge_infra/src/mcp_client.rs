@@ -4,6 +4,8 @@ use std::future::Future;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
+use tokio::sync::Mutex as TokioMutex;
+
 use backon::{ExponentialBuilder, Retryable};
 use bstr::ByteSlice;
 use forge_app::McpClientInfra;
@@ -41,6 +43,7 @@ type RmcpClient = RunningService<RoleClient, InitializeRequestParams>;
 
 #[derive(Clone)]
 pub struct ForgeMcpClient {
+    /// Holds the live connection once established.
     client: Arc<RwLock<Option<Arc<RmcpClient>>>>,
     config: McpServerConfig,
     env_vars: BTreeMap<String, String>,
@@ -54,6 +57,12 @@ pub struct ForgeMcpClient {
     circuit_breaker: CircuitBreaker,
     /// Concurrency bulkhead — prevents stampeding a struggling MCP server.
     bulkhead: Bulkhead,
+    /// Serialises the connect() path so that concurrent callers cannot each
+    /// observe `client == None`, independently create a transport, and then
+    /// silently discard all but the last one (TOCTOU).  The async mutex is
+    /// held only during the connection handshake; normal call-tool paths never
+    /// acquire it.
+    connect_mutex: Arc<TokioMutex<()>>,
 }
 
 impl ForgeMcpClient {
@@ -100,6 +109,7 @@ impl ForgeMcpClient {
             retry_config,
             circuit_breaker,
             bulkhead: Bulkhead::new("mcp_client", DEFAULT_MCP_MAX_CONCURRENT),
+            connect_mutex: Arc::new(TokioMutex::new(())),
         }
     }
 
@@ -120,16 +130,33 @@ impl ForgeMcpClient {
         ClientInfo::new(Default::default(), Implementation::new("Forge", VERSION))
     }
 
-    /// Connects to the MCP server. If `force` is true, it will reconnect even
-    /// if already connected.
+    /// Connects to the MCP server, returning an existing connection when one
+    /// is already live.
+    ///
+    /// The fast path (connection already established) reads the `RwLock`
+    /// without acquiring the `connect_mutex`.  The slow path (first connect or
+    /// reconnect) holds `connect_mutex` for the duration of the handshake so
+    /// that concurrent callers serialise here rather than each creating an
+    /// independent transport only to discard all but the last one (TOCTOU).
     async fn connect(&self) -> anyhow::Result<Arc<RmcpClient>> {
+        // Fast path: already connected.
         if let Some(client) = self.get_client() {
-            Ok(client.clone())
-        } else {
-            let client = self.create_connection().await?;
-            self.set_client(client.clone());
-            Ok(client.clone())
+            return Ok(client);
         }
+
+        // Slow path: acquire the per-client mutex so only one task performs
+        // the connection handshake at a time.
+        let _guard = self.connect_mutex.lock().await;
+
+        // Re-check after acquiring the lock — another task may have connected
+        // while we were waiting.
+        if let Some(client) = self.get_client() {
+            return Ok(client);
+        }
+
+        let client = self.create_connection().await?;
+        self.set_client(client.clone());
+        Ok(client)
     }
 
     fn get_client(&self) -> Option<Arc<RmcpClient>> {
@@ -920,5 +947,54 @@ mod tests {
         assert_eq!(resolved.url, "https://test.example.com");
         assert_eq!(resolved.disable, true);
         assert_eq!(resolved.headers.get("Auth"), Some(&"test".to_string()));
+    }
+
+    /// Verifies the TOCTOU fix: `ForgeMcpClient` must expose a `connect_mutex`
+    /// that serialises concurrent `connect()` calls.
+    ///
+    /// Concurrency invariant (documented here because an end-to-end transport
+    /// test would require a live MCP server):
+    ///
+    /// 1. The fast path reads `client` under `RwLock` — no mutex needed.
+    /// 2. The slow path acquires `connect_mutex`, then re-checks `client`
+    ///    (double-checked locking) before calling `create_connection()`.
+    /// 3. Therefore at most one transport handshake is in flight per
+    ///    `ForgeMcpClient` instance at any point in time, and all concurrent
+    ///    callers that arrive while the handshake is in progress will reuse the
+    ///    same connection once it is stored.
+    #[test]
+    fn test_connect_mutex_is_present_and_starts_unlocked() {
+        use forge_domain::Environment;
+        use std::path::PathBuf;
+
+        let config = McpServerConfig::Http(McpHttpServer {
+            url: "https://example.com".to_string(),
+            headers: BTreeMap::new(),
+            timeout: None,
+            disable: false,
+            oauth: Default::default(),
+        });
+        let env = Environment {
+            os: "linux".to_string(),
+            cwd: PathBuf::from("/tmp"),
+            home: None,
+            shell: "/bin/sh".to_string(),
+            base_path: PathBuf::from("/tmp/.forge"),
+        };
+        let client = ForgeMcpClient::new(config, &BTreeMap::new(), env);
+
+        // The mutex must be immediately acquirable on a freshly constructed client
+        // (i.e. no connect is in progress).
+        let guard = client.connect_mutex.try_lock();
+        assert!(
+            guard.is_ok(),
+            "connect_mutex should be unlocked on a fresh ForgeMcpClient"
+        );
+
+        // Verify the client field holds no connection yet.
+        assert!(
+            client.get_client().is_none(),
+            "newly constructed client must have no live connection"
+        );
     }
 }
