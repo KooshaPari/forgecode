@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/KooshaPari/forgecode/docs/contracts/provider-models/oauth-refresh-policy.schema.json",
+  "title": "OAuthRefreshPolicyContract",
+  "description": "Language-agnostic contract for the OAuth2 token model and the parameterized refresh-lead / expiry policy shared across forgecode (Rust), OmniRoute (TypeScript), and cliproxy (Go). Version: 1.0.0. This is the P5.2 expansion of the inline OAuthRefreshPolicy `$def` in provider-model.schema.json: it adds the full token-field model and per-provider override surface. forgecode's `forge_domain::auth::credentials::{AuthCredential, OAuthTokens}` is the reference implementation.",
+  "version": "1.0.0",
+  "$defs": {
+    "ProviderId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Provider identifier, snake_case for built-ins, e.g. 'anthropic', 'openai', 'codebuddy'. Matches ProviderId in provider-model.schema.json."
+    },
+    "TokenType": {
+      "type": "string",
+      "description": "OAuth token_type as returned by the token endpoint. 'Bearer' is the near-universal value.",
+      "default": "Bearer"
+    },
+    "OAuthTokens": {
+      "type": "object",
+      "description": "The persisted OAuth2 token set for a single provider credential. Reference: forgecode `forge_domain::auth::credentials::OAuthTokens` (access_token, refresh_token, expires_at). The optional id_token / token_type / scope fields are part of the contract for cross-repo alignment (OmniRoute and cliproxy persist them); forgecode currently persists the required subset and MAY ignore the optional fields.",
+      "required": ["access_token", "expires_at"],
+      "properties": {
+        "access_token": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The bearer access token used to authenticate API requests. SECRET — never logged in cleartext."
+        },
+        "refresh_token": {
+          "type": ["string", "null"],
+          "description": "The refresh token used to obtain a new access_token. SECRET. Null when the provider does not issue refresh tokens (e.g. short-lived ADC tokens that are re-minted rather than refreshed)."
+        },
+        "id_token": {
+          "type": ["string", "null"],
+          "description": "OIDC id_token (JWT) when the provider returns one. Optional; not all providers issue an id_token. SECRET."
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Absolute UTC timestamp (RFC 3339 / ISO 8601) at which the access_token expires. The refresh decision is computed against this instant, not against a relative expires_in. Implementations that receive a relative `expires_in` (seconds) MUST convert it to an absolute expires_at = now + expires_in at acquisition time (forgecode: `calculate_token_expiry` in forge_infra/auth/util.rs)."
+        },
+        "token_type": {
+          "$ref": "#/$defs/TokenType",
+          "description": "OAuth token_type, default 'Bearer'."
+        },
+        "scope": {
+          "type": ["string", "null"],
+          "description": "Space-delimited list of granted OAuth scopes, as returned by the token endpoint. Null when the provider does not echo scopes."
+        }
+      },
+      "additionalProperties": false
+    },
+    "RefreshLeadOverride": {
+      "type": "object",
+      "description": "A per-provider override of the default refresh-lead. cliproxy varies the lead per provider (most 300 s; codebuddy 86400 s). Such overrides are CONTRACT-CONFORMANT precisely because the lead is parameterized.",
+      "required": ["provider_id", "refresh_lead_seconds"],
+      "properties": {
+        "provider_id": { "$ref": "#/$defs/ProviderId" },
+        "refresh_lead_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Seconds before expires_at at which this specific provider's token should be refreshed. Overrides default_refresh_lead_seconds for this provider only."
+        },
+        "rationale": {
+          "type": ["string", "null"],
+          "description": "Why this provider deviates from the default lead, e.g. 'codebuddy issues 24h-lifetime tokens; refresh a full day ahead'."
+        }
+      },
+      "additionalProperties": false
+    },
+    "OAuthRefreshPolicy": {
+      "type": "object",
+      "description": "The parameterized refresh policy. The default lead (300 s = 5 min) is identical across all three repos; per-provider overrides are the parameterization point. The needs_refresh predicate is normative and identical across repos.",
+      "required": ["default_refresh_lead_seconds", "needs_refresh_semantics"],
+      "properties": {
+        "default_refresh_lead_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 300,
+          "description": "Default seconds-before-expiry at which a refresh is triggered. 300 s matches forgecode `chrono::Duration::minutes(5)` (forge_services/src/provider_auth.rs), OmniRoute `TOKEN_EXPIRY_BUFFER = 5*60*1000` ms, and cliproxy `5 * time.Minute` for the majority of providers."
+        },
+        "refresh_lead_overrides": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RefreshLeadOverride" },
+          "default": [],
+          "description": "Per-provider lead overrides. Empty array = every provider uses default_refresh_lead_seconds."
+        },
+        "needs_refresh_semantics": {
+          "type": "string",
+          "const": "now + lead >= expires_at",
+          "description": "Normative boolean predicate. A token needs refresh when the current UTC instant plus the (possibly overridden) lead window meets or exceeds expires_at. Reference: forgecode `OAuthTokens::needs_refresh(buffer)` = `Utc::now() + buffer >= self.expires_at`."
+        },
+        "is_expired_semantics": {
+          "type": "string",
+          "const": "now >= expires_at",
+          "description": "Normative boolean predicate for hard expiry (lead = 0). Reference: forgecode `OAuthTokens::is_expired()` = `Utc::now() >= self.expires_at`."
+        },
+        "non_refreshable_kinds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["api_key", "aws_profile"],
+          "description": "Credential kinds for which needs_refresh always returns false because they are not OAuth tokens (static API keys) or are refreshed by an external SDK (AWS profile, managed by the AWS SDK). Reference: forgecode `AuthCredential::needs_refresh` short-circuits ApiKey and AwsProfile to false."
+        },
+        "always_refresh_kinds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["google_adc"],
+          "description": "Credential kinds that should always be treated as needing refresh because they are short-lived (e.g. Google ADC ~1h tokens are re-minted on every check). Reference: forgecode `AuthCredential::needs_refresh` returns true for GoogleAdc."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "description": "Top-level OAuth refresh contract document.",
+  "properties": {
+    "version": {
+      "type": "string",
+      "default": "1.0.0",
+      "description": "Contract version following semver."
+    },
+    "tokens": {
+      "$ref": "#/$defs/OAuthTokens",
+      "description": "The token-field model that implementations persist and reason about."
+    },
+    "oauth_refresh_policy": {
+      "$ref": "#/$defs/OAuthRefreshPolicy",
+      "description": "Normative parameterized refresh policy."
+    }
+  }
+}

@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/KooshaPari/forgecode/docs/contracts/provider-models/resilience-policy.schema.json",
+  "title": "ResiliencePolicyContract",
+  "description": "Language-agnostic contract for request retry/backoff parameters, retryable-error classification, and the SSE terminal-marker rule set, shared across forgecode (Rust), OmniRoute (TypeScript), and cliproxy (Go). Version: 1.0.0. This is the P5.3 expansion covering concerns 3 (retry/backoff) and 4 (SSE stop-signal). Reference implementations: forgecode `forge_config::RetryConfig` + `forge_app::retry::should_retry` (request retry), `forge_eventsource::retry::{ExponentialBackoff, DEFAULT_RETRY}` (SSE reconnect), and `forge_eventsource::is_sse_terminal` (stop rule). The backoff loop itself stays language-native (Rust `backon`, TS/Go bespoke); only the parameter set and the rule set are contractual.",
+  "version": "1.0.0",
+  "$defs": {
+    "RetryPolicy": {
+      "type": "object",
+      "description": "Exponential-backoff-with-jitter parameters for retrying outbound requests. Reference: forgecode `forge_config::RetryConfig`.",
+      "required": ["max_attempts", "backoff_factor", "min_delay_ms"],
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum number of retry attempts after the initial try. Reference: forgecode `RetryConfig.max_attempts` (usize); OmniRoute `MAX_REQUEST_RETRY` (=10)."
+        },
+        "initial_backoff_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Initial backoff delay in milliseconds before the first retry. Reference: forgecode `RetryConfig.initial_backoff_ms`."
+        },
+        "min_delay_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Minimum delay in milliseconds between attempts (floor applied to the backoff curve). Reference: forgecode `RetryConfig.min_delay_ms`, fed to backon `with_min_delay`."
+        },
+        "max_delay_secs": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Upper cap on the per-attempt delay in seconds. Null = no cap. Reference: forgecode `RetryConfig.max_delay_secs`."
+        },
+        "backoff_factor": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 2,
+          "description": "Multiplier applied to the delay on each successive attempt (delay_n = delay_{n-1} * backoff_factor). Reference: forgecode `RetryConfig.backoff_factor` fed to backon `with_factor`; OmniRoute `minRetryCooldownMs * 2^(failures-1)` (factor 2)."
+        },
+        "jitter": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to apply randomized jitter to each computed delay to avoid thundering-herd retries. Reference: forgecode `ExponentialBuilder::with_jitter()`; cliproxy `backoffWithJitter`."
+        },
+        "suppress_errors": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether to suppress retry error logging/telemetry events for expected retries. Reference: forgecode `RetryConfig.suppress_errors`."
+        }
+      },
+      "additionalProperties": false
+    },
+    "RetryableClassification": {
+      "type": "object",
+      "description": "Rules that decide whether a failed request is eligible for retry. An error is retryable when EITHER its HTTP status is in retryable_status_codes OR its classified error kind is in retryable_error_kinds. Reference: forgecode `forge_app::retry::should_retry` gates on the domain `Error::Retryable` variant, and `RetryConfig.status_codes` carries the HTTP set.",
+      "properties": {
+        "retryable_status_codes": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 100, "maximum": 599 },
+          "default": [408, 429, 500, 502, 503, 504, 520, 522, 524, 529],
+          "description": "HTTP status codes that trigger a retry. Default matches forgecode `RetryConfig.status_codes` ([429, 500, 502, 503, 504, 408, 522, 524, 520, 529]) — 408 timeout, 429 rate-limit, 5xx server errors, and Cloudflare-class 520/522/524/529."
+        },
+        "retryable_error_kinds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "timeout",
+              "connection_reset",
+              "connection_refused",
+              "dns_failure",
+              "tls_handshake",
+              "stream_interrupted",
+              "rate_limited",
+              "upstream_unavailable"
+            ]
+          },
+          "default": [
+            "timeout",
+            "connection_reset",
+            "connection_refused",
+            "dns_failure",
+            "tls_handshake",
+            "stream_interrupted",
+            "rate_limited",
+            "upstream_unavailable"
+          ],
+          "description": "Transport/error kinds that trigger a retry independent of HTTP status (e.g. before a status is ever received). These correspond to errors a runtime maps onto forgecode's `Error::Retryable`."
+        },
+        "non_retryable_status_codes": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 100, "maximum": 599 },
+          "default": [400, 401, 403, 404, 422],
+          "description": "Client-error statuses that MUST NOT be retried (retrying cannot succeed without a request change). Advisory: a non-retryable status always wins over retryable classification."
+        }
+      },
+      "additionalProperties": false
+    },
+    "SseReconnectPolicy": {
+      "type": "object",
+      "description": "Backoff parameters for reconnecting a dropped SSE stream (distinct from request retry). Reference: forgecode `forge_eventsource::retry::DEFAULT_RETRY` = ExponentialBackoff { start: 300ms, factor: 2.0, max_duration: 5s, max_retries: None }.",
+      "properties": {
+        "start_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 300,
+          "description": "Initial reconnect delay in milliseconds. Reference: DEFAULT_RETRY start = 300 ms. A server-sent `retry:` field overrides this at runtime."
+        },
+        "factor": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 2,
+          "description": "Exponential multiplier per reconnect attempt. Reference: DEFAULT_RETRY factor = 2.0."
+        },
+        "max_delay_ms": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "default": 5000,
+          "description": "Cap on the reconnect delay in milliseconds. Reference: DEFAULT_RETRY max_duration = 5 s."
+        },
+        "max_retries": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "default": null,
+          "description": "Maximum reconnect attempts; null = unbounded. Reference: DEFAULT_RETRY max_retries = None."
+        },
+        "honor_server_retry_field": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether a server-sent SSE `retry:` value resets the reconnect delay. Reference: forge_eventsource sets reconnection time from the event's retry field."
+        }
+      },
+      "additionalProperties": false
+    },
+    "SseStopRule": {
+      "type": "object",
+      "description": "The terminal-marker rule set that decides when an SSE stream has ended. Reference: forgecode `forge_eventsource::is_sse_terminal(data)` = `matches!(data, \"[DONE]\" | \"\")`, plus the OpenAI/Anthropic finish-field rules aligned across repos (OmniRoute `checkIfStopSignal`, cliproxy `stream_forwarder`).",
+      "properties": {
+        "terminal_data_values": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["[DONE]", ""],
+          "description": "SSE event `data:` field values that signal end-of-stream. '[DONE]' is the canonical OpenAI/Anthropic sentinel; '' (empty) is a keepalive / implicit-end marker. Reference: forgecode `is_sse_terminal`."
+        },
+        "openai_finish_reasons": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["stop", "length", "content_filter", "tool_calls", "function_call"],
+          "description": "Values of `choices[0].finish_reason` that indicate the model has finished generating in an OpenAI-style stream."
+        },
+        "anthropic_stop_fields": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["stop_reason", "message_delta.stop_reason"],
+          "description": "Anthropic SSE event fields carrying the stop reason; a non-null value signals completion."
+        },
+        "synthetic_done_on_silent_close": {
+          "type": "boolean",
+          "default": true,
+          "description": "When the upstream connection closes without an explicit terminal event, implementations MUST emit a synthetic '[DONE]' terminal signal rather than propagating an unexpected EOF to callers. Reference: cliproxy openai_compat_executor injects synthetic [DONE] on silent close."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "description": "Top-level resilience contract document. retry_policy + retryable_classification govern outbound request retries; sse_reconnect_policy governs stream reconnection; sse_stop_rule governs stream termination.",
+  "properties": {
+    "version": {
+      "type": "string",
+      "default": "1.0.0",
+      "description": "Contract version following semver."
+    },
+    "retry_policy": { "$ref": "#/$defs/RetryPolicy" },
+    "retryable_classification": { "$ref": "#/$defs/RetryableClassification" },
+    "sse_reconnect_policy": { "$ref": "#/$defs/SseReconnectPolicy" },
+    "sse_stop_rule": { "$ref": "#/$defs/SseStopRule" }
+  }
+}
