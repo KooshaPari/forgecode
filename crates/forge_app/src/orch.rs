@@ -59,6 +59,10 @@ impl<S: AgentService + EnvironmentInfra<Config = forge_config::ForgeConfig>> Orc
     ///
     /// Call this once during setup; the orchestrator keeps an `Arc` so the sink
     /// can be shared cheaply across clones.
+    // Public injection point for a real metrics sink, supplied by embedders; no
+    // internal caller yet. Justified suppression: it is the only wiring for P2
+    // observability and removing it would drop that capability.
+    #[allow(dead_code)]
     pub fn with_metrics_sink(mut self, sink: Arc<dyn MetricsSink>) -> Self {
         self.metrics_sink = sink;
         self

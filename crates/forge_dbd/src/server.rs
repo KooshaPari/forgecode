@@ -301,7 +301,7 @@ impl DbServer {
 mod tests {
     use super::*;
     use crate::protocol::{Request, Response, read_frame, write_frame};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use tempfile::TempDir;
     use tokio::net::UnixStream;
     use tokio::time::{Duration, sleep};
@@ -322,7 +322,7 @@ mod tests {
     }
 
     /// Wait until the socket file appears (server is ready to accept).
-    async fn wait_for_socket(sock: &PathBuf) {
+    async fn wait_for_socket(sock: &Path) {
         for _ in 0..50 {
             if sock.exists() {
                 return;
