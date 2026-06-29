@@ -41,6 +41,10 @@ fn enable_stdout_vt_processing() {
         ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, GetStdHandle, STD_OUTPUT_HANDLE,
         SetConsoleMode,
     };
+    // SAFETY: Windows console API — GetStdHandle/GetConsoleMode/SetConsoleMode
+    // are always safe to call with STD_OUTPUT_HANDLE.  This runs once at
+    // program startup before the async runtime spawns worker threads, so no
+    // concurrent console-handle mutation is possible.
     unsafe {
         let handle = GetStdHandle(STD_OUTPUT_HANDLE);
         let mut mode = 0;

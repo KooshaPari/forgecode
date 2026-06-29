@@ -27,12 +27,7 @@ impl DriftDetector {
         similarity: Option<Arc<dyn SimilarityProvider>>,
     ) -> Self {
         let (tx, _) = broadcast::channel(256);
-        Self {
-            config,
-            index,
-            similarity,
-            tx,
-        }
+        Self { config, index, similarity, tx }
     }
 
     /// Subscribe to drift events.
@@ -52,14 +47,14 @@ impl DriftDetector {
         agent_id: &str,
         prompt: &str,
         lane: &str,
-        now_ms: i64,
+        _now_ms: i64,
     ) -> Option<DriftEvent> {
         if matches!(self.config.approval_mode, ApprovalMode::Off) {
             return None;
         }
 
         let threshold = self.config.threshold;
-        self.index.observe(agent_id, prompt, now_ms);
+        self.index.observe(agent_id, prompt);
 
         // ---------- T0 : exact hash match ----------
         if matches!(self.config.tier, Tier::T0) {
@@ -89,11 +84,7 @@ impl DriftDetector {
     }
 
     /// Override / ack an alert.
-    pub fn override_alert(
-        &self,
-        id: AlertId,
-        reason: OverrideReason,
-    ) {
+    pub fn override_alert(&self, id: AlertId, reason: OverrideReason) {
         let _ = self.tx.send(DriftEvent::OverrideApplied { id, reason });
     }
 

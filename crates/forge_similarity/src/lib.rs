@@ -1,8 +1,8 @@
 pub mod config;
 
+use crate::config::Tier;
 use std::sync::Arc;
 use thiserror::Error;
-use crate::config::Tier;
 
 // ---------------------------------------------------------------------------
 // Trait
@@ -18,7 +18,11 @@ pub trait SimilarityProvider: Send + Sync {
     /// Compare `new_prompt` against the last indexed prompt for `agent_id`.
     /// Returns a score 0.0–1.0, or `None` if the provider cannot handle this
     /// tier (caller will fall back to T1).
-    async fn compare(&self, agent_id: &str, new_prompt: &str) -> Result<Option<f64>, SimilarityError>;
+    async fn compare(
+        &self,
+        agent_id: &str,
+        new_prompt: &str,
+    ) -> Result<Option<f64>, SimilarityError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -35,9 +39,19 @@ impl HashOnlyProvider {
     }
 }
 
+impl Default for HashOnlyProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait::async_trait]
 impl SimilarityProvider for HashOnlyProvider {
-    async fn compare(&self, _agent_id: &str, _new_prompt: &str) -> Result<Option<f64>, SimilarityError> {
+    async fn compare(
+        &self,
+        _agent_id: &str,
+        _new_prompt: &str,
+    ) -> Result<Option<f64>, SimilarityError> {
         Ok(None)
     }
 }
@@ -55,9 +69,19 @@ impl LocalFastembedProvider {
     }
 }
 
+impl Default for LocalFastembedProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait::async_trait]
 impl SimilarityProvider for LocalFastembedProvider {
-    async fn compare(&self, _agent_id: &str, _new_prompt: &str) -> Result<Option<f64>, SimilarityError> {
+    async fn compare(
+        &self,
+        _agent_id: &str,
+        _new_prompt: &str,
+    ) -> Result<Option<f64>, SimilarityError> {
         // Stub — real `fastembed` integration is deferred to a follow-up PR.
         // The architecture is correct: return None → caller falls back to Jaccard.
         Ok(None)

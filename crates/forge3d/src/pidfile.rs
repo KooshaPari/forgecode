@@ -81,11 +81,7 @@ impl PidFile {
                 writeln!(f, "{}", pid)?;
                 f.sync_all()?;
                 info!(pid, path = %pid_path.display(), "acquired daemon slot");
-                Ok(Self {
-                    pid_path,
-                    lock_file,
-                    pid,
-                })
+                Ok(Self { pid_path, lock_file, pid })
             }
             Err(_) => {
                 // Someone else holds the lock. Check whether they're alive
@@ -153,12 +149,16 @@ fn pid_is_alive(pid: u32) -> bool {
     // dead. We treat EPERM as alive (the daemon can't take it over anyway).
     #[cfg(unix)]
     {
+        // SAFETY: kill(pid, sig=0) is a POSIX probe — it does not send a real
+        // signal; it only checks process existence and permissions.  `pid` is a
+        // `u32` read from a file and cast to `pid_t`; the cast is safe on all
+        // supported Unix targets where pid_t is i32 or i64.
         let r = unsafe { libc::kill(pid as libc::pid_t, 0) };
         if r == 0 {
             return true;
         }
         let errno = std::io::Error::last_os_error();
-        return matches!(errno.raw_os_error(), Some(libc::EPERM));
+        matches!(errno.raw_os_error(), Some(libc::EPERM))
     }
     #[cfg(not(unix))]
     {
@@ -194,7 +194,10 @@ mod tests {
         // Either LockHeld or AlreadyRunning is acceptable depending on
         // whether PID 1 happened to be live in the test environment.
         assert!(
-            matches!(err, Forge3Error::LockHeld { .. } | Forge3Error::AlreadyRunning),
+            matches!(
+                err,
+                Forge3Error::LockHeld { .. } | Forge3Error::AlreadyRunning
+            ),
             "got {err:?}"
         );
     }

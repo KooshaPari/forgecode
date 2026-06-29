@@ -5,13 +5,19 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Request {
-    UpsertConversation { conversation: Conversation },
-    UpsertConversationRef { conversation: Conversation },
+    UpsertConversation {
+        conversation: Conversation,
+    },
+    UpsertConversationRef {
+        conversation: Conversation,
+    },
     UpdateParentId {
         conversation_id: ConversationId,
         new_parent_id: Option<ConversationId>,
     },
-    DeleteConversation { conversation_id: ConversationId },
+    DeleteConversation {
+        conversation_id: ConversationId,
+    },
     OptimizeFts,
     RefreshFts,
     CheckpointWal,
@@ -33,7 +39,9 @@ pub struct HealthStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Response {
     Ack,
-    Error { message: String },
+    Error {
+        message: String,
+    },
     /// Response to a [`Request::Ping`].
     Health(HealthStatus),
 }
@@ -43,8 +51,8 @@ pub async fn write_frame<W: AsyncWrite + Unpin, T: Serialize>(
     writer: &mut W,
     value: &T,
 ) -> io::Result<()> {
-    let serialized = bincode::serialize(value)
-        .map_err(|e| io::Error::other(format!("bincode error: {e}")))?;
+    let serialized =
+        bincode::serialize(value).map_err(|e| io::Error::other(format!("bincode error: {e}")))?;
     let len = serialized.len() as u32;
     writer.write_all(&len.to_le_bytes()).await?;
     writer.write_all(&serialized).await?;
@@ -60,6 +68,5 @@ pub async fn read_frame<R: AsyncRead + Unpin, T: for<'de> Deserialize<'de>>(
     let len = u32::from_le_bytes(len_bytes) as usize;
     let mut buf = vec![0u8; len];
     reader.read_exact(&mut buf).await?;
-    bincode::deserialize(&buf)
-        .map_err(|e| io::Error::other(format!("bincode error: {e}")))
+    bincode::deserialize(&buf).map_err(|e| io::Error::other(format!("bincode error: {e}")))
 }
