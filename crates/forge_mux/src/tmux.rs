@@ -5,6 +5,7 @@
 //! are driven through [`tokio::process::Command`].
 
 use crate::{MuxBridge, MuxError, MuxSession, MuxWindow};
+use bstr::ByteSlice;
 use futures::future::try_join_all;
 use tokio::process::Command;
 
@@ -37,15 +38,11 @@ impl TmuxBridge {
 impl MuxBridge for TmuxBridge {
     /// Enumerate all tmux sessions, fetching windows for each.
     async fn sessions(&self) -> Result<Vec<MuxSession>, MuxError> {
-        let raw = run_tmux(&["list-sessions", "-F", "#{session_id}\t#{session_name}"])
-            .await?;
+        let raw = run_tmux(&["list-sessions", "-F", "#{session_id}\t#{session_name}"]).await?;
         let sessions = parse_sessions(&raw)?;
 
         // Fetch windows for every session in parallel.
-        let windows_futs: Vec<_> = sessions
-            .iter()
-            .map(|s| fetch_windows(&s.name))
-            .collect();
+        let windows_futs: Vec<_> = sessions.iter().map(|s| fetch_windows(&s.name)).collect();
 
         let all_windows: Vec<Vec<MuxWindow>> = try_join_all(windows_futs).await?;
 
@@ -64,13 +61,10 @@ impl MuxBridge for TmuxBridge {
 
 /// Run `tmux` with the given arguments and return trimmed stdout on success.
 async fn run_tmux(args: &[&str]) -> Result<String, MuxError> {
-    let output = Command::new("tmux")
-        .args(args)
-        .output()
-        .await?;
+    let output = Command::new("tmux").args(args).output().await?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = output.stderr.to_str_lossy();
         // tmux returns non-zero when no server is running -> treat as empty.
         if stderr.contains("no server running") {
             return Ok(String::new());
@@ -82,7 +76,7 @@ async fn run_tmux(args: &[&str]) -> Result<String, MuxError> {
         )));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stdout = output.stdout.to_str_lossy().into_owned();
     Ok(stdout.trim().to_string())
 }
 
@@ -148,11 +142,7 @@ async fn fetch_windows(session_name: &str) -> Result<Vec<MuxWindow>, MuxError> {
         }
 
         let active = parts.get(2).copied().unwrap_or("0") == "1";
-        windows.push(MuxWindow {
-            id: parts[0].to_string(),
-            name: parts[1].to_string(),
-            active,
-        });
+        windows.push(MuxWindow { id: parts[0].to_string(), name: parts[1].to_string(), active });
     }
 
     Ok(windows)

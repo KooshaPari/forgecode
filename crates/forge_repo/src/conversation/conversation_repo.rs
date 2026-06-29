@@ -41,8 +41,8 @@ impl diesel::QueryableByName<diesel::sqlite::Sqlite> for FtsRefreshRow {
     fn build<'a>(
         row: &impl diesel::row::NamedRow<'a, diesel::sqlite::Sqlite>,
     ) -> diesel::deserialize::Result<Self> {
-        use diesel::sql_types::{BigInt, Text, Nullable, Binary, Integer};
         use diesel::row::NamedRow;
+        use diesel::sql_types::{BigInt, Binary, Integer, Nullable, Text};
         Ok(FtsRefreshRow {
             rowid: NamedRow::get::<BigInt, _>(row, "rowid")?,
             title: NamedRow::get::<Text, _>(row, "title")?,
@@ -173,7 +173,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
             let mut query = conversations::table
                 .filter(conversations::workspace_id.eq(&workspace_id))
                 .filter(sql::<diesel::sql_types::Bool>(
-                    "context IS NOT NULL OR is_compressed = 1"
+                    "context IS NOT NULL OR is_compressed = 1",
                 ))
                 .order(conversations::updated_at.desc())
                 .into_boxed();
@@ -204,7 +204,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
             let record: Option<ConversationRecord> = conversations::table
                 .filter(conversations::workspace_id.eq(&workspace_id))
                 .filter(sql::<diesel::sql_types::Bool>(
-                    "context IS NOT NULL OR is_compressed = 1"
+                    "context IS NOT NULL OR is_compressed = 1",
                 ))
                 .order(conversations::updated_at.desc())
                 .first(connection)
@@ -609,9 +609,8 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 .first(connection)
                 .optional()?;
 
-            let record = current_record.ok_or_else(|| {
-                anyhow::anyhow!("Conversation {} not found", conversation_id)
-            })?;
+            let record = current_record
+                .ok_or_else(|| anyhow::anyhow!("Conversation {} not found", conversation_id))?;
 
             let current_state = IntentState::from_str(&record.intent_state)?;
 
@@ -627,8 +626,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // Update the state
             let now = chrono::Utc::now().naive_utc();
             diesel::update(
-                conversations::table
-                    .filter(conversations::conversation_id.eq(&conversation_id)),
+                conversations::table.filter(conversations::conversation_id.eq(&conversation_id)),
             )
             .set((
                 conversations::intent_state.eq(&new_state_str),
@@ -652,8 +650,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             // Use raw SQL to order by context blob size (descending) to prioritize
             // largest contexts first for maximum space reclamation
-            let sql =
-                "SELECT c.* FROM conversations c \
+            let sql = "SELECT c.* FROM conversations c \
                  WHERE c.workspace_id = ? \
                    AND c.intent_state = 'verified' \
                    AND c.context IS NOT NULL \
@@ -684,9 +681,8 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 .first(connection)
                 .optional()?;
 
-            let record = current_record.ok_or_else(|| {
-                anyhow::anyhow!("Conversation {} not found", conversation_id)
-            })?;
+            let record = current_record
+                .ok_or_else(|| anyhow::anyhow!("Conversation {} not found", conversation_id))?;
 
             let current_state = IntentState::from_str(&record.intent_state)?;
 
@@ -710,8 +706,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             let now = chrono::Utc::now().naive_utc();
             diesel::update(
-                conversations::table
-                    .filter(conversations::conversation_id.eq(&conversation_id)),
+                conversations::table.filter(conversations::conversation_id.eq(&conversation_id)),
             )
             .set((
                 conversations::context.eq(compressed_context),
@@ -748,7 +743,7 @@ fn find_last_compaction_point(context_json: &str) -> usize {
     }
     // After that user-role, look forward for the first tool_call marker.
     let after_user = last_user.unwrap() + user_marker.len();
-    if let Some(tool_pos) = context_json[after_user..].find(tool_marker) {
+    if context_json[after_user..].find(tool_marker).is_some() {
         // Truncate at the user-role boundary so we keep the user turn
         // but discard everything after it (including the tool call).
         return last_user.unwrap();
@@ -774,7 +769,7 @@ fn truncate_context(context_json: &str, rewind_point: usize) -> String {
         cut -= 1;
     }
     let prefix = &context_json[..cut];
-    format!("{}\"rewound\":true}}", prefix.trim_end_matches(|c| c == ',' || c == ' '))
+    format!("{}\"rewound\":true}}", prefix.trim_end_matches([',', ' ']))
 }
 
 #[cfg(test)]
@@ -980,8 +975,10 @@ mod tests {
         assert_eq!(actual.conversation_id, fixture.id.into_string());
         assert_eq!(actual.title, Some("Conversation with Context".to_string()));
         // With compression, context is stored in context_zstd and is_compressed=1
-        assert!(actual.context_zstd.is_some() || actual.context.is_some(),
-                "context should be stored in either context_zstd (compressed) or context (plain)");
+        assert!(
+            actual.context_zstd.is_some() || actual.context.is_some(),
+            "context should be stored in either context_zstd (compressed) or context (plain)"
+        );
         Ok(())
     }
 
@@ -1827,7 +1824,10 @@ mod tests {
 
         // ADR-103: Pruning should fail when intent_state != 'verified'
         let result = repo.prune_conversation(&conversation.id).await;
-        assert!(result.is_err(), "Pruning should fail when intent_state='pending'");
+        assert!(
+            result.is_err(),
+            "Pruning should fail when intent_state='pending'"
+        );
         assert!(
             result
                 .unwrap_err()
@@ -1841,7 +1841,10 @@ mod tests {
 
         // Now pruning should succeed
         let prune_result = repo.prune_conversation(&conversation.id).await;
-        assert!(prune_result.is_ok(), "Pruning should succeed when intent_state='verified'");
+        assert!(
+            prune_result.is_ok(),
+            "Pruning should succeed when intent_state='verified'"
+        );
 
         Ok(())
     }
@@ -1859,33 +1862,35 @@ mod tests {
         assert!(conv.is_some());
 
         // Valid transition: pending → extracting
-        assert!(repo
-            .mark_intent_state(&conversation.id, "extracting")
-            .await
-            .is_ok());
+        assert!(
+            repo.mark_intent_state(&conversation.id, "extracting")
+                .await
+                .is_ok()
+        );
 
         // Valid transition: extracting → extracted
-        assert!(repo
-            .mark_intent_state(&conversation.id, "extracted")
-            .await
-            .is_ok());
+        assert!(
+            repo.mark_intent_state(&conversation.id, "extracted")
+                .await
+                .is_ok()
+        );
 
         // Valid transition: extracted → verified
-        assert!(repo
-            .mark_intent_state(&conversation.id, "verified")
-            .await
-            .is_ok());
+        assert!(
+            repo.mark_intent_state(&conversation.id, "verified")
+                .await
+                .is_ok()
+        );
 
         // Valid transition: verified → pruned
-        assert!(repo
-            .mark_intent_state(&conversation.id, "pruned")
-            .await
-            .is_ok());
+        assert!(
+            repo.mark_intent_state(&conversation.id, "pruned")
+                .await
+                .is_ok()
+        );
 
         // Invalid transition: pruned → any state (pruned is final)
-        let result = repo
-            .mark_intent_state(&conversation.id, "verified")
-            .await;
+        let result = repo.mark_intent_state(&conversation.id, "verified").await;
         assert!(result.is_err(), "Cannot transition from pruned to verified");
 
         Ok(())
@@ -1905,8 +1910,7 @@ mod tests {
         let msg_compressed = ContextMessage::user("SEARCHABLE_COMPRESSED_TERM", None);
         let msg_plain = ContextMessage::user("SEARCHABLE_PLAIN_TERM", None);
 
-        let context_compressed =
-            Context::default().messages(vec![msg_compressed.into()]);
+        let context_compressed = Context::default().messages(vec![msg_compressed.into()]);
         let context_plain = Context::default().messages(vec![msg_plain.into()]);
 
         // Insert compressed conversation (will be stored as context_zstd, is_compressed=1, context=NULL)
@@ -1927,19 +1931,25 @@ mod tests {
         // SEARCH 1: Find compressed conversation by term in its decompressed context
         // If the fix is correct, this search WILL find the compressed row.
         // Before the fix, this would return empty (context=NULL skipped by FTS).
-        let results_compressed = repo.search_conversations("SEARCHABLE_COMPRESSED_TERM", None).await?;
+        let results_compressed = repo
+            .search_conversations("SEARCHABLE_COMPRESSED_TERM", None)
+            .await?;
         assert!(
             !results_compressed.is_empty(),
             "FTS search must find compressed conversations after refresh_fts_index; \
              bug: external-content FTS5 reads context column by name, missing compressed rows"
         );
         assert!(
-            results_compressed.iter().any(|c| c.id == compressed_conv.id),
+            results_compressed
+                .iter()
+                .any(|c| c.id == compressed_conv.id),
             "Search results must include the compressed conversation"
         );
 
         // SEARCH 2: Find uncompressed conversation (baseline to ensure search works)
-        let results_plain = repo.search_conversations("SEARCHABLE_PLAIN_TERM", None).await?;
+        let results_plain = repo
+            .search_conversations("SEARCHABLE_PLAIN_TERM", None)
+            .await?;
         assert!(
             !results_plain.is_empty(),
             "FTS search must find uncompressed conversations"

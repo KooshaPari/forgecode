@@ -81,11 +81,7 @@ impl PidFile {
                 writeln!(f, "{}", pid)?;
                 f.sync_all()?;
                 info!(pid, path = %pid_path.display(), "acquired daemon slot");
-                Ok(Self {
-                    pid_path,
-                    lock_file,
-                    pid,
-                })
+                Ok(Self { pid_path, lock_file, pid })
             }
             Err(_) => {
                 // Someone else holds the lock. Check whether they're alive
@@ -158,7 +154,7 @@ fn pid_is_alive(pid: u32) -> bool {
             return true;
         }
         let errno = std::io::Error::last_os_error();
-        return matches!(errno.raw_os_error(), Some(libc::EPERM));
+        matches!(errno.raw_os_error(), Some(libc::EPERM))
     }
     #[cfg(not(unix))]
     {
@@ -194,7 +190,10 @@ mod tests {
         // Either LockHeld or AlreadyRunning is acceptable depending on
         // whether PID 1 happened to be live in the test environment.
         assert!(
-            matches!(err, Forge3Error::LockHeld { .. } | Forge3Error::AlreadyRunning),
+            matches!(
+                err,
+                Forge3Error::LockHeld { .. } | Forge3Error::AlreadyRunning
+            ),
             "got {err:?}"
         );
     }

@@ -1,5 +1,3 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-
 /// Errors emitted by the forge3d daemon.
 ///
 /// All fallible operations in `forge3d` funnel through this enum. It is the
@@ -60,21 +58,22 @@ impl Forge3Error {
 /// Convenience alias used throughout the crate.
 pub type Result<T> = std::result::Result<T, Forge3Error>;
 
-/// Monotonic counter used to assign unique alert ids without coordinating with
-/// SQLite. The actual uniqueness is enforced by the `alerts.id PRIMARY KEY`
-/// constraint; collisions are detected and re-keyed at insert time.
-#[derive(Debug, Default)]
-pub(crate) struct AlertCounter(AtomicU64);
-
-impl AlertCounter {
-    pub(crate) fn next(&self) -> u64 {
-        self.0.fetch_add(1, Ordering::Relaxed)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Monotonic counter used to assign unique alert ids without coordinating with
+    /// SQLite. The actual uniqueness is enforced by the `alerts.id PRIMARY KEY`
+    /// constraint; collisions are detected and re-keyed at insert time.
+    #[derive(Debug, Default)]
+    struct AlertCounter(AtomicU64);
+
+    impl AlertCounter {
+        fn next(&self) -> u64 {
+            self.0.fetch_add(1, Ordering::Relaxed)
+        }
+    }
 
     #[test]
     fn code_is_stable_for_each_variant() {
