@@ -61,6 +61,9 @@ where
                         let mut bytes = err.into_bytes();
                         let rem = bytes.split_off(valid_size);
                         *this.buffer = rem;
+                        // SAFETY: `bytes` contains exactly the validated UTF-8
+                        // prefix of the original slice; `valid_up_to()` guarantees
+                        // all bytes in `[0, valid_size)` are valid UTF-8.
                         Poll::Ready(Some(Ok(unsafe { String::from_utf8_unchecked(bytes) })))
                     }
                 }
