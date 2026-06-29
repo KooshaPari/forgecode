@@ -4,6 +4,7 @@
 //! flags) to enumerate active sessions and their windows.  All commands
 //! are driven through [`tokio::process::Command`].
 
+use bstr::ByteSlice;
 use crate::{MuxBridge, MuxError, MuxSession, MuxWindow};
 use futures::future::try_join_all;
 use tokio::process::Command;
@@ -70,7 +71,7 @@ async fn run_tmux(args: &[&str]) -> Result<String, MuxError> {
         .await?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = output.stderr.to_str_lossy();
         // tmux returns non-zero when no server is running -> treat as empty.
         if stderr.contains("no server running") {
             return Ok(String::new());
@@ -82,7 +83,7 @@ async fn run_tmux(args: &[&str]) -> Result<String, MuxError> {
         )));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stdout = output.stdout.to_str_lossy().into_owned();
     Ok(stdout.trim().to_string())
 }
 

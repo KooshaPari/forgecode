@@ -39,7 +39,6 @@
 //!   non-Windows hosts (reports `NotInstalled(Reason::NotWindows)`); all API calls
 //!   short-circuit on non-Windows.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
@@ -193,6 +192,7 @@ pub mod detect {
 
 pub mod font {
     use serde::{Deserialize, Serialize};
+    use std::collections::HashMap;
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct FontConfig {
@@ -219,12 +219,13 @@ pub mod font {
         }
     }
 
-    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
     pub enum FontWeight {
         Thin,
         ExtraLight,
         Light,
         #[serde(rename = "normal")]
+        #[default]
         Normal,
         Medium,
         SemiBold,
@@ -234,14 +235,8 @@ pub mod font {
         ExtraBlack,
     }
 
-    impl Default for FontWeight {
-        fn default() -> Self { FontWeight::Normal }
-    }
-
     fn default_font_size() -> f64 { 12.0 }
     fn default_font_weight() -> FontWeight { FontWeight::Normal }
-
-    use std::collections::HashMap;
 }
 
 // ---------------------------------------------------------------------------
@@ -394,9 +389,10 @@ pub mod profile {
         }
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
     pub enum BellStyle {
         #[serde(rename = "audible")]
+        #[default]
         Audible,
         #[serde(rename = "window")]
         Window,
@@ -409,8 +405,6 @@ pub mod profile {
         #[serde(rename = "none")]
         None,
     }
-
-    impl Default for BellStyle { fn default() -> Self { BellStyle::Audible } }
 }
 
 // ---------------------------------------------------------------------------
@@ -585,7 +579,7 @@ pub mod config {
         }
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Default, Serialize, Deserialize)]
     pub struct GlobalSettings {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub always_on_top: Option<bool>,
@@ -607,18 +601,6 @@ pub mod config {
         pub theme: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub use_accent_color_on_titlebar: Option<bool>,
-    }
-
-    impl Default for GlobalSettings {
-        fn default() -> Self {
-            Self {
-                always_on_top: None, tab_width_mode: None,
-                show_tabs_in_titlebar: None, word_delimiters: None,
-                copy_on_select: None, confirm_close_all_tabs: None,
-                snap_to_grid_on_resize: None, start_on_user_login: None,
-                theme: None, use_accent_color_on_titlebar: None,
-            }
-        }
     }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -792,7 +774,7 @@ mod tests {
     fn test_save_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("profiles.json");
-        let mut cfg = WinterminalConfig {
+        let cfg = WinterminalConfig {
             profiles: ProfilesList {
                 list: vec![Profile::default()],
                 default_profile: None,

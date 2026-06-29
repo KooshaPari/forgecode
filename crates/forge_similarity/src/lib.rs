@@ -35,6 +35,12 @@ impl HashOnlyProvider {
     }
 }
 
+impl Default for HashOnlyProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait::async_trait]
 impl SimilarityProvider for HashOnlyProvider {
     async fn compare(&self, _agent_id: &str, _new_prompt: &str) -> Result<Option<f64>, SimilarityError> {
@@ -52,6 +58,12 @@ pub struct LocalFastembedProvider;
 impl LocalFastembedProvider {
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for LocalFastembedProvider {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

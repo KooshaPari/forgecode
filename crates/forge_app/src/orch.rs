@@ -59,6 +59,7 @@ impl<S: AgentService + EnvironmentInfra<Config = forge_config::ForgeConfig>> Orc
     ///
     /// Call this once during setup; the orchestrator keeps an `Arc` so the sink
     /// can be shared cheaply across clones.
+    #[allow(dead_code)]
     pub fn with_metrics_sink(mut self, sink: Arc<dyn MetricsSink>) -> Self {
         self.metrics_sink = sink;
         self

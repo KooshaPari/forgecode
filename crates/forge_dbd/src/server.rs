@@ -315,7 +315,7 @@ mod tests {
     }
 
     /// Wait until the socket file appears (server is ready to accept).
-    async fn wait_for_socket(sock: &PathBuf) {
+    async fn wait_for_socket(sock: &std::path::Path) {
         for _ in 0..50 {
             if sock.exists() {
                 return;

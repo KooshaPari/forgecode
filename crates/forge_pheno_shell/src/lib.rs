@@ -208,7 +208,10 @@ pub enum ShellError {
     DetectionFailed,
     /// Requested a completion for a shell that doesn't support completion emission.
     #[error("shell {kind} does not support completion emission")]
-    CompletionUnsupported { kind: ShellKind },
+    CompletionUnsupported {
+        /// The shell kind that was requested.
+        kind: ShellKind,
+    },
 }
 
 /// Detected shell environment.
@@ -285,19 +288,17 @@ pub fn detect_shell(env: &std::collections::HashMap<String, String>, argv0: Opti
     if let Some(explicit) = env.get("FORGE_SHELL") {
         return Ok(from_explicit(explicit));
     }
-    if let Some(arg0) = argv0 {
-        if let Some(kind) = detect_from_argv0(arg0) {
-            return Ok(ShellEnv {
+    if let (Some(arg0), Some(kind)) = (argv0, argv0.and_then(detect_from_argv0)) {
+        return Ok(ShellEnv {
+            kind,
+            family: kind.family(),
+            detection: ShellDetection {
                 kind,
-                family: kind.family(),
-                detection: ShellDetection {
-                    kind,
-                    source: DetectionSource::PosixArgv0,
-                    raw: arg0.to_string(),
-                },
-                vars: ShellVars::for_family(kind.family()),
-            });
-        }
+                source: DetectionSource::PosixArgv0,
+                raw: arg0.to_string(),
+            },
+            vars: ShellVars::for_family(kind.family()),
+        });
     }
     // Priority 2: PowerShell edition (Windows + Core).
     if let Some(edition) = env.get("PSEdition") {
@@ -318,20 +319,18 @@ pub fn detect_shell(env: &std::collections::HashMap<String, String>, argv0: Opti
         });
     }
     // Priority 3: COMSPEC on Windows (Cmd).
-    if let Some(comspec) = env.get("COMSPEC") {
-        if comspec.to_lowercase().contains("cmd") {
-            let kind = ShellKind::Cmd;
-            return Ok(ShellEnv {
+    if let Some(comspec) = env.get("COMSPEC").filter(|s| s.to_lowercase().contains("cmd")) {
+        let kind = ShellKind::Cmd;
+        return Ok(ShellEnv {
+            kind,
+            family: kind.family(),
+            detection: ShellDetection {
                 kind,
-                family: kind.family(),
-                detection: ShellDetection {
-                    kind,
-                    source: DetectionSource::WindowsComspec,
-                    raw: comspec.clone(),
-                },
-                vars: ShellVars::for_family(kind.family()),
-            });
-        }
+                source: DetectionSource::WindowsComspec,
+                raw: comspec.clone(),
+            },
+            vars: ShellVars::for_family(kind.family()),
+        });
     }
     // Priority 4: SHELL on POSIX.
     if let Some(shell) = env.get("SHELL") {
@@ -702,9 +701,9 @@ pub fn install_targets(kind: ShellKind, home_dir: &std::path::Path, bin: &str) -
             home_dir.join(".bash_completion.d").join(bin)
         }
         ShellKind::Fish => home_dir.join(".config/fish/completions").join(format!("{bin}.fish")),
-        ShellKind::PowerShellWindows => std::path::PathBuf::from(format!(
+        ShellKind::PowerShellWindows => std::path::PathBuf::from(
             "$HOME\\Documents\\PowerShell\\Microsoft.PowerShell_profile.ps1"
-        )),
+        ),
         ShellKind::PowerShellCore => {
             // XDG-friendly: ~/.local/share/powershell/Completions/<bin>.ps1
             home_dir

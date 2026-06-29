@@ -10,7 +10,14 @@ pub struct DriftIndex {
 struct AgentPromptIndex {
     prompt_sha: [u8; 32],
     words: HashSet<String>,
+    #[expect(dead_code, reason = "retained for future TTL-based eviction; not yet read in queries")]
     last_seen_ms: i64,
+}
+
+impl Default for DriftIndex {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DriftIndex {

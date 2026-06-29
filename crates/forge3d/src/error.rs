@@ -64,9 +64,11 @@ pub type Result<T> = std::result::Result<T, Forge3Error>;
 /// SQLite. The actual uniqueness is enforced by the `alerts.id PRIMARY KEY`
 /// constraint; collisions are detected and re-keyed at insert time.
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub(crate) struct AlertCounter(AtomicU64);
 
 impl AlertCounter {
+    #[allow(dead_code)]
     pub(crate) fn next(&self) -> u64 {
         self.0.fetch_add(1, Ordering::Relaxed)
     }

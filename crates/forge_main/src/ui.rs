@@ -2690,9 +2690,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
         self.writeln_title(TitleFormat::info("Optimizing FTS5 search index..."))?;
         match self.api.optimize_fts_index().await {
             Ok(()) => self.writeln_title(TitleFormat::info("FTS5 index optimized."))?,
-            Err(e) => self.writeln_title(TitleFormat::error(&format!(
-                "FTS5 optimize failed: {e}"
-            )))?,
+            Err(e) => self.writeln_title(TitleFormat::error(format!("FTS5 optimize failed: {e}")))?,
         }
         Ok(())
     }

@@ -158,7 +158,7 @@ fn pid_is_alive(pid: u32) -> bool {
             return true;
         }
         let errno = std::io::Error::last_os_error();
-        return matches!(errno.raw_os_error(), Some(libc::EPERM));
+        matches!(errno.raw_os_error(), Some(libc::EPERM))
     }
     #[cfg(not(unix))]
     {
