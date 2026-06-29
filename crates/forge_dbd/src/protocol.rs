@@ -21,12 +21,29 @@ pub enum Request {
     OptimizeFts,
     RefreshFts,
     CheckpointWal,
+    /// Health probe: returns daemon status without side effects.
+    Ping,
+}
+
+/// Status returned by a [`Request::Ping`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthStatus {
+    /// Seconds the daemon has been running.
+    pub uptime_secs: u64,
+    /// Number of write requests currently queued (not yet flushed to disk).
+    pub queue_depth: usize,
+    /// Whether the database file/path is reachable (existence check for now).
+    pub db_reachable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Response {
     Ack,
-    Error { message: String },
+    Error {
+        message: String,
+    },
+    /// Response to a [`Request::Ping`].
+    Health(HealthStatus),
 }
 
 /// Async length-prefixed frame writer: writes u32 length prefix + serialized data
