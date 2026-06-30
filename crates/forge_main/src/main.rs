@@ -54,8 +54,38 @@ fn enable_stdout_vt_processing() {
     }
 }
 
+// Phenotype-org: cap tokio worker threads in agent/CI/non-TTY mode.
+//
+// Profiling showed each forge process spawns ~18 OS threads by default
+// (tokio rt-multi-thread picks num_cpus = 10, plus blocking + tokio-internal
+// threads). At M=32 concurrent agents that's 576 OS threads fighting the macOS
+// scheduler, producing super-linear wall-clock degradation (throughput plateau
+// ~34/s then falling to ~28/s at M=128).
+//
+// TOKIO_WORKER_THREADS=3 measured at M=128: 2131ms wall vs 4121ms default
+// (64 vs 31 agents/s). Setting it here rather than expecting each caller to
+// export the env var; the env var still wins if already set.
+fn cap_tokio_workers_for_agent_mode() {
+    use std::io::IsTerminal;
+    let in_agent_mode = std::env::var_os("CI").is_some()
+        || std::env::var_os("FORGE_NON_INTERACTIVE").is_some()
+        || std::env::var_os("FORGE_AGENT_MODE").is_some()
+        || !std::io::stdin().is_terminal();
+    if in_agent_mode && std::env::var_os("TOKIO_WORKER_THREADS").is_none() {
+        // 3 workers: enough for async I/O concurrency within a single agent,
+        // but avoids the 576-thread storm at M=32+ (10 workers × 32 procs).
+        // SAFETY: called once at process start, before tokio runtime is built.
+        // NOLINTNEXTLINE: intentional env mutation at startup
+        unsafe { std::env::set_var("TOKIO_WORKER_THREADS", "3") };
+    }
+}
+
 #[tokio::main]
 async fn main() {
+    // Phenotype-org: must run before tokio runtime is built (i.e. before
+    // #[tokio::main] expands the runtime builder). See cap_tokio_workers_for_agent_mode.
+    cap_tokio_workers_for_agent_mode();
+
     // Wrap run() in a ctrl_c handler for graceful shutdown.
     let app_future = run();
     tokio::pin!(app_future);

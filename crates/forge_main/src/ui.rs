@@ -2283,11 +2283,16 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
 
     async fn on_show_conversations(&mut self, porcelain: bool) -> anyhow::Result<()> {
         let max_conversations = self.config.max_conversations;
+        // Phenotype-org: switched from get_parent_conversations (loads full context
+        // blobs into heap) to get_parent_conversations_lite (metadata only: id,
+        // title, cwd, timestamps, message_count). With max_conversations=999999 and
+        // 11,712 parent conversations averaging 246KB each the full load peaks at
+        // ~2.8GB RSS; the lite query loads <1MB regardless of conversation count.
+        // The listing display only needs title + timestamps, not context blobs.
         let conversations = self
             .api
-            .get_parent_conversations(Some(max_conversations))
+            .get_parent_conversations_lite(Some(max_conversations))
             .await?;
-        let conversations = Self::user_initiated_conversations(conversations);
 
         if conversations.is_empty() {
             return Ok(());
@@ -2296,10 +2301,6 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
         let mut info = Info::new();
 
         for conv in conversations.into_iter() {
-            if conv.context.is_none() {
-                continue;
-            }
-
             let title = conv
                 .title
                 .as_deref()
@@ -2307,8 +2308,9 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 .unwrap_or_else(|| markers::EMPTY.to_string());
 
             // Format time using humantime library (same as conversation_selector.rs)
+            // ConversationSummary has updated_at/created_at directly (no .metadata wrapper).
             let duration = chrono::Utc::now().signed_duration_since(
-                conv.metadata.updated_at.unwrap_or(conv.metadata.created_at),
+                conv.updated_at.unwrap_or(conv.created_at),
             );
             let duration =
                 std::time::Duration::from_secs((duration.num_minutes() * 60).max(0) as u64);
