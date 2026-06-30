@@ -32,6 +32,8 @@ members = [
   "crates/forge_drift",
   "crates/forge_similarity",
   "crates/forge_mux",
+  "crates/forge_daemon",
+  "benchmarks/forge_daemon_bench",
 ]
 resolver = "2"
 
