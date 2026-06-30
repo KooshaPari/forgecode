@@ -31,7 +31,6 @@ merge.workspace = true
 nucleo.workspace = true
 nucleo-picker.workspace = true
 libc = "0.2"
-tikv-jemallocator.workspace = true
 forge_fs.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
@@ -75,6 +74,15 @@ terminal_size = "0.4"
 rustls.workspace = true
 tempfile.workspace = true
 tiny_http.workspace = true
+
+# jemalloc on macOS ARM64 triggers bug #2532 (HPA probes every 4KB page → 14s cold
+# init vs 25ms baseline). Gate to Linux only; use mimalloc on macOS for similar
+# fragmentation wins without the ARM64 regression.
+[target.'cfg(target_os = "linux")'.dependencies]
+tikv-jemallocator.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mimalloc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 enable-ansi-support.workspace = true

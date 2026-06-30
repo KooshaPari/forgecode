@@ -176,8 +176,11 @@ zstd = "0.13"
 criterion = { version = "0.5", features = ["html_reports"] }
 dhat = "0.3"
 
-# Allocator
+# Allocator — Linux only: jemalloc (lower fragmentation for long-running servers)
+# macOS ARM64: jemalloc bug #2532 causes 20x slower cold init (14s vs 25ms) due
+# to HPA probing every 4KB page — use mimalloc on macOS, system alloc on other targets.
 tikv-jemallocator = "0.6"
+mimalloc = { version = "0.1", default-features = false }
 
 # Internal crates
 forge_embed = { path = "crates/forge_embed" }
