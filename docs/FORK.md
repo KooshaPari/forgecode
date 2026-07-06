@@ -115,6 +115,40 @@ for the full table):
   `helioslite.pheno.studio` (internal/dev).
 - **OTel / QA dashboards**: per-project, plus a fleet view.
 
+### 3.5 Redirect chain + install-time tombstones
+
+The legacy `forge` and `forge-dev` binaries, the `FORGE_API_KEY` /
+`FORGE_LOG` env vars, and the `~/.forge/` install path are kept alive as
+**deprecated aliases**. Each emits a tombstone the first time it is used
+in a session:
+
+1. **Binary tombstone**: running `forge` or `forge-dev` (when installed
+   via the legacy install path) prints
+   ```
+   [helioslite] 'forge-dev' is a legacy alias for 'helioslite'.
+   This shim will be removed after the deprecation window.
+   See https://helioslite.phenotype.space/docs/renames
+   ```
+   on stderr, then forwards execution to `helioslite`.
+2. **Env-var tombstone**: setting `FORGE_API_KEY` triggers the legacy
+   fallback in `crates/forge_repo/src/provider/provider_repo.rs`
+   (`legacy_env_var_fallback` mirrors the upstream `OLLAMA_HOST`
+   pattern); a one-time stderr notice recommends migrating to
+   `HELIOSLITE_API_KEY`. Set `HELIOSLITE_LEGACY_OFF=1` to silence.
+3. **Update-URL tombstone**: `crates/forge_main/src/update.rs` checks
+   `KooshaPari/heliosLite` releases first, falls back to
+   `KooshaPari/forgecode` releases so pre-rename builds keep getting
+   notified while the rename is in flight.
+4. **Doctor banner**: `helioslite doctor` prints the active rename
+   channel (repo, update URL, binary) so users always know which fork
+   they're on.
+5. **crates.io tombstone**: when the legacy `forge-dev` crate is next
+   published, its description is flipped to
+   `Deprecated: renamed to 'helioslite'. See
+   https://helioslite.phenotype.space/docs/renames` and a
+   `cargo yank` / `cargo owner --remove` queue is tracked by
+   `packaging/crates/deprecate-forge-dev.mjs`.
+
 ### 3.4 PRs and issues
 
 - This fork accepts issues and PRs.
