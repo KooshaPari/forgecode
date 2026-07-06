@@ -129,12 +129,26 @@ pub async fn on_update(api: Arc<impl API>, update: Option<&Update>) {
     // In flight, the `KooshaPari/forgecode` releases are kept as the canonical
     // source for both name chains; `HELIOSLITE_REPO` overrides the lookup so
     // nightlies can target a third-party fork without recompiling.
-    let repo =
+    //
+    // Tombstone: until the rename is pushed to remote (Gate 4b), `KooshaPari/heliosLite`
+    // doesn't exist and the lookup 404s. We swallow that case and try the
+    // legacy `KooshaPari/forgecode` releases so users on pre-rename builds
+    // keep getting notified. This branch will be removed once the rename is
+    // permanent.
+    let primary_repo =
         std::env::var("HELIOSLITE_REPO").unwrap_or_else(|_| "KooshaPari/heliosLite".to_string());
-    let informer =
-        update_informer::new(registry::GitHub, repo.as_str(), VERSION).interval(frequency.into());
+    let legacy_repo = "KooshaPari/forgecode";
+    let informer_primary =
+        update_informer::new(registry::GitHub, primary_repo.as_str(), VERSION)
+            .interval(frequency.into());
+    let informer_legacy = update_informer::new(registry::GitHub, legacy_repo, VERSION)
+        .interval(frequency.into());
 
-    if let Some(version) = informer.check_version().ok().flatten()
+    if let Some(version) = informer_primary
+        .check_version()
+        .ok()
+        .flatten()
+        .or_else(|| informer_legacy.check_version().ok().flatten())
         && (auto_update || confirm_update(version).await)
     {
         execute_update_command(api, auto_update).await;
