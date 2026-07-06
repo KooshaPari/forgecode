@@ -1,5 +1,13 @@
 # forgecode
 
+<p align="center">
+  <a href="assets/brand/forgecode-icon.svg"><img src="assets/brand/forgecode-icon.svg" alt="forgecode" width="160" height="160"></a>
+</p>
+<p align="center"><em>AI-enhanced terminal development environment — agentic coding CLI/TUI with ZSH plugin support.</em></p>
+<p align="center"><sub>Terminal-Forge palette · <a href="assets/brand/README.md">brand assets &amp; tokens</a> · theme.rs wired (PR #86) — <em>Phenotype-org addition on top of upstream <a href="https://github.com/tailcallhq/forgecode">tailcallhq/forgecode</a></em></sub></p>
+
+---
+
 An AI-enhanced terminal development environment — an agentic coding CLI/TUI with ZSH plugin support, built in Rust.
 
 > **Fork of [tailcallhq/forgecode](https://github.com/tailcallhq/forgecode).** This fork (`forge-dev`) adds Phenotype-specific features (SQLite session store with WAL checkpointing + zstd compression, conversation FTS/vector search, subagent breadcrumbs) on top of upstream.
