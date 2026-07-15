@@ -70,8 +70,7 @@ mod tests {
     #[test]
     fn test_is_cursor_error_timeout() {
         // Test detection of cursor timeout error
-        let err = std::io::Error::new(
-            std::io::ErrorKind::Other,
+        let err = std::io::Error::other(
             "The cursor position could not be read within a normal duration",
         );
         assert!(is_cursor_error(&err));
@@ -80,8 +79,7 @@ mod tests {
     #[test]
     fn test_is_cursor_error_resource_unavailable() {
         // Test detection of resource unavailable error
-        let err = std::io::Error::new(
-            std::io::ErrorKind::Other,
+        let err = std::io::Error::other(
             "Resource temporarily unavailable (os error 35)",
         );
         assert!(is_cursor_error(&err));
@@ -97,8 +95,7 @@ mod tests {
     #[test]
     fn test_is_cursor_error_partial_match() {
         // Test that partial matches don't trigger (need both parts)
-        let err = std::io::Error::new(
-            std::io::ErrorKind::Other,
+        let err = std::io::Error::other(
             "Resource temporarily unavailable (but not the cursor one)",
         );
         assert!(!is_cursor_error(&err));

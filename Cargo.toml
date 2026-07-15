@@ -28,7 +28,7 @@ members = [
   "crates/forge_walker",
   "crates/forge_pheno_memory",
   "crates/forge_pheno_evals",
-  "crates/forge3d",
+#  "crates/forge3d",
   "crates/forge_pheno_shell",
   "crates/forge_pheno_winterminal",
 ]

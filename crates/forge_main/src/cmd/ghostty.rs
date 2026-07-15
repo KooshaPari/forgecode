@@ -329,15 +329,13 @@ fn validate_config(config: &GhosttyConfig, path: &Path) -> Vec<String> {
             line,
             ..
         } = entry
-        {
-            if looks_like_failed_color(s) {
+            && looks_like_failed_color(s) {
                 warnings.push(format!(
                     "warning: {}:{line}: value `{s}` for `{key}` looks like \
                      a color literal but is not #RRGGBB[AA]",
                     path.display()
                 ));
             }
-        }
     }
     warnings
 }

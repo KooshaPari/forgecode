@@ -46,6 +46,25 @@ thiserror = { workspace = true }
 # Structured logging — consistent with the rest of forgecode.
 tracing = { workspace = true }
 
+# CLI argument parsing
+clap = { workspace = true }
+
+# Tracing subscriber for daemon logging
+tracing-subscriber = { workspace = true }
+
+# Internal workspace crates
+forge_drift = { workspace = true }
+forge_similarity = { workspace = true }
+forge_infra = { workspace = true }
+forge_snaps = { workspace = true }
+
+# Misc
+sha2.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+libc = "0.2"
+tokio-util.workspace = true
+
 [dev-dependencies]
 # Temp directories for socket + db paths in integration tests.
 tempfile = { workspace = true }
