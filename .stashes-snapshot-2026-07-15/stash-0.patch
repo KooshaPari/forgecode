@@ -1,0 +1,50 @@
+[1mdiff --git a/crates/forge_app/src/tool_registry.rs b/crates/forge_app/src/tool_registry.rs[m
+[1mindex a7567e3f..81d387b3 100644[m
+[1m--- a/crates/forge_app/src/tool_registry.rs[m
+[1m+++ b/crates/forge_app/src/tool_registry.rs[m
+[36m@@ -101,6 +101,7 @@[m [mimpl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ToolReg[m
+ [m
+         tracing::info!(tool_name = %input.name, arguments = %input.arguments.clone().into_string(), "Executing tool call");[m
+         let tool_name = input.name.clone();[m
+[32m+[m[32m        let parent_id = context.conversation_id();[m
+ [m
+         // First, try to call a Forge tool[m
+         if ToolCatalog::contains(&input.name) {[m
+[36m@@ -111,7 +112,6 @@[m [mimpl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ToolReg[m
+                 let executor = self.agent_executor.clone();[m
+                 let session_id = task_input.session_id.clone();[m
+                 let agent_id = task_input.agent_id.clone();[m
+[31m-                let parent_id = context.conversation_id();[m
+                 // Parse session_id into ConversationId if present[m
+                 let conversation_id = session_id[m
+                     .map(|id| forge_domain::ConversationId::parse(&id))[m
+[36m@@ -177,7 +177,6 @@[m [mimpl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ToolReg[m
+             let agent_input = AgentInput::try_from(&input)?;[m
+             let executor = self.agent_executor.clone();[m
+             let agent_name = input.name.as_str().to_string();[m
+[31m-            let parent_id = context.conversation_id();[m
+             // NOTE: Agents should not timeout[m
+             let outputs = join_all(agent_input.tasks.into_iter().map(|task| {[m
+                 let agent_name = agent_name.clone();[m
+[1mdiff --git a/crates/forge_main/src/input.rs b/crates/forge_main/src/input.rs[m
+[1mindex 507f6f44..212ffbfc 100644[m
+[1m--- a/crates/forge_main/src/input.rs[m
+[1m+++ b/crates/forge_main/src/input.rs[m
+[36m@@ -29,7 +29,7 @@[m [mimpl Console {[m
+ impl Console {[m
+     pub async fn prompt(&self, prompt: &mut ForgePrompt) -> anyhow::Result<AppCommand> {[m
+         loop {[m
+[31m-            let mut forge_editor = self.editor.lock().unwrap();[m
+[32m+[m[32m            let mut forge_editor = self.editor.lock().expect("editor lock poisoned");[m
+             let user_input = forge_editor.prompt(prompt)?;[m
+ [m
+             drop(forge_editor);[m
+[36m@@ -47,7 +47,7 @@[m [mimpl Console {[m
+ [m
+     /// Sets the buffer content for the next prompt[m
+     pub fn set_buffer(&self, content: String) {[m
+[31m-        let mut editor = self.editor.lock().unwrap();[m
+[32m+[m[32m        let mut editor = self.editor.lock().expect("editor lock poisoned");[m
+         editor.set_buffer(content);[m
+     }[m
+ [m

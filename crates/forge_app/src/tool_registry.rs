@@ -101,6 +101,7 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ToolReg
 
         tracing::info!(tool_name = %input.name, arguments = %input.arguments.clone().into_string(), "Executing tool call");
         let tool_name = input.name.clone();
+        let parent_id = context.conversation_id();
 
         // First, try to call a Forge tool
         if ToolCatalog::contains(&input.name) {
@@ -111,7 +112,6 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ToolReg
                 let executor = self.agent_executor.clone();
                 let session_id = task_input.session_id.clone();
                 let agent_id = task_input.agent_id.clone();
-                let parent_id = context.conversation_id();
                 // Parse session_id into ConversationId if present
                 let conversation_id = session_id
                     .map(|id| forge_domain::ConversationId::parse(&id))
@@ -177,7 +177,6 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ToolReg
             let agent_input = AgentInput::try_from(&input)?;
             let executor = self.agent_executor.clone();
             let agent_name = input.name.as_str().to_string();
-            let parent_id = context.conversation_id();
             // NOTE: Agents should not timeout
             let outputs = join_all(agent_input.tasks.into_iter().map(|task| {
                 let agent_name = agent_name.clone();

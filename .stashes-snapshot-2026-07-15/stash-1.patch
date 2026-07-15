@@ -1,0 +1,482 @@
+[1mdiff --git a/Cargo.lock b/Cargo.lock[m
+[1mindex bf67483e..c2242acd 100644[m
+[1m--- a/Cargo.lock[m
+[1m+++ b/Cargo.lock[m
+[36m@@ -2201,18 +2201,6 @@[m [mdependencies = [[m
+  "rand 0.10.1",[m
+ ][m
+ [m
+[31m-[[package]][m
+[31m-name = "fallible-iterator"[m
+[31m-version = "0.3.0"[m
+[31m-source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"[m
+[31m-[m
+[31m-[[package]][m
+[31m-name = "fallible-streaming-iterator"[m
+[31m-version = "0.1.9"[m
+[31m-source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"[m
+[31m-[m
+ [[package]][m
+ name = "faster-hex"[m
+ version = "0.10.0"[m
+[36m@@ -2360,21 +2348,6 @@[m [mversion = "0.1.1"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"[m
+ [m
+[31m-[[package]][m
+[31m-name = "forge3d"[m
+[31m-version = "0.1.0"[m
+[31m-dependencies = [[m
+[31m- "fs2",[m
+[31m- "parking_lot",[m
+[31m- "rusqlite",[m
+[31m- "serde",[m
+[31m- "serde_json",[m
+[31m- "tempfile",[m
+[31m- "thiserror 2.0.18",[m
+[31m- "tokio",[m
+[31m- "tracing",[m
+[31m-][m
+[31m-[m
+ [[package]][m
+ name = "forge_api"[m
+ version = "0.1.1"[m
+[36m@@ -2791,7 +2764,7 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "forge_pheno_winterminal"[m
+[31m-version = "2.9.9"[m
+[32m+[m[32mversion = "0.1.0"[m
+ dependencies = [[m
+  "dirs",[m
+  "regex",[m
+[36m@@ -3061,16 +3034,6 @@[m [mdependencies = [[m
+  "percent-encoding",[m
+ ][m
+ [m
+[31m-[[package]][m
+[31m-name = "fs2"[m
+[31m-version = "0.4.3"[m
+[31m-source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"[m
+[31m-dependencies = [[m
+[31m- "libc",[m
+[31m- "winapi",[m
+[31m-][m
+[31m-[m
+ [[package]][m
+ name = "fs_extra"[m
+ version = "1.3.0"[m
+[36m@@ -3305,9 +3268,9 @@[m [mchecksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"[m
+ [m
+ [[package]][m
+ name = "gix"[m
+[31m-version = "0.84.0"[m
+[32m+[m[32mversion = "0.85.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "ae54ae0ebd1a5a3c3f8d95dd3b5ca6e63f4fed9bfd585e13801a97d7bde8f9ce"[m
+[32m+[m[32mchecksum = "fa8b2e38ebfc4484dfef8580ddcaf8abb7285e6f3eb6413ff6775d104ae96ca6"[m
+ dependencies = [[m
+  "gix-actor",[m
+  "gix-archive",[m
+[36m@@ -3378,9 +3341,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-archive"[m
+[31m-version = "0.33.0"[m
+[32m+[m[32mversion = "0.34.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "16909cacc78936ab96f6c3be08379d0a2e88bfa3a7527972d2ed75c7517ef31e"[m
+[32m+[m[32mchecksum = "1303ed647e048d2bbecb9fd3a627d753e73f883a20ad5c039b30c7cbc85e217f"[m
+ dependencies = [[m
+  "bstr",[m
+  "gix-date",[m
+[36m@@ -3417,9 +3380,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-blame"[m
+[31m-version = "0.14.0"[m
+[32m+[m[32mversion = "0.15.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "4d39a0c14af94c2edaa5eefe06d5ef2cdea55316ae9a9321314288e3f55fa4c0"[m
+[32m+[m[32mchecksum = "cf49c828ad8a8a674d52caaf0b61fdee1f20cc46c15439ca3d875ef3b6f64bdc"[m
+ dependencies = [[m
+  "gix-commitgraph",[m
+  "gix-date",[m
+[36m@@ -3473,9 +3436,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-config"[m
+[31m-version = "0.57.0"[m
+[32m+[m[32mversion = "0.58.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "4f2372d4b49ca28431e7d150cab9d25edc1890f0184bd57eb0e917c7799e63de"[m
+[32m+[m[32mchecksum = "a29bf266c4cdaf759e535c24ad4ce655b987aeb6911075643403cc7cc5ade583"[m
+ dependencies = [[m
+  "bstr",[m
+  "gix-config-value",[m
+[36m@@ -3534,9 +3497,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-diff"[m
+[31m-version = "0.64.0"[m
+[32m+[m[32mversion = "0.65.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "3b6d9528f32d94cef2edf39a1ac01fe5a0fc44ddbb18d9e44099936047c3302b"[m
+[32m+[m[32mchecksum = "92c6d56c94edf92d78203a1cd416f770e35e10b6955ede6b9d7d0c22ff88a5f3"[m
+ dependencies = [[m
+  "bstr",[m
+  "gix-attributes",[m
+[36m@@ -3558,9 +3521,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-dir"[m
+[31m-version = "0.26.0"[m
+[32m+[m[32mversion = "0.27.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "21bb2a53a6fd917ec499ed0bfb5b6887de7a15bd79197dcea7c987938749a9f1"[m
+[32m+[m[32mchecksum = "20098fba2b9c6e29361ccb4c0379d42dfb81fc7f86f7ab11f2dff4528c0bf01f"[m
+ dependencies = [[m
+  "bstr",[m
+  "gix-discover",[m
+[36m@@ -3578,9 +3541,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-discover"[m
+[31m-version = "0.52.0"[m
+[32m+[m[32mversion = "0.53.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "77bacdd12b7879d2178a80c58c2f319995e4654e1a7a23e3181e5c8a12b824f7"[m
+[32m+[m[32mchecksum = "d624d5b23b10c1d85337645227abe353ac95ab8ff66a7bdd5ce689b2db33a722"[m
+ dependencies = [[m
+  "bstr",[m
+  "dunce",[m
+[36m@@ -3624,9 +3587,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-filter"[m
+[31m-version = "0.31.0"[m
+[32m+[m[32mversion = "0.32.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "ecf74b7d16f6694ce4a3049074c41be0c7987105743674f1671807bd6dce09fa"[m
+[32m+[m[32mchecksum = "6644fb2ef97928c278675b239f366b457103d7e436f811d27331a8daf212759c"[m
+ dependencies = [[m
+  "bstr",[m
+  "encoding_rs",[m
+[36m@@ -3717,9 +3680,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-index"[m
+[31m-version = "0.52.0"[m
+[32m+[m[32mversion = "0.53.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "4e6b28cc592dc753adb58302bb14a64e412ee591a3bec77aa4df87bff74fa80d"[m
+[32m+[m[32mchecksum = "36d45f82ec5a4d7542ea595e9ad16e03e26c8cb4f221e5bc9fcdcf469f63a681"[m
+ dependencies = [[m
+  "bitflags 2.13.0",[m
+  "bstr",[m
+[36m@@ -3768,9 +3731,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-negotiate"[m
+[31m-version = "0.32.0"[m
+[32m+[m[32mversion = "0.33.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "890c936a215bae25818c076cb881cb2e54d2c66ba947ba58b8dd47cff921bf55"[m
+[32m+[m[32mchecksum = "63d6081882a5f575ace9f53924a7c85f69bbd0f96071b982df12f258ab338cc9"[m
+ dependencies = [[m
+  "bitflags 2.13.0",[m
+  "gix-commitgraph",[m
+[36m@@ -3782,9 +3745,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-object"[m
+[31m-version = "0.61.0"[m
+[32m+[m[32mversion = "0.62.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "d5cd857e29429c7213bdef3f5aef83f8cc124774fe8ae0d27b1607d218d6d525"[m
+[32m+[m[32mchecksum = "019b38afc3eac1e41f9fe09a327664b313ba4a120fa5f40e3678795d0e42783e"[m
+ dependencies = [[m
+  "bstr",[m
+  "gix-actor",[m
+[36m@@ -3801,9 +3764,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-odb"[m
+[31m-version = "0.81.0"[m
+[32m+[m[32mversion = "0.82.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "7d004c32858b1556f2d7874405edb3c97dc78fc09beaa87d57bb077ee2858a7d"[m
+[32m+[m[32mchecksum = "7fadc59f6fa0f9dd445eceee61060a2b59ca557f48da9fc677f567db535b782a"[m
+ dependencies = [[m
+  "arc-swap",[m
+  "gix-features",[m
+[36m@@ -3822,9 +3785,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-pack"[m
+[31m-version = "0.71.0"[m
+[32m+[m[32mversion = "0.72.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "e43626f2a27d1033674ec1a196b845614231e6bbd949d5e21c133045ff56b174"[m
+[32m+[m[32mchecksum = "ca3e7f1726cd2c0cd1cf1fc20be8a8e623f0b163f1f8d6fc836cfb9bc8cd758b"[m
+ dependencies = [[m
+  "clru",[m
+  "gix-chunk",[m
+[36m@@ -3894,9 +3857,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-protocol"[m
+[31m-version = "0.62.0"[m
+[32m+[m[32mversion = "0.63.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "51dea3acb390707ab868f1f9584f18449eb95d869deffae96768e47d303595ee"[m
+[32m+[m[32mchecksum = "978468bae4ea2df20c72db3b20d0bdb548a0c1090b85a83643b553e6e0e041f2"[m
+ dependencies = [[m
+  "bstr",[m
+  "gix-date",[m
+[36m@@ -3924,9 +3887,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-ref"[m
+[31m-version = "0.64.0"[m
+[32m+[m[32mversion = "0.65.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "4c04f64c37eb7e6feb73c7060f8dc6f381cc5de5d53249bfd450bc48a86b2e8b"[m
+[32m+[m[32mchecksum = "9bbfbce1dfd7d7f8469ddef6d3518376aff664348f153cbe0fc3e58ef993d24e"[m
+ dependencies = [[m
+  "gix-actor",[m
+  "gix-features",[m
+[36m@@ -3944,9 +3907,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-refspec"[m
+[31m-version = "0.42.0"[m
+[32m+[m[32mversion = "0.43.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "b216ae06ec74b5f24ad0142026a997fb0a935b7410eaf9c1616fc3f0e6c5a6d3"[m
+[32m+[m[32mchecksum = "7bc36a4fb1a1540b59cf2da498783080743fa274b02a3f19ca444fc4015a9d4f"[m
+ dependencies = [[m
+  "bstr",[m
+  "gix-error",[m
+[36m@@ -3960,9 +3923,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-revision"[m
+[31m-version = "0.46.0"[m
+[32m+[m[32mversion = "0.47.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "0b47c88884dd3c1a19a39da19d10211fcdea2809aadc86869b6e824a1774340f"[m
+[32m+[m[32mchecksum = "885075c3c21eb9c06e0be3b3728ba5932c04e1c1011dcee7c81801980e3e986f"[m
+ dependencies = [[m
+  "bitflags 2.13.0",[m
+  "bstr",[m
+[36m@@ -3979,9 +3942,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-revwalk"[m
+[31m-version = "0.32.0"[m
+[32m+[m[32mversion = "0.33.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "85f5756abffe0917827aac683b13684ed99875bc398fa1f9b8f479b0681ef9e6"[m
+[32m+[m[32mchecksum = "8f11fe7ca2585193d3d70bbe0be175a2008d883a704cc7a55e454e113e689455"[m
+ dependencies = [[m
+  "gix-commitgraph",[m
+  "gix-date",[m
+[36m@@ -4020,9 +3983,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-status"[m
+[31m-version = "0.31.0"[m
+[32m+[m[32mversion = "0.32.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "22042e385d28a34275e029d98f4970285045be14b9073658ca897923f2ed8700"[m
+[32m+[m[32mchecksum = "aec3293f75db1212f99217832cbc70c30faeb95cefc97c7f1a17fd3bcf13a72e"[m
+ dependencies = [[m
+  "bstr",[m
+  "filetime",[m
+[36m@@ -4043,9 +4006,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-submodule"[m
+[31m-version = "0.31.0"[m
+[32m+[m[32mversion = "0.32.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "3059890ef054066c22a94bfc6a3eaba0d806aedcd630a0bc9e5783fd88884781"[m
+[32m+[m[32mchecksum = "a7f9f594f7cbda0b38ba6b633b3e9a7b7901acdc5d27bc186a16633800cd1ac8"[m
+ dependencies = [[m
+  "bstr",[m
+  "gix-config",[m
+[36m@@ -4095,9 +4058,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-traverse"[m
+[31m-version = "0.58.0"[m
+[32m+[m[32mversion = "0.59.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "e8de590ecc86a3b2870665f2288324fa9f7f8672c7fc2d4e020fdd81cd1f7aed"[m
+[32m+[m[32mchecksum = "5062cca8f2977565bbaf666ec31dbdb9bc9d9293beb65f9bec52e6c1121b62a1"[m
+ dependencies = [[m
+  "bitflags 2.13.0",[m
+  "gix-commitgraph",[m
+[36m@@ -4144,9 +4107,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-worktree"[m
+[31m-version = "0.53.0"[m
+[32m+[m[32mversion = "0.54.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "cef414ed275e8407cd5d53d301e83be19700b0dd3f859d2434417b58f454a2d1"[m
+[32m+[m[32mchecksum = "92399ed66f259592050c6ed9dc80105e095a2f8e87e6b83d98aa2e21d8e27036"[m
+ dependencies = [[m
+  "bstr",[m
+  "gix-attributes",[m
+[36m@@ -4162,9 +4125,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-worktree-state"[m
+[31m-version = "0.31.0"[m
+[32m+[m[32mversion = "0.32.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "4bffae8b3ca258fdd50370cd51f06deb4c76a3b43db3868bc28dde45ffa77d69"[m
+[32m+[m[32mchecksum = "c0f926b6a249bdb0086b307c704b7abd9d643e08f98040efe6467f00bb6d2ef5"[m
+ dependencies = [[m
+  "bstr",[m
+  "gix-features",[m
+[36m@@ -4180,9 +4143,9 @@[m [mdependencies = [[m
+ [m
+ [[package]][m
+ name = "gix-worktree-stream"[m
+[31m-version = "0.33.0"[m
+[32m+[m[32mversion = "0.34.0"[m
+ source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "d25e9ed30100c63f7590bc581c225e53f731a53e06aa79a245739c07f7dcc557"[m
+[32m+[m[32mchecksum = "55f3a878c89a05470ad98c644b0015777c530da24854dd29e41fe4f41176840f"[m
+ dependencies = [[m
+  "gix-attributes",[m
+  "gix-error",[m
+[36m@@ -7417,21 +7380,6 @@[m [mdependencies = [[m
+  "thiserror 2.0.18",[m
+ ][m
+ [m
+[31m-[[package]][m
+[31m-name = "rusqlite"[m
+[31m-version = "0.39.0"[m
+[31m-source = "registry+https://github.com/rust-lang/crates.io-index"[m
+[31m-checksum = "a0d2b0146dd9661bf67bb107c0bb2a55064d556eeb3fc314151b957f313bcd4e"[m
+[31m-dependencies = [[m
+[31m- "bitflags 2.13.0",[m
+[31m- "fallible-iterator",[m
+[31m- "fallible-streaming-iterator",[m
+[31m- "hashlink 0.11.1",[m
+[31m- "libsqlite3-sys",[m
+[31m- "smallvec",[m
+[31m- "sqlite-wasm-rs",[m
+[31m-][m
+[31m-[m
+ [[package]][m
+ name = "rust-ini"[m
+ version = "0.21.3"[m
+[1mdiff --git a/Cargo.toml b/Cargo.toml[m
+[1mindex ba978f03..5fae5069 100644[m
+[1m--- a/Cargo.toml[m
+[1m+++ b/Cargo.toml[m
+[36m@@ -28,7 +28,7 @@[m [mmembers = [[m
+   "crates/forge_walker",[m
+   "crates/forge_pheno_memory",[m
+   "crates/forge_pheno_evals",[m
+[31m-  "crates/forge3d",[m
+[32m+[m[32m#  "crates/forge3d",[m
+   "crates/forge_pheno_shell",[m
+   "crates/forge_pheno_winterminal",[m
+ ][m
+[1mdiff --git a/crates/forge3d/Cargo.toml b/crates/forge3d/Cargo.toml[m
+[1mindex f9ce0bbd..a3fba73b 100644[m
+[1m--- a/crates/forge3d/Cargo.toml[m
+[1m+++ b/crates/forge3d/Cargo.toml[m
+[36m@@ -46,7 +46,26 @@[m [mthiserror = { workspace = true }[m
+ # Structured logging — consistent with the rest of forgecode.[m
+ tracing = { workspace = true }[m
+ [m
+[32m+[m[32m# CLI argument parsing[m
+[32m+[m[32mclap = { workspace = true }[m
+[32m+[m
+[32m+[m[32m# Tracing subscriber for daemon logging[m
+[32m+[m[32mtracing-subscriber = { workspace = true }[m
+[32m+[m
+[32m+[m[32m# Internal workspace crates[m
+[32m+[m[32mforge_drift = { workspace = true }[m
+[32m+[m[32mforge_similarity = { workspace = true }[m
+[32m+[m[32mforge_infra = { workspace = true }[m
+[32m+[m[32mforge_snaps = { workspace = true }[m
+[32m+[m
+[32m+[m[32m# Misc[m
+[32m+[m[32msha2.workspace = true[m
+[32m+[m[32mchrono.workspace = true[m
+[32m+[m[32muuid.workspace = true[m
+[32m+[m[32mlibc = "0.2"[m
+[32m+[m[32mtokio-util.workspace = true[m
+[32m+[m
+ [dev-dependencies][m
+ # Temp directories for socket + db paths in integration tests.[m
+ tempfile = { workspace = true }[m
+[31m-tokio = { version = "1.51", features = ["macros", "rt-multi-thread", "time"] }[m
+\ No newline at end of file[m
+[32m+[m[32mtokio = { version = "1.51", features = ["macros", "rt-multi-thread", "time"] }[m
+[1mdiff --git a/crates/forge_main/src/cmd/ghostty.rs b/crates/forge_main/src/cmd/ghostty.rs[m
+[1mindex 3dc55edd..b5d47616 100644[m
+[1m--- a/crates/forge_main/src/cmd/ghostty.rs[m
+[1m+++ b/crates/forge_main/src/cmd/ghostty.rs[m
+[36m@@ -329,15 +329,13 @@[m [mfn validate_config(config: &GhosttyConfig, path: &Path) -> Vec<String> {[m
+             line,[m
+             ..[m
+         } = entry[m
+[31m-        {[m
+[31m-            if looks_like_failed_color(s) {[m
+[32m+[m[32m            && looks_like_failed_color(s) {[m
+                 warnings.push(format!([m
+                     "warning: {}:{line}: value `{s}` for `{key}` looks like \[m
+                      a color literal but is not #RRGGBB[AA]",[m
+                     path.display()[m
+                 ));[m
+             }[m
+[31m-        }[m
+     }[m
+     warnings[m
+ }[m
+[1mdiff --git a/crates/forge_main/src/error.rs b/crates/forge_main/src/error.rs[m
+[1mindex 2635fcb6..3bfea990 100644[m
+[1m--- a/crates/forge_main/src/error.rs[m
+[1m+++ b/crates/forge_main/src/error.rs[m
+[36m@@ -70,8 +70,7 @@[m [mmod tests {[m
+     #[test][m
+     fn test_is_cursor_error_timeout() {[m
+         // Test detection of cursor timeout error[m
+[31m-        let err = std::io::Error::new([m
+[31m-            std::io::ErrorKind::Other,[m
+[32m+[m[32m        let err = std::io::Error::other([m
+             "The cursor position could not be read within a normal duration",[m
+         );[m
+         assert!(is_cursor_error(&err));[m
+[36m@@ -80,8 +79,7 @@[m [mmod tests {[m
+     #[test][m
+     fn test_is_cursor_error_resource_unavailable() {[m
+         // Test detection of resource unavailable error[m
+[31m-        let err = std::io::Error::new([m
+[31m-            std::io::ErrorKind::Other,[m
+[32m+[m[32m        let err = std::io::Error::other([m
+             "Resource temporarily unavailable (os error 35)",[m
+         );[m
+         assert!(is_cursor_error(&err));[m
+[36m@@ -97,8 +95,7 @@[m [mmod tests {[m
+     #[test][m
+     fn test_is_cursor_error_partial_match() {[m
+         // Test that partial matches don't trigger (need both parts)[m
+[31m-        let err = std::io::Error::new([m
+[31m-            std::io::ErrorKind::Other,[m
+[32m+[m[32m        let err = std::io::Error::other([m
+             "Resource temporarily unavailable (but not the cursor one)",[m
+         );[m
+         assert!(!is_cursor_error(&err));[m

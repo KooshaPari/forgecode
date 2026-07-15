@@ -29,7 +29,7 @@ impl Console {
 impl Console {
     pub async fn prompt(&self, prompt: &mut ForgePrompt) -> anyhow::Result<AppCommand> {
         loop {
-            let mut forge_editor = self.editor.lock().unwrap();
+            let mut forge_editor = self.editor.lock().expect("editor lock poisoned");
             let user_input = forge_editor.prompt(prompt)?;
 
             drop(forge_editor);
@@ -47,7 +47,7 @@ impl Console {
 
     /// Sets the buffer content for the next prompt
     pub fn set_buffer(&self, content: String) {
-        let mut editor = self.editor.lock().unwrap();
+        let mut editor = self.editor.lock().expect("editor lock poisoned");
         editor.set_buffer(content);
     }
 
