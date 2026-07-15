@@ -1,0 +1,16 @@
+# forgecode-local override: rustc 1.85+ requires embed-bitcode=yes when lto is set.
+# The parent monorepo's .cargo/config.toml sets -C lto=thin without embed-bitcode,
+# which causes "options -C embed-bitcode=no and -C lto are incompatible" on Mac (aarch64-apple-darwin).
+# This config REPLACES the parent's target.* rustflags for builds inside forgecode/.
+
+[target.aarch64-apple-darwin]
+rustflags = []
+
+[target.x86_64-apple-darwin]
+rustflags = []
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = []
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = []
