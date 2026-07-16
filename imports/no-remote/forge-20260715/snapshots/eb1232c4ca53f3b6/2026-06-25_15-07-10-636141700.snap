@@ -1,0 +1,35 @@
+//! # byteport-dag
+//!
+//! DAG foundation for Phenotype compute/infra automation (epic F).
+//!
+//! ## Modules
+//!
+//! | Module        | Description                                         |
+//! |---------------|-----------------------------------------------------|
+//! | [`dag`]       | Generic directed-acyclic-graph data structure        |
+//! | [`topo`]      | Topological sort (Kahn's algorithm + DFS variant)   |
+//! | [`scheduler`] | Parallel-bucket scheduler built on topological order |
+//! | [`serialize`] | YAML/JSON round-trip serialization (DagSchema)      |
+//!
+//! ## Example
+//!
+//! ```rust
+//! use byteport_dag::dag::Dag;
+//! use byteport_dag::scheduler;
+//!
+//! let mut dag = Dag::new();
+//! dag.add_node("build").unwrap();
+//! dag.add_node("test").unwrap();
+//! dag.add_node("deploy").unwrap();
+//! dag.add_edge("build", "test").unwrap();
+//! dag.add_edge("test", "deploy").unwrap();
+//!
+//! let sched = scheduler::schedule(&dag).unwrap();
+//! assert_eq!(sched.buckets.len(), 3);
+//! ```
+
+pub mod artifact;
+pub mod dag;
+pub mod scheduler;
+pub mod serialize;
+pub mod topo;

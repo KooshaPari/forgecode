@@ -1,0 +1,43 @@
+import subprocess, json, re, time, sys
+
+sys.stdout.reconfigure(encoding='utf-8')
+
+# Conflicting PRs targeting main
+conflicting_prs = [669, 673, 674, 675, 676, 677, 678, 679, 682, 683, 685, 686, 687, 688, 689, 690, 691, 693, 694, 695, 696, 697]
+
+success = []
+failed = []
+
+for num in conflicting_prs:
+    try:
+        r = subprocess.run(
+            ['gh', 'api', '-X', 'PUT',
+             f'repos/KooshaPari/Civis/pulls/{num}/update-branch',
+             '--input', '-'],
+            input='{}',
+            capture_output=True, text=True, timeout=60
+        )
+        raw = re.sub(r'\x1b\[[0-9;]*[mK]', '', r.stdout).strip()
+        err = re.sub(r'\x1b\[[0-9;]*[mK]', '', r.stderr).strip()
+        if r.returncode == 0 and raw:
+            info = json.loads(raw)
+            status_text = f'{info.get("message", "OK")}'
+            success.append((num, status_text))
+            print(f'#{num:>3} ✅ {status_text}')
+        elif 'Conflict' in err or '409' in err:
+            failed.append((num, 'CONFLICT'))
+            print(f'#{num:>3} ⛔ CONFLICT: {err[:120]}')
+        else:
+            failed.append((num, err[:100]))
+            print(f'#{num:>3} ❌ {err[:100]}')
+    except Exception as e:
+        failed.append((num, str(e)[:80]))
+        print(f'#{num:>3} ⚠️ EXCEPTION: {str(e)[:80]}')
+    time.sleep(1)
+
+print()
+print('=' * 60)
+print(f'Successful rebases: {len(success)}')
+print(f'Failed (still conflicting): {len(failed)}')
+for num, reason in failed:
+    print(f'  #{num}: {reason}')

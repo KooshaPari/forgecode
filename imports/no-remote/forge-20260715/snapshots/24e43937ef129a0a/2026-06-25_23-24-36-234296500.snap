@@ -1,0 +1,32 @@
+$repos = @('eyetracker','eventra','configra','benchora','authvault','quillr')
+
+function Get-GhJson {
+    param([string]$Path)
+    $out = gh api $Path 2>&1
+    if ($LASTEXITCODE -ne 0) { return $null }
+    try { return ($out | Out-String | ConvertFrom-Json) } catch { return $null }
+}
+
+function Get-GhRaw {
+    param([string]$Path)
+    $out = gh api -H "Accept: application/vnd.github.raw" $Path 2>&1
+    if ($LASTEXITCODE -ne 0) { return $null }
+    return ($out | Out-String)
+}
+
+foreach ($r in $repos) {
+    Write-Host "=== $r ==="
+    $wfList = Get-GhJson "/repos/KooshaPari/$r/contents/.github/workflows"
+    if ($wfList) {
+        Write-Host "  workflows:"
+        foreach ($w in $wfList) { Write-Host "    - $($w.name)" }
+    } else {
+        Write-Host "  workflows: NONE"
+    }
+    foreach ($f in @('Cargo.toml','Cargo.lock','package.json','package-lock.json','yarn.lock','pnpm-lock.yaml')) {
+        $meta = Get-GhJson "/repos/KooshaPari/$r/contents/$f"
+        if ($meta -and $meta.type -eq 'file') {
+            Write-Host "  HAS $f (size=$($meta.size))"
+        }
+    }
+}

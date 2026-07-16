@@ -1,0 +1,32 @@
+$ErrorActionPreference = 'SilentlyContinue'
+$exts = @('*.md','*.txt','*.json','*.toml','*.yaml','*.yml')
+$root = 'C:\Users\koosh'
+
+# Phase 1: home root files only (already known small)
+Write-Host "=== Phase 1: home-root doc files ==="
+$rootFiles = Get-ChildItem -LiteralPath $root -File -Include $exts -Force -ErrorAction SilentlyContinue
+$rootHits = $rootFiles | Select-String -Pattern 'nippon' -CaseSensitive:$false
+Write-Host ("Home-root files: {0}, hits: {1}" -f $rootFiles.Count, $rootHits.Count)
+$rootHits | ForEach-Object {
+  [pscustomobject]@{ Path = $_.Path; Line = $_.LineNumber; Text = $_.Line.Trim() }
+} | Format-Table -AutoSize -Wrap Path,Line,Text
+
+# Phase 2: shallow (top-level) scan of each candidate subdir — NO recursion
+Write-Host ""
+Write-Host "=== Phase 2: top-level docs of candidate subdirs ==="
+$dirs = Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue
+$totalHits = 0
+foreach ($d in $dirs) {
+  $files = Get-ChildItem -LiteralPath $d.FullName -File -Include $exts -Force -ErrorAction SilentlyContinue
+  if (-not $files) { continue }
+  $hits = $files | Select-String -Pattern 'nippon' -CaseSensitive:$false
+  if ($hits) {
+    Write-Host ("-- {0} ({1} hits)" -f $d.FullName, $hits.Count)
+    foreach ($h in $hits) {
+      Write-Host ("   {0}:L{1}: {2}" -f $h.Path, $h.LineNumber, $h.Line.Trim())
+      $totalHits++
+    }
+  }
+}
+Write-Host ""
+Write-Host ("=== TOTAL non-recursive hits: {0} ===" -f ($rootHits.Count + $totalHits))

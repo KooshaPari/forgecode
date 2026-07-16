@@ -1,0 +1,5 @@
+@echo off
+cd /d C:\Users\koosh\Dev\Civis\.worktrees\wt-voxel-hygiene
+del test.out test.err test.exit 2>nul
+cargo test -p civ-voxel --no-fail-fast --offline 1>test.out 2>test.err
+echo DONE_EXIT=%ERRORLEVEL% > test.exit

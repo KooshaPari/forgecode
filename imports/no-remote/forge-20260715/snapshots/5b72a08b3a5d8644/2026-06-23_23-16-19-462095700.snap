@@ -1,0 +1,57 @@
+"""Find nanovms, phenocompose, byteport repos via gh repo list --json."""
+import subprocess, json, sys, os, re
+
+def gh_list(flags):
+    env = os.environ.copy()
+    env["NO_COLOR"] = "1"
+    try:
+        with open(os.path.expanduser("~/.env"), "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = re.match(r'^GITHUB_TOKEN=(.+)$', line.strip())
+                if m: env["GH_TOKEN"] = m.group(1); break
+    except: pass
+    r = subprocess.run(["gh"] + flags, capture_output=True, timeout=30, env=env)
+    out = r.stdout.decode("utf-8", errors="replace")
+    if r.returncode != 0:
+        err = r.stderr.decode("utf-8", errors="replace")
+        print(f"gh error ({r.returncode}): {err[:500]}")
+        return []
+    parts = out.strip().split("\n")
+    rows = []
+    for p in parts:
+        p = p.strip()
+        if not p: continue
+        fields = [f.strip() for f in p.split("\t")]
+        rows.append(fields)
+    return rows
+
+# Method 1: gh repo list (tab-separated, no color issues)
+rows = gh_list(["repo", "list", "--limit", "200", "--no-archived", "--json", "name,description,owner"])
+print(f"Got {len(rows)} raw rows")
+for r in rows[:5]:
+    print(f"  {r}")
+
+# Method 2: gh search
+search_terms = ["nanovms", "phenocompose", "byteport", "pheno-compose"]
+for term in search_terms:
+    print(f"\n--- Searching gh search repos '{term}' (user:kooshapari) ---")
+    r = subprocess.run(
+        ["gh", "search", "repos", term, "--owner", "kooshapari", "--json", "name,description,url", "--limit", "5"],
+        capture_output=True, timeout=30, env=dict(os.environ, **{"NO_COLOR": "1", "GH_TOKEN": os.environ.get("GH_TOKEN", "")})
+    )
+    out = r.stdout.decode("utf-8", errors="replace")
+    if r.returncode != 0:
+        err = r.stderr.decode("utf-8", errors="replace")
+        print(f"  error: {err[:200]}")
+        continue
+    # Strip ANSI
+    out = re.sub(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])', '', out)
+    out = out.strip()
+    if not out: print("  (no results / empty)")
+    else:
+        try:
+            data = json.loads(out)
+            for item in data:
+                print(f"  {item.get('name','?')} | {item.get('description','')}")
+        except json.JSONDecodeError as e:
+            print(f"  JSON err: {e} | first 300: {out[:300]}")

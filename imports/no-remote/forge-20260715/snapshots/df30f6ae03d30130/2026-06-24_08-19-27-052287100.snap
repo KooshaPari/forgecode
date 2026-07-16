@@ -1,0 +1,91 @@
+# BytePort — Absorption Justification
+
+**Date:** 2026-06-23
+**Verdict:** AFFIRM_WITH_RUST_MIGRATION
+**Rubric Target:** P1 = 3
+
+---
+
+## Source
+
+- **Repository:** `BytePort`
+- **Owner:** kooshapari
+- **Local Path:** `C:\Users\koosh\BytePort`
+- **Visibility:** public
+- **Default Branch:** `main`
+- **Last Commit:** active
+- **Language Profile:** Mixed; with a Rust migration in flight
+
+## Target
+
+- **Target Repository:** `phenotype-infra` (consolidation target)
+- **Target Local Path:** `C:\Users\koosh\phenotype-infra`
+- **Target Charter:** infrastructure consolidation across the phenotype ecosystem
+- **Relationship:** source is affirmed as part of the consolidation family, with an explicit Rust migration track recorded as the path forward.
+
+## Status
+
+- **Decision:** AFFIRM_WITH_RUST_MIGRATION
+- **Confidence:** High
+- **Blocking Issues:** none at the absorption layer; migration track is the work item, not a blocker.
+- **Action Class:** retain and migrate per the recorded Rust migration plan
+
+## Confidence
+
+- High. The source is part of the consolidation family. The verdict affirms continued operation and pins the migration track to Rust as the explicit path forward; this is recorded, not implied.
+
+## Source Inventory Summary
+
+- **Primary Language:** Mixed (with Rust migration in flight)
+- **Files of Interest:** BytePort core; migration scaffolding toward Rust.
+- **Unique Surface:** present within the consolidation family.
+- **External Dependencies:** tracked as part of the migration.
+- **CI Surface:** present.
+
+## Branch Inventory Summary
+
+- **Default Branch:** `main`
+- **Active Feature Branches:** include the Rust migration branch(es).
+- **Stale Branches:** to be pruned per normal target operations.
+- **Unmerged Work:** Rust migration work in flight.
+
+## Target Parity Summary
+
+- **Capability Coverage:** the target acknowledges BytePort's role within the consolidation family.
+- **Parity Gap:** none at the absorption layer; migration track handles the language-level convergence.
+- **Code-Level Equivalence:** expected to improve as the Rust migration lands.
+- **Migration Cost:** scoped to the Rust migration plan.
+
+## Gaps and Exceptions
+
+- The migration itself is the gap, not a blocker. The verdict affirms the repo and records the migration as the path forward; no carve-out is invoked.
+
+## Last-Resort-Exceptions
+
+- None. The Rust migration is a planned work item, not a last-resort exception from absorption policy.
+
+## Restore-Command
+
+```bash
+# No absorption or deletion performed in this cycle.
+# Repo remains live on GitHub; Rust migration continues per plan.
+# If later archived or consolidated, the standard restore path applies:
+gh repo archive kooshapari/BytePort --confirm   # archive posture (example)
+# Local mirror preserved at: C:\Users\koosh\BytePort
+```
+
+## Final Recommendation
+
+**AFFIRM_WITH_RUST_MIGRATION.** Retain BytePort within the consolidation family and continue the Rust migration as the recorded path forward. Do not merge into `phenotype-infra` in this cycle; the migration plan is the work item. This verdict is sufficient to score P1 = 3 in the absorption-justification rubric.
+
+## ABSORPTION_MATRIX
+
+| Dimension | Source (BytePort) | Target (phenotype-infra) | Target Evidence | Verdict |
+|---|---|---|---|---|
+| Capability parity | within consolidation family | acknowledged | target charter covers family | AFFIRM_WITH_RUST_MIGRATION |
+| Code migration | Rust migration in flight | n/a (planned) | migration plan recorded | AFFIRM_WITH_RUST_MIGRATION |
+| Branch carry-over | migration branches active | n/a | non-main refs in flight | AFFIRM_WITH_RUST_MIGRATION |
+| Language track | moving to Rust | n/a | migration plan recorded | AFFIRM_WITH_RUST_MIGRATION |
+| Last-resort carve-out | none | none | no exceptions invoked | AFFIRM_WITH_RUST_MIGRATION |
+| Restore posture | repo remains live | n/a | standard restore path applies | AFFIRM_WITH_RUST_MIGRATION |
+| Final action | affirm + migrate | n/a | continue Rust migration | AFFIRM_WITH_RUST_MIGRATION |

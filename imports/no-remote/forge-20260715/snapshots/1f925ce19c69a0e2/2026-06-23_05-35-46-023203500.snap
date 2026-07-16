@@ -1,0 +1,30 @@
+import re, json, glob
+
+ANSI = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
+files = sorted(glob.glob('_arch_*.json'))
+out = []
+for f in files:
+    raw = open(f, 'r', encoding='utf-8', errors='replace').read()
+    clean = ANSI.sub('', raw).strip()
+    try:
+        d = json.loads(clean)
+    except Exception as e:
+        out.append(f + '|PARSE_FAIL|' + str(e))
+        continue
+    out.append('--- ' + f + ' ---')
+    out.append('  full_name: ' + str(d.get('full_name')))
+    out.append('  archived: ' + str(d.get('archived')))
+    out.append('  private: ' + str(d.get('private')))
+    out.append('  fork: ' + str(d.get('fork')))
+    out.append('  lang: ' + str(d.get('language')))
+    out.append('  size: ' + str(d.get('size')))
+    out.append('  stars: ' + str(d.get('stargazers_count')))
+    out.append('  pushed: ' + str(d.get('pushed_at')))
+    out.append('  default_branch: ' + str(d.get('default_branch')))
+    lic = d.get('license')
+    out.append('  license: ' + (str(lic.get('spdx_id')) if lic else 'None'))
+    out.append('  topics: ' + str(d.get('topics')))
+    out.append('  desc: ' + (d.get('description') or '')[:200])
+    out.append('  homepage: ' + str(d.get('homepage')))
+open('_arch_full.txt', 'w', encoding='utf-8').write('\n'.join(out))
+print('wrote', len(out), 'lines from', len(files), 'files')

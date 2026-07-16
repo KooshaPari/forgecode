@@ -1,0 +1,195 @@
+/**
+ * sloEvaluator.test.ts — tests for SLO evaluation + error-budget math.
+ *
+ * Validates the PR-008 deliverable: pure functions that the operator-runner
+ * uses to decide whether to page / warn / silence. No env vars, no IO.
+ *
+ * @see src/lib/observability/sloEvaluator.ts
+ */
+
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  evaluateSlo,
+  errorBudgetMinutes,
+  burnRateForConsumption,
+  describeSloResult,
+  annotateSloSpan,
+  COMMON_SLO_WINDOWS,
+} from "../../../src/lib/observability/sloEvaluator";
+
+describe("evaluateSlo — SLO met cases", () => {
+  test("met=true when current exactly equals target", () => {
+    const r = evaluateSlo({ name: "x", target: 0.999, current: 0.999, windowSeconds: 3600 });
+    assert.equal(r.met, true);
+    assert.ok(Math.abs(r.burnRate - 0) < 1e-12, `got ${r.burnRate}`);
+    // At exactly the target, budget is "fully consumed" (remaining = 0). This
+    // is intentional — the SLO is met only because we're at the budget edge.
+    assert.ok(Math.abs(r.errorBudgetRemaining - 0) < 1e-9, `got ${r.errorBudgetRemaining}`);
+  });
+
+  test("met=true when current > target (full budget remaining)", () => {
+    const r = evaluateSlo({ name: "x", target: 0.99, current: 1.0, windowSeconds: 3600 });
+    assert.equal(r.met, true);
+    assert.equal(r.burnRate, 0);
+    assert.ok(Math.abs(r.errorBudgetRemaining - 1) < 1e-9, `got ${r.errorBudgetRemaining}`);
+  });
+
+  test("met=true when current > target", () => {
+    const r = evaluateSlo({ name: "x", target: 0.99, current: 1.0, windowSeconds: 3600 });
+    assert.equal(r.met, true);
+    assert.equal(r.burnRate, 0);
+  });
+
+  test("met=true at 100% (target=1.0, current=1.0)", () => {
+    const r = evaluateSlo({ name: "x", target: 1.0, current: 1.0, windowSeconds: 3600 });
+    assert.equal(r.met, true);
+    assert.equal(r.burnRate, 0);
+    assert.equal(r.totalBudgetSeconds, 0);
+  });
+});
+
+describe("evaluateSlo — SLO breached cases", () => {
+  test("met=false when current < target", () => {
+    const r = evaluateSlo({ name: "x", target: 0.999, current: 0.9985, windowSeconds: 3600 });
+    assert.equal(r.met, false);
+  });
+
+  test("burnRate equals (target - current) / target when below", () => {
+    const r = evaluateSlo({ name: "x", target: 0.999, current: 0.9985, windowSeconds: 3600 });
+    // (0.999 - 0.9985) / 0.999 = 0.0005005...
+    assert.ok(Math.abs(r.burnRate - 0.0005005) < 1e-6, `got ${r.burnRate}`);
+  });
+
+  test("errorBudgetRemaining is < 1.0 when current < target", () => {
+    const r = evaluateSlo({ name: "x", target: 0.999, current: 0.99, windowSeconds: 3600 });
+    assert.ok(r.errorBudgetRemaining < 1.0);
+    assert.ok(r.errorBudgetRemaining > 0.0);
+  });
+
+  test("errorBudgetRemaining is < 0 when SLO is severely breached", () => {
+    const r = evaluateSlo({ name: "x", target: 0.999, current: 0.5, windowSeconds: 3600 });
+    assert.ok(r.errorBudgetRemaining < 0, `got ${r.errorBudgetRemaining}`);
+    assert.ok(r.remainingBudgetSeconds < 0);
+  });
+
+  test("30d window for 0.999 target gives 43.2 min total budget", () => {
+    const r = evaluateSlo({
+      name: "x",
+      target: 0.999,
+      current: 1.0,
+      windowSeconds: COMMON_SLO_WINDOWS.THIRTY_DAYS,
+    });
+    assert.equal(r.met, true);
+    // 30d = 2_592_000s; budget = 0.001 * 2_592_000 = 2_592 seconds = 43.2 min
+    // Floating point: use approximate equality.
+    assert.ok(Math.abs(r.totalBudgetSeconds - 2592) < 1e-9, `got ${r.totalBudgetSeconds}`);
+    assert.ok(Math.abs(r.remainingBudgetSeconds - 2592) < 1e-9, `got ${r.remainingBudgetSeconds}`);
+  });
+});
+
+describe("evaluateSlo — input validation", () => {
+  test("rejects target = 0", () => {
+    assert.throws(
+      () => evaluateSlo({ name: "x", target: 0, current: 0.5, windowSeconds: 3600 }),
+      /target must be in/,
+    );
+  });
+
+  test("rejects target > 1", () => {
+    assert.throws(
+      () => evaluateSlo({ name: "x", target: 1.1, current: 0.5, windowSeconds: 3600 }),
+      /target must be in/,
+    );
+  });
+
+  test("rejects current < 0", () => {
+    assert.throws(
+      () => evaluateSlo({ name: "x", target: 0.999, current: -0.1, windowSeconds: 3600 }),
+      /current must be in/,
+    );
+  });
+
+  test("rejects windowSeconds <= 0", () => {
+    assert.throws(
+      () => evaluateSlo({ name: "x", target: 0.999, current: 0.5, windowSeconds: 0 }),
+      /windowSeconds/,
+    );
+  });
+});
+
+describe("errorBudgetMinutes — utility", () => {
+  test("returns full budget when downtime=0", () => {
+    const m = errorBudgetMinutes({ target: 0.999, totalMinutes: 43_200, downtime: 0 });
+    assert.ok(Math.abs(m - 43.2) < 1e-9, `got ${m}`);
+  });
+
+  test("returns negative budget when downtime exceeds target budget", () => {
+    const m = errorBudgetMinutes({ target: 0.999, totalMinutes: 43_200, downtime: 60 });
+    assert.ok(m < 0, `got ${m}`);
+  });
+
+  test("clamps negative downtime to 0 (never add to budget)", () => {
+    const m = errorBudgetMinutes({ target: 0.999, totalMinutes: 43_200, downtime: -100 });
+    assert.ok(Math.abs(m - 43.2) < 1e-9, `got ${m}`);
+  });
+});
+
+describe("burnRateForConsumption", () => {
+  test("returns 1.0 when consumeSeconds equals the budget", () => {
+    const totalBudget = (1 - 0.999) * 30 * 86_400; // 2592s
+    const r = burnRateForConsumption(0.999, 30 * 86_400, totalBudget);
+    assert.ok(Math.abs(r - 1.0) < 1e-9, `got ${r}`);
+  });
+
+  test("returns > 1.0 when consumeSeconds < budget (fast consumption)", () => {
+    const r = burnRateForConsumption(0.999, 30 * 86_400, 2592 / 10);
+    assert.ok(Math.abs(r - 10) < 1e-9, `got ${r}`);
+  });
+
+  test("throws on non-positive consumeSeconds", () => {
+    assert.throws(() => burnRateForConsumption(0.999, 3600, 0));
+    assert.throws(() => burnRateForConsumption(0.999, 3600, -5));
+  });
+});
+
+describe("describeSloResult", () => {
+  test("emits a one-line human-readable description", () => {
+    const input = { name: "omniroute:availability:ratio", target: 0.999, current: 0.9985, windowSeconds: 3600 };
+    const result = evaluateSlo(input);
+    const line = describeSloResult(input, result);
+    assert.ok(line.includes("BREACHED"));
+    assert.ok(line.includes("99.850%"));
+    assert.ok(line.includes("99.900%"));
+  });
+});
+
+describe("annotateSloSpan", () => {
+  test("is a no-op on undefined span", () => {
+    annotateSloSpan(undefined, { name: "x", target: 0.999, current: 0.998, windowSeconds: 3600 }, {
+      met: false,
+      burnRate: 0.001,
+      errorBudgetRemaining: 0.5,
+      totalBudgetSeconds: 3.6,
+      remainingBudgetSeconds: 1.8,
+      windowSeconds: 3600,
+    });
+  });
+
+  test("writes slo.* attributes on the span when provided", () => {
+    const attrs: Record<string, unknown> = {};
+    const span = { setAttribute(k: string, v: unknown) { attrs[k] = v; } };
+    annotateSloSpan(span as never, { name: "x", target: 0.999, current: 0.998, windowSeconds: 3600 }, {
+      met: false,
+      burnRate: 0.001,
+      errorBudgetRemaining: 0.5,
+      totalBudgetSeconds: 3.6,
+      remainingBudgetSeconds: 1.8,
+      windowSeconds: 3600,
+    });
+    assert.equal(attrs["slo.name"], "x");
+    assert.equal(attrs["slo.met"], false);
+    assert.equal(attrs["slo.target"], 0.999);
+    assert.equal(attrs["slo.window_seconds"], 3600);
+  });
+});

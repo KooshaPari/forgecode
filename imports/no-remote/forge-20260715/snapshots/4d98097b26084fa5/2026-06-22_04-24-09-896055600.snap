@@ -1,0 +1,22 @@
+go 1.25.0
+
+use ./packages/devhex
+
+// Canonical Go SDK workspace. Only packages/devhex (module
+// github.com/KooshaPari/devenv-abstraction) is a member — it builds and tests
+// clean and is the single source of the devenv/devhex modules.
+//
+// Removed 2026-06-02 (ADR-011 Go convergence): the two duplicate copies under
+// packages/platformkit/go/ were dropped. They were carried "for reversibility"
+// by the absorption subtree but were never built and were broken:
+//   - platformkit/go/devhex: byte-divergent dup of packages/devhex with the SAME
+//     module path (github.com/KooshaPari/devenv-abstraction) — a hard conflict.
+//   - platformkit/go/devenv: older lowercase-path copy
+//     (github.com/kooshapari/devenv-abstraction) that did not compile —
+//     nonexistent mousetrap v1.1.2 pin, an import of a nonexistent
+//     .../internal/domain remote, a package-name collision in internal/core,
+//     and missing prometheus deps.
+//
+// PhenoMCP Go module decision unchanged: PhenoMCP retains its own module and is
+// consumed as a dependency, not vendored. packages/mcpkit/go/go.work references
+// not-yet-present pheno-mcp-* modules and stays deferred.

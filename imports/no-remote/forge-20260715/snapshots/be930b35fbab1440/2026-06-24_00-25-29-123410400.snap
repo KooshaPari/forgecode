@@ -1,0 +1,35 @@
+// Quick test of toml crate behavior
+use serde::Deserialize;
+
+fn main() {
+    let crlf = "[package]\r\nname = \"test\"\r\nversion = \"0.1.0\"\r\n";
+    let lf = "[package]\nname = \"test\"\nversion = \"0.1.0\"\n";
+
+    // Direct toml::Value parse
+    println!("=== toml::Value parse ===");
+    println!("CRLF: {:?}", crlf.parse::<toml::Value>().is_ok());
+    println!("LF:   {:?}", lf.parse::<toml::Value>().is_ok());
+
+    // Using from_str with #[derive(Deserialize)]
+    println!("=== toml::from_str toml::Table ===");
+    println!("CRLF: {:?}", toml::from_str::<toml::Table>(crlf).is_ok());
+    println!("LF:   {:?}", toml::from_str::<toml::Table>(lf).is_ok());
+
+    // Test with the actual substrate-core content
+    let real = include_str!("../../crates/substrate-core/Cargo.toml");
+    println!("=== substrate-core Cargo.toml ===");
+    println!("Value parse: {:?}", real.parse::<toml::Value>().is_ok());
+    println!("Table from_str: {:?}", toml::from_str::<toml::Table>(real).is_ok());
+
+    // Try parsing the deserialized version
+    println!("=== Substrate-core dep names via toml::Table ===");
+    match toml::from_str::<toml::Table>(real) {
+        Ok(t) => {
+            println!("Top-level keys: {:?}", t.keys().collect::<Vec<_>>());
+            if let Some(deps) = t.get("dependencies").and_then(|v| v.as_table()) {
+                println!("dependencies keys: {:?}", deps.keys().collect::<Vec<_>>());
+            }
+        }
+        Err(e) => println!("Error: {e}"),
+    }
+}

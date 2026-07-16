@@ -1,0 +1,310 @@
+//! Emergent citizen lifecycle classifiers and capacity curves.
+//!
+//! This module exposes read-only classifiers and continuous drivers. It does
+//! not store lifecycle stages on entities.
+
+use civ_genetics::{
+    sentience::{cognition_score, CognitionTraitProfile},
+    Dna,
+};
+use serde::{Deserialize, Serialize};
+
+use crate::Health;
+
+/// Read-only lifecycle label derived from continuous state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LifecycleLabel {
+    /// Still developing.
+    Child,
+    /// Fully participating adult.
+    Adult,
+    /// Aging or physically degraded.
+    Elder,
+    /// No longer alive.
+    Dead,
+}
+
+/// Tunable lifecycle thresholds and curves.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LifecycleParams {
+    /// Base maturity gain per tick under no stress.
+    pub base_maturity_rate: f32,
+    /// Fraction of the maturity gain removed per critical need.
+    pub maturity_stress_penalty: f32,
+    /// Weight given to DNA longevity when deriving age thresholds.
+    pub longevity_dna_weight: f32,
+    /// Minimum food satisfaction for reproduction.
+    pub fertility_food_threshold: f32,
+    /// Minimum safety satisfaction for reproduction.
+    pub fertility_safety_threshold: f32,
+    /// Placeholder social support coupling rate.
+    pub care_share_rate: f32,
+    /// Floor on elder labor capacity.
+    pub elder_labor_floor: f32,
+    /// Trait profile used when measuring cognition from DNA.
+    pub cognition_profile: CognitionTraitProfile,
+}
+
+impl Default for LifecycleParams {
+    fn default() -> Self {
+        Self {
+            base_maturity_rate: 0.0008,
+            maturity_stress_penalty: 0.5,
+            longevity_dna_weight: 0.3,
+            fertility_food_threshold: 0.5,
+            fertility_safety_threshold: 0.4,
+            care_share_rate: 0.1,
+            elder_labor_floor: 0.2,
+            cognition_profile: CognitionTraitProfile::new(
+                "lifecycle-cognition",
+                vec![(0, 0.5), (1, 0.5), (2, 0.5), (8, 0.25)],
+            ),
+        }
+    }
+}
+
+fn clamp01(value: f32) -> f32 {
+    value.clamp(0.0, 1.0)
+}
+
+/// Derived threshold at which a lineage transitions into elderhood.
+#[must_use]
+pub fn age_threshold(dna: &Dna, params: &LifecycleParams) -> u16 {
+    let longevity_profile = CognitionTraitProfile::new(
+        "lifecycle-longevity",
+        vec![(20, 1.0), (21, 0.5), (22, 0.25)],
+    );
+    let longevity_score = cognition_score(dna, &longevity_profile);
+    let dna_span = 50.0 + 70.0 * longevity_score;
+    let blended = 90.0 * (1.0 - params.longevity_dna_weight)
+        + dna_span * params.longevity_dna_weight;
+    blended.round().clamp(50.0, 120.0) as u16
+}
+
+/// Continuous labor capacity derived from cognition, age, and integrity.
+#[must_use]
+pub fn labor_capacity(age: u16, health: &Health, dna: &Dna, params: &LifecycleParams) -> f32 {
+    let cognition = cognition_score(dna, &params.cognition_profile);
+    let age_peak = age_threshold(dna, params).max(20) as f32;
+    let age = age as f32;
+    let age_factor = if age <= age_peak {
+        (age / age_peak).clamp(0.0, 1.0)
+    } else {
+        let decline = 1.0 / (1.0 + ((age - age_peak) / age_peak).max(0.0));
+        decline.max(params.elder_labor_floor)
+    };
+    let integrity = clamp01(health.integrity);
+    let capacity = 0.55 * cognition + 0.25 * age_factor + 0.20 * integrity;
+    let elder_floor = if age > age_peak {
+        params.elder_labor_floor * cognition.max(0.1)
+    } else {
+        0.0
+    };
+    capacity.max(elder_floor).clamp(0.0, 1.0)
+}
+
+/// Minimum age (inclusive) at which reproduction is biologically possible.
+pub const REPRODUCE_MIN_AGE: u16 = 18;
+/// Maximum age (inclusive) at which reproduction is biologically possible.
+pub const REPRODUCE_MAX_AGE: u16 = 42;
+
+/// Decide whether a civilian can reproduce this tick.
+///
+/// Reproduction requires:
+/// - Age within [`REPRODUCE_MIN_AGE`, `REPRODUCE_MAX_AGE`] (inclusive on both
+///   ends), and
+/// - Food satisfaction at or above [`LifecycleParams::fertility_food_threshold`],
+///   and
+/// - Safety satisfaction at or above [`LifecycleParams::fertility_safety_threshold`].
+///
+/// Designed for `civ_agents::Needs` (4 fields: `food`, `shelter`, `safety`,
+/// `belonging`) — callers pass `food` and `safety` directly to avoid
+/// cross-crate coupling on the richer `civ_needs::Needs` vector.
+///
+/// FR-CIV-LIFE-003 (death from unmet needs) + CIV-003 design P3
+/// (reproduction gating).
+#[must_use]
+pub fn should_reproduce(age: u16, food: f32, safety: f32, params: &LifecycleParams) -> bool {
+    if age < REPRODUCE_MIN_AGE || age > REPRODUCE_MAX_AGE {
+        return false;
+    }
+    if food < params.fertility_food_threshold {
+        return false;
+    }
+    if safety < params.fertility_safety_threshold {
+        return false;
+    }
+    true
+}
+
+/// Classify a citizen from read-only continuous state.
+///
+/// The labels are a measurement vocabulary, not a control flow. The order of
+/// the predicates mirrors the spec's §1.2 table: dead first, then the
+/// age/integrity Elder trigger (so a senior citizen with full capacity is
+/// still classified as Elder, not Adult), then the maturity-integrity-capacity
+/// Adult gate, with Child as the residual so that a young agent with low
+/// labor capacity is still classified as Child rather than Elder.
+#[must_use]
+pub fn classify_lifecycle(
+    age: u16,
+    health: &Health,
+    maturity: f32,
+    labor_capacity: f32,
+) -> LifecycleLabel {
+    if health.is_dead() {
+        LifecycleLabel::Dead
+    } else if age >= 65 || health.integrity < 0.3 {
+        LifecycleLabel::Elder
+    } else if maturity >= 0.65 && health.integrity > 0.3 && labor_capacity > 0.4 {
+        LifecycleLabel::Adult
+    } else {
+        LifecycleLabel::Child
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dna(seed: u8) -> Dna {
+        let mut bytes = vec![0u8; 32];
+        for (idx, byte) in bytes.iter_mut().enumerate() {
+            *byte = seed.wrapping_add(idx as u8);
+        }
+        Dna(bytes)
+    }
+
+    #[test]
+    fn lifecycle_label_boundaries_are_read_only() {
+        let health = Health::default();
+        assert_eq!(
+            classify_lifecycle(2, &health, 0.1, 0.0),
+            LifecycleLabel::Child
+        );
+        assert_eq!(
+            classify_lifecycle(24, &health, 0.8, 0.8),
+            LifecycleLabel::Adult
+        );
+        assert_eq!(
+            classify_lifecycle(70, &Health { integrity: 0.4, ..health }, 0.8, 0.8),
+            LifecycleLabel::Elder
+        );
+        assert_eq!(
+            classify_lifecycle(24, &Health { integrity: 0.0, ..health }, 0.8, 0.8),
+            LifecycleLabel::Dead
+        );
+    }
+
+    #[test]
+    fn labor_capacity_drops_with_integrity() {
+        let params = LifecycleParams::default();
+        let dna = dna(7);
+        let healthy = Health {
+            integrity: 1.0,
+            ..Health::default()
+        };
+        let degraded = Health {
+            integrity: 0.2,
+            ..Health::default()
+        };
+
+        let high = labor_capacity(32, &healthy, &dna, &params);
+        let low = labor_capacity(32, &degraded, &dna, &params);
+
+        assert!(high >= low);
+        assert!(low < high);
+    }
+
+    #[test]
+    fn age_threshold_stays_in_expected_band() {
+        let params = LifecycleParams::default();
+        let low = age_threshold(&dna(0), &params);
+        let high = age_threshold(&dna(200), &params);
+        assert!((50..=120).contains(&low));
+        assert!((50..=120).contains(&high));
+    }
+
+    // -----------------------------------------------------------------------
+    // CIV-003 P3-A / P3-B — reproduction gating (FR-CIV-LIFE-003).
+    //
+    // The reproduction predicate is intentionally independent of the
+    // `civ_needs::Needs` vector and `civ_genetics::Dna` so the engine can call
+    // it cheaply on every adult tick. The tests below pin the boundary
+    // semantics so balance changes (e.g. tuning thresholds or widening the age
+    // band) cannot silently shift the simulation population curve.
+    // -----------------------------------------------------------------------
+
+    /// Adults with adequate food + safety can reproduce — happy path.
+    #[test]
+    fn should_reproduce_adult_with_needs_above_thresholds() {
+        let params = LifecycleParams::default();
+        assert!(should_reproduce(28, 0.9, 0.8, &params));
+    }
+
+    /// Under the minimum reproduction age, fertility is suppressed even when
+    /// needs are fully met (pre-pubescent / child stage).
+    #[test]
+    fn should_reproduce_rejects_below_min_age() {
+        let params = LifecycleParams::default();
+        // 17 is the highest age still below REPRODUCE_MIN_AGE.
+        assert!(!should_reproduce(17, 1.0, 1.0, &params));
+    }
+
+    /// Above the maximum reproduction age, fertility is suppressed even when
+    /// needs are fully met (post-reproductive / elder stage).
+    #[test]
+    fn should_reproduce_rejects_above_max_age() {
+        let params = LifecycleParams::default();
+        // 43 is the lowest age still above REPRODUCE_MAX_AGE.
+        assert!(!should_reproduce(43, 1.0, 1.0, &params));
+    }
+
+    /// Food satisfaction strictly below the fertility threshold is a hard gate.
+    #[test]
+    fn should_reproduce_rejects_when_food_below_threshold() {
+        let params = LifecycleParams::default();
+        // Default threshold is 0.5; pick a value just under it.
+        assert!(!should_reproduce(28, params.fertility_food_threshold - 0.01, 1.0, &params));
+    }
+
+    /// Safety satisfaction strictly below the fertility threshold is a hard gate.
+    #[test]
+    fn should_reproduce_rejects_when_safety_below_threshold() {
+        let params = LifecycleParams::default();
+        assert!(!should_reproduce(28, 1.0, params.fertility_safety_threshold - 0.01, &params));
+    }
+
+    /// Exact-threshold values are inclusive — boundary case must allow
+    /// reproduction (matches `>=`, not `>`).
+    #[test]
+    fn should_reproduce_inclusive_at_threshold_boundaries() {
+        let params = LifecycleParams::default();
+        // Exactly at REPRODUCE_MIN_AGE / REPRODUCE_MAX_AGE / thresholds.
+        assert!(should_reproduce(
+            REPRODUCE_MIN_AGE,
+            params.fertility_food_threshold,
+            params.fertility_safety_threshold,
+            &params
+        ));
+        assert!(should_reproduce(
+            REPRODUCE_MAX_AGE,
+            params.fertility_food_threshold,
+            params.fertility_safety_threshold,
+            &params
+        ));
+    }
+
+    /// A tuned param set (lower thresholds) widens the eligible population.
+    #[test]
+    fn should_reproduce_respects_custom_params() {
+        let mut params = LifecycleParams::default();
+        params.fertility_food_threshold = 0.2;
+        params.fertility_safety_threshold = 0.1;
+        // Same civilian, lower thresholds → now eligible.
+        assert!(should_reproduce(28, 0.3, 0.2, &params));
+        // But a tighter (higher) safety threshold still blocks.
+        params.fertility_safety_threshold = 0.5;
+        assert!(!should_reproduce(28, 0.3, 0.2, &params));
+    }
+}

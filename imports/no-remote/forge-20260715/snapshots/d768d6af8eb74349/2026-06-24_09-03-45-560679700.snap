@@ -1,0 +1,236 @@
+"""Inference contract tests for registered ML model artifacts."""
+
+# ruff: noqa: D101, D102, D103, D107, PLR2004, S101
+
+from __future__ import annotations
+
+import os
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Protocol
+
+import pytest
+
+from tracertm.ml import ModelRegistry
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+Sample = str
+Prediction = int | float | list[int]
+BatchPrediction = list[Prediction]
+ReferenceFn = Callable[[Sequence[Sample]], BatchPrediction]
+
+
+class _PredictableModel(Protocol):
+    def predict(self, samples: Sequence[Sample]) -> BatchPrediction: ...
+
+MAX_LENGTH_TEXT = " ".join(f"token{i}" for i in range(128))
+
+
+class LengthNormalizer:
+    """Normalize text length against a fixed maximum."""
+
+    def __init__(self, max_length: int = 128) -> None:
+        self.max_length = max_length
+
+    def predict(self, samples: Sequence[Sample]) -> BatchPrediction:
+        return [min(len(sample.split()), self.max_length) / self.max_length for sample in samples]
+
+
+class KeywordCounter:
+    """Count traceability keywords in each sample."""
+
+    def __init__(self, keywords: set[str] | None = None) -> None:
+        self.keywords = keywords or {"shall", "must", "verify", "trace", "risk"}
+
+    def predict(self, samples: Sequence[Sample]) -> BatchPrediction:
+        return [sum(token.lower() in self.keywords for token in sample.split()) for sample in samples]
+
+
+class ThresholdClassifier:
+    """Classify samples using a minimum token threshold."""
+
+    def __init__(self, threshold: int = 4) -> None:
+        self.threshold = threshold
+
+    def predict(self, samples: Sequence[Sample]) -> BatchPrediction:
+        return [int(len(sample.split()) >= self.threshold) for sample in samples]
+
+
+class PairwiseRanker:
+    """Rank each sample by stable character-code score."""
+
+    def predict(self, samples: Sequence[Sample]) -> BatchPrediction:
+        return [sum(ord(char) for char in sample) % 101 for sample in samples]
+
+
+class TokenWindowEncoder:
+    """Encode the first fixed token window as token lengths."""
+
+    def __init__(self, window: int = 4) -> None:
+        self.window = window
+
+    def predict(self, samples: Sequence[Sample]) -> BatchPrediction:
+        return [
+            [len(token) for token in sample.split()[: self.window]]
+            + [0] * max(0, self.window - len(sample.split()))
+            for sample in samples
+        ]
+
+
+def length_reference(samples: Sequence[Sample]) -> BatchPrediction:
+    return [min(len(sample.split()), 128) / 128 for sample in samples]
+
+
+def keyword_reference(samples: Sequence[Sample]) -> BatchPrediction:
+    keywords = {"shall", "must", "verify", "trace", "risk"}
+    return [sum(token.lower() in keywords for token in sample.split()) for sample in samples]
+
+
+def threshold_reference(samples: Sequence[Sample]) -> BatchPrediction:
+    return [int(len(sample.split()) >= 4) for sample in samples]
+
+
+def ranker_reference(samples: Sequence[Sample]) -> BatchPrediction:
+    return [sum(ord(char) for char in sample) % 101 for sample in samples]
+
+
+def encoder_reference(samples: Sequence[Sample]) -> BatchPrediction:
+    return [
+        [len(token) for token in sample.split()[:4]] + [0] * max(0, 4 - len(sample.split()))
+        for sample in samples
+    ]
+
+
+@dataclass(frozen=True)
+class InferenceCase:
+    name: str
+    model: _PredictableModel
+    reference: ReferenceFn
+
+
+@pytest.fixture(
+    params=[
+        InferenceCase("length-normalizer", LengthNormalizer(), length_reference),
+        InferenceCase("keyword-counter", KeywordCounter(), keyword_reference),
+        InferenceCase("threshold-classifier", ThresholdClassifier(), threshold_reference),
+        InferenceCase("pairwise-ranker", PairwiseRanker(), ranker_reference),
+        InferenceCase("token-window-encoder", TokenWindowEncoder(), encoder_reference),
+    ],
+    ids=lambda case: case.name,
+)
+def registered_model(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> tuple[_PredictableModel, ReferenceFn]:
+    """Persist and load each inference model through the ML registry."""
+    case = request.param
+    registry = ModelRegistry(tmp_path)
+    os.makedirs(tmp_path / "models" / case.name / "1.0.0" / "blobs", exist_ok=True)  # noqa: PTH103
+    registry.save(case.name, "1.0.0", case.model, metadata={"kind": "inference"}, pin=True)
+    return registry.load(case.name), case.reference
+
+
+@pytest.mark.unit
+@pytest.mark.parity
+def test_shape_parity_for_representative_batch(
+    registered_model: tuple[_PredictableModel, ReferenceFn],
+) -> None:
+    model, reference = registered_model
+    samples = ["requirement shall trace risk", "verify link", "plain text"]
+
+    result = model.predict(samples)
+
+    assert len(result) == len(reference(samples))
+
+
+@pytest.mark.unit
+@pytest.mark.parity
+def test_value_parity_for_representative_batch(
+    registered_model: tuple[_PredictableModel, ReferenceFn],
+) -> None:
+    model, reference = registered_model
+    samples = ["requirement shall trace risk", "verify link", "plain text"]
+
+    assert model.predict(samples) == reference(samples)
+
+
+@pytest.mark.unit
+@pytest.mark.determinism
+def test_determinism_for_representative_batch(
+    registered_model: tuple[_PredictableModel, ReferenceFn],
+) -> None:
+    model, _reference = registered_model
+    samples = ["alpha beta", "shall verify trace", "risk control"]
+
+    assert model.predict(samples) == model.predict(samples)
+
+
+@pytest.mark.unit
+@pytest.mark.parity
+def test_empty_input_returns_empty_batch(
+    registered_model: tuple[_PredictableModel, ReferenceFn],
+) -> None:
+    model, reference = registered_model
+
+    assert model.predict([]) == reference([]) == []
+
+
+@pytest.mark.unit
+@pytest.mark.determinism
+def test_empty_input_is_deterministic(registered_model: tuple[object, ReferenceFn]) -> None:
+    model, _reference = registered_model
+
+    assert model.predict([]) == model.predict([])
+
+
+@pytest.mark.unit
+@pytest.mark.parity
+def test_single_sample_parity(registered_model: tuple[object, ReferenceFn]) -> None:
+    model, reference = registered_model
+    samples = ["system shall verify trace"]
+
+    assert model.predict(samples) == reference(samples)
+
+
+@pytest.mark.unit
+@pytest.mark.determinism
+def test_single_sample_is_deterministic(registered_model: tuple[object, ReferenceFn]) -> None:
+    model, _reference = registered_model
+    samples = ["system shall verify trace"]
+
+    assert model.predict(samples) == model.predict(samples)
+
+
+@pytest.mark.unit
+@pytest.mark.parity
+def test_large_batch_parity(registered_model: tuple[object, ReferenceFn]) -> None:
+    model, reference = registered_model
+    samples = [f"requirement {index} shall trace" for index in range(32)]
+
+    assert model.predict(samples) == reference(samples)
+
+
+@pytest.mark.unit
+@pytest.mark.determinism
+def test_large_batch_is_deterministic(registered_model: tuple[object, ReferenceFn]) -> None:
+    model, _reference = registered_model
+    samples = [f"requirement {index} shall trace" for index in range(32)]
+
+    assert model.predict(samples) == model.predict(samples)
+
+
+@pytest.mark.unit
+@pytest.mark.parity
+@pytest.mark.determinism
+def test_max_length_sample_parity_and_determinism(
+    registered_model: tuple[_PredictableModel, ReferenceFn],
+) -> None:
+    model, reference = registered_model
+    samples = [MAX_LENGTH_TEXT]
+
+    first = model.predict(samples)
+    second = model.predict(samples)
+
+    assert first == reference(samples)
+    assert first == second

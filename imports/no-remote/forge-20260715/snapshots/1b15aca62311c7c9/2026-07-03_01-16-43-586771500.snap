@@ -1,0 +1,10 @@
+@echo off
+setlocal
+set LOG=%TEMP%\civ-standalone-build.log
+set EXITFILE=%TEMP%\civ-standalone-exit.txt
+if exist "%LOG%" del "%LOG%"
+if exist "%EXITFILE%" del "%EXITFILE%"
+
+REM Launch fully detached via cmd /C start /B with double-detach so parent cmd returns immediately.
+start "" /B cmd /c "cargo build --release -p civ-bevy-ref --bin civ-standalone --features bevy,egui > %LOG% 2>&1 & echo EXITCODE=%ERRORLEVEL% > %EXITFILE%"
+endlocal

@@ -1,0 +1,3 @@
+## Summary  
+  
+Add live status updating to the DAG renderer with F9-style event stream, status history tracking, and a view-mode toggle for live auto-refresh. 

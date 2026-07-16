@@ -1,0 +1,90 @@
+//! `VerbDescriptor` — the canonical, substrate-faithful description of a godverb.
+//!
+//! Every godverb that the MCP / JSON-RPC / egui layers expose is reflected
+//! here as a static `VerbDescriptor`. Holocron consumes the descriptor list
+//! to power the panel, the Command-K launcher, and the context-aware
+//! ranking. No runtime introspection of the MCP server is required.
+
+use crate::{group::VerbGroup, provenance::Provenance, risk::RiskTier};
+use serde::{Deserialize, Serialize};
+
+/// Static metadata describing a single godverb.
+///
+/// VerbDescriptors are constructed at startup and stored in the
+/// [`VerbRegistry`](crate::registry::VerbRegistry). They are immutable for
+/// the lifetime of the process.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VerbDescriptor {
+    /// Stable, kebab-case identifier (e.g. `"spawn-citizen"`).
+    pub id: String,
+    /// Human-readable verb name shown in the panel / Command-K (e.g. `"Spawn Citizen"`).
+    pub name: String,
+    /// Single-line summary shown in the panel and as Command-K hint text.
+    pub summary: String,
+    /// Legacy field — long-form description used by some FR-module drafts.
+    /// When set, takes precedence over `summary` for descriptive text.
+    #[serde(default)]
+    pub description: String,
+    /// Grouping for the panel and for context-aware ranking.
+    pub group: VerbGroup,
+    /// Optional single-character hotkey for the keycap palette.
+    #[serde(default)]
+    pub hotkey: Option<char>,
+    /// Legacy field — risk tier alias. New code should prefer `risk`.
+    /// Resolved to the same severity ladder (see `risk::RiskTier`).
+    #[serde(default)]
+    pub risk_tier: RiskTier,
+    /// How risky the verb is (used by the panel to gate destructive actions).
+    pub risk: RiskTier,
+    /// Provenance — where the verb is reachable from.
+    pub provenance: Provenance,
+    /// Optional MCP tool name used by the bridge layer to fire this verb.
+    #[serde(default)]
+    pub mcp_tool: Option<String>,
+    /// Aliases for Command-K fuzzy search. Lower-case, no whitespace.
+    pub aliases: &'static [&'static str],
+    /// Counter of how many times this verb has been invoked (running tally).
+    /// `0` for never-fired verbs.
+    #[serde(default)]
+    pub use_count: u64,
+}
+
+impl VerbDescriptor {
+    /// Construct a new descriptor. All fields are required.
+    pub fn new(
+        id: &'static str,
+        name: &'static str,
+        summary: &'static str,
+        group: VerbGroup,
+        risk: RiskTier,
+        provenance: Provenance,
+        aliases: &'static [&'static str],
+    ) -> Self {
+        Self {
+            id: id.to_string(),
+            name: name.to_string(),
+            summary: summary.to_string(),
+            description: summary.to_string(),
+            group,
+            hotkey: None,
+            risk_tier: risk,
+            risk,
+            provenance,
+            mcp_tool: None,
+            aliases,
+            use_count: 0,
+        }
+    }
+
+    /// Tokenise this descriptor for fuzzy matching: lower-cased words
+    /// derived from `name`, `id`, and `aliases`.
+    pub fn search_tokens(&self) -> Vec<String> {
+        let mut tokens = Vec::with_capacity(4 + self.aliases.len());
+        tokens.push(self.name.to_lowercase());
+        tokens.push(self.id.replace('-', " "));
+        for alias in self.aliases {
+            tokens.push((*alias).to_lowercase());
+        }
+        tokens
+    }
+}

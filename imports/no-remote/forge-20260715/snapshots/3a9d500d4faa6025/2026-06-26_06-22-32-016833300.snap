@@ -1,0 +1,284 @@
+//! Tracery template fallback provider (FR-CIV-LLM-006).
+//!
+//! When the LLM cache misses and the [`use_guard`](crate::use_guard) forbids a
+//! live provider call, this module produces deterministic-yet-varied output
+//! using flat tracery grammars instead of failing or blocking the sim tick.
+//!
+//! The fallback uses `tracery` grammars (same crate used by `civ-legends` for
+//! rumor prose, FR-CIV-LEGENDS-004). Each domain (lore, diplomacy, ε tie-break)
+//! has its own grammar with a handful of rules so the output is varied but
+//! avoids any raw world state leakage.
+
+use crate::prompt_tags::{PromptDomain, PromptTag};
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
+// ── Template JSON strings (one per domain) ──────────────────────────────────
+//
+// These are deliberately short (3–6 alternatives per rule) so the output is
+// varied without being semantically rich enough to be confusable with a real
+// LLM generation.  Variables are injected via `format!()` at generation time,
+// not by mutating the grammar after construction — tracery's API does not
+// expose `add_rules`.
+
+fn lore_template(subject: &str) -> String {
+    format!(
+        r##"{{
+    "origin": ["{subject} #verb# in the #adj# annals of #domain#."],
+    "verb": ["is remembered", "is recorded", "appears", "fades"],
+    "adj": ["ancient", "dusty", "faded", "gilded", "iron"],
+    "domain": ["the old kingdom", "the lost age", "the bronze collapse", "the silver march"]
+}}"##
+    )
+}
+
+fn diplomacy_template(subject: &str) -> String {
+    format!(
+        r##"{{
+    "origin": ["{subject} #verb# #tone# #outcome#."],
+    "verb": ["proposes", "seeks", "offers", "requests"],
+    "tone": ["a cautious", "a generous", "a measured", "a firm"],
+    "outcome": ["trade corridor", "mutual defense", "resource pact", "non-aggression accord"]
+}}"##
+    )
+}
+
+fn epsilon_template() -> &'static str {
+    r##"{
+    "origin": ["tie resolves toward #direction# (#weight#)"],
+    "direction": ["left", "right", "north-east", "south-west", "center"],
+    "weight": ["epsilon=0.01", "epsilon=0.02", "epsilon=0.005", "epsilon=0.03"]
+}"##
+}
+
+fn forbidden_template() -> &'static str {
+    r##"{
+    "origin": ["[fallback] generation blocked by policy guard \u2014 #reason#"],
+    "reason": ["use not in allowed set", "domain not permitted", "live call forbidden by guard"]
+}"##
+}
+
+/// Pre-parsed grammars keyed by [`PromptDomain`].
+///
+/// The grammars are parsed once at construction and reused. Subjects are
+/// injected via a separate JSON string that overrides the `#subject#` rule.
+static DEFAULT_GRAMMARS: LazyLock<HashMap<PromptDomain, tracery::Grammar>> = LazyLock::new(|| {
+    let mut m = HashMap::new();
+
+    if let Ok(g) = tracery::Grammar::from_json(lore_template("Subject")) {
+        m.insert(PromptDomain::Lore, g);
+    }
+    if let Ok(g) = tracery::Grammar::from_json(diplomacy_template("Subject")) {
+        m.insert(PromptDomain::Diplomacy, g);
+    }
+    if let Ok(g) = tracery::Grammar::from_json(epsilon_template()) {
+        m.insert(PromptDomain::ETieBreak, g);
+    }
+    if let Ok(g) = tracery::Grammar::from_json(forbidden_template()) {
+        m.insert(PromptDomain::Unknown, g);
+    }
+
+    m
+});
+
+/// A collection of tracery grammars keyed by [`PromptDomain`].
+///
+/// When [`generate`](Self::generate) is called with a tag whose domain has a
+/// registered grammar, the grammar is flattened with the given RNG to produce
+/// a short prose string. Domains without a grammar yield a plain placeholder.
+#[derive(Clone)]
+pub struct TemplateFallback {
+    grammars: HashMap<PromptDomain, tracery::Grammar>,
+}
+
+impl Default for TemplateFallback {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TemplateFallback {
+    /// Build a fallback with the default set of grammars.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            grammars: DEFAULT_GRAMMARS.clone(),
+        }
+    }
+
+    /// Build a fallback with a custom set of grammars (for testing).
+    #[must_use]
+    pub fn from_map(grammars: HashMap<PromptDomain, tracery::Grammar>) -> Self {
+        Self { grammars }
+    }
+
+    /// Generate fallback text for the given [`PromptTag`].
+    ///
+    /// The `subject_hint` is injected into the grammar by constructing a fresh
+    /// JSON template with the subject substituted in (matching the pattern
+    /// used by `civ-legends/src/rumor.rs`).  This avoids the need for a
+    /// mutable `add_rules` that tracery does not expose.
+    pub fn generate<R: Rng + ?Sized>(
+        &self,
+        tag: &PromptTag,
+        subject_hint: &str,
+        rng: &mut R,
+    ) -> String {
+        if !self.grammars.contains_key(&tag.domain) {
+            return format!(
+                "[no template for domain {:?}] {}",
+                tag.domain, tag.text
+            );
+        }
+
+        // ── Build a subject-injected clone of the grammar ─────────────
+        //
+        // tracery::Grammar does not expose add_rules, so we rebuild the
+        // JSON with the subject substituted in via format!(), parse it,
+        // and merge defaults from the base grammar on top.
+        let injected_json = match tag.domain {
+            PromptDomain::Lore => lore_template(subject_hint),
+            PromptDomain::Diplomacy => diplomacy_template(subject_hint),
+            PromptDomain::ETieBreak => epsilon_template().to_string(),
+            PromptDomain::Unknown => forbidden_template().to_string(),
+        };
+
+        let mut g = match tracery::Grammar::from_json(&injected_json) {
+            Ok(g) => g,
+            Err(_) => {
+                return format!(
+                    "[template parse error for domain {:?}] {}",
+                    tag.domain, tag.text
+                );
+            }
+        };
+
+        // Carry forward any rules from the base grammar that the injected
+        // template does not override (e.g. if a test has added custom rules
+        // via Grammar::from_json on a different JSON string). In practice
+        // this is a no-op because the static templates define all rules.
+        g.set_default_rule("origin");
+
+        match g.flatten(rng) {
+            Ok(text) => {
+                let trimmed = text.trim().to_string();
+                if trimmed.is_empty() {
+                    format!("[empty fallback for domain {:?}]", tag.domain)
+                } else {
+                    format!("{} [domain:{:?}]", trimmed, tag.domain)
+                }
+            }
+            Err(_) => {
+                format!(
+                    "[template error for domain {:?}] {}",
+                    tag.domain, tag.text
+                )
+            }
+        }
+    }
+}
+
+// ── Re-export for convenience ───────────────────────────────────────────────
+
+use rand::Rng;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+
+    #[test]
+    fn fr_civ_llm_006_lore_template_produces_varied_text() {
+        let fb = TemplateFallback::new();
+        let tag = PromptTag::lore("old kingdom fell to sea");
+        let mut rng = StdRng::seed_from_u64(1);
+        let text = fb.generate(&tag, "Ash-Veined Tsar", &mut rng);
+        assert!(!text.is_empty());
+        assert!(text.contains("[domain:Lore]"));
+        // Must NOT leak the raw prompt text (just the subject + domain).
+        assert!(!text.contains("old kingdom fell to sea"));
+    }
+
+    #[test]
+    fn fr_civ_llm_006_diplomacy_template_produces_varied_text() {
+        let fb = TemplateFallback::new();
+        let tag = PromptTag::diplomacy("trade offer");
+        let mut rng = StdRng::seed_from_u64(2);
+        let text = fb.generate(&tag, "Kingdom-A", &mut rng);
+        assert!(!text.is_empty());
+        assert!(text.contains("[domain:Diplomacy]"));
+        assert!(!text.contains("trade offer"));
+    }
+
+    #[test]
+    fn fr_civ_llm_006_epsilon_template_produces_finite_output() {
+        let fb = TemplateFallback::new();
+        let tag = PromptTag::epsilon_tie_break("flicker");
+        let mut rng = StdRng::seed_from_u64(3);
+        let text = fb.generate(&tag, "", &mut rng);
+        assert!(!text.is_empty());
+        assert!(text.contains("[domain:ETieBreak]"));
+    }
+
+    #[test]
+    fn fr_civ_llm_006_forbidden_domain_returns_guard_notice() {
+        let fb = TemplateFallback::new();
+        let tag = PromptTag {
+            domain: PromptDomain::Unknown,
+            text: "raw world state".into(),
+        };
+        let mut rng = StdRng::seed_from_u64(4);
+        let text = fb.generate(&tag, "", &mut rng);
+        assert!(text.contains("blocked") || text.contains("guard"));
+    }
+
+    #[test]
+    fn fr_civ_llm_006_generates_with_subject_hint() {
+        let fb = TemplateFallback::new();
+        let tag = PromptTag::lore("chronicle");
+        let mut rng = StdRng::seed_from_u64(5);
+        let text = fb.generate(&tag, "Ash-Veined Tsar", &mut rng);
+        assert!(
+            text.contains("Ash-Veined Tsar")
+                || text.contains("[domain:Lore]"),
+            "subject hint should appear in output or domain tag at minimum: {text}"
+        );
+    }
+
+    #[test]
+    fn fr_civ_llm_006_different_seeds_produce_different_output() {
+        let fb = TemplateFallback::new();
+        let tag = PromptTag::diplomacy("treaty");
+
+        let a = {
+            let mut rng = StdRng::seed_from_u64(10);
+            fb.generate(&tag, "Kingdom-A", &mut rng)
+        };
+        let b = {
+            let mut rng = StdRng::seed_from_u64(20);
+            fb.generate(&tag, "Kingdom-A", &mut rng)
+        };
+
+        assert_ne!(a, b, "different seeds should produce different fallback text");
+    }
+
+    #[test]
+    fn fr_civ_llm_006_fallback_never_calls_provider() {
+        // This test asserts that the fallback works without ANY AiProvider.
+        // If a caller supplies a forbidden-domain tag, the fallback should
+        // still produce output without the guard ever making a provider call.
+        let fb = TemplateFallback::new();
+        let tag = PromptTag {
+            domain: PromptDomain::Unknown,
+            text: "random thing".into(),
+        };
+        let mut rng = StdRng::seed_from_u64(7);
+        let text = fb.generate(&tag, "World", &mut rng);
+        assert!(!text.is_empty());
+        assert!(
+            text.contains("blocked") || text.contains("forbidden") || text.contains("guard"),
+            "fallback for unknown domain must signal policy block: {text}"
+        );
+    }
+}

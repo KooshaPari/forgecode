@@ -1,0 +1,17 @@
+[package]
+name = "phenotype-logging"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Phenotype Infra <infra@phenotype.dev>"]
+description = "Thin re-export of pheno-tracing (T22, ADR-036) for phenotype-infra iac/* daemons. See https://github.com/KooshaPari/pheno-tracing for the canonical implementation."
+publish = false
+
+[dependencies]
+pheno-tracing = { git = "https://github.com/KooshaPari/pheno-tracing", branch = "main" }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+anyhow = "1.0"
+
+[lib]
+path = "src/lib.rs"

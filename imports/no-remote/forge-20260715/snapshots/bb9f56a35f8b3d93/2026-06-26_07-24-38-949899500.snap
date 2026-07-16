@@ -1,0 +1,39 @@
+import json
+with open(r'C:\Users\koosh\tmp_omniroute_combo_flow\all_prs.json', 'rb') as f:
+    raw = f.read()
+if raw.startswith(b'\xef\xbb\xbf'):
+    raw = raw[3:]
+data = json.loads(raw.decode('utf-8'))
+
+open_prs = [p for p in data if p['state'] == 'OPEN']
+closed_prs = [p for p in data if p['state'] != 'OPEN']
+print(f'TOTAL: {len(data)}')
+print(f'OPEN: {len(open_prs)}')
+print(f'CLOSED/MERGED: {len(closed_prs)}')
+print('---')
+
+from collections import Counter
+print('OPEN PRs by branch prefix:')
+prefixes = Counter()
+for p in open_prs:
+    h = p['headRefName']
+    parts = h.split('/')
+    if len(parts) > 1:
+        seg = parts[1]
+        prefix = seg.split('-')[0]
+    else:
+        prefix = 'other'
+    prefixes[prefix] += 1
+for k, v in sorted(prefixes.items()):
+    print(f'  {k:15s}  {v}')
+
+print('---')
+print('OPEN PRs by base branch:')
+bases = Counter(p['baseRefName'] for p in open_prs)
+for b, c in sorted(bases.items()):
+    print(f'  {b:30s}  {c}')
+
+print('---')
+print('All OPEN PRs (sorted by number):')
+for p in sorted(open_prs, key=lambda x: x['number']):
+    print(f"  #{p['number']:5d}  {p['headRefName']:55s}  -> {p['baseRefName']:25s}")

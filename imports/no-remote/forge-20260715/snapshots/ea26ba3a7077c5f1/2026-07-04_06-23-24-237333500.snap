@@ -1,0 +1,260 @@
+# ADR 0003 — Local Serving Bootstrap
+
+- **Status:** proposed (2026-07-03).
+- **Decider(s):** forge, on behalf of the PhenoLM maintainer.
+- **Supersedes:** nothing.
+- **Superseded by:** nothing yet.
+
+## Context
+
+The user asked:
+
+> "Ling is the cloud model, as well as MiniMax M3, that would be test,
+> I now would rather you load a local model and begin working with that."
+
+Ling (`inclusionai/ling-2.6-flash`, OpenRouter) and MiniMax M3 were treated
+as the workhorse models in the prior round of planning. The user wants
+the workhorse path to be **local** — a model running on the RTX 3090 Ti
+in this Windows machine. Cloud models remain baseline + parity checks.
+
+### Environment probe (2026-07-03, read-only)
+
+- 1 × NVIDIA GeForce RTX 3090 Ti, 24 GB VRAM, UUID `8d337a84-43de-158d-7526-7175288a6064`.
+- Free space: `D:` 528 GB, `G:` 253 GB, `C:` 15 GB, `E:` 1364 GB. C is the
+  OS drive and is tight — model weights must stay off C.
+- Python 3.13 environment (most ML-loaded, but not labeled Python 3.13 in
+  path) has: `torch 2.6.0`, `transformers 4.57.6`, `sglang 0.5.2`,
+  `vllm 0.20.0`, `huggingface_hub 0.36.2`, `tokenizers 0.22.2`,
+  `safetensors 0.5.3`, `sentence-transformers 4.1.0`, `anthropic 0.97.0`,
+  `openai 2.33.0`, `psutil 7.0.0`, plus editable installs for
+  `dinoforge-mcp`, `dispatch-mcp`, `helios-bench`, `jarvis-swe-agent`,
+  `wsm3d-mcp`.
+- Python 3.11 has a separate environment.
+- HF local cache (`~/.cache/huggingface/hub/`) is essentially empty for
+  models — only one dataset present.
+- No `ik_llama-server`, no `llama-server`, no MLX.
+
+### Constraints
+
+- 3090 Ti has no FP8 tensor cores. AWQ-INT4 is the strongest available
+  quantization on this GPU.
+- The user's `config/inference_runners.yaml` already lists
+  `sglang: primary_agent`, `vllm: secondary`, `llama-server: legacy`,
+  `bitnet: sub_1b_drafts`, with TensorRT-LLM marked
+  `not_recommended_primary`. We honor that.
+- The user's `docs/ARCHITECTURE_LAYERS.md` introduces a layer the
+  prior audit missed: **`pheno-serve-dev`**, the inner inference
+  router. This ADR positions the local serving bootstrap below that
+  layer (engines) and uses `pheno-serve-dev` as the OpenAI-compatible
+  endpoint `forge-dev` ultimately talks to.
+- C: has 15 GB free; weights must live on D: or E:.
+- The decision must be reversible: the next time we change workhorse,
+  this ADR rolls back via a follow-up ADR.
+
+## Decision
+
+**Adopt a local-first workhorse for eval + dev sessions:**
+
+1. **Primary engine:** SGLang 0.5.2 (already installed in the
+   Python 3.13 env). Rationale: matches `config/inference_runners.yaml`,
+   has RadixAttention + prefix caching for the chat-loop's tight
+   inner loop, supports EAGLE-2 / P-EAGLE drafting.
+2. **Secondary engine:** vLLM 0.20.0 (already installed). Used for
+   cross-check cells and for MoE tiers (better paged-KV at MoE sizes).
+3. **Workhorse model:** **Qwen 2.5 7B Instruct** in **AWQ-INT4**
+   (`Qwen2.5-7B-Instruct-AWQ`). Rationale: per
+   `docs/specs/003-model-engine-matrix.md` §2.3 + §6, AWQ-INT4 at 7B
+   uses 9–10 GB VRAM on the 3090 Ti — leaves headroom for a draft
+   model and for batch ≥ 2.
+4. **Draft model (Tier 0, for EAGLE-2):** **Qwen 2.5 0.5B Instruct**
+   in **GGUF Q4_K_M** (`Qwen2.5-0.5B-Instruct-GGUF`). Off by default
+   in this round; turned on after the first TTFT probe lands.
+5. **Weight location:** `D:\models\hf\<repo-id>\` — explicit and
+   tracked. **Not** on `C:` (15 GB free is too tight).
+6. **First serving port:** `9001` (SGLang default for OpenAI-compat
+   endpoint). Routing through `pheno-serve-dev` once that layer is
+   wired (see `docs/specs/004-implementation-plan.md` §5).
+7. **Cloud parities (unchanged):**
+   - `inclusionai/ling-2.6-flash` on OpenRouter
+     ($0.01/$0.03 per 1M tokens, 90 % promo, verified 2026-07-03).
+   - MiniMax M3 (provider details TBD by user; treat as second
+     cloud baseline, never the workhorse).
+8. **Cloud call paths are not gated by this ADR.** The existing
+   `pheno-harness/pheno/harbor_util.py` continues to route cloud
+   models through the existing config (`config/combo_main.json`).
+   Local-first only governs the **default** engine binding for
+   `eval/` drivers and `pheno/harbor_util.py`'s local-mode path.
+
+### What is *not* decided here
+
+- Whether to add `pheno-serve-dev` as a real inner router this round.
+  See `docs/specs/004-implementation-plan.md` §2–§3. ADR is silent
+  on the implementation cadence; it documents the routing target.
+- Whether to use latent-MAS. Out of scope (parked in
+  `docs/specs/001-eval-architecture.md` §9).
+- Which exact AWQ checkpoint to pin (there are 2–3 community AWQ
+  builds for Qwen 2.5 7B). Decision deferred to the bootstrap PR
+  that downloads the weights.
+
+## Consequences
+
+### Positive
+
+- Eval runs become reproducible without paying OpenRouter for every
+  cell — most semantic-eval cells run on the local 7B.
+- Cloud models stop being the rate-limiting cost driver.
+- The 3090 Ti becomes load-bearing — earlier it sat idle when we
+  used only OpenRouter.
+- The local model is large enough to be useful (vs. 0.5B / 1B drafts).
+
+### Negative
+
+- New disk + VRAM footprint. ~5 GB for AWQ weights, ~9–10 GB VRAM
+  at runtime. Monitor `D:` free space and VRAM peak in
+  `perf/profiler.py`.
+- SGLang on Windows is less battle-tested than on Linux. We are
+  already running on Windows; we accept this risk explicitly.
+- The first local baseline will be *worse* than Ling on TB 2.0 by
+  design — that gap is the optimization target, not a regression.
+- We are committing to AWQ-INT4 because that is the strongest
+  general-purpose quantization on 3090 Ti. FP8 / NVFP4 unavailable.
+
+### Neutral
+
+- vLLM 0.20.0 stays as a secondary engine for the MoE tiers and
+  for cross-check cells. No change to its install state.
+- Cloud model bindings are unchanged.
+
+## Bootstrap Plan
+
+Concrete, ordered, every step isolated so a failure rolls back to a
+clean state.
+
+### Step 1 — Pin the weight and engine (no download yet)
+
+Update `pheno-harness/config/model_engine_matrix.yaml` with the
+chosen workhorse cell:
+
+```yaml
+workhorse:
+  engine: sglang
+  engine_version: "==0.5.2"
+  model_id: "Qwen/Qwen2.5-7B-Instruct-AWQ"
+  format: awq_int4
+  context_window: 32768          # explicit, not default
+  gpu_memory_utilization: 0.85  # leave headroom for draft + perf probes
+  max_model_len: 32768
+  openai_compat_port: 9001
+draft:
+  enabled_default: false         # turned on after Step 5
+  engine: llama.cpp              # or sglang EAGLE-2 mode
+  model_id: "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
+  format: gguf_q4_k_m
+weight_cache_root: "D:\\models\\hf"   # Windows path; double-escaped in YAML
+```
+
+Modify `pheno-harness/config/inference_runners.yaml` to mark
+`sglang: 0.5.2` as the resolved version pin. (Already a string —
+add a `version:` field next to it; backward-compatible.)
+
+### Step 2 — Add a local-model runner script
+
+NEW: `pheno-harness/scripts/run_local_workhorse.ps1`. Idempotent.
+On first run, downloads + caches AWQ weights under
+`D:\models\hf\`. Subsequent runs are no-ops. Mirrors the design of
+`scripts/start_local_swarm.ps1`.
+
+### Step 3 — Add a health probe
+
+NEW: `pheno-harness/scripts/probe_local_workhorse.py`. Hits
+`http://127.0.0.1:9001/v1/models` and `/v1/chat/completions` with a
+1-token ping. Returns a JSON health row + writes to
+`bench/results/perf/<date>_local_workhorse_health.json`.
+
+### Step 4 — First SGLang launch
+
+NEW: `pheno-harness/config/sglang/workhorse.launch.json` — the
+launcher arg bundle. Run via:
+
+```powershell
+python -m sglang.launch_server `
+  --model D:\models\hf\Qwen\Qwen2.5-7B-Instruct-AWQ `
+  --port 9001 `
+  --host 0.0.0.0 `
+  --mem-fraction-static 0.85 `
+  --context-length 32768 `
+  --attention-backend flashinfer `
+  --chat-template qwen2.5
+```
+
+(GPU kernel selection may be tuned after the first benchmark.)
+
+### Step 5 — Wire to the eval drivers
+
+MODIFY: `pheno-harness/eval/tbench.py`, `pheno-harness/eval/route_matrix.py`,
+`pheno-harness/pheno/harbor_util.py` to add an `engine_override`
+config key. Default `engine_override: null` keeps current cloud
+behavior. Setting `engine_override: local_workhorse` forces the
+local SGLang endpoint.
+
+### Step 6 — First benchmark sweep
+
+Run the Tier 1 (T1 = 1–4 B) cell of the matrix on `qwen2.5-7b-awq`
+to confirm the local pipeline works. Compare against the existing
+Ling baseline on TB 2.0 micro-eval (5-min budget). Publish the
+delta in `bench/results/perf/<date>_t1_local_vs_cloud.json`.
+
+### Step 7 — Garden loop integration
+
+Once Steps 1–6 are green, the garden loop can promote
+`qwen2.5-7b-awq@sglang` into a lane binding via the standard
+`two-consecutive-green-windows` rule.
+
+### Step 8 — Draft model (optional, after Step 6)
+
+Add the Qwen 2.5 0.5B GGUF draft and enable EAGLE-2 in SGLang.
+Re-run Step 6. Confirm TTFT p95 improvement ≥ target before
+promoting the draft-enabled profile.
+
+## Risk Mitigations (extracted into `0002-risks-register.md`)
+
+- **OpenRouter instability (R9)** — local workhorse removes this as
+  a load-bearing dependency for the routine eval path.
+- **Disk pressure (R3)** — single source of truth:
+  `weight_cache_root` lives on D: with a 30 GB cap; GC LRU based on
+  last-access timestamp in `state/model_cache/`.
+- **Dependency drift (R17)** — engine versions are now pinned in YAML
+  (`config/inference_runners.yaml` + `config/model_engine_matrix.yaml`).
+- **Throughput mismeasurement (R7)** — first perf suite cells must
+  report cache state + batch size + concurrency alongside TTFT/ITL.
+
+## Verification
+
+This ADR is accepted when:
+
+1. `python scripts/probe_local_workhorse.py` returns 200 with a
+   non-empty model list and a 1-token chat completion.
+2. `python scripts/run_tbench.py --subset 4 --engine local_workhorse`
+   writes a valid manifest to `bench/results/tbench/<run_id>.manifest.json`.
+3. The composite score from Step 6 is within bounds the user accepts
+   for "first local baseline" — explicitly a low bar by design.
+
+## Rollback
+
+- Delete `D:\models\hf\Qwen\` (~5 GB).
+- Revert Steps 1, 2, 3, 4 in any order. Step 5's `engine_override`
+  defaults to `null` already, so reverting Step 5 is the policy
+  revert.
+- A "skip local, go cloud" cell is already wired into
+  `eval/route_matrix.py`; no work needed to fall back.
+
+## References
+
+- `docs/ARCHITECTURE_LAYERS.md` — layer contract (canonical).
+- `docs/GARDEN_LOOP.md` — promotion policy.
+- `docs/specs/003-model-engine-matrix.md` — full local × engine matrix.
+- `docs/adrs/0001-current-state-audit.md` — env probe + citations.
+- `docs/adrs/0002-risks-register.md` — risk mitigations.
+- SGLang docs: <https://docs.sglang.ai/> (verified 2026-07-03).
+- vLLM speculative decoding: <https://docs.vllm.ai/en/latest/features/speculative_decoding/>.
+- Qwen 2.5 AWQ on HF: <https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-AWQ>.

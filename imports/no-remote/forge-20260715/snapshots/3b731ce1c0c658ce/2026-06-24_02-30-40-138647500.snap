@@ -1,0 +1,10 @@
+@echo off
+setlocal enabledelayedexpansion
+set OUTFILE=%TEMP%\gitleaks_history_scan.txt
+> "%OUTFILE%" === Gitleaks per-commit scan ===
+for /F "tokens=*" %%H in ('git log --all --pretty^=format:%%H') do (
+  echo === Scanning %%H === >> "%OUTFILE%"
+  gitleaks detect --no-banner --no-git --redact --source %%H >> "%OUTFILE%" 2>&1
+  echo. >> "%OUTFILE%"
+)
+echo Done. Output: %OUTFILE%

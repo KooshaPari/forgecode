@@ -1,0 +1,2 @@
+@echo off
+"C:\program files\Git\usr\bin\bash.exe" -c "ls -la 'C:/Users/koosh/phenotype-registry/audits/absorption-justifications/go-nippon-2026-06-23.md' 2>&1; echo ---; ls -la '/c/Users/koosh/phenotype-registry/audits/absorption-justifications/go-nippon-2026-06-23.md' 2>&1; echo ---; pwd; echo ---; cygpath -w /c/Users/koosh/phenotype-registry/audits/absorption-justifications/go-nippon-2026-06-23.md"

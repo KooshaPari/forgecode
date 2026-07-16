@@ -1,0 +1,30 @@
+## Summary
+Re-point BytePort's NVMS parser from local implementation to the shared `phenotype-tooling/nanovms/parser` package as part of cross-repo consolidation (epic B).
+
+## Context
+BytePort contained a local NVMS configuration parser (`backend/nvms/`) that duplicated parser logic. As part of epic B's cross-repo consolidation, this parser has been extracted into `phenotype-tooling/crates/nanovms/parser` so it can be shared across the phenotype ecosystem (BytePort, phenotype-sdk, etc.). This PR redirects BytePort's references to the external shared package.
+
+## Changes
+- **go.mod**: Added `github.com/kooshapari/nanovms v0.0.0` dependency with `replace` directive pointing to `../../../phenotype-tooling/crates/nanovms`
+- **models/types.go**: Replaced local `NVMS`, `Service`, and `BuildPack` struct definitions with type aliases pointing to `parser.NVMS`, `parser.Service`, `parser.BuildPack` — maintaining full backward compatibility
+- **projectManager/parser.go**: Replaced 60-line local `parseNVMSConfig` implementation with a thin delegation to `parser.ParseNVMSConfig`
+
+### Key Implementation Details
+- Uses Go type aliases (`=`) rather than type definitions, so all existing usages of `models.NVMS`, `models.Service`, `models.BuildPack` continue to compile without changes
+- The `replace` directive uses a relative path to the local clone so no remote publish is needed yet — the external package lives in the same monorepo-adjacent workspace
+- AWS-specific types (`AWSConfig`, `AWSResource`, etc.) remain local since they are BytePort-specific
+
+## Testing
+```bash
+cd backend/nvms
+go mod tidy
+go build ./models
+go vet ./models
+```
+
+The `models` package builds and vets cleanly. The `projectManager` package has a pre-existing build failure from `fermyon/spin-go-sdk` (unrelated `export comment` mismatch) that exists on `main` as well.
+
+## Links
+- Epic: epic_B — Cross-repo consolidation & L1 grading
+- DAG Unit: B10 — Re-point NVMS parser to phenotype-tooling
+- Area: compute-infra

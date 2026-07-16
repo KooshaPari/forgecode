@@ -1,0 +1,69 @@
+# ─────────────────────────────────────────────────────────────────────
+# Claude Code + Codex profile launchers (pwsh equivalent of .zshrc)
+# Mirrors the env-bundle pattern from ~/.zshrc so claude-omni / claude-mm
+# work identically whether launched from zsh or pwsh.
+# Added: 2026-07-05
+# ─────────────────────────────────────────────────────────────────────
+
+# ── Resolve native binaries at load time (avoids name-shadowing recursion) ─
+$script:ClaudeExe = (Get-Command -CommandType Application -Name claude -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+if (-not $script:ClaudeExe) { Write-Warning 'claude binary not found on PATH; claude-omni/claude-mm/claude will fail.' }
+$script:CodexExe  = (Get-Command -CommandType Application -Name codex  -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+if (-not $script:CodexExe)  { Write-Warning 'codex binary not found on PATH; codex-omni/codex-mm will fail.' }
+
+$env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '512000'
+$env:ANTHROPIC_MODEL = 'Main'
+$env:ANTHROPIC_DEFAULT_SONNET_MODEL = 'Main'
+$env:ANTHROPIC_DEFAULT_OPUS_MODEL = 'Main'
+$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = 'Main'
+
+# OmniRoute profile — routes via local SSE-cleanup proxy at 127.0.0.1:20130
+# which strips OmniRoute's post-`response.completed` `: x-omniroute-*` annotations
+# (codex 0.142.5's strict SSE parser otherwise interprets them as a new open stream).
+# See C:\Users\koosh\.omniroute\bin\sse-cleanup-proxy.mjs
+function claude-omni {
+    $env:ANTHROPIC_AUTH_TOKEN = 'sk-a6e8236359cd319b-3w6jyp-b0931376'
+    $env:ANTHROPIC_BASE_URL   = 'http://127.0.0.1:20130/v1'
+    & $script:ClaudeExe @args
+}
+
+# Direct MiniMax profile — bypasses OmniRoute
+function claude-mm {
+    $env:ANTHROPIC_AUTH_TOKEN = 'sk-cp-gPIgSPD1rxNMDQqvb4nYNj0HE4HfElst4cbyJQby9eMhod_1FU5OVTh1KisjFDPoPSngE-R_WwHAhA4ehgzqoIKhaXfipS-1CmEjUqCTPk2brR2Fq6PH0OA'
+    $env:ANTHROPIC_BASE_URL   = 'https://api.minimax.io/anthropic'
+    & $script:ClaudeExe @args
+}
+
+# Default `claude` → OmniRoute
+function claude {
+    claude-omni @args
+}
+
+# Codex profiles — use --profile flag (matches ~/.codex/<name>.config.toml overlays)
+# Ensure-SseCleanupProxy auto-starts the SSE trailer-stripper if 127.0.0.1:20130
+# isn't already listening. Required for codex 0.142.5 ↔ OmniRoute stream compat.
+function Ensure-SseCleanupProxy {
+    $listening = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() |
+        Where-Object { $_.Port -eq 20130 }
+    if ($listening) { return $true }
+
+    $vbs = 'C:\Users\koosh\Temp\start-proxy.vbs'
+    if (-not (Test-Path $vbs)) {
+        Write-Warning "Ensure-SseCleanupProxy: $vbs not found"
+        return $false
+    }
+    Start-Process -FilePath 'cscript.exe' -ArgumentList '//nologo', "`"$vbs`"" -WindowStyle Hidden
+    Start-Sleep -Milliseconds 1200
+    $listening = [System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() |
+        Where-Object { $_.Port -eq 20130 }
+    return [bool]$listening
+}
+
+function codex-omni {
+    [void](Ensure-SseCleanupProxy)
+    & $script:CodexExe --profile omniroute @args
+}
+
+function codex-mm {
+    & $script:CodexExe --profile minimax @args
+}

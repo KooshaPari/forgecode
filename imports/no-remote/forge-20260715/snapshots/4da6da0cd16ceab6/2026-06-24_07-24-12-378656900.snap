@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Debug helper
+AUDIT="/c/Users/koosh/phenotype-registry/audits/absorption-justifications/go-nippon-2026-06-23.md"
+
+echo "=== H1 detection ==="
+H1=$(grep -E '^#[[:space:]]+' "$AUDIT" | head -1 || true)
+echo "H1 raw: [$H1]"
+
+PROJECT=$(echo "$H1" \
+    | sed -E 's/^#[[:space:]]+//' \
+    | sed -E 's/[[:space:]]*[—-][[:space:]]*[Aa]bsorption.*$//' \
+    | sed -E 's/[[:space:]]*[Aa]bsorption.*$//' \
+    | xargs)
+echo "PROJECT: [$PROJECT]"

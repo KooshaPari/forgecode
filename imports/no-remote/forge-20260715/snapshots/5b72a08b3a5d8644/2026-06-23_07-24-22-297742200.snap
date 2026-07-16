@@ -1,0 +1,48 @@
+"""Search GitHub for the missing repos in scope: nanovms, PhenoCompose, byteport."""
+import json
+import os
+import subprocess
+
+tok = ""
+env_path = r"C:\Users\koosh\.env"
+if os.path.exists(env_path):
+    for line in open(env_path, encoding="utf-8", errors="replace"):
+        if line.startswith("GITHUB_TOKEN="):
+            tok = line.split("=", 1)[1].strip()
+            break
+
+env = dict(os.environ)
+env["NO_COLOR"] = "1"
+env["GH_TOKEN"] = tok
+if tok:
+    env["GITHUB_TOKEN"] = tok
+
+queries = [
+    ("nanovms", "user:kooshapari nanovms"),
+    ("pheno-compose", "user:kooshapari pheno-compose"),
+    ("PhenoCompose", "user:kooshapari PhenoCompose"),
+    ("byteport", "user:kooshapari byteport"),
+    ("phenotype-compose", "user:kooshapari phenotype-compose"),
+    ("phenotype-nanovms", "user:kooshapari phenotype-nanovms"),
+]
+
+results = {}
+for label, q in queries:
+    try:
+        r = subprocess.run(
+            ["gh", "search", "repos", q, "--limit", "5", "--json", "name,description,visibility,archived"],
+            capture_output=True, env=env, timeout=30,
+        )
+        out = r.stdout.decode("utf-8", errors="replace").strip()
+        if out:
+            try:
+                results[label] = json.loads(out)
+            except Exception as e:
+                results[label] = f"PARSE_ERR: {e}; raw: {out[:200]}"
+        else:
+            err = r.stderr.decode("utf-8", errors="replace").strip()
+            results[label] = f"EMPTY (stderr: {err[:120]})"
+    except Exception as e:
+        results[label] = f"EXC: {e}"
+
+print(json.dumps(results, indent=2))

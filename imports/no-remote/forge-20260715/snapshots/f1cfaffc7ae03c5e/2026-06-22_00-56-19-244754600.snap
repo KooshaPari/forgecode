@@ -1,0 +1,12 @@
+$f='C:\Users\koosh\active_repos.txt'
+$c=[System.IO.File]::ReadAllText($f)
+$crlf = "`r`n"
+$lines = $c -split $crlf
+Write-Host ('total_lines=' + $lines.Length)
+Write-Host ('file_len=' + $c.Length)
+Write-Host ('has_trailing_crlf=' + $c.EndsWith($crlf))
+for ($i=55; $i -lt 70; $i++) {
+  if ($i -lt $lines.Length) {
+    Write-Host ('L' + ($i+1) + '=[' + $lines[$i] + ']')
+  }
+}

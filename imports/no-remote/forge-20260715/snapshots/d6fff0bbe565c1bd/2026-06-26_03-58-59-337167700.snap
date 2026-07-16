@@ -1,0 +1,22 @@
+## Summary
+Add tutorial/onboarding system with first-run detection, persistence, and state-gated hint progression.
+
+## Context
+New players lacked guidance on Civis controls and mechanics. The previous tutorial stub had no persistence, no first-run detection, and no state gating — it would always show hints from step 0 regardless of player progress. This PR builds a complete onboarding system that detects first-time players, persists completion status, and gates hints by simulation state.
+
+## Changes
+- Added `TutorialVisibility` enum (`Auto`, `Manual`, `Hidden`) replacing boolean `enabled` — supports automatic first-run, manual [H] key toggle, and dismissed states
+- Added `TutorialSaveData` struct with `completed_once` flag (Serde-serializable for disk persistence)
+- Added `STATE_GATES` array mapping step indices to required sim state conditions (`faction`, `technology`)
+- Implemented `is_gate_open()` function for future sim-state checks (currently returns true for all, with gates defined)
+- Updated `advance()` to skip gated steps that aren't yet relevant
+- Added `should_show()` helper: shows tutorial automatically on first run, manually with [H] key, and hides when completed
+- Tutorial completion sets `save_data.completed_once = true` and transitions to `Hidden`
+
+## Testing
+1. Start a new game — tutorial should auto-show if no save data exists
+2. Press [H] to manually re-open the tutorial
+3. Press [Space] to advance through hints
+4. Complete the last hint — tutorial should hide and mark `completed_once = true`
+5. Start another new game — tutorial should NOT auto-show (first-run flag is set)
+6. Press [H] to verify manual re-opening still works

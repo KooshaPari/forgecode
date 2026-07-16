@@ -1,0 +1,8 @@
+@echo off
+setlocal
+set "CARGO_HOME=E:\Dev\.cargo"
+set "CARGO_TARGET_DIR=E:\civis-target"
+cd /d "C:\Users\koosh\.claude\lanes\substrate-feat-cloud-dispatch"
+cargo clippy --all-targets --all-features -- -D warnings > cargo_clippy_output_final.txt 2>&1
+echo EXIT_CODE=%ERRORLEVEL% >> cargo_clippy_output_final.txt
+echo FINISHED >> cargo_clippy_output_final.txt

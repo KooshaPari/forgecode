@@ -1,0 +1,10 @@
+import json
+d = json.load(open(r'C:\Users\koosh\_wfs\runlist.out', encoding='utf-8', errors='replace'))
+print('total:', d.get('total_count'))
+for r in d.get('workflow_runs', [])[:5]:
+    name = r.get('name', '?')
+    status = r.get('status', '?')
+    conc = r.get('conclusion', '?')
+    num = r.get('run_number', '?')
+    created = r.get('created_at', '')[:19]
+    print(f"  {name:<30} status={status:<10} conclusion={conc:<10} run={num} created={created}")

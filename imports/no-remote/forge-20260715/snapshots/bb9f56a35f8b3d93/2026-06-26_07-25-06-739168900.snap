@@ -1,0 +1,36 @@
+"""Strip BOM + ANSI from gh JSON output and summarize."""
+import re, json, sys
+from collections import Counter
+
+p = r"C:\Users\koosh\tmp_omniroute_combo_flow\all_prs.json"
+with open(p, "rb") as f:
+    raw = f.read().decode("utf-8", errors="replace")
+if raw.startswith("\ufeff"):
+    raw = raw[1:]
+ansi = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+clean = ansi.sub("", raw)
+data = json.loads(clean)
+
+open_prs = [p for p in data if p["state"] == "OPEN"]
+closed_prs = [p for p in data if p["state"] != "OPEN"]
+merged = [p for p in closed_prs if p["state"] == "MERGED"]
+
+print(f"TOTAL: {len(data)}  OPEN: {len(open_prs)}  CLOSED: {len(closed_prs)}  MERGED: {len(merged)}")
+print("---")
+print("OPEN by branch prefix:")
+prefixes = Counter()
+for p in open_prs:
+    parts = p["headRefName"].split("/")
+    prefix = parts[1].split("-")[0] if len(parts) > 1 else "other"
+    prefixes[prefix] += 1
+for k, v in sorted(prefixes.items()):
+    print(f"  {k:15s}  {v}")
+print("---")
+print("OPEN by base branch:")
+bases = Counter(p["baseRefName"] for p in open_prs)
+for b, c in sorted(bases.items()):
+    print(f"  {b:30s}  {c}")
+print("---")
+print("MERGED PRs:")
+for p in sorted(merged, key=lambda x: x["number"]):
+    print(f"  #{p['number']:5d}  {p['headRefName']:50s}  {p['title'][:70]}")

@@ -1,0 +1,198 @@
+# phenotype-infra Consolidation Validation Report
+
+**Date:** 2026-06-23
+**Validator:** Forge automated audit
+**Repo:** `C:\Users\koosh\phenotype-infra`
+
+---
+
+## 1. Workspace Structure
+
+**Root Cargo.toml** (`Cargo.toml:1-23`):
+- `resolver = "2"` — ✅
+- Members declared (5):
+  - `crates/nanovms-core` — ✅
+  - `crates/nvms-ffi` — ✅
+  - `crates/pheno-compose` — ✅
+  - `crates/pheno-config` — ✅
+  - `tests` — ✅
+- **Workspace dependencies** (`Cargo.toml:35-41`): `async-trait`, `thiserror`, `serde`, `serde_json`, `bindgen`, `figment` — ✅
+
+**Claimed crates:** The repo claims 4 crates (nanovms-core, nvms-ffi, pheno-compose, pheno-config) plus tools/byteport.
+
+| # | Crate | Path | Cargo.toml | src/lib.rs | Actual code | Status |
+|---|-------|------|------------|------------|-------------|--------|
+| 1 | **nanovms-core** | `crates/nanovms-core/` | ✅ | ✅ | Go source tree (320 lines CGo export + 50+ Go files) | ✅ Exist |
+| 2 | **nvms-ffi** | `crates/nvms-ffi/` | ✅ | ✅ (767 lines) | Full FFI bindings, sys module, shim, 20 tests | ✅ Exist |
+| 3 | **pheno-compose** | `crates/pheno-compose/` | ✅ | ✅ (170 lines) | Driver + config + instance + health + errors modules | ✅ Exist |
+| 4 | **pheno-config** | `crates/pheno-config/` | ✅ | ✅ (442 lines) | Figment-backed layered config, 4 sub-modules | ✅ Exist |
+| 5 | **tests** | `tests/` | ✅ | ✅ (183 lines) | Cross-crate integration tests | ✅ Exist |
+| 6 | **byteport** | `tools/byteport/` | ✅ | ✅ | Independent workspace, 2 crate members + Tauri app | ✅ Exist |
+
+**All 4 claimed crates + tools/byteport exist and contain actual code.** ✅
+
+---
+
+## 2. Per-Crate Code Audit
+
+### 2.1 nanovms-core (`crates/nanovms-core/`)
+
+| Check | Status |
+|-------|--------|
+| Cargo.toml package name | `nanovms-core` |
+| Crate type | `staticlib`, `rlib` |
+| `src/lib.rs` | ✅ Minimal entry point (`pub const VERSION`) |
+| `build.rs` | ✅ Go staticlib orchestrator with fallback stub |
+| Go source code | ✅ 320-line `nvms_core.go` CGo export (Apple Silicon, CUDA, ROCm, NEON) |
+| Go full tree | ✅ `cmd/`, `internal/`, `pkg/`, `tests/`, `docs/` — real code |
+| `go.mod` / `go.sum` | ✅ Present |
+| `Makefile` / `Taskfile.yml` | ✅ Present |
+| ADRs in `docs/` | ✅ 14 ADRs preserved |
+
+**Verdict:** The crate is a hybrid Go/Rust static library crate. The Rust side is intentionally thin (just a version constant + `build.rs` orchestration). The Go side is substantive with 50+ files across 6 packages. **PASS** — by design.
+
+### 2.2 nvms-ffi (`crates/nvms-ffi/`)
+
+| Check | Status |
+|-------|--------|
+| Cargo.toml package name | `nvms-ffi` |
+| Crate type | `staticlib`, `cdylib`, `rlib` |
+| `src/lib.rs` | ✅ 767 lines — substantive |
+| Code structure | `sys` module with C structs/enums + safe Rust wrappers (`Tier`, `Status`, `GpuBackend`, `MemoryType`, `Instance`) + GPU support functions + shim module + 20 tests |
+| `build.rs` | ✅ 118 lines — 3-mode orchestration (pre-built lib / Go on-the-fly / stub) |
+| Features | `cuda`, `default` |
+| Tests | ✅ 20 test functions covering version, init, GPU info, instance lifecycle, tier/status/gpu/memory roundtrips, error handling |
+| **Issues** | ⚠️ `unexpected_cfg` warning for `nvms_core_lib` — needs `check-cfg` in build.rs |
+
+**Verdict:** Most complete Rust crate with both FFI declarations and a comprehensive stub shim that enables `cargo test` without Go. **PASS** (minor cfg warning).
+
+### 2.3 pheno-compose (`crates/pheno-compose/`)
+
+| Check | Status |
+|-------|--------|
+| Cargo.toml package name | `pheno-compose-driver` |
+| Crate type | `lib`, `staticlib`, `cdylib` |
+| `src/lib.rs` | ✅ 170 lines — `NvmsDriver` struct with `new()`/`create_instance()`/`create_instance_with_config()`, unit tests |
+| `src/config.rs` | ✅ 169 lines — `NvmsConfig` builder pattern (wasm/gvisor/firecracker constructors, CPU/memory/network/image/env chain methods), unit tests |
+| `src/instance.rs` | ✅ 161 lines — `Instance` wrapper using `NonNull`, lifecycle (`start`/`stop`/`status`), unit tests |
+| `src/health.rs` | ✅ 162 lines — `check()` → `HealthReport` with probes (init/version/platform), serde roundtrip, unit tests |
+| `src/errors.rs` | ✅ 181 lines — `Error` enum (thiserror), `From` impls, `Result<T>` alias, unit tests |
+| Dependencies | `nvms-ffi` (path), `pheno-config` (path), `serde`, `thiserror` — ✅ |
+| Features | `default = ["nvms"]`, `nvms`, `mock` — ✅ |
+| **Issues** | ❌ **BUILD ERROR E0119** — conflicting `From<NvmsError>` implementations in `errors.rs` |
+| | ❌ `nvms_ffi::NvmsError` does not implement `std::error::Error` (StdError), breaking thiserror derive macro |
+
+**Verdict:** Well-structured with 5 source modules, but has a **compilation error** that prevents clean `cargo check`. The `#[from]` attribute in the derive macro conflicts with the manual `From` impl, and `nvms_ffi::NvmsError` lacks `std::error::Error` impl needed by thiserror. **FAIL** — needs fix.
+
+### 2.4 pheno-config (`crates/pheno-config/`)
+
+| Check | Status |
+|-------|--------|
+| Cargo.toml package name | `pheno-config` |
+| Crate type | `lib` |
+| `src/lib.rs` | ✅ 442 lines — substantive |
+| Code structure | `PhenoConfig` top-level + `nvms`, `sandbox`, `perf`, `gpu` sub-modules + `DriverConfig` + builder overrides + figment-based `load()` |
+| Safety | `#![forbid(unsafe_code)]` — ✅ |
+| Tests | ✅ 9 test functions covering defaults, load, builder, serde roundtrip |
+| Dependencies | `serde`, `figment` (TOML + env) — ✅ |
+
+**Verdict:** Clean config crate with comprehensive defaults and layered loading. Compiles without issues. **PASS**.
+
+---
+
+## 3. tools/byteport Audit
+
+| Check | Status |
+|-------|--------|
+| Exists at `tools/byteport/` | ✅ |
+| Independent workspace (`Cargo.toml` with `resolver = "3"`) | ✅ |
+| Workspace members | `crates/byteport-transport`, `frontend/web/src-tauri` |
+| **byteport-transport** | ✅ 148 lines — `UploadTransport` trait, `S3UploadTransport`, unit tests |
+| **byteport integration crate** | ⚠️ External deps (`pheno-errors`, `pheno-tracing`) pointing to `../../../pheno-errors` — paths don't exist in this monorepo |
+| **frontend/web/src-tauri** | ✅ 27 lines — CLI entry point with `Desktop` subcommand |
+| **Not workspace member of root** | ✅ Correct — tools use own build systems |
+
+**Verdict:** BytePort is a substantial multi-crate project (3400+ files across docs, frontend, backend, crates). Not expected to build from within the monorepo (its own workspace). The `byteport-integration` crate has unresolved external dependencies but this doesn't affect root workspace. **PASS** (not a workspace member, documented as tooling).
+
+---
+
+## 4. Absorption Completeness (A-01 through A-08, A-10)
+
+| Ticket | Validation File | Status | Details |
+|--------|----------------|--------|---------|
+| **A-01** | `A-01_VALIDATION.md` | ✅ PASS | Monorepo shell: Cargo.toml, README, AGENTS.md, .gitignore, .gitleaks.toml, .editorconfig, .pre-commit-config.yaml, crates/, tools/, docs/ dirs, git init at `7ed716e` |
+| **A-02** | `A-02_VALIDATION.md` | ✅ PASS | nanovms core absorbed: Go source tree, build.rs, Cargo.toml (staticlib+rlib), workspace member, at `f22d4e0` |
+| **A-03** | `A-03_VALIDATION.md` | ✅ PASS | PhenoCompose absorbed: pheno-compose, nvms-ffi, pheno-config crates, CONSOLIDATION.md, paths updated, at `ac422b8` |
+| **A-04** | `A-04_VALIDATION.md` | ✅ PASS | BytePort absorbed into tools/byteport, 3400+ files, at `6f1881b` |
+| **A-05** | `A-05_VALIDATION.md` | ✅ PASS | Build.rs link chain: 3 modes, shim gated by cfg, graceful Go failure, CGo constraint fix, top-level Makefile, at `1fb03fb` |
+| **A-06** | `A-06_VALIDATION.md` | ✅ PASS | ADR files: 14 ADRs from nanovms + 2 new PhenoCompose ADRs, cross-references verified |
+| **A-07** | `A-07_VALIDATION.md` | ✅ PASS | CI workflows: quality-gate, release, audit (Trivy), scorecard (OSSF), deny.toml |
+| **A-08** | `A-08_VALIDATION.md` | ✅ PASS | Governance ported from phenotype-infra-ci-fix: 51 files copied, 28 new files committed at `34fb5a2` |
+| **A-10** | `A-10_VALIDATION.md` | ✅ PASS | L0-L2 violations fixed: integration tests, error types, health module, CONTRIBUTING.md, CODEOWNERS, tets workspace member |
+
+**All 9 absorption tickets validated as PASS.** ✅
+
+---
+
+## 5. Build Attempt Results
+
+`cargo check --workspace` was run on 2026-06-23.
+
+### Warnings
+1. 💡 **nvms-ffi**: `unexpected cfg condition name: nvms_core_lib` — add `check-cfg` to build.rs
+2. 💡 **nanovms-core**: Go toolchain not found (expected on Windows without Go) — graceful fallback
+3. 💡 **nvms-ffi**: Go build failed (expected) — falling back to Rust shim
+
+### Errors (Blocker)
+1. ❌ **E0119** — `pheno-compose/src/errors.rs:27-97`:
+   ```
+   conflicting implementations of trait `From<NvmsError>` for type `errors::Error`
+   ```
+   Root cause: The `#[derive(Error)]` macro's `#[from]` attribute on `Ffi(nvms_ffi::NvmsError)` at line 58 attempts to generate a `From<nvms_ffi::NvmsError>` impl, but a manual impl exists at line 97. Since `nvms_ffi::NvmsError` doesn't implement `std::error::Error`, the derive-generated impl conflicts with the manual one.
+
+2. ❌ **nvms_ffi::NvmsError missing StdError**:
+   ```
+   the method `as_dyn_error` exists for reference `&NvmsError`, but its trait bounds were not satisfied
+   ```
+   `nvms_ffi::NvmsError` at `crates/nvms-ffi/src/lib.rs:214` needs to implement `std::error::Error` for thiserror to work with `#[from]`.
+
+---
+
+## 6. Gap Analysis & Recommendations
+
+### Critical Issues (Blocking Compilation)
+
+| # | Issue | Location | Recommendation |
+|---|-------|----------|---------------|
+| 1 | **E0119**: Conflicting `From` impls | `pheno-compose/src/errors.rs:27-97` | Either: (a) Remove `#[from]` from derive and keep manual `From` impl at line 97, or (b) implement `std::error::Error` for `nvms_ffi::NvmsError` and remove manual `From` impl, keeping `#[from]` |
+| 2 | **nvms_ffi::NvmsError lacks StdError** | `nvms-ffi/src/lib.rs:214` | Add `#[derive(Error, Debug)]` from thiserror or manually implement `std::error::Error` + `Display` for `NvmsError` |
+
+### Minor Issues
+
+| # | Issue | Location | Recommendation |
+|---|-------|----------|---------------|
+| 3 | **unexpected_cfg warning** | `nvms-ffi/src/lib.rs:401` | Add `println!("cargo::rustc-check-cfg=cfg(nvms_core_lib)");` to `nvms-ffi/build.rs` |
+| 4 | **Vendor crate paths in byteport-integration** | `tools/byteport/crates/integration/Cargo.toml:13-15` | Paths to `pheno-errors`, `pheno-tracing`, `pheno-config` are outside the monorepo — either vendor those crates or update paths |
+
+### Observations
+
+- The **nanovms-core** Go build emits warnings on Windows (no Go toolchain), but these are expected and harmless — the Rust shim in nvms-ffi handles this gracefully.
+- The **tests/** integration tests reference all 3 Rust crates and would verify cross-crate linkage once compilation errors are fixed.
+- The **BytePort** `byteport-integration` crate's external path dependencies (`../../../pheno-errors`, `../../../pheno-tracing`) won't resolve within this monorepo — this crate cannot build in isolation here.
+- The **A-10** validation fixed scorecard violations comprehensively (tests, errors, health, CONTRIBUTING, CODEOWNERS).
+
+---
+
+## 7. Summary
+
+| Category | Count | Status |
+|----------|-------|--------|
+| Claimed crates exist with code | 4/4 | ✅ PASS |
+| tools/byteport exists | 1/1 | ✅ PASS |
+| Workspace members match Cargo.toml | 5/5 | ✅ PASS |
+| Absorption tickets (A-01 through A-08, A-10) | 9/9 | ✅ PASS |
+| Compilation succeeds (cargo check) | ❌ FAIL | 2 errors, 1 warning |
+| Cross-crate integration tests written | 183 lines | ✅ PRESENT |
+| Build blockers found | 2 | Need fix before CI green |
+
+**Bottom line:** The consolidation structure is sound — all 4 crates are correctly placed, all 9 absorption tickets pass validation, and the architecture (Go static lib + Rust FFI + high-level driver + config) is well-thought-out. However, there are **2 compilation errors** in `pheno-compose/src/errors.rs` caused by a conflict between thiserror's `#[from]` derive and a manual `From` impl. These need to be resolved before `cargo check --workspace` passes.

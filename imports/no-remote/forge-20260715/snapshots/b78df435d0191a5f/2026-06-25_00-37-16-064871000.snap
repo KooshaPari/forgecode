@@ -1,0 +1,24 @@
+import subprocess
+
+token = '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'
+
+pushes = [
+    (r'C:\Users\koosh\phenotype-infra', 'master', 'phenotype-infra'),
+    (r'C:\Users\koosh\phenotype-infra', 'kvd/oauth2-5x-fixes', 'phenotype-infra'),
+    (r'C:\Users\koosh\agileplus', 'wip/preserve-agileplus-brand-rename-20260605', 'agileplus'),
+    (r'C:\Users\koosh\phenotype-registry-pr172-check', 'feat/p6-thegent-closure-2026-06-21', 'phenotype-registry'),
+]
+
+for repo_path, branch, repo_name in pushes:
+    url = f'https://KooshaPari:{token}@github.com/KooshaPari/{repo_name}.git'
+    print(f'=== {repo_name} → {branch} ===')
+    r = subprocess.run(
+        ['git', '-C', repo_path, 'push', url, f'HEAD:{branch}'],
+        capture_output=True, text=True, timeout=120
+    )
+    out = r.stderr if r.stderr else r.stdout
+    print(out[-400:] if len(out) > 400 else out)
+    print(f'RC: {r.returncode}')
+    print()
+
+print('DONE')

@@ -1,0 +1,355 @@
+model_context_window = 512000
+model = "Main"
+model_provider="omniroute"
+model_reasoning_effort = "medium"
+service_tier = "default"
+
+[model_providers.omniroute]
+name = "OmniRoute"
+model = "Main"
+base_url = "http://100.96.135.160:20128/v1"
+experimental_bearer_token = "sk-cp-gPIgSPD1rxNMDQqvb4nYNj0HE4HfElst4cbyJQby9eMhod_1FU5OVTh1KisjFDPoPSngE-R_WwHAhA4ehgzqoIKhaXfipS-1CmEjUqCTPk2brR2Fq6PH0OA"
+wire_api = "responses"
+
+[model_providers.minimax]
+name = "MiniMax"
+base_url = "https://api.minimax.io/v1"
+experimental_bearer_token = "sk-cp-gPIgSPD1rxNMDQqvb4nYNj0HE4HfElst4cbyJQby9eMhod_1FU5OVTh1KisjFDPoPSngE-R_WwHAhA4ehgzqoIKhaXfipS-1CmEjUqCTPk2brR2Fq6PH0OA"
+wire_api = "responses"
+
+[projects.'c:\users\koosh']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-urban']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-trade']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-festival']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-seafaring']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-plague']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-oracle-tighten']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\configra-configra-ci-green']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cxa']
+trust_level = "trusted"
+
+[projects.'e:\dev\tracera']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-famine']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\heliosbench-helios-docs']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-client-tuple']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-wire-plague']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-plague-getter']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\quillr-quillr-docs']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-famine-fn']
+trust_level = "trusted"
+
+[projects.'e:\lanes\byteport']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-unrest']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-seafaring2']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-trade-conn']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\policystack-ps-deny55']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\melosviz-melo-docs54']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\policystack-ps-yaml54']
+trust_level = "trusted"
+
+[projects.'e:\dev\agileplus']
+trust_level = "trusted"
+
+[projects.'e:\gfx_pipeline']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-batch2']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\policystack-ps-deny2']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-fix977']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-cx-a']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-cx-b']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-cx-c']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-cx-d']
+trust_level = "trusted"
+
+[projects.'e:\dev\tokn-worker']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-combine-cd']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-cx-f']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-cx-e']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-cx-g']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-998b']
+trust_level = "trusted"
+
+[projects.'e:\lanes\phenotype-landing']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-trade-oracle2']
+trust_level = "trusted"
+
+[projects.'e:\lanes']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\eventra-eve-docs']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\tasken-tasken-deny']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-cx-h']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-cx-i']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-cx-j']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-cx-k']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-cx-l']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis-cx-cx-m']
+trust_level = "trusted"
+
+[projects.'e:\dev']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\configra-config-cx']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\tasken-tasken-cx']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\appdata\local\temp\forge-smoke']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\eventra-eve-spark']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\benchora-bench-spark']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\policystack-ps-spark']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\tasken-tasken-cx2']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\configra-config-cx2']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\eventra-eve-spark2']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\policystack-ps-spark2']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\benchora-bench-spark2']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\configra-cfg85-fix']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\policystack-ps80-fix']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\work\ps80']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\work\cfg85']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\helioslab-absorb-helios']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\eidolon-eidolon-fix']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\playcua-playcua-mod']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\nanovms-nanovms-cx']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\eidolon-eidolon-mobile']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\dinoforge']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\nanovms-nanovms-green']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\civis']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\nanovms-nanovms-green2']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\substrate-substrate-finish']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\byteport-byteport-sec']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\nanovms-nanovms-diag']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\nanovms-nanovms-kdesk']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\phenodag-phenodag-ingest-20260702-175333']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\forgecode-forgecode-win-compat-audit-20260702-175532']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\omniroute-omniroute-auto-creds-fix']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\bifrost-bifrost-fallback-smoke']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\substrate-substrate-ci-zig']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\omniroute-omniroute-auto-fix']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\benchora-bench-codex1']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\omniroute-omniroute-codex1']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\byteport-byteport-codex1']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\byteport-byteport-codex2']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\benchora-bench-codex2']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\omniroute-omniroute-codex2']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\byteport-byteport-codex3']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\phenodag-phenodag-codex1']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\bifrost-bifrost-codex1']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\benchora-bench-small']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\substrate-substrate-supervisor']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\substrate-substrate-codexargv']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\substrate-substrate-zig-regress']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\substrate-substrate-appstate-fix']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\substrate-substrate-clippy-fix']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\substrate-substrate-fmt-fix']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\substrate-substrate-tier']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\substrate-substrate-p50-fix']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\substrate-substrate-fmt-fix2']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\dev\agileplus']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\substrate-a2a-version']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\substrate-audit-gaps']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\substrate-a2a-kilo']
+trust_level = "trusted"
+
+[projects.'c:\users\koosh\.claude\lanes\substrate-audit-kilo']
+trust_level = "trusted"
+
+[tui.model_availability_nux]
+"gpt-5.5" = 4
+
+[notice]
+hide_rate_limit_model_nudge = true
+

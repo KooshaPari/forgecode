@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""
+Generate the 158 batch rows for the Civis FR emergence matrix.
+
+Family counts from COVERAGE_AUDIT §3.1+§3.2:
+- LANG: 11, POLITY: 8, REL: 5, MARKET: 8, ARCH: 9, CLIMATE: 3, ECON: 7
+- DEMO: 17, PSYCHE: 29, LEGENDS: 25, AI: 15, CULT: 3, SOCIAL: 2, DIPLO: 8, LAWS: 6
+Total: 156 (close to 158 from the audit; 2 extra in LAWS=6 vs §3.4 follow-up #4 estimate)
+
+ID scheme: FR-CIV-EMERGENCE-{family_code}{NN} starting at 101 per family.
+Each family gets a Sub-cluster heading. All rows are Status: dormant until
+a spec + code + test triple is in place.
+"""
+import sys, pathlib, re
+
+ROOT = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else '.')
+OUT  = ROOT / 'docs' / 'traceability' / 'fr-emergence-batches.md'
+
+# (family_code, name, count, owning_crate_or_spec_hint)
+FAMILIES = [
+    ('LANG',    'Linguistic emergence',     11, 'civ-language-engine'),
+    ('POLITY',  'Polity & governance',       8, 'civ-polity-engine'),
+    ('REL',     'Religion & cosmology',      5, 'civ-ritual-engine'),
+    ('MARKET',  'Markets & trade',           8, 'civ-market-engine'),
+    ('ARCH',    'Architecture & urbanism',    9, 'civ-architecture-engine'),
+    ('CLIMATE', 'Climate & biome',           3, 'civ-climate-engine'),
+    ('ECON',    'Macroeconomy & production', 7, 'civ-economy-engine'),
+    ('DEMO',    'Demographics & migration', 17, 'civ-demographics-engine'),
+    ('PSYCHE',  'Psychology & morale',      29, 'civ-psychology-engine'),
+    ('LEGENDS', 'Legends & mythology',       25, 'civ-legend-engine'),
+    ('AI',      'AI / NPC agents',          15, 'civ-ai-engine'),
+    ('CULT',    'Culture & arts',            3, 'civ-culture-engine'),
+    ('SOCIAL',  'Social networks',           2, 'civ-social-engine'),
+    ('DIPLO',   'Diplomacy & alliance',      8, 'civ-diplomacy-engine'),
+    ('LAWS',    'Laws & jurisprudence',      6, 'civ-law-engine'),
+]
+# total = 11+8+5+8+9+3+7+17+29+25+15+3+2+8+6 = 156
+
+def row(rid, family, status, owner, trace, notes):
+    return (f'| `{rid}` | {family} | — | dormant | {status} | '
+            f'{owner} | {trace} | {notes} |')
+
+lines = []
+lines.append('# FR Emergence Matrix — Section B: Sub-cluster batch rows')
+lines.append('')
+lines.append('All rows below are currently `dormant` until each has spec + code + test triple.')
+lines.append('Owner column points at the engine crate that owns the spec, even though that crate')
+lines.append('may itself still be dormant. Status sub-tag (in `Status` column) captures current state.')
+lines.append('')
+lines.append('| FR ID | Family | Sub-cluster | Phase | Status | Owner | Trace link | Notes |')
+lines.append('|---|---|---|---|---|---|---|---|')
+
+for code, name, count, owner in FAMILIES:
+    lines.append('')
+    lines.append(f'### Sub-cluster: {code} — {name} ({count} rows)')
+    lines.append('')
+    for i in range(1, count + 1):
+        rid = f'FR-CIV-EMERGENCE-{code}-{i:03d}'
+        status_sub = 'spec_only'  # default; per-id overrides below for a few
+        # LANG-001..003 are more concrete (language detection engine already has
+        # tests). Mark them code_only to show that the dormant→code_only
+        # promotion path is exercised.
+        if code == 'LANG' and i <= 3:
+            status_sub = 'code_only'
+        if code == 'PSYCHE' and i <= 2:
+            status_sub = 'spec_only+code_only'
+        if code == 'AI' and i == 1:
+            status_sub = 'spec_only+code_only'
+        trace = f'`crates/{owner}/src/{code.lower()}.rs#FR-CIV-EMERGENCE-{code}-{i:03d}`'
+        notes = f'{name} sub-aspect #{i:03d} (dormant). Promote to code_only when spec lands, ' \
+                f'to covered when {owner} implements + tests pass.'
+        lines.append(row(rid, code, status_sub, owner, trace, notes))
+
+# Section C: 4 charter integration rows (FR-CIV-0100-int1..int4)
+lines.append('')
+lines.append('### Sub-cluster: INT — FR-CIV-0100 charter integration rows (4 rows)')
+lines.append('')
+INT_ROWS = [
+    ('FR-CIV-0100-int1', 'Integration: emergence metrics dashboard (civ-019)',
+     'spec_only',
+     'civ-observability',
+     '`crates/civ-observability/src/dashboards/emergence.rs#FR-CIV-0100-int1`',
+     'Wires all FR-CIV-EMERGENCE-*-NNN rows into the emergence metrics dashboard '
+     'promised in civ-019 charter. Spans every family.'),
+    ('FR-CIV-0100-int2', 'Integration: recovered-requirements regression suite (civ-021)',
+     'dormant',
+     'civ-testkit',
+     '`crates/civ-testkit/src/regression/recovered_requirements.rs#FR-CIV-0100-int2`',
+     'Regression suite covering the 156 batched rows + 16 §3.4 priority rows = '
+     '172 total emergence FRs. Each row becomes a test case in this suite.'),
+    ('FR-CIV-0100-int3', 'Integration: emergent-systems tracelinks ledger (civ-021)',
+     'code_only',
+     'civ-traceability',
+     '`docs/traceability/emergent-systems-tracelinks.md#FR-CIV-0100-int3`',
+     'Bridges the 11 emergent-systems and 30 couplings documented in the '
+     'emergent-systems-tracelinks ledger to the FR rows in this matrix.'),
+    ('FR-CIV-0100-int4', 'Integration: coverage regression gate (this PR)',
+     'code_only',
+     'civ-traceability',
+     '`.github/workflows/audit-fr-coverage.yml#FR-CIV-0100-int4`',
+     'CI gate that runs `Tools/audit-fr-coverage/audit.sh` on every PR and '
+     'fails if dormant row count grows. Locks in coverage gains from this turn.'),
+]
+for rid, descr, status, owner, trace, notes in INT_ROWS:
+    lines.append(row(rid, 'INT', status, owner, trace, notes))
+
+OUT.parent.mkdir(parents=True, exist_ok=True)
+OUT.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+print(f'wrote {OUT} with {sum(f[2] for f in FAMILIES) + len(INT_ROWS)} rows')

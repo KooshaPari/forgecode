@@ -1,0 +1,124 @@
+# Phase 2: Worktree resolution
+            git commit -m "wip: snapshot of $path before consolidation $(Get-Date -Format o)" 2>&null | Out-Null
+#   - Skip if .git pointer is broken (dir missing) — record for prune
+#   - If alive: capture uncommitted work as a WIP commit on a new preservation branch
+#   - Remove the worktree link
+# Phase 3: Convert stashes to branches (NOT drop)
+# Phase 4: Prune ghost worktrees
+# SAFETY: Every action reversible; bundle is being written in parallel.
+
+$ErrorActionPreference = "Continue"
+$Repo = "C:\Users\koosh\Dev\Civis"
+Set-Location $Repo
+
+$TS = Get-Date -Format "yyyyMMdd_HHmmss"
+$LogDir = "C:\Users\koosh\_civis_work_$TS"
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+$Log = "$LogDir\phase2.log"
+"=== Phase 2 START $TS ===" | Out-File $Log
+
+# 1. List all worktrees via porcelain, parse
+$porcelain = git worktree list --porcelain
+$worktrees = @()
+$current = $null
+foreach ($line in $porcelain) {
+    if ($line -match '^worktree (.+)$') {
+        if ($current) { $worktrees += $current }
+        $current = @{ Path = $matches[1]; HEAD = ''; Branch = ''; Locked = '' }
+    } elseif ($current -and $line -match '^HEAD (.+)$') {
+        $current.HEAD = $matches[1]
+    } elseif ($current -and $line -match '^branch (.+)$') {
+        $current.Branch = $matches[1]
+    } elseif ($current -and $line -match '^locked') {
+        $current.Locked = 'yes'
+    } elseif ($current -and $line -match '^prunable') {
+        $current.Prunable = 'yes'
+    }
+    }
+}
+if ($current) { $worktrees += $current }
+"Total worktrees: $($worktrees.Count)" | Out-File $Log -Append
+
+# 2. Classify each
+$alive = @()
+$ghosts = @()
+foreach ($wt in $worktrees) {
+    if ($wt.Path -eq $Repo) { continue }  # skip main
+    if (Test-Path $wt.Path) {
+        $alive += $wt
+        "ALIVE: $($wt.Path) | $($wt.Branch) | $($wt.HEAD.Substring(0,8))" | Out-File $Log -Append
+    } else {
+        $ghosts += $wt
+        "GHOST: $($wt.Path) | $($wt.Branch) | $($wt.HEAD)" | Out-File $Log -Append
+    }
+}
+"Alive: $($alive.Count)  Ghosts: $($ghosts.Count)" | Out-File $Log -Append
+
+# 3. Save classification
+$worktrees | Export-Csv "$LogDir\worktrees_classified.csv" -NoTypeInformation
+$alive | Export-Csv "$LogDir\worktrees_alive.csv" -NoTypeInformation
+$ghosts | Export-Csv "$LogDir\worktrees_ghosts.csv" -NoTypeInformation
+
+# 4. For each ALIVE worktree, capture uncommitted work as preservation branch
+#    Strategy:
+#      a) cd into the worktree
+#      b) git status -s  -> count dirty
+#      c) If dirty: commit to a new branch wip/wt-<sanitized>-<date>
+#      d) If clean: just remove
+#      e) git worktree remove --force
+$preservedBranches = @()
+foreach ($wt in $alive) {
+    $path = $wt.Path
+    $branch = $wt.Branch
+    $sanitized = ($path -replace '[/\\: ]', '_') -replace '_+', '_'
+    $wipBranch = "wip/wt-$sanitized-$TS"
+    $wipBranch = $wipBranch.Substring(0, [Math]::Min($wipBranch.Length, 200))  # git branch name limit safety
+    $entry = @{
+        Path = $path
+        OriginalBranch = $branch
+        WIPBranch = $wipBranch
+        DirtyCount = 0
+        Action = ''
+    }
+    try {
+        Set-Location $path
+        $status = git status --porcelain 2>$null
+        $status = git status --porcelain 2>&null
+        if ($entry.DirtyCount -gt 0) {
+            "  Dirty: $path ($($entry.DirtyCount) files) - creating WIP branch" | Out-File $Log -Append
+            # Snapshot uncommitted work
+            git add -A 2>$null
+            git add -A 2>&null
+            # Save full diff to file (in case we need to recover more)
+            git diff HEAD~1..HEAD --stat 2>$null | Out-File "$LogDir\$sanitized-diff.txt"
+            git diff HEAD~1..HEAD --stat 2>&null | Out-File "$LogDir\$sanitized-diff.txt"
+            git branch $wipBranch HEAD 2>$null
+            git branch $wipBranch HEAD 2>&null
+        } else {
+            $entry.Action = 'clean-removed'
+        }
+    } catch {
+        $entry.Action = "error: $_"
+    }
+    $preservedBranches += $entry
+}
+$preservedBranches | Export-Csv "$LogDir\wip_branches_created.csv" -NoTypeInformation
+
+Set-Location $Repo
+
+# 5. Remove all worktrees
+foreach ($wt in $alive) {
+    "Removing worktree: $($wt.Path)" | Out-File $Log -Append
+    git worktree remove --force $wt.Path 2>&1 | Out-File $Log -Append
+}
+
+# 6. Prune (cleans ghost worktree entries from .git/worktrees/)
+"Pruning worktree references..." | Out-File $Log -Append
+git worktree prune --verbose 2>&1 | Out-File $Log -Append
+
+# 7. Final worktree list (should just be the main repo)
+"=== After phase 2 ===" | Out-File $Log -Append
+git worktree list 2>&1 | Out-File $Log -Append
+
+"=== Phase 2 END ===" | Out-File $Log -Append
+Get-Content $Log

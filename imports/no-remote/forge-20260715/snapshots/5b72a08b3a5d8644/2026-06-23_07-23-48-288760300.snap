@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""Search for nanovms / PhenoCompose / byteport on GitHub + GitHub org repos."""
+import json, os, subprocess, sys
+
+repos_to_find = ["nanovms", "PhenoCompose", "byteport", "NanoVMS", "phenovms", "nano-vms"]
+# Also fetch all repos to check
+result = subprocess.run(
+    ["gh", "api", "user/repos?per_page=100&sort=updated&affiliation=owner"],
+    capture_output=True, env={**os.environ, "NO_COLOR": "1", "GH_TOKEN": os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))},
+)
+data = json.loads(result.stdout.decode("utf-8", errors="replace"))
+print(f"Total repos scanned: {len(data)}")
+# Look for any matching
+for r in data:
+    name = r["name"]
+    desc = (r.get("description") or "").lower()
+    if any(x.lower() in name.lower() or x.lower() in desc for x in ["nano", "compose", "byteport", "vms"]):
+        print(f"  HIT: {name:40s} | {r.get('description','') or '(no desc)'} | arch={r.get('archived', False)} priv={r.get('private', False)}")
+# Org-level repos
+print("\n--- Org repos ---")
+for org in ["kooshapari", "phenotypeorg"]:
+    r2 = subprocess.run(
+        ["gh", "api", f"orgs/{org}/repos?per_page=100&sort=updated"],
+        capture_output=True, env={**os.environ, "NO_COLOR": "1", "GH_TOKEN": os.environ.get("GITHUB_TOKEN", os.environ.get("GH_TOKEN", ""))},
+    )
+    if r2.returncode != 0:
+        print(f"  {org}: error {r2.stderr[:100]}")
+        continue
+    try:
+        odata = json.loads(r2.stdout.decode("utf-8", errors="replace"))
+    except json.JSONDecodeError:
+        print(f"  {org}: invalid json")
+        continue
+    print(f"  {org}: {len(odata)} repos")
+    for r in odata:
+        name = r["name"]
+        desc = (r.get("description") or "").lower()
+        if any(x.lower() in name.lower() or x.lower() in desc for x in ["nano", "compose", "byteport", "vms"]):
+            print(f"    HIT: {name:40s} | {r.get('description','') or '(no desc)'} | arch={r.get('archived', False)} priv={r.get('private', False)}")

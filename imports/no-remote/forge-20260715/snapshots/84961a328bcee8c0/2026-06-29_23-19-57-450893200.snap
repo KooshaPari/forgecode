@@ -1,0 +1,21 @@
+## Summary
+Harmonize `.editorconfig` with the phenotype-registry standard, adding explicit `[*.rs]` and `[*.py]` section overrides.
+
+## Context
+This is DAG unit A6 under epic_A (Hygiene garden & branch slim). The PhenoCompose `.editorconfig` was out of sync with the canonical template maintained in `phenotype-registry`. The registry template defines per-language `indent_size` overrides for Rust (4) and Python (4) as separate sections, while PhenoCompose had a combined `[*.{rs,py}]` glob. Adding the individual sections ensures that tooling which only matches single-ext globs still picks up the correct indent.
+
+## Changes
+- Added `[*.rs]` section with `indent_size = 4`
+- Added `[*.py]` section with `indent_size = 4`
+- Preserved existing `[*.{rs,py}]` combined glob (no deletions)
+- Core properties (`indent_style`, `end_of_line`, `charset`, `trim_trailing_whitespace`, `insert_final_newline`) already matched the standard
+
+## Testing
+Verify the file parses correctly:
+```bash
+cat .editorconfig
+```
+
+## Links
+- Epic: epic_A — Hygiene garden & branch slim
+- Standard template: phenotype-registry/.editorconfig

@@ -1,0 +1,116 @@
+"""Generate 30-line markdown summary of audit results."""
+import json
+from pathlib import Path
+
+with open(r"C:\Users\koosh\_infra_recon.json", encoding="utf-8") as f:
+    data = json.load(f)
+
+# Header
+lines = []
+lines.append("# Compute/Infra Repo Audit Summary")
+lines.append("")
+lines.append(f"_Generated: 2026-06-23 | Repos audited: {len(data)}_")
+lines.append("")
+lines.append("| Repo | HEAD | Branch | LclBr | Dirty | Stash | WT | Ahead | LastCommit | Lang | Pkg |")
+lines.append("|------|------|--------|------:|------:|------:|---:|------:|------------|------|-----|")
+
+for r in data:
+    name = r["name"]
+    head = (r.get("head_short") or "—")[:8]
+    branch = (r.get("current_branch") or "—")[:20]
+    n_branches = r.get("local_branches_count", 0)
+    dirty = r.get("dirty_count", 0)
+    stash = r.get("stashes_count", 0)
+    wt = r.get("worktrees_count", 0)
+    ahead_list = r.get("branches_ahead_of_origin") or []
+    ahead = len(ahead_list)
+    if ahead_list:
+        ahead_detail = "; ".join(
+            f"{b['branch']} +{b['ahead']}/-{b.get('behind', 0)}"
+            for b in ahead_list
+        )
+    else:
+        ahead_detail = "—"
+    lct = r.get("last_commit_ts")
+    if lct:
+        lct_short = lct[:10]
+    else:
+        lct_short = "—"
+    lcs = r.get("last_commit_subject") or "—"
+    lcs = lcs[:40] + ("…" if lcs and len(lcs) > 40 else "")
+    lang = r.get("primary_language") or "—"
+    pkgs = r.get("packages") or {}
+    pkg_parts = [k.replace(".toml", "").replace(".json", "").replace(".mod", "")
+                 for k, v in pkgs.items() if v]
+    pkg_str = "+".join(pkg_parts) if pkg_parts else "—"
+
+    lines.append(
+        f"| {name} | `{head}` | {branch} | {n_branches} | {dirty} | "
+        f"{stash} | {wt} | {ahead} | {lct_short} | {lang} | {pkg_str} |"
+    )
+
+lines.append("")
+lines.append("## Branch / Push / Protection")
+lines.append("")
+lines.append("| Repo | Default | Upstream | LastPush (cur) | LastFetch | Protection |")
+lines.append("|------|---------|----------|----------------|-----------|------------|")
+
+for r in data:
+    name = r["name"]
+    db = r.get("default_branch") or "—"
+    up = r.get("upstream_branch") or "—"
+    lp = r.get("last_push") or "—"
+    if lp and len(lp) > 10:
+        lp = lp[:10]
+    lf = r.get("last_fetch") or "—"
+    if lf and len(lf) > 10:
+        lf = lf[:10]
+    bp = r.get("branch_protection_status") or {}
+    if isinstance(bp, dict):
+        if bp.get("ok"):
+            rsc = bp.get("required_status_checks") or []
+            reviews = bp.get("required_pull_request_reviews") or 0
+            admins = bp.get("enforce_admins")
+            bp_str = f"✓ checks={len(rsc) if isinstance(rsc, list) else rsc} rev={reviews} admins={admins}"
+        elif bp.get("configured") is False:
+            bp_str = "— none"
+        else:
+            err = (bp.get("error") or "")[:30]
+            bp_str = f"err: {err}"
+    else:
+        bp_str = "—"
+    lines.append(f"| {name} | {db} | {up} | {lp} | {lf} | {bp_str} |")
+
+lines.append("")
+lines.append("## Notes")
+lines.append("")
+notes = []
+for r in data:
+    name = r["name"]
+    if not r.get("is_git"):
+        notes.append(f"- **{name}**: not a git repo (no `.git` directory)")
+    elif r.get("dirty_count", 0) > 0:
+        notes.append(f"- **{name}**: {r['dirty_count']} dirty files")
+    if r.get("stashes_count", 0) > 0:
+        notes.append(f"- **{name}**: {r['stashes_count']} stash(es)")
+    if r.get("worktrees_count", 0) > 1:
+        notes.append(f"- **{name}**: {r['worktrees_count']} worktrees")
+    bps = r.get("branch_protection_status") or {}
+    if isinstance(bps, dict) and bps.get("ok") and (bps.get("required_status_checks") or []):
+        rsc = bps["required_status_checks"]
+        if isinstance(rsc, list) and rsc:
+            notes.append(f"- **{name}**: branch protection requires `{', '.join(rsc[:3])}`{'…' if len(rsc) > 3 else ''}")
+
+if not notes:
+    notes.append("- All repos clean (no dirty files, stashes, or extra worktrees)")
+
+lines.extend(notes)
+lines.append("")
+lines.append(f"_Full JSON: `C:\\Users\\koosh\\_infra_recon.json`_")
+
+# Trim to 30 lines: just the tables + a few notes
+out = "\n".join(lines)
+print(out)
+print(f"\n--- LINE COUNT: {len(lines)} ---", flush=True)
+
+Path(r"C:\Users\koosh\_infra_recon_summary.md").write_text(out, encoding="utf-8")

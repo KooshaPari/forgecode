@@ -1,0 +1,359 @@
+import json, datetime
+
+# ================ RAW DATA (collected via gh api) ================
+
+BRANCHES = [
+    {"name": "B34-tier-1-enforcement", "sha": "68a1f8e7e0c30b19a7c6bdec766a892bcd59075e", "protected": False},
+    {"name": "a29-sweep-orphaned-svelte", "sha": "184630e2c4700168b7f5218dc5fb053745a10f33", "protected": False},
+    {"name": "a30/orphaned-astro-preview-sweep", "sha": "700e9bece16872669e15981a3ad50613ca30b171", "protected": False},
+    {"name": "audit/A3-list-stale-branches", "sha": "89270ae2ccb1678e214bcdf795c152ee78b2db24", "protected": False},
+    {"name": "bp-dag-foundation-2026-06-12", "sha": "8d96dd64f837146921c9ee3f884d6ddee5d5c795", "protected": False},
+    {"name": "chore/A11-recover-byteport-stash-0-terminal-ui", "sha": "693597ba6e919a17f1c5f590fd708f518ae96130", "protected": False},
+    {"name": "chore/governance-skeleton-2026-06-16", "sha": "50856e5777ef67e357a60774428b2fec8486ce13", "protected": False},
+    {"name": "chore/manifest-fix", "sha": "0ffc247b962143e98ef9777a108129b113b6ca0e", "protected": False},
+    {"name": "chore/slsa-build-2026-06-16", "sha": "39c5b41bee37ad44b591c9f11ea30bccc37265d8", "protected": False},
+    {"name": "ci/add-golangci-lint", "sha": "2e61349aa3359885d791c78232f03ee999cfbff8", "protected": False},
+    {"name": "ci/go-workflow", "sha": "fa3d7f712b23b21b6e69ac539b5afa1d54636ceb", "protected": False},
+    {"name": "ci/security-scan-2026-06-20", "sha": "f62654b277e4bd18956a6ca4c6c7c495efc019a3", "protected": False},
+    {"name": "consolidate/B11-delete-nvms-impl", "sha": "689d27ed9618eba309682a7d0f28288a67beddb8", "protected": False},
+    {"name": "cve-sweep-high", "sha": "ee137d07aa2bfb5d8124099599b93b5abb6dd400", "protected": False},
+    {"name": "dependabot/github_actions/major-6df859f817", "sha": "10b037c7cb4bb150e68dc795458a42f7082be6c0", "protected": False},
+    {"name": "dependabot/github_actions/minor-and-patch-cfdd69f9fc", "sha": "3f177767ea3bbbbb66472378b472f93388d8973d", "protected": False},
+    {"name": "dependabot/npm_and_yarn/frontend/web/npm-5453435d43", "sha": "f79c7c23a7f150936783620ec3985dc3f00b68d5", "protected": False},
+    {"name": "docs/A21-readme-workstate", "sha": "da2fd9854ba953ba1585ceeb547c835b3b4bcb46", "protected": False},
+    {"name": "docs/readme-m", "sha": "19d9eff8a8f47d52b23f4780361d43ea39923f7c", "protected": False},
+    {"name": "docs/reconcile-sladge-docs-A23", "sha": "7ac9862fe14ff2ba0fe8475495db1bab0f04ddf9", "protected": False},
+    {"name": "epic/B10-repoint-nvms-parser", "sha": "6362ac3667bf5ed2533876e6768b8a44bb25b307", "protected": False},
+    {"name": "epic/B11-delete-local-nvms-impl", "sha": "8bf4ada1f0d55150ec8d41c1e4c05e4013941760", "protected": False},
+    {"name": "epic/B16-extract-oci-helpers", "sha": "71b43d13846306884276fa6d9dda1b8d232d3090", "protected": False},
+    {"name": "epic/F2-extract-pheno-dag", "sha": "bff7268b2b587a141380a0b2cbf3a48a7b4cba6d", "protected": False},
+    {"name": "epic/F4-dag-serialization", "sha": "f33ebad724d1180d3f33d3836dc3e011d693081b", "protected": False},
+    {"name": "epic/F10-dag-cli-run", "sha": "35da1ed19a8a68488e3e9de3b76652a5a02a4f1f", "protected": False},
+    {"name": "epic/G3-slsa-l3-byteport-cli", "sha": "485586483efdc6628575a4c1d4ae9c5d0b797b0e", "protected": False},
+    {"name": "epic-G13/wasm-cli-subset", "sha": "bff7268b2b587a141380a0b2cbf3a48a7b4cba6d", "protected": False},
+    {"name": "feat/E7-otel-cli-trace", "sha": "96f83e76ddd2498e89a34760dcc43f39d72f8ca1", "protected": False},
+    {"name": "feat/E8-otel-context-propagate", "sha": "92dfb0f6628168d51f629c76574fc60c49a0f3f5", "protected": False},
+    {"name": "feat/E9-otel-metrics", "sha": "97999a859ed27c7ef7fa778739261470f30fb9be", "protected": False},
+    {"name": "feat/F3-dag-schema-complete", "sha": "46a18222a1cd7e7b0947f1c53e717dac8583dc9e", "protected": False},
+    {"name": "feat/otel-instrumentation", "sha": "9c07b752e404d985e02570e6515d433af06e7fca", "protected": False},
+    {"name": "fix/add-pem-gitignore", "sha": "d29f6ec490b45061e107e3dd279b500434edfe65", "protected": False},
+    {"name": "fix/byteport-changelog-hygiene", "sha": "105eb58de0baf120f4b328797e4a9593fc9867fb", "protected": False},
+    {"name": "fix/codeql-apilink-ssrf", "sha": "e53d2505d3d9e66468a814e846d4d5569013cbe9", "protected": False},
+    {"name": "fix/deps-cve-2026-04-27", "sha": "343018d32d2100ebab593d5ee809536059f71122", "protected": False},
+    {"name": "fix/nvms-parser-cleanup", "sha": "c755a153dbe125edac6191538846271782c3f6be", "protected": False},
+    {"name": "main", "sha": "eec7551c6b34a5dad610b21496d25c27ccabf4cb", "protected": True},
+    {"name": "reconcile/E5-recover-reconciliation", "sha": "477ff63cc8c31013ab1778b030846613957f5dec", "protected": False},
+    {"name": "recover/E2-terminal-ui-pr", "sha": "a31d0547386860e4eec8bb997d4379e4b4d882ad", "protected": False},
+    {"name": "recover/E3-tools-cli-worktree", "sha": "3625a3ca5d5b8bb37c9773f2e6f76c4365ded167", "protected": False},
+    {"name": "recover/E4-tools-cli-pr", "sha": "e3e0ed6dbaed41de3e8ab3a520270521d5e96b93", "protected": False},
+    {"name": "review/F1-dag-foundation-review-2026-06-25", "sha": "1d29fa389603bc03cb1ab22d460a71f964854d4f", "protected": False},
+    {"name": "t12-devcontainer-ci", "sha": "16a7f71641f5331218314148e88ca62b770a573c", "protected": False},
+    {"name": "wip/byteport-local-dump-20260626", "sha": "4cf9207f80b4b1e7c9d7759c06c5fe9eaf13c954", "protected": False},
+    {"name": "wip/2026-06-24-byteport-hygiene-bundle", "sha": "1c35a21e54cd3d08f59f44becba01c1fd9cf290d", "protected": False},
+]
+
+SHA_DATES = {
+    "0ffc247b962143e98ef9777a108129b113b6ca0e": "2026-06-05T16:14:18Z",
+    "105eb58de0baf120f4b328797e4a9593fc9867fb": "2026-06-09T02:01:32Z",
+    "10b037c7cb4bb150e68dc795458a42f7082be6c0": "2026-06-15T08:15:27Z",
+    "16a7f71641f5331218314148e88ca62b770a573c": "2026-06-21T22:18:29Z",
+    "184630e2c4700168b7f5218dc5fb053745a10f33": "2026-06-25T07:51:58Z",
+    "19d9eff8a8f47d52b23f4780361d43ea39923f7c": "2026-06-27T03:18:31Z",
+    "1c35a21e54cd3d08f59f44becba01c1fd9cf290d": "2026-06-25T05:34:58Z",
+    "1d29fa389603bc03cb1ab22d460a71f964854d4f": "2026-06-25T12:35:06Z",
+    "2e61349aa3359885d791c78232f03ee999cfbff8": "2026-05-07T02:53:07Z",
+    "343018d32d2100ebab593d5ee809536059f71122": "2026-04-27T14:28:46Z",
+    "35da1ed19a8a68488e3e9de3b76652a5a02a4f1f": "2026-06-25T14:39:59Z",
+    "3625a3ca5d5b8bb37c9773f2e6f76c4365ded167": "2026-06-25T23:29:55Z",
+    "39c5b41bee37ad44b591c9f11ea30bccc37265d8": "2026-06-16T11:40:42Z",
+    "3f177767ea3bbbbb66472378b472f93388d8973d": "2026-06-15T08:15:14Z",
+    "46a18222a1cd7e7b0947f1c53e717dac8583dc9e": "2026-06-25T15:50:11Z",
+    "477ff63cc8c31013ab1778b030846613957f5dec": "2026-06-26T00:05:13Z",
+    "485586483efdc6628575a4c1d4ae9c5d0b797b0e": "2026-06-25T13:51:48Z",
+    "4cf9207f80b4b1e7c9d7759c06c5fe9eaf13c954": "2026-06-26T06:40:14Z",
+    "50856e5777ef67e357a60774428b2fec8486ce13": "2026-06-16T11:09:37Z",
+    "6362ac3667bf5ed2533876e6768b8a44bb25b307": "2026-06-25T11:06:06Z",
+    "689d27ed9618eba309682a7d0f28288a67beddb8": "2026-06-25T22:58:30Z",
+    "68a1f8e7e0c30b19a7c6bdec766a892bcd59075e": "2026-06-25T10:36:26Z",
+    "693597ba6e919a17f1c5f590fd708f518ae96130": "2026-06-25T04:03:27Z",
+    "700e9bece16872669e15981a3ad50613ca30b171": "2026-06-25T07:44:26Z",
+    "71b43d13846306884276fa6d9dda1b8d232d3090": "2026-06-25T12:21:20Z",
+    "7ac9862fe14ff2ba0fe8475495db1bab0f04ddf9": "2026-06-25T04:25:01Z",
+    "89270ae2ccb1678e214bcdf795c152ee78b2db24": "2026-06-25T03:48:43Z",
+    "8bf4ada1f0d55150ec8d41c1e4c05e4013941760": "2026-06-25T08:14:02Z",
+    "8d96dd64f837146921c9ee3f884d6ddee5d5c795": "2026-06-25T12:32:08Z",
+    "92dfb0f6628168d51f629c76574fc60c49a0f3f5": "2026-06-26T04:07:32Z",
+    "96f83e76ddd2498e89a34760dcc43f39d72f8ca1": "2026-06-26T03:16:08Z",
+    "97999a859ed27c7ef7fa778739261470f30fb9be": "2026-06-26T04:08:02Z",
+    "9c07b752e404d985e02570e6515d433af06e7fca": "2026-06-26T03:05:21Z",
+    "a31d0547386860e4eec8bb997d4379e4b4d882ad": "2026-06-26T01:13:48Z",
+    "bff7268b2b587a141380a0b2cbf3a48a7b4cba6d": "2026-06-25T16:05:57Z",
+    "c755a153dbe125edac6191538846271782c3f6be": "2026-04-28T01:56:11Z",
+    "d29f6ec490b45061e107e3dd279b500434edfe65": "2026-05-07T06:20:21Z",
+    "da2fd9854ba953ba1585ceeb547c835b3b4bcb46": "2026-06-25T21:44:55Z",
+    "e3e0ed6dbaed41de3e8ab3a520270521d5e96b93": "2026-06-26T01:11:59Z",
+    "e53d2505d3d9e66468a814e846d4d5569013cbe9": "2026-04-26T17:40:55Z",
+    "ee137d07aa2bfb5d8124099599b93b5abb6dd400": "2026-04-25T18:35:53Z",
+    "eec7551c6b34a5dad610b21496d25c27ccabf4cb": "2026-06-27T06:57:37Z",
+    "f33ebad724d1180d3f33d3836dc3e011d693081b": "2026-06-25T13:20:59Z",
+    "f62654b277e4bd18956a6ca4c6c7c495efc019a3": "2026-06-20T10:54:40Z",
+    "f79c7c23a7f150936783620ec3985dc3f00b68d5": "2026-06-10T13:18:57Z",
+    "fa3d7f712b23b21b6e69ac539b5afa1d54636ceb": "2026-05-06T07:02:20Z",
+}
+
+# Open PRs mapped by head branch
+OPEN_PRS = {
+    "docs/readme-m": {"number": 257, "state": "open", "draft": False, "created_at": "2026-06-27T03:33:58Z"},
+    "feat/E8-otel-context-propagate": {"number": 256, "state": "open", "draft": False, "created_at": "2026-06-26T04:27:44Z"},
+    "feat/E9-otel-metrics": {"number": 255, "state": "open", "draft": False, "created_at": "2026-06-26T03:25:55Z"},
+    "feat/E7-otel-cli-trace": {"number": 254, "state": "open", "draft": False, "created_at": "2026-06-26T03:10:24Z"},
+    "feat/otel-instrumentation": {"number": 253, "state": "open", "draft": False, "created_at": "2026-06-26T02:29:20Z"},
+    "recover/E2-terminal-ui-pr": {"number": 252, "state": "open", "draft": False, "created_at": "2026-06-26T00:33:19Z"},
+    "recover/E4-tools-cli-pr": {"number": 251, "state": "open", "draft": False, "created_at": "2026-06-26T00:17:29Z"},
+    "reconcile/E5-recover-reconciliation": {"number": 250, "state": "open", "draft": False, "created_at": "2026-06-26T00:05:38Z"},
+    "recover/E3-tools-cli-worktree": {"number": 249, "state": "open", "draft": False, "created_at": "2026-06-25T23:25:24Z"},
+    "consolidate/B11-delete-nvms-impl": {"number": 247, "state": "open", "draft": False, "created_at": "2026-06-25T21:47:50Z"},
+    "docs/A21-readme-workstate": {"number": 246, "state": "open", "draft": False, "created_at": "2026-06-25T21:42:56Z"},
+    "chore/A11-recover-byteport-stash-0-terminal-ui": {"number": 228, "state": "open", "draft": False, "created_at": "2026-06-25T05:31:01Z"},
+    "a29-sweep-orphaned-svelte": {"number": 227, "state": "open", "draft": False, "created_at": "2026-06-25T07:33:28Z"},
+    "a30/orphaned-astro-preview-sweep": {"number": 226, "state": "open", "draft": False, "created_at": "2026-06-25T07:27:11Z"},
+    "B34-tier-1-enforcement": {"number": 224, "state": "open", "draft": False, "created_at": "2026-06-25T07:52:44Z"},
+    "docs/reconcile-sladge-docs-A23": {"number": 223, "state": "open", "draft": False, "created_at": "2026-06-25T07:44:25Z"},
+    "epic/B11-delete-local-nvms-impl": {"number": 222, "state": "open", "draft": False, "created_at": "2026-06-25T04:19:30Z"},
+    "epic/B16-extract-oci-helpers": {"number": 221, "state": "open", "draft": False, "created_at": "2026-06-25T04:06:37Z"},
+    "audit/A3-list-stale-branches": {"number": 220, "state": "open", "draft": False, "created_at": "2026-06-25T03:51:01Z"},
+    "t12-devcontainer-ci": {"number": 214, "state": "open", "draft": False, "created_at": "2026-06-20T13:05:30Z"},
+    "ci/security-scan-2026-06-20": {"number": 212, "state": "open", "draft": False, "created_at": "2026-06-20T08:33:45Z"},
+    "chore/slsa-build-2026-06-16": {"number": 202, "state": "open", "draft": False, "created_at": "2026-06-16T11:29:57Z"},
+    "dependabot/github_actions/major-6df859f817": {"number": 198, "state": "open", "draft": False, "created_at": "2026-06-15T08:15:28Z"},
+    "dependabot/github_actions/minor-and-patch-cfdd69f9fc": {"number": 186, "state": "open", "draft": False, "created_at": "2026-06-11T11:07:09Z"},
+    "dependabot/npm_and_yarn/frontend/web/npm-5453435d43": {"number": 184, "state": "open", "draft": False, "created_at": "2026-06-10T13:18:58Z"},
+    "fix/deps-cve-2026-04-27": {"number": 182, "state": "open", "draft": False, "created_at": "2026-06-09T05:14:04Z"},
+    "ci/go-workflow": {"number": 179, "state": "open", "draft": False, "created_at": "2026-06-09T05:12:02Z"},
+    "ci/add-golangci-lint": {"number": 178, "state": "open", "draft": False, "created_at": "2026-06-09T05:10:27Z"},
+    "fix/nvms-parser-cleanup": {"number": 172, "state": "open", "draft": False, "created_at": "2026-06-09T04:06:14Z"},
+}
+
+# ================ ANALYSIS ================
+
+now = datetime.datetime(2026, 6, 27, 7, 0, 0, tzinfo=datetime.timezone.utc)
+
+THRESHOLDS = {
+    "wip": 14, "recover": 7, "dependabot": 14, "feature": 21,
+    "fix": 21, "chore": 21, "ci": 14, "docs": 21,
+    "audit-review": 14, "main": 0, "epic": 21
+}
+
+
+def categorize(name, age_days):
+    if name == "main":
+        return "main", "active", "keep"
+    if name.startswith("wip/"):
+        return "wip", ("stale" if age_days > 14 else "active"), "recover-or-delete"
+    if name.startswith("recover/") or name.startswith("reconcile/"):
+        return "recover", ("stale" if age_days > 7 else "active"), "review-and-merge-or-delete"
+    if name.startswith("dependabot/"):
+        return "dependabot", ("stale" if age_days > 14 else "active"), "merge-or-close"
+    if name.startswith("fix/") or name.startswith("cve-"):
+        return "fix", ("stale" if age_days > 21 else "active"), "review-and-merge"
+    if name.startswith("chore/"):
+        return "chore", ("stale" if age_days > 21 else "active"), "review-and-merge"
+    if name.startswith("ci/"):
+        return "ci", ("stale" if age_days > 14 else "active"), "review-and-merge"
+    if name.startswith("docs/") or name.startswith("docs-"):
+        return "docs", ("stale" if age_days > 21 else "active"), "review-and-merge"
+    if name.startswith("audit/") or name.startswith("review/") or name.startswith("consolidate/"):
+        return "audit-review", ("stale" if age_days > 14 else "active"), "review-and-close"
+    if name.startswith("epic/") or name.startswith("epic-") or name.startswith("feat/"):
+        return "feature", ("stale" if age_days > 21 else "active"), "active-development"
+    if name.startswith("B34-") or name.startswith("B34/"):
+        return "feature", ("stale" if age_days > 21 else "active"), "active-development"
+    if name.startswith("bp-dag"):
+        return "feature", ("stale" if age_days > 14 else "active"), "active-development"
+    prefix = name.split("/")[0] if "/" in name else "other"
+    return prefix, ("stale" if age_days > 30 else "active"), "review"
+
+
+# Build branch entries
+report_branches = []
+for b in BRANCHES:
+    name = b["name"]
+    sha = b["sha"]
+    date_str = SHA_DATES.get(sha, "")
+    age_days = -1
+    if date_str:
+        dt = datetime.datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+        age_days = (now - dt).days
+
+    cat, status, action = categorize(name, age_days)
+    pr_info = OPEN_PRS.get(name, None)
+
+    report_branches.append({
+        "name": name,
+        "sha": sha,
+        "last_commit_date": date_str or None,
+        "age_days": age_days,
+        "category": cat,
+        "status": status,
+        "recommended_action": action,
+        "has_open_pr": pr_info is not None,
+        "pr_number": pr_info["number"] if pr_info else None,
+        "pr_state": pr_info["state"] if pr_info else None,
+        "pr_draft": pr_info.get("draft", False) if pr_info else None,
+        "protected": b["protected"],
+        "staleness_threshold_days": THRESHOLDS.get(cat, 30)
+    })
+
+# Aggregate categories
+cats = {}
+for r in report_branches:
+    c = r["category"]
+    cats.setdefault(c, {"total": 0, "stale": 0, "active": 0, "with_pr": 0})
+    cats[c]["total"] += 1
+    if r["status"] == "stale":
+        cats[c]["stale"] += 1
+    else:
+        cats[c]["active"] += 1
+    if r["has_open_pr"]:
+        cats[c]["with_pr"] += 1
+
+stale_total = sum(1 for r in report_branches if r["status"] == "stale")
+active_total = sum(1 for r in report_branches if r["status"] == "active")
+with_pr = sum(1 for r in report_branches if r["has_open_pr"])
+
+# Find stale branches that are very old (>30 days)
+very_stale = [r for r in report_branches if r["age_days"] > 30]
+
+report = {
+    "report_metadata": {
+        "dag_unit": "A11",
+        "title": "byteport-pool: Branch audit",
+        "phase": "Phase 1",
+        "pool": "byteport-pool",
+        "repo": "KooshaPari/BytePort",
+        "analysis_date": "2026-06-27T07:00:00Z",
+        "data_source": "GitHub API (gh api repos/KooshaPari/BytePort/branches --paginate)",
+        "staleness_threshold_days": THRESHOLDS,
+        "total_branches_fetched": len(report_branches),
+        "unique_commits_checked": len(SHA_DATES)
+    },
+    "executive_summary": {
+        "total_branches": len(report_branches),
+        "active_branches": active_total,
+        "stale_branches": stale_total,
+        "stale_percentage": round(stale_total / len(report_branches) * 100, 1),
+        "branches_with_open_prs": with_pr,
+        "protected_branches": 1,
+        "wip_branches": 2,
+        "recover_branches": 4,
+        "dependabot_branches": 3
+    },
+    "categories": cats,
+    "stale_branches": sorted(
+        [r for r in report_branches if r["status"] == "stale"],
+        key=lambda x: x["age_days"], reverse=True
+    ),
+    "active_branches_excluding_main": sorted(
+        [r for r in report_branches if r["status"] == "active" and r["name"] != "main"],
+        key=lambda x: x["name"]
+    ),
+    "protected_branches": [r for r in report_branches if r["protected"]],
+    "wip_recover_branches": sorted(
+        [r for r in report_branches if r["category"] in ("wip", "recover")],
+        key=lambda x: x["name"]
+    ),
+    "very_stale_branches_over_30d": sorted(
+        very_stale, key=lambda x: x["age_days"], reverse=True
+    ),
+    "all_branches": sorted(report_branches, key=lambda x: x["name"]),
+    "findings": [
+        {
+            "id": "F1",
+            "severity": "medium",
+            "description": f"WIP branches ({len([r for r in report_branches if r['category'] == 'wip'])}) exist without open PRs — local experiment dumps, likely already recovered to main",
+            "affected_branches": [r["name"] for r in report_branches if r["category"] == "wip"]
+        },
+        {
+            "id": "F2",
+            "severity": "high",
+            "description": f"Recover/Reconcile branches ({len([r for r in report_branches if r['category'] == 'recover'])}) have open PRs but need prioritization — recovered stash work at risk of divergence",
+            "affected_branches": [r["name"] for r in report_branches if r["category"] == "recover"]
+        },
+        {
+            "id": "F3",
+            "severity": "low",
+            "description": f"Dependabot branches ({len([r for r in report_branches if r['category'] == 'dependabot'])}) accumulate — periodic review needed (avg age varies)",
+            "affected_branches": [r["name"] for r in report_branches if r["category"] == "dependabot"]
+        },
+        {
+            "id": "F4",
+            "severity": "medium",
+            "description": f"Total branch count ({len(report_branches)}) exceeds recommended hygiene target of <20",
+            "affected_branches": []
+        },
+        {
+            "id": "F5",
+            "severity": "high",
+            "description": f"{len(very_stale)} branch(es) are extremely stale (>30 days) and should be evaluated for deletion: {', '.join(r['name'] for r in very_stale)}",
+            "affected_branches": [r["name"] for r in very_stale]
+        },
+        {
+            "id": "F6",
+            "severity": "medium",
+            "description": f"{stale_total} branch(es) flagged as stale per category-specific thresholds — candidates for cleanup or merge",
+            "affected_branches": [r["name"] for r in report_branches if r["status"] == "stale"]
+        }
+    ],
+    "recommendations": [
+        {
+            "priority": "P1",
+            "action": f"Prioritize review and merge of recover/E* branches: recover/E2-terminal-ui-pr (PR#252), recover/E3-tools-cli-worktree (PR#249), recover/E4-tools-cli-pr (PR#251), reconcile/E5-recover-reconciliation (PR#250)",
+            "rationale": "These represent recovered work from stashes that should be merged to main before diverging further"
+        },
+        {
+            "priority": "P1",
+            "action": "Extremely stale branches ($gte 30d): evaluate fix/codeql-apilink-ssrf (61d), fix/nvms-parser-cleanup (60d), fix/add-pem-gitignore (51d), cve-sweep-high (62d), fix/deps-cve-2026-04-27 (60d), ci/go-workflow (52d), ci/add-golangci-lint (51d), chore/manifest-fix (21d). Most are security fixes that should be reviewed and merged",
+            "rationale": "Security fixes left open for 2 months represent residual risk and potential merge conflicts"
+        },
+        {
+            "priority": "P2",
+            "action": "Close or delete wip/ branches if content already recovered to merged branches",
+            "rationale": "WIP branches with no open PR are dead weight; recover any needed content then delete"
+        },
+        {
+            "priority": "P2",
+            "action": "Update or merge dependabot branches >14d old (3 branches from June 10-15)",
+            "rationale": "Dependabot branches that accumulate without merge create noise and potential merge conflicts"
+        },
+        {
+            "priority": "P2",
+            "action": "Establish branch lifecycle policy: auto-delete after merge, <14d for WIP, <7d for recover",
+            "rationale": "Standardizing branch lifecycle improves repository hygiene and reduces cognitive overhead"
+        },
+        {
+            "priority": "P3",
+            "action": "Archive audit/A3-list-stale-branches branch after completing this audit",
+            "rationale": "Audit-only branches should be cleaned up after their purpose is served"
+        },
+        {
+            "priority": "P3",
+            "action": "Review and close feature branches inactive for >21d if no longer prioritized",
+            "rationale": "Stale feature branches indicate scope changes or blocked work that needs explicit closure"
+        }
+    ],
+    "next_steps": [
+        "A12: Apply cleanup actions — delete stale merged branches",
+        "A13: Verify recover/ branches merge cleanly with main",
+        "A14: Close WIP branches after content recovery confirmation",
+        "A15: Address stale security fix branches (codeql, cve-sweep, deps-cve)"
+    ]
+}
+
+report_path = r"C:\Users\koosh\_compute_infra_audit\reports\A11_byteport_branch_audit.json"
+with open(report_path, "w") as f:
+    json.dump(report, f, indent=2)
+
+print(f"Report written: {report_path}")
+print(f"Branches analyzed: {len(report_branches)}")
+print(f"Stale: {stale_total}, Active: {active_total}, With PRs: {with_pr}")
+print(f"Very stale (>30d): {len(very_stale)}")

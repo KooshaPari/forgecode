@@ -1,0 +1,162 @@
+/**
+/** Force every builtin check to fail. Mutates the live registry in place. */
+async function forceAllFail(): Promise<void> {
+  const hc = await import("../../../src/lib/observability/healthChecks.ts");
+  const checks = hc.BUILTIN_CHECKS as unknown as Record<string, () => Promise<unknown>>;
+  for (const k of Object.keys(checks)) {
+    checks[k] = async () => ({ status: "fail", durationMs: 1, error: "forced failure" });
+  }
+}
+
+/** Force every builtin check to return ok. Mutates the live registry in place. */
+async function forceAllOk(): Promise<void> {
+  const hc = await import("../../../src/lib/observability/healthChecks.ts");
+  const checks = hc.BUILTIN_CHECKS as unknown as Record<string, () => Promise<unknown>>;
+  for (const k of Object.keys(checks)) {
+    checks[k] = async () => ({ status: "ok", durationMs: 1 });
+  }
+}
+/** Force every builtin check to return ok. Mutates the live registry in place. */
+async function forceAllOk(): Promise<void> {
+  const hc = await import("../../../src/lib/observability/healthChecks.ts");
+  const checks = hc.BUILTIN_CHECKS as unknown as Record<string, () => Promise<unknown>>;
+  for (const k of Object.keys(checks)) {
+    Object.defineProperty(checks, k, {
+      configurable: true,
+      value: async () => ({ status: "ok", durationMs: 1 }),
+    });
+  }
+}
+
+// ─── happy path ─────────────────────────────────────────────────────────────
+
+test("GET /api/health returns 200 with status 'ok' when every check passes", async () => {
+  await forceAllOk();
+  const res = await routeModule.GET(makeRequest("/api/health"));
+  const parsed = await parseResponse(res);
+  assert.equal(parsed.status, 200, "expected HTTP 200 when all checks pass");
+  assert.equal(parsed.body.status, "ok");
+});
+
+test("GET /api/health always sets Cache-Control: no-store", async () => {
+  await forceAllOk();
+  const res = await routeModule.GET(makeRequest("/api/health"));
+  const parsed = await parseResponse(res);
+  assert.ok(parsed.cacheControl, "Cache-Control header must be set");
+  assert.match(parsed.cacheControl, /no-store/i);
+});
+
+test("GET /api/health mirrors status into X-Health-Status header", async () => {
+  await forceAllOk();
+  const res = await routeModule.GET(makeRequest("/api/health"));
+  const parsed = await parseResponse(res);
+  assert.equal(parsed.xHealthStatus, parsed.body.status);
+});
+
+test("GET /api/health response shape has the required top-level fields", async () => {
+  await forceAllOk();
+  const res = await routeModule.GET(makeRequest("/api/health"));
+  const parsed = await parseResponse(res);
+  for (const field of ["status", "version", "uptimeSeconds", "timestamp", "checks"]) {
+    assert.ok(field in parsed.body, `response missing field "${field}"`);
+  }
+});
+
+test("GET /api/health populates each of the seven documented check keys", async () => {
+  await forceAllOk();
+  const res = await routeModule.GET(makeRequest("/api/health"));
+  const parsed = await parseResponse(res);
+  const expected = [
+    "database",
+    "providerRegistry",
+    "diskSpace",
+    "memory",
+    "eventLoop",
+    "configSchema",
+    "tenantQuota",
+  ];
+  for (const key of expected) {
+    assert.ok(parsed.body.checks && key in parsed.body.checks, `missing check "${key}"`);
+  }
+});
+
+// ─── 503 / degraded path ────────────────────────────────────────────────────
+
+test("GET /api/health returns 503 with errors[] when any check fails", async () => {
+  await forceAllFail();
+  const res = await routeModule.GET(makeRequest("/api/health"));
+  const parsed = await parseResponse(res);
+  assert.equal(parsed.status, 503, `expected 503, got ${parsed.status}`);
+  assert.equal(parsed.body.status, "fail");
+  assert.ok(Array.isArray(parsed.body.errors), "errors[] must be an array");
+  assert.ok(parsed.body.errors && parsed.body.errors.length > 0, "errors[] must be non-empty");
+  for (const e of parsed.body.errors ?? []) {
+    assert.ok(typeof e.check === "string", "error.check must be a string");
+    assert.ok(typeof e.message === "string", "error.message must be a string");
+  }
+});
+
+test("GET /api/health does NOT include errors[] when no check failed", async () => {
+  await forceAllOk();
+  const res = await routeModule.GET(makeRequest("/api/health"));
+  const parsed = await parseResponse(res);
+  assert.equal(parsed.status, 200);
+  assert.equal(parsed.body.status, "ok");
+  assert.equal(parsed.body.errors, undefined, "errors[] must be omitted on success");
+});
+
+// ─── ?internal=true auth gating ─────────────────────────────────────────────
+
+test("GET /api/health?internal=true is reachable when auth is not required (loopback)", async () => {
+  await forceAllOk();
+  // In a CI sandbox `requireManagementAuth` returns null (no credentials
+  // configured → no auth required on loopback). The route MUST still
+  // successfully produce a 200 in that case — we just verify the auth gate
+  // doesn't 500 and the response shape is intact.
+  const res = await routeModule.GET(makeRequest("/api/health?internal=true"));
+  const parsed = await parseResponse(res);
+  assert.notEqual(parsed.status, 500, "internal=true must not 500");
+  assert.ok(parsed.body.checks, "internal=true response must still include checks{}");
+});
+
+test("GET /api/health without ?internal=true is anonymous (must not 500)", async () => {
+  await forceAllOk();
+  const res = await routeModule.GET(makeRequest("/api/health"));
+  // Either 200 (auth not required) or 401 (auth required + no creds).
+  // The key invariant: it must NOT crash with 500.
+  assert.notEqual(res.status, 500);
+});
+
+// ─── timestamp / uptime invariants ──────────────────────────────────────────
+
+test("GET /api/health timestamp is ISO-parseable", async () => {
+  await forceAllOk();
+  const res = await routeModule.GET(makeRequest("/api/health"));
+  const parsed = await parseResponse(res);
+  assert.ok(typeof parsed.body.timestamp === "string");
+  assert.ok(!Number.isNaN(Date.parse(parsed.body.timestamp ?? "")));
+});
+
+test("GET /api/health uptimeSeconds is a non-negative integer", async () => {
+  await forceAllOk();
+  const res = await routeModule.GET(makeRequest("/api/health"));
+  const parsed = await parseResponse(res);
+  assert.equal(typeof parsed.body.uptimeSeconds, "number");
+  assert.ok((parsed.body.uptimeSeconds ?? -1) >= 0);
+});
+
+// ─── deep-check timeout cascade ─────────────────────────────────────────────
+
+test("a slow check (via direct runner call) surfaces as 'fail' with timeout message", async () => {
+  const hc = await import("../../../src/lib/observability/healthChecks.ts");
+  const slowRunner = await hc.runHealthCheck(
+    "slow-test",
+    () =>
+      new Promise<{ status: "ok"; durationMs: number }>((r) =>
+        setTimeout(() => r({ status: "ok", durationMs: 1 }), 200)
+      ),
+    20
+  );
+  assert.equal(slowRunner.status, "fail");
+  assert.match(slowRunner.error ?? "", /exceeded 20ms timeout/);
+});

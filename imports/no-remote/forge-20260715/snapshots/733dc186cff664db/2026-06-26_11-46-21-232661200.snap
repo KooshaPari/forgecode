@@ -1,0 +1,36 @@
+[package]
+name = "phenotype-event-bus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Event bus abstractions for the Phenotype ecosystem"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+ulid = { workspace = true }
+dashmap = { workspace = true }
+phenotype-error-core = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+pin-project = { workspace = true, optional = true }
+uuid = { workspace = true, features = ["v4", "serde"], optional = true }
+futures = { workspace = true, optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "macros", "chrono", "json", "uuid"], optional = true }
+
+[features]
+default = []
+postgres = ["dep:sqlx", "dep:tokio", "dep:uuid", "dep:tracing", "dep:async-trait"]
+sqlite = ["dep:sqlx", "dep:tokio", "dep:uuid", "dep:tracing", "dep:async-trait"]
+relay = ["dep:tokio", "dep:async-trait", "dep:futures", "dep:tracing", "dep:pin-project"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

@@ -1,0 +1,228 @@
+from datetime import datetime, timezone
+import subprocess, json
+
+# Parse PR data
+with open(r'C:\Users\koosh\_pr_data.json', 'r', encoding='utf-8') as f:
+    prs = json.load(f)
+
+# Parse compare data
+with open(r'C:\Users\koosh\_compare_results.txt', 'r', encoding='utf-8') as f:
+    lines = f.read().strip().split('\n')
+
+# Clean ANSI codes from compare results
+import re
+def clean_ansi(s):
+    return re.sub(r'\x1b\[[0-9;]*[mK]', '', s).strip()
+
+compare = {}
+for line in lines:
+    parts = [clean_ansi(p) for p in line.split('|')]
+    if len(parts) >= 3:
+        branch = parts[0]
+        try:
+            j = json.loads('|'.join(parts[1:]))
+            compare[branch] = (j.get('ahead_by', '?'), j.get('behind_by', '?'))
+        except:
+            compare[branch] = ('?', '?')
+
+# Build PR lookup by head branch
+pr_by_head = {}
+for pr in prs:
+    pr_by_head[pr['headRefName']] = pr
+    pr_by_head.setdefault(pr['headRefName'], pr)
+
+# Build chain: branches that are base for other PRs
+branches_with_prs_as_base = set()
+for pr in prs:
+    if pr['baseRefName'] != 'main':
+        branches_with_prs_as_base.add(pr['baseRefName'])
+
+# Build dependency graph
+chains = {}
+for pr in prs:
+    if pr['baseRefName'] != 'main':
+        key = f"{pr['headRefName']} -> {pr['baseRefName']}"
+        chains[key] = pr
+
+# All branches list
+all_branches = sorted(compare.keys())
+
+print("=" * 120)
+print("CIVIS REPO - FULL BRANCH STATUS REPORT")
+print("=" * 120)
+print()
+print("--- OPEN PULL REQUESTS (chain view) ---")
+print()
+
+# Print PR chains
+# Find root chains
+pr_chain_map = {}
+for pr in prs:
+    pr_chain_map[pr['headRefName']] = pr
+
+# Print all PRs in dependency order
+printed = set()
+# First print PRs targeting main
+print("PRs targeting MAIN:")
+print(f"{'#':>4} {'Branch':<50} {'Base':<30} {'Status':<15} {'Mergeable':<12}")
+print('-' * 115)
+for pr in prs:
+    if pr['baseRefName'] == 'main' and pr['headRefName'] not in printed:
+        label = f"#{pr['number']}"
+        print(f"{label:>4} {pr['headRefName']:<50} {pr['baseRefName']:<30} {pr['mergeStateStatus']:<15} {pr['mergeable']:<12}")
+        printed.add(pr['headRefName'])
+
+print()
+print("PRs targeting OTHER BRANCHES (chained):")
+print(f"{'#':>4} {'Branch':<50} {'Base':<30} {'Status':<15} {'Mergeable':<12}")
+print('-' * 115)
+for pr in prs:
+    if pr['baseRefName'] != 'main' and pr['headRefName'] not in printed:
+        label = f"#{pr['number']}"
+        print(f"{label:>4} {pr['headRefName']:<50} {pr['baseRefName']:<30} {pr['mergeStateStatus']:<15} {pr['mergeable']:<12}")
+        printed.add(pr['headRefName'])
+
+# Branches WITHOUT PRs
+print()
+print("=" * 120)
+print("BRANCHES WITHOUT OPEN PRs (orphans/stale)")
+print("=" * 120)
+branches_with_prs = set(pr['headRefName'] for pr in prs)
+branches_with_prs.add('main')
+
+orphan_branches = [b for b in all_branches if b not in branches_with_prs]
+print(f"{'Branch':<55} {'Ahead':>6} {'Behind':>7}")
+print('-' * 70)
+for b in sorted(orphan_branches):
+    a, bh = compare.get(b, ('?', '?'))
+    print(f"{b:<55} {str(a):>6} {str(bh):>7}")
+
+# Classification
+print()
+print("=" * 120)
+print("CLASSIFICATION SUMMARY")
+print("=" * 120)
+
+# Branches likely merged (0 ahead, way behind)
+likely_merged = [b for b in compare if compare[b][0] == 0 and (isinstance(compare[b][1], int) and compare[b][1] > 100)]
+print(f"\nLIKELY MERGED/STALE (0 ahead, far behind main): {len(likely_merged)}")
+for b in sorted(likely_merged):
+    a, bh = compare.get(b, ('?', '?'))
+    print(f"  {b:<55} ahead={a} behind={bh}")
+
+# Branches significantly ahead but no PR
+stale_old = [b for b in orphan_branches if b in compare and isinstance(compare[b][0], int) and compare[b][0] > 0]
+print(f"\nSTALE ORPHANS (have commits but no PR): {len(stale_old)}")
+for b in sorted(stale_old):
+    a, bh = compare.get(b, ('?', '?'))
+    print(f"  {b:<55} ahead={a} behind={bh}")
+
+# Active chain info
+print()
+print("=" * 120)
+print("ACTIVE STACK CHAINS")
+print("=" * 120)
+
+# Trace chains
+def get_chain(branch, prs, depth=0):
+    if depth > 10:
+        return []
+    result = []
+    for pr in prs:
+        if pr['headRefName'] == branch:
+            result.append(pr)
+            if pr['baseRefName'] != 'main':
+                result.extend(get_chain(pr['baseRefName'], prs, depth+1))
+    return result
+
+# Find root branches of chains
+chain_roots = []
+for pr in prs:
+    # Check if this branch is the top of a chain (base=main or base has no PR pointing to it)
+    is_top = True
+    for pr2 in prs:
+        if pr2['headRefName'] == pr['baseRefName']:
+            is_top = False
+            break
+    if is_top and pr['baseRefName'] == 'main':
+        chain_roots.append(pr['headRefName'])
+
+# Find chain bottoms
+chain_bottoms = []
+for pr in prs:
+    # Check if any other PR targets this branch
+    has_dependent = False
+    for pr2 in prs:
+        if pr2['baseRefName'] == pr['headRefName']:
+            has_dependent = True
+            break
+    if not has_dependent and pr['headRefName'] not in chain_bottoms:
+        chain_bottoms.append(pr['headRefName'])
+
+print(f"\nTop-level PRs (target main): {len(chain_roots)}")
+for b in sorted(chain_roots):
+    pr = pr_by_head.get(b)
+    if pr:
+        a, bh = compare.get(b, ('?', '?'))
+        print(f"  #{pr['number']:>3} {b:<50} -> main    ahead={a} behind={bh}")
+
+print(f"\nLeaf PRs (no dependents): {len(chain_bottoms)}")
+for b in sorted(chain_bottoms):
+    pr = pr_by_head.get(b)
+    if pr:
+        base = pr['baseRefName']
+        a, bh = compare.get(b, ('?', '?'))
+        print(f"  #{pr['number']:>3} {b:<50} -> {base:<30} ahead={a} behind={bh}")
+
+# Full chains
+print()
+print("FULL DEPENDENCY CHAINS:")
+tracked = set()
+for root in chain_roots:
+    if root in tracked:
+        continue
+    # Walk down the chain
+    chain = []
+    current = root
+    while True:
+        chain.append(current)
+        tracked.add(current)
+        # Find PR where this is base
+        next_branch = None
+        for pr in prs:
+            if pr['baseRefName'] == current:
+                next_branch = pr['headRefName']
+                break
+        if next_branch:
+            current = next_branch
+        else:
+            break
+    if len(chain) > 1:
+        print(f"  Chain ({len(chain)} deep): {' -> '.join(chain)}")
+    elif len(chain) == 1 and chain[0] not in [pr['headRefName'] for pr in prs if pr['baseRefName'] != 'main']:
+        pass  # standalone PR to main, already shown
+
+# Also print remaining chain bottoms
+for b in chain_bottoms:
+    if b not in tracked:
+        # Walk up
+        chain = [b]
+        current = b
+        while True:
+            pr = pr_by_head.get(current)
+            if pr and pr['baseRefName'] != 'main':
+                chain.append(pr['baseRefName'])
+                current = pr['baseRefName']
+            else:
+                break
+        if len(chain) > 1:
+            chain.reverse()
+            print(f"  Chain: {' -> '.join(chain)}")
+        tracked.add(b)
+
+print()
+print("=" * 120)
+print(f"Report generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+print(f"Total remote branches: {len(all_branches)}")
+print(f"Open PRs: {len(prs)}")
+print(f"Orphan branches (no PR): {len(orphan_branches)}")

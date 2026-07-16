@@ -1,0 +1,39 @@
+@echo off
+rem ============================================================
+rem  omniroute-dev.cmd - literal bin for the OmniRoute fork
+rem ============================================================
+rem  Lives in %USERPROFILE%\.local\bin\ alongside agent-imessage,
+rem  claude, uv, etc. Resolved by `where` on this machine (the
+rem  .local\bin directory is first on user PATH).
+rem
+rem  Forwards every argument verbatim to the OmniRoute fork
+rem  CLI installed at:
+rem
+rem    C:\Users\koosh\OmniRoute-fresh2\bin\omniroute.mjs
+rem
+rem  This is a literal bin: no symlink magic, no upstream
+rem  fallback, no fork source modification. The fork must be
+rem  built (`bun run build:cli` in C:\Users\koosh\OmniRoute-fresh2)
+rem  so the CLI's `serve` subcommand can find its server entry.
+rem
+rem  Runtime: bun (not node). Bun executes the .mjs fork CLI
+rem  directly with native ESM/TS support - no `--import tsx`
+rem  flag needed. For TypeScript-heavy fork tooling (builds,
+rem  test runners), prefer `bunx tsgo` over `npx tsx`.
+rem
+rem  Override the fork location by setting OMNIRoute_DEV_FORK_ROOT
+rem  before invoking (e.g. to point at a different checkout).
+rem
+rem  Examples:
+rem    omniroute-dev --version
+rem    omniroute-dev --help
+rem    omniroute-dev serve
+rem    omniroute-dev doctor
+rem    omniroute-dev cloud
+rem ============================================================
+
+if not "%OMNIRoute_DEV_FORK_ROOT%"=="" goto :have_root
+set "OMNIRoute_DEV_FORK_ROOT=C:\Users\koosh\OmniRoute-fresh2"
+:have_root
+
+"%OMNIRoute_DEV_FORK_ROOT%\bin\omniroute.mjs" %*

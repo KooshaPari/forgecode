@@ -1,0 +1,86 @@
+# phenotype-infra .gitignore
+# NOTE: Do NOT add blanket `Cargo.toml` ignores — per audit #105, this silently
+# hides per-crate manifests. List specific build output dirs only.
+
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# --- Editors ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.netrwhist
+
+# --- Rust ---
+/target/
+**/target/
+*.rs.bk
+Cargo.lock.bak
+# explicit: keep root and per-crate Cargo.toml tracked
+
+# --- Terraform ---
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+*.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# --- Ansible ---
+*.retry
+inventory.yml
+!inventory.yml.example
+vault_pass.txt
+.vault_pass
+
+# --- Python (for any generator scripts) ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# --- Node (for docsite, if added later) ---
+node_modules/
+.pnp.*
+.yarn/
+dist/
+.next/
+
+# --- Secrets / creds (defense in depth) ---
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+.env
+.env.*
+!.env.example
+credentials
+credentials.json
+secrets.yml
+!secrets.yml.example
+
+# --- Logs ---
+*.log
+logs/
+
+# --- OS / misc ---
+Thumbs.db
+ehthumbs.db

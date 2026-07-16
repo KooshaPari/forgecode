@@ -1,0 +1,56 @@
+# Compute/Infra — Phase 1: Branch & Stash Inventory
+
+Generated: 2026-06-25
+
+## 1. phenotype-infra (35 branches, 8 worktrees, 0 stashes, 0 dirty)
+
+### Active worktrees (all working, clean trees)
+| Path | Branch | HEAD |
+|---|---|---|
+| `phenotype-infra/` | `kvd/oauth2-5x-fixes` | c9af1de |
+| `wt-pi-d-014-pheno-config-tests` | `test/d-014-pheno-config-24-cases` | b7fc092 |
+| `wt-pi-d-017-kvd-core-transport` | `test/d-017-kvd-core-transport` | b7fc092 |
+| `wt-pi-d-024-kvd-wire-cm` | `chore/d-024-kvd-wire-cm-dep` | b7fc092 |
+| `wt-pi-d-028-kvd-30tests` | `test/d-028-kvd-30tests` | b7fc092 |
+| `wt-pi-d-030-cm-oauth-retry` | `feat/d-030-cm-oauth-retry` | b7fc092 |
+| `wt-pi-d-031-cm-kdf-wire` | `feat/d-031-cm-kdf-wire` | b7fc092 |
+| `wt-pi-d-037-thegent-fallback` | `feat/d-037-thegent-fallback` | b7fc092 |
+
+### Branch categories (verify with `git branch -a`):
+- feat/*, test/*, chore/*, kvd/*, wip/*, ci/*
+- 35 total branches across all categories
+
+## 2. BytePort (92 branches, 17 stashes, 2 dirty files)
+
+### Stash breakdown (17 stashes, active OTel/DAG work)
+| Stash | Branch | Content |
+|---|---|---|
+| 0 | feat/E7-otel-cli-trace | OTel trace feature work |
+| 1 | main (recover) | Merge cleanup |
+| 2 | feat/E9-otel-metrics | OTel metrics for CLI |
+| 3-5 | recover/E4-tools-cli-pr | Recover branch series |
+| 6-8 | consolidate/B11-delete-nvms-impl | B11 consolidation |
+| 9-10 | dag-f9-status-reporting | DAG serialization |
+| 11-12 | epic/F10-dag-cli-run / F7-artifact-aware | DAG CLI run |
+| 13 | epic/G3-slsa-l3 | SLSA Build L3 attestation |
+| 14 | bp-dag-foundation | DAG foundation crate |
+| 15 | epic/B10-repoint-nvms-parser | NVMS parser re-point |
+| 16-17 | B34-tier-1-enforcement / ci/B28-tier0 | Tier enforcement |
+
+### Active dirty files:
+- `..forge/FORGE_PR_DESCRIPTION.md` (staged delete D)
+- `Cargo.lock` (modified M)
+
+### Branches: 92 total (remote + local)
+
+## 3. PhenoCompose (79 branches, 0 stashes, 0 dirty)
+
+On `tier-enforcement-gate` branch — a governance branch.
+
+## 4. nanovms (clean main, 0 stashes, 0 dirty)
+
+## Cross-Repo Observations
+
+1. **phenotype-infra worktrees**: All 7 `wt-pi-d-*` worktrees based on same commit `b7fc092` — suggests they branched from a common base for parallel feature development (KVD config tests, OAuth, KDF, thegent fallback)
+2. **BytePort stashes**: 17 stashes represent ~8 distinct feature streams (OTel E7/E9, DAG F9/F10, SLSA G3, recover E1/E4) — significant recoverable work
+3. **DAG state**: All 349 units `pending` — no execution started on any epic

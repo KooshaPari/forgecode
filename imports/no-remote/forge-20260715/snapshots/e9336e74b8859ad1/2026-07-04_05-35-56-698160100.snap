@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""
+hf_scrape_2026_07_03.py — reproducible HF model sweep for the pheno-harness
+local-serving bootstrap (ADR 0003 + SPEC-003-model-engine-matrix).
+
+Designed for the unauthenticated HF public API. With a `HF_TOKEN` env var
+the rate-limits go from ~30 req/15 min to ~300 req/15 min and gated/private
+models become visible. **Never print, log, or commit the token.**
+
+Outputs:
+  state/hf_scrape/<YYYY-MM-DD>/models.jsonl    — one model per line
+  state/hf_scrape/<YYYY-MM-DD>/summary.json    — counts, errors, timing
+  state/hf_scrape/<YYYY-MM-DD>/rejects.jsonl   — anything filtered out + reason
+
+Usage:
+  python scripts/hf_scrape_2026_07_03.py
+  HF_TOKEN=hf_xxx python scripts/hf_scrape_2026_07_03.py --include-private
+
+No side effects beyond writing the three files above.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+import time
+from datetime import date
+from pathlib import Path
+from typing import Iterable
+
+from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub.errors import HfHubHTTPError, RepositoryNotFoundError
+
+# --- config ------------------------------------------------------------------
+
+# Candidate authors/orgs that ship broadly-relevant coding-or-agent LLMs.
+# Add new ones as the live ecosystem shifts; the spec says this list is a
+# starting point only and should grow in follow-up ADRs.
+AUTHORS = [
+    # Big Western open-weight families
+    "meta-llama",        # Llama 3.x / 4.x
+    "mistralai",         # Mistral / Mixtral / Magistral / Codestral
+    "google",            # Gemma 2/3
+    "microsoft",         # Phi-3 / Phi-4
+    "allenai",           # OLMo / Tülu
+    "cohere",            # Command-R
+    # Chinese open-weight leaders in 2026
+    "Qwen",              # Qwen 3.x / 3.6
+    "deepseek-ai",       # DeepSeek-V3 / R1
+    "inclusionAI",       # Ling family
+    "moonshotai",        # Kimi
+    "zai-org",           # GLM / Z.AI
+    "THUDM",             # GLM-Edge / ChatGLM
+    "01-ai",             # Yi
+    "baichuan-inc",      # Baichuan
+    # Coding-specialized
+    "bigcode",
+    "WizardLM",
+    "deepseek-ai",       # (dup key, set() will dedupe)
+    # Reasoners
+    "deepseek-ai",       # R1 distilled
+    "NousResearch",
+]
+
+# Task tag we care about. HF tag system is messy; we filter in three passes.
+TAGS_KEEP = [
+    "text-generation",
+    "text2text-generation",
+]
+
+# Hard ceilings from the brief.
+MIN_PARAMS_B = 0.8
+MAX_PARAMS_B = 35.0
+
+# Parameter-count extraction: parse from name + safetensors config.
+# Patterns taken from common naming conventions across these orgs; may miss
+# edge cases, which is why we also pull `config.json` when reachable.
+NAME_PARAM_PATTERNS = [
+    re.compile(r"(?P<b>\d+(?:\.\d+)?)[Bb]\-", re.IGNORECASE),
+    re.compile(r"(?P<b>\d+(?:\.\d+)?)B(?:\-|$|_)", re.IGNORECASE),
+    re.compile(r"(?P<b>\d+(?:\.\d+)?)b", re.IGNORECASE),
+]
+
+
+def extract_params_b(name: str, cfg_params: int | None) -> float | None:
+    """Best-effort params-in-B inference from name + config.json."""
+    if cfg_params and cfg_params > 0:
+        return cfg_params / 1e9
+    for pat in NAME_PARAM_PATTERNS:
+        m = pat.search(name)
+        if m:
+            try:
+                return float(m.group("b"))
+            except ValueError:
+                pass
+    return None
+
+
+# --- core fetch --------------------------------------------------------------
+
+
+def iter_models(api: HfApi, author: str) -> Iterable:
+    """Yield model objects for an author. Respects rate limits."""
+    try:
+        yield from api.list_models(
+            author=author,
+            task="text-generation",
+            limit=200,
+            sort="downloads",
+            direction=-1,
+            fetch_config=True,
+        )
+    except RepositoryNotFoundError:
+        return
+    except HfHubHTTPError as e:
+        # 404 on org is fine; 403 means auth needed; 429 means back off.
+        if e.response is not None and e.response.status_code == 404:
+            return
+        raise
+
+
+def fetch_model_detail(api: HfApi, model_id: str) -> dict:
+    """Pull model_info + the lightweight `config.json` + size estimates."""
+    info = api.model_info(model_id, files_metadata=True)
+    out: dict = {"id": model_id, "downloads": info.downloads, "likes": info.likes,
+                 "tags": info.tags, "created_at": str(info.created_at),
+                 "last_modified": str(info.last_modified), "private": info.private,
+                 "gated": info.gated, "siblings_seen": len(info.siblings or [])}
+
+    # Try to grab config.json to read parameter count + context window.
+    cfg_params = None
+    cfg_ctx = None
+    cfg_arch = None
+    cfg_dtype = None
+    try:
+        cfg_path = hf_hub_download(repo_id=model_id, filename="config.json",
+                                   repo_type="model", cache_dir=None)
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+        cfg_params = (
+            cfg.get("num_parameters")
+            or cfg.get("n_params")
+            or cfg.get("total_params")
+            or cfg.get("num_hidden_layers", 0) * 0  # placeholder
+        )
+        cfg_ctx = (
+            cfg.get("max_position_embeddings")
+            or cfg.get("max_seq_len")
+            or cfg.get("seq_length")
+            or cfg.get("n_positions")
+        )
+        cfg_arch = cfg.get("model_type") or cfg.get("architectures", [None])[0]
+        cfg_dtype = cfg.get("torch_dtype")
+    except Exception:
+        pass  # gated repos, missing config, transient error — keep going
+
+    out["config_params"] = cfg_params
+    out["config_ctx"] = cfg_ctx
+    out["config_arch"] = cfg_arch
+    out["config_dtype"] = cfg_dtype
+
+    # Detect quant variants from sibling filenames (no download).
+    quants = set()
+    if info.siblings:
+        for s in info.siblings:
+            rname = s.rfilename.lower()
+            for tag in ("awq", "gptq", "gguf", "bnb-4bit", "bnb-8bit", "fp8",
+                        "nf4", "int4", "int8", "exl2", "marlin"):
+                if f"-{tag}" in rname or f".{tag}" in rname or f"_{tag}" in rname:
+                    quants.add(tag)
+    out["quants"] = sorted(quants)
+
+    # Safety / moderation tag set
+    safety_tags = [t for t in (info.tags or []) if t.startswith("arxiv:")
+                   or t in ("safetensors", "pytorch", "jax", "tf", "onnx")]
+    out["safety_tags"] = sorted(safety_tags)
+
+    out["params_b"] = extract_params_b(model_id.split("/")[-1], cfg_params)
+    return out
+
+
+# --- filters -----------------------------------------------------------------
+
+
+def passes_brief(rec: dict) -> tuple[bool, str | None]:
+    if rec["params_b"] is None:
+        return False, "no param count"
+    if not (MIN_PARAMS_B <= rec["params_b"] <= MAX_PARAMS_B):
+        return False, f"params_b={rec['params_b']:.2f} out of [{MIN_PARAMS_B},{MAX_PARAMS_B}]"
+    if not any(t in (rec["tags"] or []) for t in TAGS_KEEP):
+        return False, "not text-generation"
+    if rec["gated"] not in (False, "false", None):
+        # gated => needs approval/email; skip from default scrape
+        return False, f"gated={rec['gated']}"
+    return True, None
+
+
+# --- main --------------------------------------------------------------------
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--include-private", action="store_true",
+                    help="requires HF_TOKEN in env")
+    ap.add_argument("--max-per-author", type=int, default=120)
+    ap.add_argument("--output-dir", default=None)
+    args = ap.parse_args()
+
+    today = date.today().isoformat()
+    out_root = Path(args.output_dir or f"C:/Users/koosh/pheno-harness/state/hf_scrape/{today}")
+    out_root.mkdir(parents=True, exist_ok=True)
+    jsonl_path = out_root / "models.jsonl"
+    summary_path = out_root / "summary.json"
+    rejects_path = out_root / "rejects.jsonl"
+
+    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+    api = HfApi(token=token)
+
+    started = time.time()
+    errors: list[dict] = []
+    counts = {"seen": 0, "kept": 0, "rejected": 0, "fetch_fail": 0}
+    by_author: dict[str, int] = {}
+
+    seen_ids: set[str] = set()
+    authors = list(dict.fromkeys(AUTHORS))  # dedupe, preserve order
+
+    with jsonl_path.open("w", encoding="utf-8") as fout, \
+         rejects_path.open("w", encoding="utf-8") as frej:
+        for author in authors:
+            by_author[author] = 0
+            try:
+                iterable = iter_models(api, author)
+            except Exception as e:
+                errors.append({"author": author, "stage": "list", "err": repr(e)})
+                continue
+            per = 0
+            for m in iterable:
+                if per >= args.max_per_author:
+                    break
+                if m.id in seen_ids:
+                    continue
+                seen_ids.add(m.id)
+                counts["seen"] += 1
+                try:
+                    rec = fetch_model_detail(api, m.id)
+                except Exception as e:
+                    counts["fetch_fail"] += 1
+                    errors.append({"id": m.id, "stage": "info", "err": repr(e)})
+                    continue
+                ok, reason = passes_brief(rec)
+                if ok:
+                    fout.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                    fout.flush()
+                    counts["kept"] += 1
+                    by_author[author] += 1
+                else:
+                    frej.write(json.dumps({"id": m.id, "reason": reason,
+                                            "params_b": rec.get("params_b"),
+                                            "tags": rec.get("tags"),
+                                            "gated": rec.get("gated")},
+                                           ensure_ascii=False) + "\n")
+                    frej.flush()
+                    counts["rejected"] += 1
+                per += 1
+            # gentle pacing for unauthenticated calls
+            time.sleep(0.2)
+
+    summary = {
+        "date": today,
+        "token_set": bool(token),
+        "include_private": bool(args.include_private),
+        "authors_queried": authors,
+        "counts": counts,
+        "by_author": by_author,
+        "errors": errors[:50],
+        "elapsed_s": round(time.time() - started, 1),
+        "filters": {"min_params_b": MIN_PARAMS_B, "max_params_b": MAX_PARAMS_B,
+                     "tags_keep": TAGS_KEEP},
+        "outputs": {"models_jsonl": str(jsonl_path),
+                     "rejects_jsonl": str(rejects_path)},
+    }
+    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False),
+                            encoding="utf-8")
+    print(json.dumps({"counts": counts, "by_author": by_author,
+                       "elapsed_s": summary["elapsed_s"],
+                       "outputs": summary["outputs"]}, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

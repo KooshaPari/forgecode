@@ -1,0 +1,621 @@
+//! Shared physics-field substrate — `PhysicsFields { T, M, E, F, P, B }`.
+//!
+//! Doctrine (PHYSICS_COUPLING_SUBSTRATE.md §2):
+//!
+//! > All emergent layers couple **bidirectionally** through the substrate
+//! > via continuous field gradients and conserved resources (downward
+//! > causation). Inter-layer API calls between silos are prohibited.
+//!
+//! Public surface (this is what emergent layers may touch):
+//!
+//! * [`PhysicsFields`] — owned by [`Simulation`](civ_engine::Simulation).
+//! * [`PhysicsFields::set`] — the **only** mutator. Rate-limited, audited,
+//!   unit-typed per [`WriteSource`].
+//! * [`PhysicsFields::grad`] — central-difference gradient sample. The only
+//!   "real" read; scalar reads at a single lattice point are allowed for
+//!   boolean-ish UI use but do not count as coupled-fields.
+//! * [`PhysicsFields::evolve`] — single tick of physics evolution
+//!   (advection, diffusion, reaction, dispersal, biomass regrowth,
+//!   conservation clamps). Called once per tick by `phase_substrate`.
+//!
+//! Phase 1 / Sprint 0 (PHYSICS_INTEGRATION_PLAN.md §3.1): the operators
+//! are **identity** (the field persists layer writes but does not yet
+//! advect / diffuse / react). Conservation invariants are reported in
+//! [`EvolveReport`] so the invariant module can trip on leak.
+
+pub mod grid;
+
+use glam::{IVec3, Vec3};
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use grid::{Grid, GridSpec};
+
+/// Logical field identifier. The substrate owns six: temperature, moisture,
+/// energy, material flux, population pressure, biomass.
+///
+/// Order is part of the wire contract — emergent layers index
+/// [`PhysicsFields::fields`] by `Field as usize`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(usize)]
+pub enum Field {
+    /// Temperature (K). Clamped `[0, 6000]`.
+    T = 0,
+    /// Moisture (kg/m³-equivalent). Clamped `[0, 1e6]`.
+    M = 1,
+    /// Energy (J-equivalent). Clamped `[0, 1e12]`.
+    E = 2,
+    /// Material flux (kg/cell/tick). Clamped `[0, 1e6]`.
+    F = 3,
+    /// Population pressure (agents/m²). Clamped `[0, 1e6]`.
+    P = 4,
+    /// Biomass (kg-equivalent). Clamped `[0, 1e9]`.
+    B = 5,
+}
+
+/// Inclusive `(lo, hi)` clamp ranges for each [`Field`]. Used by
+/// [`PhysicsFields::set`] to enforce unit bounds before the write lands.
+pub mod limits {
+    use super::Field;
+
+    /// Return the inclusive `(lo, hi)` bounds for a field.
+    ///
+    /// Mirrors the doctrine in `PHYSICS_COUPLING_SUBSTRATE.md` §2:
+    /// temperature is K-clamped, the others are mass/energy-conserved.
+    pub fn range(field: Field) -> (f32, f32) {
+        match field {
+            Field::T => (0.0, 6_000.0),
+            Field::M => (0.0, 1.0e6),
+            Field::E => (0.0, 1.0e12),
+            Field::F => (0.0, 1.0e6),
+            Field::P => (0.0, 1.0e6),
+            Field::B => (0.0, 1.0e9),
+        }
+    }
+}
+
+/// Originating layer for a write. The substrate uses this to enforce the
+/// rate-limit table (doctrine §2.3 — no thermonuclear factions) and to
+/// attribute each write to a single emitter for the audit panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum WriteSource {
+    /// `civ-life` (genetics, species, needs) writes P and B.
+    LifeLayer(u64),
+    /// `civ-language` drift emitter — pure event sink, no field write.
+    LanguageLayer,
+    /// `civ-faction` writes P via migration.
+    FactionLayer,
+    /// `engine::religion` writes E (ritual fire) and F (burnt offerings).
+    ReligionLayer,
+    /// `civ-trade` writes B (exports) and F (cargo flux).
+    TradeLayer,
+    /// `civ-architecture` writes T (shade), M (drainage), E (vents), F (channels).
+    ArchitectureLayer,
+    /// `civ-economy::extraction` writes B (harvest).
+    EconomyLayer,
+    /// `civ-climate` writes T (radiative balance), M (precip), E (latent).
+    ClimateLayer,
+    /// `civ-tactics` writes P (casualties), E (fires), F (debris).
+    TacticsLayer,
+    /// `civ-diplomacy` is read-only on the substrate.
+    DiplomacyLayer,
+    /// `civ-laws` modulates permitted ranges via the rate-limit table.
+    LawsLayer,
+    /// `civ-research` writes E (factory power-on).
+    ResearchLayer,
+    /// The substrate's own operator (advection / diffusion / reaction).
+    Substrate,
+}
+
+/// Errors returned by substrate mutators. Phase 1 only surfaces
+/// `OutOfBounds` (lattice coordinate outside `[origin, hi]`); later
+/// sprints may add `RateLimited` for `TacticsLayer > RATE_FIRE_MAX`.
+#[derive(Debug, Error)]
+pub enum SubstrateError {
+    /// Lattice coordinate outside `[origin, hi]`. Layers should clamp
+    /// `p` with [`GridSpec::clamp_lattice`] before calling `set`.
+    #[error("lattice point {p:?} out of bounds for spec (origin={origin:?}, world_dim={world_dim})")]
+    OutOfBounds {
+        p: IVec3,
+        origin: IVec3,
+        world_dim: i32,
+    },
+}
+
+/// One tick of substrate evolution, returned by [`PhysicsFields::evolve`].
+///
+/// Phase 1 / Sprint 0 returns the pre-/post-tick totals of every field so
+/// `substrate_conservation()` can trip on a leak. The `operators` field
+/// records which operators actually ran (Phase 1 = `Identity`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EvolveReport {
+    /// Tick the evolution ran on.
+    pub tick: u64,
+    /// Per-field total before evolution.
+    pub pre_totals: [f64; 6],
+    /// Per-field total after evolution.
+    pub post_totals: [f64; 6],
+    /// Which operators ran. Phase 1 only reports `Identity`.
+    pub operators: Vec<String>,
+    /// Per-field write count (audit / `emission_lag` invariant).
+    pub writes_by_source: [u64; 13],
+}
+
+/// Index into [`WriteSource`] used to populate [`EvolveReport::writes_by_source`].
+fn source_index(source: WriteSource) -> usize {
+    match source {
+        WriteSource::LifeLayer(_) => 0,
+        WriteSource::LanguageLayer => 1,
+        WriteSource::FactionLayer => 2,
+        WriteSource::ReligionLayer => 3,
+        WriteSource::TradeLayer => 4,
+        WriteSource::ArchitectureLayer => 5,
+        WriteSource::EconomyLayer => 6,
+        WriteSource::ClimateLayer => 7,
+        WriteSource::TacticsLayer => 8,
+        WriteSource::DiplomacyLayer => 9,
+        WriteSource::LawsLayer => 10,
+        WriteSource::ResearchLayer => 11,
+        WriteSource::Substrate => 12,
+    }
+}
+
+/// The shared substrate — six conservation fields on a shared lattice.
+///
+/// Owned by [`Simulation`](civ_engine::Simulation). Construct via
+/// [`PhysicsFields::new`] (or `Default::default()`).
+#[derive(Debug, Clone)]
+pub struct PhysicsFields {
+    spec: GridSpec,
+    /// Temperature grid (K).
+    pub T: Grid,
+    /// Moisture grid.
+    pub M: Grid,
+    /// Energy grid.
+    pub E: Grid,
+    /// Material flux grid.
+    pub F: Grid,
+    /// Population pressure grid.
+    pub P: Grid,
+    /// Biomass grid.
+    pub B: Grid,
+    /// Per-source write counts (audit / `emission_lag` invariant).
+    writes_by_source: [u64; 13],
+}
+
+impl Default for PhysicsFields {
+    fn default() -> Self {
+        Self::new(GridSpec::default())
+    }
+}
+
+impl PhysicsFields {
+    /// Build a substrate sized to `spec` with every field zeroed.
+    pub fn new(spec: GridSpec) -> Self {
+        Self {
+            T: Grid::new(spec),
+            M: Grid::new(spec),
+            E: Grid::new(spec),
+            F: Grid::new(spec),
+            P: Grid::new(spec),
+            B: Grid::new(spec),
+            spec,
+            writes_by_source: [0; 13],
+        }
+    }
+
+    /// Lattice descriptor (chunk_dim, world_dim, origin).
+    #[inline]
+    pub fn spec(&self) -> GridSpec {
+        self.spec
+    }
+
+    /// Borrow a field's [`Grid`] by identifier. Use this for `at(p)`
+    /// (boolean reads) and for the substrate's own internal operators.
+    /// Layer writes must use [`PhysicsFields::set`] instead.
+    pub fn grid(&self, field: Field) -> &Grid {
+        match field {
+            Field::T => &self.T,
+            Field::M => &self.M,
+            Field::E => &self.E,
+            Field::F => &self.F,
+            Field::P => &self.P,
+            Field::B => &self.B,
+        }
+    }
+
+    fn grid_mut(&mut self, field: Field) -> &mut Grid {
+        match field {
+            Field::T => &mut self.T,
+            Field::M => &mut self.M,
+            Field::E => &mut self.E,
+            Field::F => &mut self.F,
+            Field::P => &mut self.P,
+            Field::B => &mut self.B,
+        }
+    }
+
+    /// `true` when `p` is in `[origin, hi]` (lattice coordinates).
+    #[inline]
+    pub fn in_bounds(&self, p: IVec3) -> bool {
+        self.spec.index_of(p).is_some()
+    }
+
+    /// Type-checked, range-clamped, audited write.
+    ///
+    /// `delta` is **added** to the current value (not absolute) so callers
+    /// can express "fire spawned 1000 J" without first reading the cell.
+    /// The resulting value is then clamped to the field's inclusive range.
+    /// This is the **only** mutator layers may use (doctrine §2.3).
+    ///
+    /// Returns the post-write clamped value.
+    pub fn set(
+        &mut self,
+        field: Field,
+        p: IVec3,
+        delta: f32,
+        source: WriteSource,
+    ) -> Result<f32, SubstrateError> {
+        let grid = self.grid_mut(field);
+        if grid.spec().index_of(p).is_none() {
+            return Err(SubstrateError::OutOfBounds {
+                p,
+                origin: self.spec.origin,
+                world_dim: self.spec.world_dim,
+            });
+        }
+        let current = grid.at(p);
+        let (lo, hi) = limits::range(field);
+        let updated = (current + delta).clamp(lo, hi);
+        grid.set(p, updated);
+        self.writes_by_source[source_index(source)] += 1;
+        Ok(updated)
+    }
+
+    /// Set the absolute value of a field at `p`, clamped to the field's
+    /// range. Counts as one write against `source` for the audit panel.
+    /// Useful for tests and substrate initialisation (climate seed).
+    pub fn set_value(
+        &mut self,
+        field: Field,
+        p: IVec3,
+        value: f32,
+        source: WriteSource,
+    ) -> Result<f32, SubstrateError> {
+        let grid = self.grid_mut(field);
+        if grid.spec().index_of(p).is_none() {
+            return Err(SubstrateError::OutOfBounds {
+                p,
+                origin: self.spec.origin,
+                world_dim: self.spec.world_dim,
+            });
+        }
+        let (lo, hi) = limits::range(field);
+        let clamped = value.clamp(lo, hi);
+        grid.set(p, clamped);
+        self.writes_by_source[source_index(source)] += 1;
+        Ok(clamped)
+    }
+
+    /// Central-difference gradient sample at `p`, edge-clamped.
+    ///
+    /// `grad.x` is `(field(p + X̂) − field(p − X̂)) · 0.5`. At the boundary
+    /// the clamping converts the central difference into a forward/
+    /// backward difference, which is the doctrine-correct degradation
+    /// (see `Grid::at_clamped`).
+    pub fn grad(&self, field: Field, p: IVec3) -> Vec3 {
+        let g = self.grid(field);
+        let dx = (g.at_clamped(p + IVec3::X) - g.at_clamped(p - IVec3::X)) * 0.5;
+        let dy = (g.at_clamped(p + IVec3::Y) - g.at_clamped(p - IVec3::Y)) * 0.5;
+        let dz = (g.at_clamped(p + IVec3::Z) - g.at_clamped(p - IVec3::Z)) * 0.5;
+        Vec3::new(dx, dy, dz)
+    }
+
+    /// One tick of physics evolution.
+    ///
+    /// Phase 1 / Sprint 0 operators are **identity** — the substrate
+    /// persists layer writes but does not yet advect / diffuse / react.
+    /// The report carries the pre-/post-tick totals so
+    /// `substrate_conservation()` can verify no leak.
+    ///
+    /// `dt` is in seconds; the operator split (substrate §4.1) calls
+    /// `evolve` with `dt = 1.0` for the physics stage and `dt = 1.0` for
+    /// the ecology stage, summing the reports.
+    pub fn evolve(&mut self, dt: f32) -> EvolveReport {
+        let _ = dt;
+        let pre_totals = [
+            self.T.sum(),
+            self.M.sum(),
+            self.E.sum(),
+            self.F.sum(),
+            self.P.sum(),
+            self.B.sum(),
+        ];
+        // Phase 1: identity. Sprint 1 will fill in advection/diffusion/
+        // reaction/biomass-regrowth here.
+        let post_totals = [
+            self.T.sum(),
+            self.M.sum(),
+            self.E.sum(),
+            self.F.sum(),
+            self.P.sum(),
+            self.B.sum(),
+        ];
+        EvolveReport {
+            tick: 0,
+            pre_totals,
+            post_totals,
+            operators: vec!["identity".to_string()],
+            writes_by_source: self.writes_by_source,
+        }
+    }
+
+    /// Per-source write counts (audit / `emission_lag` invariant).
+    pub fn writes_by_source(&self) -> &[u64; 13] {
+        &self.writes_by_source
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn small_spec() -> GridSpec {
+        GridSpec {
+            chunk_dim: 4,
+            world_dim: 8,
+            origin: IVec3::ZERO,
+        }
+    }
+
+    #[test]
+    fn grad_central_difference_is_linear_along_axis() {
+        let spec = small_spec();
+        let mut fields = PhysicsFields::new(spec);
+        // Linear ramp T(x, y, z) = 10 + x. Gradient along X must be 1.0,
+        // and 0 along Y and Z.
+        for x in 0..spec.world_dim {
+            for y in 0..spec.world_dim {
+                for z in 0..spec.world_dim {
+                    let p = IVec3::new(x, y, z);
+                    fields
+                        .set_value(Field::T, p, 10.0 + x as f32, WriteSource::Substrate)
+                        .unwrap();
+                }
+            }
+        }
+        let g = fields.grad(Field::T, IVec3::new(2, 2, 2));
+        assert!(
+            (g.x - 1.0).abs() < 1e-5,
+            "grad_x should be 1.0 for a unit slope, got {}",
+            g.x
+        );
+        assert!(g.y.abs() < 1e-5, "grad_y should be 0, got {}", g.y);
+        assert!(g.z.abs() < 1e-5, "grad_z should be 0, got {}", g.z);
+    }
+
+    #[test]
+    fn grad_at_edge_clamps_to_forward_difference() {
+        let spec = small_spec();
+        let mut fields = PhysicsFields::new(spec);
+        // Same ramp — at the edge x=0, central difference collapses to
+        // forward difference: (T(1) − T(0)) * 0.5 = (11 − 10) * 0.5 = 0.5.
+        for x in 0..spec.world_dim {
+            for y in 0..spec.world_dim {
+                for z in 0..spec.world_dim {
+                    let p = IVec3::new(x, y, z);
+                    fields
+                        .set_value(Field::T, p, 10.0 + x as f32, WriteSource::Substrate)
+                        .unwrap();
+                }
+            }
+        }
+        let g_edge = fields.grad(Field::T, IVec3::new(0, 4, 4));
+        assert!(
+            (g_edge.x - 0.5).abs() < 1e-5,
+            "edge gradient should degrade to forward-difference = 0.5, got {}",
+            g_edge.x
+        );
+    }
+
+    #[test]
+    fn set_clamps_to_field_range_and_audits_source() {
+        let spec = small_spec();
+        let mut fields = PhysicsFields::new(spec);
+        let p = IVec3::new(1, 1, 1);
+        // T max is 6000 K. Set_value beyond the limit must clamp.
+        let v = fields
+            .set_value(Field::T, p, 99_999.0, WriteSource::ClimateLayer)
+            .unwrap();
+        assert_eq!(v, 6_000.0);
+        // The audit panel records exactly one ClimateLayer write.
+        assert_eq!(fields.writes_by_source()[source_index(WriteSource::ClimateLayer)], 1);
+    }
+
+    #[test]
+    fn set_out_of_bounds_returns_error() {
+        let spec = small_spec();
+        let mut fields = PhysicsFields::new(spec);
+        let outside = IVec3::new(100, 100, 100);
+        let err = fields
+            .set(Field::T, outside, 1.0, WriteSource::Substrate)
+            .expect_err("should reject out-of-bounds lattice point");
+        assert!(matches!(err, SubstrateError::OutOfBounds { .. }));
+    }
+
+    #[test]
+    fn set_adds_delta_then_clamps() {
+        let spec = small_spec();
+        let mut fields = PhysicsFields::new(spec);
+        let p = IVec3::new(3, 3, 3);
+        fields
+            .set_value(Field::B, p, 100.0, WriteSource::Substrate)
+            .unwrap();
+        fields.set(Field::B, p, 50.0, WriteSource::LifeLayer(7)).unwrap();
+        assert_eq!(fields.B.at(p), 150.0);
+        // Push past the upper bound (1e9). Use 1e9 + 100 instead of the
+        // public `set` so we exercise the clamp-on-overflow path
+        // deliberately without taking 1e9 in a unit test.
+        fields
+            .set_value(Field::B, p, 1.0e9 + 100.0, WriteSource::EconomyLayer)
+            .unwrap();
+        assert_eq!(fields.B.at(p), 1.0e9);
+    }
+
+    #[test]
+    fn evolve_identity_preserves_totals() {
+        let spec = small_spec();
+        let mut fields = PhysicsFields::new(spec);
+        // Seed a handful of cells with non-zero values, then evolve and
+        // confirm `post_totals == pre_totals` on every field. This is the
+        // Phase 1 `substrate_conservation` invariant.
+        for p in [
+            IVec3::new(0, 0, 0),
+            IVec3::new(2, 3, 1),
+            IVec3::new(7, 7, 7),
+        ] {
+            fields
+                .set_value(Field::T, p, 273.0, WriteSource::ClimateLayer)
+                .unwrap();
+            fields
+                .set_value(Field::B, p, 50.0, WriteSource::EconomyLayer)
+                .unwrap();
+            fields
+                .set_value(Field::P, p, 3.0, WriteSource::LifeLayer(1))
+                .unwrap();
+        }
+        let report = fields.evolve(1.0);
+        for i in 0..6 {
+            assert!(
+                (report.pre_totals[i] - report.post_totals[i]).abs() < 1e-9,
+                "field {} leak: pre={} post={}",
+                i,
+                report.pre_totals[i],
+                report.post_totals[i]
+            );
+        }
+    }
+
+    #[test]
+    fn bidir_hardship_sample_then_ritual_writes_e() {
+        // Doctrine scenario (PHYSICS_COUPLING_SUBSTRATE.md §4.4):
+        //   1. religion samples hardship = |∇T| + |∇B| at the temple.
+        //   2. religion spawns FIRE voxels (writes E).
+        //   3. substrate runs evolve() and the temple's E shows up.
+        //
+        // This test asserts the *bidirectional* read+write loop in one
+        // substrate, without involving the engine. The engine integration
+        // test lives in `crates/engine/src/religion.rs`.
+        let spec = small_spec();
+        let mut fields = PhysicsFields::new(spec);
+        let temple = IVec3::new(2, 2, 2);
+        // Build a steep T gradient toward the temple and a small B bump
+        // east of it so |∇T| + |∇B| is non-zero.
+        for x in 0..spec.world_dim {
+            for y in 0..spec.world_dim {
+                for z in 0..spec.world_dim {
+                    let p = IVec3::new(x, y, z);
+                    fields
+                        .set_value(Field::T, p, 300.0 + x as f32 * 5.0, WriteSource::ClimateLayer)
+                        .unwrap();
+                    if p == IVec3::new(temple.x + 1, temple.y, temple.z) {
+                        fields
+                            .set_value(Field::B, p, 200.0, WriteSource::Substrate)
+                            .unwrap();
+                    }
+                }
+            }
+        }
+        // Step 1: religion samples hardship as |∇T| + |∇B| at the temple.
+        // T has slope 5 K/cell along X, B has a 200 kg bump one cell east.
+        // We sample one cell east of the temple to land on the B gradient
+        // edge (the gradient at the bump's center itself is 0).
+        let hardship_sample = IVec3::new(temple.x + 1, temple.y, temple.z);
+        let hardship =
+            fields.grad(Field::T, hardship_sample).length() + fields.grad(Field::B, temple).length();
+        assert!(
+            hardship > 0.0,
+            "hardship sample at the temple must be non-zero (got {})",
+            hardship
+        );
+        // Step 2: religion spawns FIRE voxels at the temple — a delta
+        // write to E (doctrine §4.4 example).
+        fields
+            .set(Field::E, temple, 1.0e6, WriteSource::ReligionLayer)
+            .unwrap();
+        assert!(fields.E.at(temple) >= 1.0e6);
+        // Step 3: substrate evolves. Phase 1 is identity, so E persists.
+        let report = fields.evolve(1.0);
+        assert_eq!(report.pre_totals[2], report.post_totals[2]);
+    }
+
+    #[test]
+    fn contact_pressure_from_population_gradient_drives_language_drift() {
+        // Doctrine scenario (PHYSICS_COUPLING_SUBSTRATE.md §4.4 L2×P):
+        //   1. faction writes P at the city center.
+        //   2. language reads |∇P| at the cluster centroid → contact pressure.
+        //   3. substrate evolves, P persists (Phase 1 identity), language
+        //      uses the gradient to modulate drift_rate.
+        //
+        // This test asserts the *bidirectional* layer→substrate read+write
+        // path: P is written, the gradient is observable by language.
+        let spec = small_spec();
+        let mut fields = PhysicsFields::new(spec);
+        let city = IVec3::new(3, 3, 3);
+        // Build a sharp P gradient: city center 100, neighbors 10.
+        fields
+            .set_value(Field::P, city, 100.0, WriteSource::FactionLayer)
+            .unwrap();
+        for offset in [
+            IVec3::new(1, 0, 0),
+            IVec3::new(-1, 0, 0),
+            IVec3::new(0, 1, 0),
+            IVec3::new(0, -1, 0),
+            IVec3::new(0, 0, 1),
+            IVec3::new(0, 0, -1),
+        ] {
+            let p = city + offset;
+            fields
+                .set_value(Field::P, p, 10.0, WriteSource::FactionLayer)
+                .unwrap();
+        }
+        // Language samples |∇P| at the cluster centroid (the city itself).
+        let contact_pressure = fields.grad(Field::P, city).length();
+        assert!(
+            contact_pressure > 0.0,
+            "contact_pressure must be > 0 near a population gradient, got {}",
+            contact_pressure
+        );
+        // Audit: FactionLayer wrote 7 times (1 city + 6 neighbors).
+        assert_eq!(
+            fields.writes_by_source()[source_index(WriteSource::FactionLayer)],
+            7
+        );
+        // Substrate evolve() preserves the gradient (identity operator).
+        let _ = fields.evolve(1.0);
+        assert!(fields.P.at(city) == 100.0);
+    }
+
+    #[test]
+    fn lag_one_tick_between_layer_write_and_next_layer_read() {
+        // Doctrine: substrate's evolve() runs *between* layers (one tick
+        // lag). This test asserts that a layer's write at tick T is
+        // observable by the next layer at tick T+1 — the closed feedback
+        // loop that produces edge-of-chaos.
+        let spec = small_spec();
+        let mut fields = PhysicsFields::new(spec);
+        let p = IVec3::new(2, 2, 2);
+        // Tick T: life writes a birth (P +1).
+        fields.set(Field::P, p, 1.0, WriteSource::LifeLayer(42)).unwrap();
+        assert_eq!(fields.P.at(p), 1.0);
+        // substrate evolve() runs at T+0.5 (interleave).
+        let report_t1 = fields.evolve(1.0);
+        // Tick T+1: faction reads P at p — it must see the +1 from life.
+        let p_read = fields.P.at(p);
+        assert_eq!(p_read, 1.0, "faction must see life birth at T+1");
+        assert!(
+            (report_t1.pre_totals[4] - report_t1.post_totals[4]).abs() < 1e-9,
+            "P field must be conserved through evolve (no leak between ticks)"
+        );
+    }
+}

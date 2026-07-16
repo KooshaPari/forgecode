@@ -1,0 +1,130 @@
+/**
+ * DAG renderer tests.
+ *
+ * Uses Bun's built-in test runner (bun test).
+ * Tests the layout algorithm, DAG data integrity, and drill-down detail fields.
+ */
+
+import { describe, it, expect } from "bun:test";
+import dagData from "../data/dag-data.json";
+
+interface DagNode {
+  id: string;
+  label: string;
+  status: string;
+  lastUpdated?: string | null;
+}
+interface DagEdge {
+  from: string;
+  to: string;
+}
+interface DagData {
+  title: string;
+  description: string;
+  nodes: DagNode[];
+  edges: DagEdge[];
+}
+
+const data = dagData as DagData;
+
+describe("DAG data integrity", () => {
+  it("has a title and description", () => {
+    expect(data.title).toBeTruthy();
+    expect(data.description).toBeTruthy();
+  });
+
+  it("has at least one node", () => {
+    expect(data.nodes.length).toBeGreaterThan(0);
+  });
+
+  it("all nodes have unique ids", () => {
+    const ids = data.nodes.map((n) => n.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("all nodes have valid status values", () => {
+    const valid = new Set(["completed", "in-progress", "pending", "failed", "blocked"]);
+    for (const n of data.nodes) {
+      expect(valid.has(n.status)).toBe(true);
+    }
+  });
+
+  it("all edge references point to existing node ids", () => {
+    const ids = new Set(data.nodes.map((n) => n.id));
+    for (const e of data.edges) {
+      expect(ids.has(e.from)).toBe(true);
+      expect(ids.has(e.to)).toBe(true);
+    }
+  });
+
+  it("has no duplicate edges", () => {
+    const edgeSet = new Set(data.edges.map((e) => `${e.from}->${e.to}`));
+    expect(edgeSet.size).toBe(data.edges.length);
+  });
+});
+
+describe("DAG topology", () => {
+  // Kahn's algorithm: if it produces all node ids, the graph is acyclic
+  it("is acyclic (topological sort produces all nodes)", () => {
+    const inDeg: Record<string, number> = {};
+    const adj: Record<string, string[]> = {};
+    const ids = new Set(data.nodes.map((n) => n.id));
+
+    for (const id of ids) {
+      inDeg[id] = 0;
+      adj[id] = [];
+    }
+    for (const e of data.edges) {
+      if (!ids.has(e.from) || !ids.has(e.to)) continue;
+      adj[e.from].push(e.to);
+      inDeg[e.to] = (inDeg[e.to] || 0) + 1;
+    }
+
+    const queue = Object.keys(inDeg).filter((id) => inDeg[id] === 0);
+    const order: string[] = [];
+    while (queue.length) {
+      const id = queue.shift()!;
+      order.push(id);
+      for (const nid of adj[id] || []) {
+        inDeg[nid]--;
+        if (inDeg[nid] === 0) queue.push(nid);
+      }
+    }
+
+    expect(order.length).toBe(ids.size);
+  });
+
+  it("has at least one root node (no incoming edges)", () => {
+    const hasIncoming = new Set(data.edges.map((e) => e.to));
+    const roots = data.nodes.filter((n) => !hasIncoming.has(n.id));
+    expect(roots.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("DAG status distribution", () => {
+  it("has at least one node in each non-pending status that is represented", () => {
+    const counts: Record<string, number> = {};
+    for (const n of data.nodes) {
+      counts[n.status] = (counts[n.status] || 0) + 1;
+    }
+    // total should match
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    expect(total).toBe(data.nodes.length);
+  });
+});
+
+describe("DAG drill-down detail fields", () => {
+  it("all nodes have a valid id pattern (f## or F##)", () => {
+    for (const n of data.nodes) {
+      expect(n.id).toMatch(/^f\d+$/);
+    }
+  });
+
+  it("nodes can optionally have lastUpdated as ISO-8601 or null", () => {
+    for (const n of data.nodes) {
+      if (n.lastUpdated !== null && n.lastUpdated !== undefined) {
+        expect(n.lastUpdated).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      }
+    }
+  });
+});

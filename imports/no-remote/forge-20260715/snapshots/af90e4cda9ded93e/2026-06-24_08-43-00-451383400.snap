@@ -1,0 +1,71 @@
+[package]
+name = "kvirtual"
+version = "0.1.0"
+edition = "2021"
+description = "Desktop automation CLI (kvd) — absorbed from _tmp_kvirtualstage/kvirtualdesktop"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KooshaPari/phenotype-infra"
+publish = false
+
+[[bin]]
+name = "kvd"
+path = "src/main.rs"
+
+[dependencies]
+# CLI framework
+clap = { version = "4", features = ["derive", "cargo"] }
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# TUI and interactive features
+crossterm = "0.27"
+ratatui = "0.24"
+dialoguer = "0.11"
+indicatif = "0.17"
+
+# System interaction
+sysinfo = "0.29"
+which = "4"
+dirs = "5"
+
+# Async runtime
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Configuration and sessions
+toml = "0.8"
+config = "0.14"
+uuid = { workspace = true, features = ["v4"] }
+
+# Desktop automation
+autopilot = "0.4"
+screenshots = "0.4"
+image = "0.24"
+
+# Container/VM support
+bollard = "0.14"  # Docker API
+libvirt = "0.3"   # VM management
+
+# Recording and media
+ffmpeg-next = "6.0"
+rodio = "0.17"    # Audio playback for TTS
+
+# Credential management
+keyring = "2"
+secrecy = "0.8"
+
+# History and completion
+rustyline = "12"
+fuzzy-matcher = "0.3"
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+test-case = "3"
+mockall = "0.11"

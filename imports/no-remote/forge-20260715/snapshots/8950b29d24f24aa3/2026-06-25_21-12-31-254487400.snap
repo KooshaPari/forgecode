@@ -1,0 +1,16 @@
+@echo off
+setlocal enabledelayedexpansion
+set RUSTUP_AUTO_INSTALL=0
+for %%R in (phenotype-infra phenotype-journeys phenocompose byteport OmniRoute-upstream) do (
+  echo === %%R ===
+  pushd "C:\Users\koosh\%%R" >nul 2>&1
+  if errorlevel 1 ( echo   NOT_FOUND & popd >nul & goto :next )
+  bash ..\phenotype-registry\grade.sh --fast --json 1>nul 2>nul
+  if exist .grade-reports\grade.json (
+    python -X utf8 -c "import json; d=json.load(open('.grade-reports/grade.json','r',encoding='utf-8')); print(f'  score=' + str(d['score']) + '/' + str(d['max']) + ' (' + str(d['percentage']) + '%%) grade=' + d['grade'])"
+  ) else (
+    echo   no grade report
+  )
+  popd >nul
+  :next
+)

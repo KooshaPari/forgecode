@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# scripts/sre/page-rotation.sh
+#
+# Resolve the current primary / secondary on-call from
+# docs/runbooks/oncall-rotation.txt and emit:
+#   - current primary handle
+#   - current secondary handle
+#   - window start / end (UTC)
+#   - next handoff date (UTC)
+#
+# Swap rows in oncall-rotation.txt override the standing rotation for their
+# window (see the file header for format).
+#
+# Usage:
+#   scripts/sre/page-rotation.sh                 # resolve "today"
+#   scripts/sre/page-rotation.sh --date 2026-07-04
+#   scripts/sre/page-rotation.sh --json          # emit JSON instead of text
+#
+# Exit codes:
+#   0  success (current window found)
+#   1  rotation file missing
+#   2  no row matches the given date
+#   3  rotation file is malformed
+
+set -euo pipefail
+
+# Resolve repo root (this script lives at <repo>/scripts/sre/).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+ROTATION_FILE="${REPO_ROOT}/docs/runbooks/oncall-rotation.txt"
+
+# Defaults
+DATE_TODAY="$(date -u +%Y-%m-%d)"
+EMIT_JSON=0
+
+# Arg parse
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --date)
+      DATE_TODAY="${2:-}"
+      shift 2
+      ;;
+    --json)
+      EMIT_JSON=1
+      shift
+      ;;
+    -h|--help)
+      sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "Unknown arg: $1" >&2
+      exit 3
+      ;;
+  esac
+done
+
+if [[ ! -f "$ROTATION_FILE" ]]; then
+  echo "ERROR: rotation file not found: $ROTATION_FILE" >&2
+  exit 1
+fi
+
+# Validate the date input matches YYYY-MM-DD; refuse anything else to keep
+# the comparison unambiguous.
+if ! [[ "$DATE_TODAY" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "ERROR: --date must be YYYY-MM-DD (got: $DATE_TODAY)" >&2
+  exit 3
+fi
+
+# Walk the rotation file. The file is small (one row per week); a single linear
+# pass is the clearest implementation.
+current_row=""
+matched=0
+# Strip CR (files committed from Windows may have CRLF line endings).
+while IFS=$'\t' read -r start end primary secondary notes; do
+  start="${start%$'\r'}"
+  end="${end%$'\r'}"
+  primary="${primary%$'\r'}"
+  secondary="${secondary%$'\r'}"
+  notes="${notes%$'\r'}"
+  # Skip blank lines and comments. Note: single-bracket [ ] does not glob —
+  # use substring comparison on the first character.
+  if [ -z "$start" ] || [ "${start:0:1}" = "#" ]; then
+    continue
+  fi
+
+  # Validate row shape — five tab-separated fields, start <= end.
+  if ! [[ "$start" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$end" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    echo "ERROR: malformed row (bad date): ${start}	${end}	${primary:-?}	${secondary:-?}	${notes:-}" >&2
+    exit 3
+  fi
+  if [[ "$start" > "$end" ]]; then
+    echo "ERROR: row has start > end: ${start} > ${end}" >&2
+    exit 3
+  fi
+
+  # Inclusive comparison in YYYY-MM-DD space (lexicographic == chronological
+# for fixed-width ISO dates). Use single-quoted [ ] chains — Git for Windows
+# bash occasionally misparses "]] && [[".
+  if [ "$DATE_TODAY" ">=" "$start" ] && [ "$DATE_TODAY" "<=" "$end" ]; then
+    current_row="${start}	${end}	${primary}	${secondary}	${notes}"
+    matched=1
+    break
+  fi
+done < "$ROTATION_FILE"
+
+if [[ "$matched" -eq 0 ]]; then
+  echo "ERROR: no rotation row matches ${DATE_TODAY}. Update ${ROTATION_FILE}." >&2
+  exit 2
+fi
+
+IFS=$'\t' read -r win_start win_end primary secondary notes <<<"$current_row"
+
+# Next handoff = day after the current window ends.
+# Portable date arithmetic: GNU date on Linux, otherwise fall back to a
+# small Python-free trick using `date -d` only (works on the Git Bash
+# environment bundled with OmniRoute's CI runners too).
+if date -u -d "1970-01-01 +0 days" +%s >/dev/null 2>&1; then
+  NEXT_HANDOFF="$(date -u -d "${win_end} +1 day" +%Y-%m-%d)"
+else
+  # Busybox / alpine fallback — same idea, different flag.
+  NEXT_HANDOFF="$(date -u -d "@$(( $(date -u -d "${win_end}" +%s) + 86400 ))" +%Y-%m-%d)"
+fi
+
+if [[ "$EMIT_JSON" -eq 1 ]]; then
+  # Use python3 if available, else fall back to jq, else hand-emit JSON.
+  if command -v python3 >/dev/null 2>&1; then
+    PRIMARY="$primary" SECONDARY="$secondary" \
+    WIN_START="$win_start" WIN_END="$win_end" \
+    NEXT_HANDOFF="$NEXT_HANDOFF" NOTES="$notes" \
+    python3 - <<'PY'
+import json, os
+print(json.dumps({
+  "date": os.environ.get("DATE", ""),
+  "window_start": os.environ["WIN_START"],
+  "window_end": os.environ["WIN_END"],
+  "primary": os.environ["PRIMARY"],
+  "secondary": os.environ["SECONDARY"],
+  "notes": os.environ["NOTES"],
+  "next_handoff": os.environ["NEXT_HANDOFF"],
+}, indent=2))
+PY
+  elif command -v jq >/dev/null 2>&1; then
+    jq -n \
+      --arg date     "${DATE_TODAY}" \
+      --arg wstart   "$win_start" \
+      --arg wend     "$win_end" \
+      --arg prim     "$primary" \
+      --arg sec      "$secondary" \
+      --arg notes    "$notes" \
+      --arg handoff  "$NEXT_HANDOFF" \
+      '{date:$date,window_start:$wstart,window_end:$wend,primary:$prim,secondary:$sec,notes:$notes,next_handoff:$handoff}'
+  else
+    # Bare-minimum JSON emitter (no quoting concerns since names contain no " or \).
+    printf '{\n  "date": "%s",\n  "window_start": "%s",\n  "window_end": "%s",\n  "primary": "%s",\n  "secondary": "%s",\n  "notes": "%s",\n  "next_handoff": "%s"\n}\n' \
+      "$DATE_TODAY" "$win_start" "$win_end" "$primary" "$secondary" "$notes" "$NEXT_HANDOFF"
+  fi
+else
+  cat <<EOF
+On-call rotation (UTC)
+  Date queried : ${DATE_TODAY}
+  Window       : ${win_start} → ${win_end}  (${notes})
+  Primary      : ${primary}
+  Secondary    : ${secondary}
+  Next handoff : ${NEXT_HANDOFF}
+
+Tip: pass --json to feed this into PagerDuty / OpsGenie / Slack automation.
+EOF
+fi

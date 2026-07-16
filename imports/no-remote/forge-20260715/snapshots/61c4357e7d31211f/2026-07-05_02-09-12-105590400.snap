@@ -1,0 +1,127 @@
+"""
+Resolve the 10+ rebase-merge conflicts by using -X theirs strategy.
+For each candidate branch, attempt rebase onto current consolidation HEAD with
+the 'theirs' strategy. This will accept all incoming changes and discard
+conflicting main-side changes. We log which files were auto-resolved and
+which (if any) need manual intervention.
+"""
+import subprocess
+import json
+import os
+
+CWD = r'C:\Users\koosh\OmniRoute-fresh2'
+BUN = r'C:\Users\koosh\AppData\Roaming\npm\bun.CMD'
+
+# Branches that need rebase+merge with conflict resolution
+# Already merged (zero-behind): skip
+ALREADY_MERGED = {
+    'fix/omniroute-auto-passthrough-404',
+    'koosha/accelerate-router-issue-agent-20260704',
+    'fix/omniroute-auto-fix',
+}
+# Skipped: 4707-ahead rewrite
+SKIP = {
+    'fix/caddy-lb-policy-forwarded-headers',
+}
+# Re-merge candidates (in priority order — small diffs first)
+CANDIDATES = [
+    # Small diffs (ahead 1-5)
+    'feat/in-flight-fixes-1783052951',  # ahead=3 behind=3
+    'port/bai-sidecar',                  # ahead=1 behind=12
+    'fix/main-workflow-schema-2',        # ahead=3 behind=12
+    'ship/router-eval-retained-gate',    # ahead=2 behind=21
+    'feat/router-eval-retained-trends',  # ahead=5 behind=21
+    'feat/router-eval-retained-trends-refresh',  # ahead=9 behind=21
+    'feat/qgate-reusable-spectrum',      # ahead=0 behind=32  (likely empty)
+    'rebase/5887',                       # ahead=0 behind=31  (likely empty)
+    'fix/vitest-blockers',               # ahead=0 behind=27  (likely empty)
+    'land/pr-025',                       # ahead=0 behind=25  (likely empty)
+    'land-pr025',                        # ahead=0 behind=24  (likely empty)
+    'pr-014-reasoning-effort-maps',      # ahead=1 behind=24
+    'rebase/pr-012',                     # ahead=0 behind=33  (likely empty)
+    'rebase/pr-014',                     # ahead=1 behind=33
+    'feat/router-eval-replay-gate',      # ahead=4 behind=33
+    'feat-sveltekit-dashboard',          # ahead=5 behind=33
+    # Larger diffs (zero-behind, but conflicted earlier)
+    'fix/off-next-ci-257',               # ahead=40 behind=0
+    'fix/main-docs-build-gates',         # ahead=43 behind=0
+]
+
+def run(cmd, **kw):
+    """Run a shell command, return (rc, stdout, stderr)."""
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=CWD,
+                       encoding='utf-8', errors='replace', **kw)
+    return r.returncode, r.stdout, r.stderr
+
+def is_ancestor(child, parent):
+    rc, out, _ = run(['git', 'merge-base', '--is-ancestor', child, parent])
+    return rc == 0
+
+results = {
+    'merged': [],
+    'empty': [],
+    'skipped': [],
+    'failed': [],
+}
+
+for branch in CANDIDATES:
+    if branch in ALREADY_MERGED:
+        results['skipped'].append((branch, 'already merged'))
+        continue
+    if branch in SKIP:
+        results['skipped'].append((branch, 'rewrite/4707-ahead'))
+        continue
+
+    full = f'origin/{branch}'
+    if not is_ancestor(full, 'main'):
+        # Try checking if it's already in HEAD via the linear chain
+        if is_ancestor(full, 'HEAD'):
+            results['merged'].append((branch, 'already in HEAD (linear)'))
+            continue
+        # Skip unrooted
+        results['skipped'].append((branch, 'unrooted'))
+        continue
+
+    # Already in HEAD (linear chain picked it up)
+    if is_ancestor(full, 'HEAD'):
+        results['merged'].append((branch, 'already in HEAD (linear)'))
+        continue
+
+    # Create a temp branch from origin/branch and try to merge it into HEAD
+    tmp = f'_tmp_resolve_{branch.replace("/", "_")}'
+    rc, _, err = run(['git', 'branch', '-f', tmp, full])
+    if rc != 0:
+        results['failed'].append((branch, f'branch create failed: {err[:200]}'))
+        continue
+
+    # Merge with -X theirs to prefer the branch's version on conflict
+    rc, out, err = run(['git', 'merge', '--no-ff', '-X', 'theirs', '-m',
+                        f'merge({branch}): auto-resolve via theirs strategy',
+                        tmp])
+    if rc == 0:
+        # Check if merge actually added anything
+        rc2, out2, _ = run(['git', 'log', '-1', '--format=%H', 'HEAD'])
+        ahead_after = run(['git', 'rev-list', '--count', f'HEAD~1..HEAD'])[1].strip()
+        results['merged'].append((branch, f'OK (commit {out2.strip()[:10]})'))
+    else:
+        # Abort and log
+        run(['git', 'merge', '--abort'])
+        results['failed'].append((branch, f'merge conflict (auto-aborted): {err[:200]}'))
+
+    # Clean up tmp branch
+    run(['git', 'branch', '-D', tmp])
+
+# Write report
+with open(r'C:\Users\koosh\_resolve_report.json', 'w') as f:
+    json.dump(results, f, indent=2)
+
+print('=== RESULTS ===')
+print(f"MERGED: {len(results['merged'])}")
+for b, m in results['merged']:
+    print(f"  ✓ {b}: {m}")
+print(f"\nEMPTY/SKIPPED: {len(results['skipped'])}")
+for b, m in results['skipped']:
+    print(f"  - {b}: {m}")
+print(f"\nFAILED: {len(results['failed'])}")
+for b, m in results['failed']:
+    print(f"  ✗ {b}: {m}")

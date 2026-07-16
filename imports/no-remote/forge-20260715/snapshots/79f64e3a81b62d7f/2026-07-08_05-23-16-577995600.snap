@@ -1,0 +1,58 @@
+## Summary
+
+Reconstructs the three engine-internal modules (FR-CIV-LANG-001, FR-CIV-PSYCHE, FR-CIV-RELIGION section 7) that were lost when the workspace-manifest-loss commit (PR #1350) wiped their files, and fixes the two broken import paths the prior partial recovery left behind.
+
+## What ships
+
+### New modules
+
+1. `crates/engine/src/language.rs` (540 lines)
+   - Port of the engine-side language drift surface used by `Simulation::phase_language`.
+   - Exposes the full symbol contract `engine.rs::phase_language` expects: `seeded_language_state`, `place_name_meaning`, `person_name_meaning`, `ensure_seeded_word`, `place_name`, `person_name`, `tick_language`, `tick_language_for_lineage` (engine-side wrapper that mixes the lineage id into the per-tick RNG seed), `borrow_word`, plus the `LanguageState`/`Phoneme`/`Morpheme` types.
+
+2. `crates/engine/src/psyche_behavior.rs` (208 lines)
+   - Port of the FR-CIV-PSYCHE bridge: `EmotionDrivenBehavior` enum (`Flee | Cooperate | Aggress | Neutral`) and `behavior_from_psyche(&civ_agents::Psyche)`. The behavior enum is consumed by `Simulation::phase_psyche_behavior`.
+
+3. `crates/engine/src/religion.rs` (668 lines)
+   - Port of the FR-CIV-RELIGION section 7 emergence slice: `ReligiousProfile`, `SubstrateGradients`, `apply_big_gods_response`, `substrate_gradients_for`, `last_religion_sample`, the `ReligionEvent` + `ReligionEventKind` event surface (with the `::tick` constructor and `is_notable()` filter the engine loop expects), plus the per-tick cap constants `MAX_D_MONITORING_PER_TICK`, `MAX_D_COHERENCE_PER_TICK`, `MAX_D_UNCERT_REDUCTION_TICK`, `MAX_MISERY_UNREST`. Keeps the section 12.4 deprecated `Belief`, `BeliefConcept`, `Religion`, `emerge_belief`, `spread_religion` shims so the existing `lib.rs` re-export keeps compiling.
+
+### Bug fixes
+
+4. `crates/engine/src/engine.rs`
+   - Removes the broken `AgentAction` from the `civ_agents` import (the agents crate today only exposes `NeedAction` in that namespace).
+   - Adds a local `AgentAction` enum (`Flee | Socialize | Work`) with the same derives `PsycheDrivenBehavior` expects. Keeps the engine crate self-contained for downstream consumers.
+
+5. `crates/engine/src/emergence_metrics.rs`
+   - Removes the dead `use civ_emergence_metrics::branching::{CriticalityInputs, TileDashboard};` import. `CriticalityInputs` actually lives in `civ_emergence_metrics::criticality`, `TileDashboard` is not implemented (per `civ_emergence_metrics::lib.rs` section "deliberately empty"), and the import was unused.
+
+6. `crates/engine/src/lib.rs`
+   - Adds the three missing `pub mod` declarations.
+
+## Verification
+
+- `rustc --edition 2021 --crate-type lib crates/engine/src/lib.rs` produces 0 E0xxx errors in the new modules. All errors present in the output are downstream-cascade from external crates (`rand`, `serde`, `civ_agents`, `blake3`, etc.) and pre-existing missing-module cascades (`crate::faction_decisions`, `crate::demographics`, etc.) -- none are introduced by this PR.
+- Anti-wipe check: `git diff --cached --diff-filter=D --name-only` returns 0 before commit.
+- All symbols the engine.rs call sites reference (`tick_language_for_lineage(lang, isolation, lineage)`, `ReligionEvent::tick(sid, monitor, coherence, uncertainty_reduction, tick)`, `action_from_emotion_behavior(behavior)`, etc.) resolve to the new modules.
+
+## Contracts preserved
+
+| Symbol | Caller | Module |
+|--------|--------|--------|
+| `seeded_language_state(seed)` | `engine.rs:4333` | `language.rs` |
+| `tick_language_for_lineage(lang, isolation, lineage)` | `engine.rs:4350` | `language.rs` |
+| `borrow_word(lang, source, meaning)` | `engine.rs:4383-4386` | `language.rs` |
+| `ensure_seeded_word(lang, meaning, seed)` | `engine.rs:4337-4338, 4378-4381` | `language.rs` |
+| `behavior_from_psyche(psyche)` | `engine.rs:3884` | `psyche_behavior.rs` |
+| `EmotionDrivenBehavior` variants | `engine.rs:243-246, 266-271` | `psyche_behavior.rs` |
+| `ReligiousProfile::new(p, t)` | `engine.rs:3674` | `religion.rs` |
+| `apply_big_gods_response(p, g, t)` | `engine.rs:3676` | `religion.rs` |
+| `ReligionEvent::tick(s, m, c, u, t)` | `engine.rs:3678` | `religion.rs` |
+| `ReligionEvent::is_notable()` | `engine.rs:3685` | `religion.rs` |
+| `substrate_gradients_for(sid)` | `engine.rs:3693` | `religion.rs` |
+| `Vec<crate::religion::ReligionEvent>` | `engine.rs:858` | `religion.rs` |
+| `MAX_MISERY_UNREST`, `MAX_D_*_PER_TICK` | `engine.rs:3720-3746` (math), 959-963 (doc-links) | `religion.rs` |
+
+## Related
+
+- Recovery trunk: `fix/restore-remaining-modules` (currently a5cbd2f0, +9 ahead of origin/main after this lands).
+- This PR pulls to `feat/engine-recovery-master` (off fix/restore-remaining-modules) so it can stack cleanly above any other branch-restoration work the lead is doing in parallel.

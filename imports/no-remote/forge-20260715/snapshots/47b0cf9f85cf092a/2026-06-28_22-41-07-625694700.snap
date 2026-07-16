@@ -1,0 +1,147 @@
+# Build Lite dataset: 6 traces total - balanced across what we have.
+# Schema: one row per trace, transcript_json as JSON-stringified cell.
+$ErrorActionPreference = 'Stop'
+$indexPath = 'C:\Users\koosh\AppData\Local\Temp\trace_index.jsonl'
+$outLite   = 'C:\Users\koosh\Downloads\traces_lite.csv'
+$transcriptsDir = 'C:\Users\koosh\Downloads\trace_transcripts_lite'
+New-Item -Path $transcriptsDir -ItemType Directory -Force | Out-Null
+
+# Load index
+$lines = Get-Content -LiteralPath $indexPath | Where-Object { $_ -notmatch '^#' -and $_.Trim().Length -gt 0 }
+$records = @()
+foreach ($l in $lines) {
+  try { $records += ($l | ConvertFrom-Json) } catch {}
+}
+
+function Bucket($r) {
+  $turns = [int]$r.turn_count
+  $span  = if ($r.span_seconds) { [int]$r.span_seconds } else { 0 }
+  $bytes = [int]$r.bytes
+  if ($turns -le 5 -and $bytes -le 5120) { return 'short' }
+  if ($span -ge 86400 -or $turns -ge 500 -or $bytes -ge 512000) { return 'long_horizon' }
+  return 'medium'
+}
+
+# Sample plan for Lite (6 rows, transparent allocation):
+#   Forge  : 0 (no conversation traces available)
+#   Codex  : 2 (1 short-by-Codex-standards + 1 medium) - both human-driven
+#   Claude : 4 (1 short, 1 medium, 2 long_horizon) - mix of human + agent_spawned
+$picks = @()
+
+# Codex: 2 medium (no short/long available in Codex index)
+$codexAll = @($records | Where-Object { $_.source -eq 'codex' })
+$picks += $codexAll | Sort-Object span_seconds | Select-Object -First 1   # shortest
+$picks += $codexAll | Sort-Object span_seconds -Descending | Select-Object -First 1  # longest
+
+# Claude Code: 4 picks spread across buckets + drivers
+$claudeAll = @($records | Where-Object { $_.source -eq 'claudecode' })
+$claudeShort = @($claudeAll | Where-Object { (Bucket $_) -eq 'short' })
+$claudeMedium = @($claudeAll | Where-Object { (Bucket $_) -eq 'medium' })
+$claudeLong = @($claudeAll | Where-Object { (Bucket $_) -eq 'long_horizon' })
+$claudeAgent = @($claudeAll | Where-Object { $_.driver_type -eq 'agent_spawned' })
+
+# 1 short
+if ($claudeShort.Count -gt 0) { $picks += $claudeShort | Get-Random -Count 1 }
+# 1 medium (prefer human-driven)
+$mediumHuman = @($claudeMedium | Where-Object { $_.driver_type -eq 'human' })
+if ($mediumHuman.Count -gt 0) { $picks += $mediumHuman | Get-Random -Count 1 }
+# 2 long-horizon (1 human + 1 agent_spawned)
+$longHuman  = @($claudeLong | Where-Object { $_.driver_type -eq 'human' })
+$longAgent  = @($claudeLong | Where-Object { $_.driver_type -eq 'agent_spawned' })
+if ($longHuman.Count -gt 0)  { $picks += $longHuman  | Get-Random -Count 1 }
+if ($longAgent.Count -gt 0)  { $picks += $longAgent  | Get-Random -Count 1 }
+elseif ($claudeAgent.Count -gt 0) { $picks += $claudeAgent | Get-Random -Count 1 }
+
+# Forge: 0 - skip with explicit note
+Write-Output ("Picks so far: {0}" -f $picks.Count)
+
+# --- Write CSV ---
+# UTF-8 BOM for Excel safety
+$utf8Bom = New-Object System.Text.UTF8Encoding($true)
+$writer = [System.IO.StreamWriter]::new($outLite, $false, $utf8Bom)
+$header = @('trace_id','source','source_path','source_file','size_bytes','line_count','turn_count','span_seconds','first_ts','last_ts','driver_type','driver_signal','driver_source','project_root','cwd','models','input_tokens','output_tokens','cache_creation_input_tokens','cache_read_input_tokens','tool_use','tool_result','bucket','length_class','transcript_path','transcript_json','sampled_at','sampling_notes')
+$writer.WriteLine( ($header -join ',') )
+
+$i = 0
+foreach ($p in $picks) {
+  $i++
+  $traceId = "lite_$('{0:D3}' -f $i)"
+  # Read the source transcript content (raw jsonl or justfile) for the transcript_json cell
+  $transcriptContent = ''
+  $transcriptFile = $null
+  try {
+    if ($p.bytes -lt 524288 -and (Test-Path -LiteralPath $p.path)) {
+      # Inline transcript (small enough)
+      $transcriptContent = Get-Content -LiteralPath $p.path -Raw -ErrorAction SilentlyContinue
+    } else {
+      # Write to a separate file and reference
+      $safeName = ($traceId + '_' + ([System.IO.Path]::GetFileName($p.path)))
+      $transcriptFile = Join-Path $transcriptsDir $safeName
+      Copy-Item -LiteralPath $p.path -Destination $transcriptFile -Force
+      $transcriptContent = "<<external:{0}>>" -f $safeName
+    }
+  } catch {
+    $transcriptContent = "<<read_error: $($_.Exception.Message)>>"
+  }
+  $bucket = Bucket $p
+  $lengthClass = switch ($bucket) {
+    'short'        { 'short' }
+    'long_horizon' { 'long' }
+    default        { 'medium' }
+  }
+  $notes = switch ($p.source) {
+    'forge'      { 'forge_session_dir_has_no_conversation_traces_only_build_artifacts' }
+    'codex'      { 'all_codex_traces_in_corpus_are_human_initiated_exec_user' }
+    'claudecode' { 'human_or_agent_spawned_detected_via_subagents_dir' }
+  }
+  $row = [ordered]@{
+    trace_id                     = $traceId
+    source                       = $p.source
+    source_path                  = $p.path
+    source_file                  = [System.IO.Path]::GetFileName($p.path)
+    size_bytes                   = [int]$p.bytes
+    line_count                   = [int]$p.line_count
+    turn_count                   = [int]$p.turn_count
+    span_seconds                 = [int]$p.span_seconds
+    first_ts                     = $p.first_ts
+    last_ts                      = $p.last_ts
+    driver_type                  = $p.driver_type
+    driver_signal                = $p.driver_signal
+    driver_source                = switch ($p.source) { 'codex' {'session_meta.source+thread_source'} 'claudecode' {'subagents_dir_path_match'} 'forge' {'n/a'} default {'n/a'} }
+    project_root                 = $p.project_root
+    cwd                          = $p.cwd
+    models                       = $p.models
+    input_tokens                 = [int]$p.input_tokens
+    output_tokens                = [int]$p.output_tokens
+    cache_creation_input_tokens  = [int]$p.cache_creation_input_tokens
+    cache_read_input_tokens      = [int]$p.cache_read_input_tokens
+    tool_use                     = [int]$p.tool_use
+    tool_result                  = [int]$p.tool_result
+    bucket                       = $bucket
+    length_class                 = $lengthClass
+    transcript_path              = if ($transcriptFile) { $transcriptFile } else { '(inline)' }
+    transcript_json              = $transcriptContent
+    sampled_at                   = (Get-Date).ToString('o')
+    sampling_notes               = $notes
+  }
+  # Escape CSV: quote fields containing commas/quotes/newlines
+  function Esc-Csv([string]$s) {
+    if ($null -eq $s) { return '' }
+    $s = $s -replace "`r`n", "`n"
+    if ($s -match '[",\n]') { return '"' + ($s -replace '"', '""') + '"' }
+    return $s
+  }
+  $csvRow = ($row.Values | ForEach-Object { Esc-Csv ([string]$_) }) -join ','
+  $writer.WriteLine($csvRow)
+}
+$writer.Flush(); $writer.Close()
+
+Write-Output ("WROTE {0} rows -> {1}" -f $picks.Count, $outLite)
+Write-Output ("FILE SIZE: {0:N0} bytes" -f (Get-Item -LiteralPath $outLite).Length)
+
+Write-Output ""
+Write-Output "=== PICK SUMMARY ==="
+$picks | ForEach-Object {
+  Write-Output ("  {0,-12} {1,-15} {2,-15} turns={3,5} span={4,10}s bytes={5,12:N0} path={6}" -f `
+    $_.source, $_.driver_type, (Bucket $_), $_.turn_count, $_.span_seconds, $_.bytes, $_.path)
+}

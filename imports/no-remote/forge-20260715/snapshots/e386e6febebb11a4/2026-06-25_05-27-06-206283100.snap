@@ -1,0 +1,74 @@
+# Phenotype Router Protocol Spec v0.1.0
+
+> **Protocol spec for the phenotype router agent-to-agent (A2A) surface.**
+> Pure markdown + JSON schema. Reference implementations live in
+> [`KooshaPari/substrate`](https://github.com/KooshaPari/substrate).
+
+## Status
+
+**Draft** — under active development alongside substrate. Breaking changes
+are likely until `v0.3.0`.
+
+## Scope
+
+This spec defines the **wire-level protocol** that any substrate-compatible
+agent router must speak. It covers:
+
+1. **Dispatch** — `RouterDispatch` (routing decisions) + `RouterRequest` (work)
+2. **Mailbox** — `RouterMailbox` event envelope (status updates, message chunks, errors)
+3. **Trace** — `RouterTrace` (observability primitives — task lifecycle events)
+4. **Artifact** — `RouterArtifact` (PR URLs, file diffs, structured outputs)
+
+It does NOT define:
+
+- The HTTP transport itself (substrate uses reqwest, but any transport works)
+- The agent CLI semantics (those are agent-specific — substrate has adapters)
+- The trace export format (use OTLP; see [`pheno-otel`](https://github.com/KooshaPari/PhenoObservability/tree/main/pheno-otel))
+
+## Conformance
+
+A router implementation is **conformant** if it:
+
+1. Produces valid `RouterDispatch` JSON for every input `RouterRequest`
+2. Consumes `RouterMailbox` events in order
+3. Emits `RouterTrace` for task lifecycle transitions
+4. Returns `RouterArtifact[]` on task completion
+5. Passes the [`engine-conformance`](https://github.com/KooshaPari/substrate/tree/main/crates/engine-conformance) suite in substrate
+
+Reference implementations:
+
+- **HTTP gateway** → [`substrate::engine-agentapi`](https://github.com/KooshaPari/substrate/tree/main/crates/engine-agentapi) (over the `agentapi-plusplus` Go binary)
+- **OpenAI-compat** → [`substrate::cliproxy-adapter`](https://github.com/KooshaPari/substrate/tree/main/crates/cliproxy-adapter)
+- **Provider router** → [`substrate::omniroute-adapter`](https://github.com/KooshaPari/substrate/tree/main/crates/omniroute-adapter)
+- **Bifrost decisions** → [`substrate::routing-phenotype-router`](https://github.com/KooshaPari/substrate/tree/main/crates/routing-phenotype-router) (wraps `phenotype-router`)
+
+## Versioning
+
+| Version | Status | Notes |
+|---|---|---|
+| 0.1.0 | draft | current |
+
+## Contents
+
+| File | Purpose |
+|---|---|
+| [`schema/router-dispatch.json`](schema/router-dispatch.json) | JSON schema for routing decisions |
+| [`schema/router-mailbox.json`](schema/router-mailbox.json) | JSON schema for mailbox events |
+| [`schema/router-trace.json`](schema/router-trace.json) | JSON schema for trace events |
+| [`schema/router-artifact.json`](schema/router-artifact.json) | JSON schema for task artifacts |
+| [`docs/dispatch.md`](docs/dispatch.md) | Dispatch protocol semantics |
+| [`docs/mailbox.md`](docs/mailbox.md) | Mailbox event semantics |
+| [`docs/trace.md`](docs/trace.md) | Trace event semantics |
+| [`docs/artifact.md`](docs/artifact.md) | Artifact semantics |
+| [`docs/lanes.md`](docs/lanes.md) | Sync / fanout / tree execution lanes |
+| [`examples/`](examples/) | Reference JSON payloads for each schema |
+
+## License
+
+Dual MIT/Apache-2.0. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
+
+## Related repos
+
+- [`KooshaPari/substrate`](https://github.com/KooshaPari/substrate) — Rust hexagonal spine, reference implementations
+- [`KooshaPari/substrate-adapters-bundle`](https://github.com/KooshaPari/substrate-adapters-bundle) — meta-repo of standalone adapter crates
+- [`KooshaPari/phenotype-registry`](https://github.com/KooshaPari/phenotype-registry) — registry of phenotype-related projects

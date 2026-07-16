@@ -1,0 +1,3 @@
+git -C "C:\Users\koosh\Dev\Civis\.worktrees\wt-physics-impl" update-index --force-remove crates/engine/src/engine.rs
+git -C "C:\Users\koosh\Dev\Civis\.worktrees\wt-physics-impl" update-index --force-remove crates/engine/src/replay.rs
+git -C "C:\Users\koosh\Dev\Civis\.worktrees\wt-physics-impl" diff --cached --name-only

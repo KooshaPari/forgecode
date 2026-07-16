@@ -1,0 +1,155 @@
+name: bench
+
+on:
+  schedule:
+    # Nightly at 03:00 UTC (after the dedupe at 02:00 UTC)
+    - cron: "0 3 * * *"
+  push:
+    paths:
+      - "crates/phenotype-diff/**"
+      - "crates/temporal-grounding/**"
+      - "scripts/bench_diff.py"
+      - "scripts/bench_parse_criterion.py"
+      - "BENCHMARKS.md"
+      - ".github/workflows/ci-bench.yml"
+  workflow_dispatch:
+    inputs:
+      threshold_pct:
+        description: "Regression threshold (percentage, e.g. 5)"
+        required: false
+        default: "5"
+      baseline_ref:
+        description: "Git ref to compare against (default: BENCHMARKS.md)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------
+  # 1. Run criterion across both bench crates and persist artifacts.
+  # ---------------------------------------------------------------------
+  bench-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: install rust
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly
+          components: rustfmt, clippy
+
+      - name: cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: bench-nightly-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            bench-nightly-${{ runner.os }}-
+
+      - name: cargo bench (phenotype-diff)
+        working-directory: crates/phenotype-diff
+        run: |
+          cargo bench --no-fail-fast --no-run >/dev/null 2>&1 || true
+          # Use rustc's native libtest bench format; emitted to stdout.
+          cargo bench --no-fail-fast -- \
+            --output-format bencher \
+            --bench \
+            > ../../bench_artifacts/phenotype-diff.txt
+        env:
+          CARGO_TERM_COLOR: never
+
+      - name: cargo bench (temporal-grounding)
+        working-directory: crates/temporal-grounding
+        run: |
+          cargo bench --no-fail-fast --no-run >/dev/null 2>&1 || true
+          cargo bench --no-fail-fast -- \
+            --output-format bencher \
+            --bench \
+            > ../../bench_artifacts/temporal-grounding.txt
+        env:
+          CARGO_TERM_COLOR: never
+
+      - name: upload bench artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-artifacts
+          path: bench_artifacts/
+
+  # ---------------------------------------------------------------------
+  # 2. Diff against BENCHMARKS.md, fail if any benchmark regressed by
+  #    more than the threshold percentage.
+  # ---------------------------------------------------------------------
+  bench-diff:
+    needs: bench-run
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-artifacts
+          path: bench_artifacts/
+
+      - name: install python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: parse bench output -> JSONL
+        run: |
+          set -euo pipefail
+          mkdir -p bench_artifacts
+          : > bench_artifacts/current.jsonl
+          for txt in bench_artifacts/*.txt; do
+            [ -f "${txt}" ] || continue
+            crate="$(basename "${txt}" .txt)"
+            python scripts/bench_parse_criterion.py \
+              --input "${txt}" \
+              --crate "${crate}" \
+              >> bench_artifacts/current.jsonl
+          done
+          # Echo count for verification.
+          wc -l bench_artifacts/current.jsonl
+
+      - name: bench diff vs baseline
+        id: diff
+        run: |
+          set -euo pipefail
+          THRESHOLD=${{ github.event.inputs.threshold_pct || '5' }}
+          BASELINE_REF="${{ github.event.inputs.baseline_ref || '' }}"
+          ARGS=("--threshold" "${THRESHOLD}")
+          if [ -n "${BASELINE_REF}" ]; then
+            ARGS+=("--baseline-ref" "${BASELINE_REF}")
+          fi
+          python scripts/bench_diff.py \
+            bench_artifacts/current.jsonl \
+            "${ARGS[@]}" \
+            --baseline "BENCHMARKS.md" \
+            --report-out "bench_artifacts/regression-report.md" \
+          || echo "diff_exit=$?" >> "$GITHUB_OUTPUT" || true
+          echo "diff_exit=$?" >> "$GITHUB_OUTPUT"
+
+      - name: upload report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-regression-report
+          path: bench_artifacts/

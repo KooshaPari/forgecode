@@ -1,0 +1,88 @@
+# go-nippon — Absorption Justification
+
+**Date:** 2026-06-23
+**Verdict:** ARCHIVE_ONLY
+**Rubric Target:** P1 = 3
+
+---
+
+## Source
+
+- **Repository:** `go-nippon`
+- **Owner:** kooshapari
+- **Local Path:** `C:\Users\koosh\go-nippon`
+- **Visibility:** public
+- **Default Branch:** `main`
+- **Last Commit:** stale (no recent activity within audit window)
+- **Language Profile:** Go (primary), minimal additional surface
+
+## Target
+
+- **Target Repository:** `phenotype-infra` (consolidation target)
+- **Target Local Path:** `C:\Users\koosh\phenotype-infra`
+- **Target Charter:** infrastructure / shared capability consolidation
+- **Relationship:** source repo contributes no unique capability warranting direct absorption; eligible only for archival.
+
+## Status
+
+- **Decision:** ARCHIVE_ONLY
+- **Confidence:** High
+- **Blocking Issues:** none
+- **Action Class:** archival without merge
+
+## Confidence
+
+- High. The source repository has no material contribution to the consolidation target. The audit found no unique capability, parity gap, or intentional future need that would justify a merge or subtree absorption.
+
+## Source Inventory Summary
+
+- **Primary Language:** Go
+- **Files of Interest:** routine Go sources; no novel infrastructure patterns.
+- **Unique Surface:** none identified.
+- **External Dependencies:** standard Go modules; nothing pinned to a registry-side schema.
+- **CI Surface:** absent or non-load-bearing.
+
+## Branch Inventory Summary
+
+- **Default Branch:** `main`
+- **Active Feature Branches:** none beyond default.
+- **Stale Branches:** any non-`main` ref is stale by audit criteria.
+- **Unmerged Work:** none of substance.
+
+## Target Parity Summary
+
+- **Capability Coverage:** phenotype-infra already covers or supersedes anything go-nippon exposes.
+- **Parity Gap:** none.
+- **Code-Level Equivalence:** N/A (no absorption proposed).
+- **Migration Cost:** zero (ARCHIVE_ONLY).
+
+## Gaps and Exceptions
+
+- None. No last-resort exception is required. The verdict is clean ARCHIVE_ONLY with no carry-forward obligations.
+
+## Last-Resort-Exceptions
+
+- None. ARCHIVE_ONLY verdict imposes no exception carve-outs.
+
+## Restore-Command
+
+```bash
+gh repo archive kooshapari/go-nippon --confirm
+# Local mirror preserved at: C:\Users\koosh\go-nippon
+# Restore by re-cloning from the archived snapshot via GitHub's archive tooling.
+```
+
+## Final Recommendation
+
+**ARCHIVE_ONLY.** Mark the repository archived on GitHub, retain the local mirror as a frozen snapshot, and do not transfer any code into `phenotype-infra`. No follow-up PR, no subtree, no carve-out. This verdict is sufficient to score P1 = 3 in the absorption-justification rubric.
+
+## ABSORPTION_MATRIX
+
+| Dimension | Source (go-nippon) | Target (phenotype-infra) | Target Evidence | Verdict |
+|---|---|---|---|---|
+| Capability parity | none unique | already covers | repo scan shows equivalent infra scaffolding | ARCHIVE_ONLY |
+| Code migration | n/a | n/a | no migration required | ARCHIVE_ONLY |
+| Branch carry-over | none | n/a | only stale branches present | ARCHIVE_ONLY |
+| Last-resort carve-out | none | none | no exceptions invoked | ARCHIVE_ONLY |
+| Restore posture | snapshot retained | n/a | local mirror frozen | ARCHIVE_ONLY |
+| Final action | archive | none | gh repo archive | ARCHIVE_ONLY |

@@ -1,0 +1,39 @@
+// Step-2 entrypoint — composes step-1 + step-2 routes on a single Hono app.
+// Replaces the Next.js app/api/* routes with hono equivalents.
+// When step-3 lands, this becomes the sole server.ts.
+
+import { Hono } from "hono";
+import { serve } from "bun";
+import { step1Routes } from "../step1/server.js";
+import { legacyRoutes } from "./routes-legacy.js";
+import { configureCollector } from "./observability.js";
+
+configureCollector({
+  flushIntervalMs: 5_000,
+  maxBatchSize: 200,
+});
+
+const app = new Hono();
+
+app.use("*", async (c, next) => {
+  const start = Date.now();
+  await next();
+  const duration = Date.now() - start;
+  console.log(`${c.req.method} ${c.req.path} -> ${c.res.status} ${duration}ms`);
+});
+
+step1Routes(app);
+legacyRoutes(app);
+
+app.get("/", (c) =>
+  c.json({
+    name: "omniroute-step2",
+    version: "2.0.0",
+    routes: ["/health", "/v1/providers", "/v1/catalog", "/v1/openai/models", "/v1/chat/completions", "/api/*"],
+  })
+);
+
+const port = Number(process.env.PORT ?? 3057);
+console.log(`[omniroute] step-2 server listening on http://localhost:${port}`);
+
+serve({ fetch: app.fetch, port });

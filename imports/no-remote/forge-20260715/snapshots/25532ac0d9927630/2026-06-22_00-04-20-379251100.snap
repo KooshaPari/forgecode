@@ -1,0 +1,43 @@
+[package]
+name = "kmobile"
+version = "0.1.0"
+edition = "2021"
+description = "KMobile - Kompass for Mobile Development (absorbed from KooshaPari/kmobile into KooshaPari/rich-cli-kit)"
+license = "MIT"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "kmobile"
+path = "src/main.rs"
+
+[[bin]]
+name = "kmobile-desktop"
+path = "src/bin/desktop.rs"
+
+[features]
+default = ["cli", "api", "mcp"]
+cli = ["kmobile-cli"]
+api = ["kmobile-api"]
+mcp = ["kmobile-mcp"]
+vendored = []  # marker feature: enables all absorbed kmobile code without forcing builds
+
+[dependencies]
+kmobile-core = { workspace = true }
+kmobile-api  = { workspace = true, optional = true }
+kmobile-cli  = { workspace = true, optional = true }
+kmobile-mcp  = { workspace = true, optional = true }
+anyhow       = { workspace = true }
+cpal = { workspace = true }
+winit = { workspace = true }
+serde_json   = { workspace = true }
+tokio        = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "fs", "process", "io-util"] }
+async-trait  = { workspace = true }
+clap         = { workspace = true, features = ["derive", "env"] }
+tracing      = { workspace = true }
+chrono       = { workspace = true, features = ["serde"] }
+# clap-ext removed: invalid git upstream; users wanting advanced clap helpers should add a vetted crate themselves
+# cpal kept optional + out of default features to keep builds lean
+cpal         = { workspace = true, optional = true }

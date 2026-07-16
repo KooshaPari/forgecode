@@ -1,0 +1,124 @@
+/**
+ * Proxy middleware span helper — wraps an inbound Next.js request into a
+ * `omniroute.proxy.request` span with the canonical HTTP attributes.
+ *
+ * Default-OFF: when telemetry is not enabled, the helpers return a
+ * transparent passthrough so callers can use them without conditionals.
+ *
+ * @module observability/proxySpan
+ */
+
+import { initTelemetry, type Span, type Tracer } from "./otel.ts";
+import { SPAN_ATTRS, SPAN_NAMES, resolveTenantId } from "./spanTypes.ts";
+import { getPreboundMetrics, proxyAttrs } from "./metrics.ts";
+import type { Logger } from "./otel.ts";
+
+interface TracerLike {
+  tracer: Tracer;
+  logger: Logger;
+}
+
+function ensureHandle(): TracerLike {
+  // `initTelemetry` is idempotent and returns the cached singleton.
+  const h = initTelemetry();
+  return { tracer: h.tracer, logger: h.logger };
+}
+
+/** Inputs for `withProxySpan`. */
+export interface WithProxySpanInput {
+  method: string;
+  target: string;
+  route?: string;
+  headers?: Headers | Record<string, string | string[] | undefined> | null;
+  tenantHint?: string | null;
+  userAgent?: string | null;
+  scheme?: string;
+  /** Optional extra attributes for the parent span. */
+  extra?: Record<string, string | number | boolean>;
+}
+
+/**
+ * Run a handler inside a proxy span. The span is closed automatically on
+ * resolution (status `ok`) or rejection (status `error` + exception event).
+ *
+ * @param input - The HTTP request metadata.
+ * @param handler - The handler to run inside the span.
+ * @returns Whatever the handler returns.
+ */
+export async function withProxySpan<T>(
+  input: WithProxySpanInput,
+  handler: (span: Span | null) => Promise<T>
+): Promise<T> {
+  const handle = ensureHandle();
+  const tenantId = resolveTenantId(input.headers ?? null, input.tenantHint ?? null);
+  const attrs: Record<string, string | number | boolean> = {
+    [SPAN_ATTRS.HTTP_METHOD]: input.method,
+    [SPAN_ATTRS.HTTP_TARGET]: input.target,
+  };
+  if (input.route) attrs[SPAN_ATTRS.HTTP_ROUTE] = input.route;
+  if (input.scheme) attrs[SPAN_ATTRS.HTTP_SCHEME] = input.scheme;
+  if (input.userAgent) attrs[SPAN_ATTRS.HTTP_USER_AGENT] = input.userAgent;
+  if (tenantId) attrs[SPAN_ATTRS.TENANT_ID] = tenantId;
+  if (input.extra) Object.assign(attrs, input.extra);
+
+  try {
+    return await handle.tracer.withSpan(SPAN_NAMES.PROXY_REQUEST, async (span) => {
+      const result = await handler(span);
+      return result;
+    }, attrs);
+  } catch (err) {
+    getPreboundMetrics().errors.add(1, { [SPAN_ATTRS.ERROR_TYPE]: "proxy_handler_error" });
+    handle.logger.error("proxy_handler_failed", { error: err instanceof Error ? err.message : String(err) });
+    throw err;
+  }
+}
+
+/**
+ * Record an HTTP status code on the currently active span. No-op when no
+ * span is active (the helper exists so middleware doesn't have to know
+ * about the OTel internals).
+ *
+ * @param span - The active span (or null when telemetry is off).
+ * @param status - The HTTP status code.
+ */
+export function recordProxyStatus(span: Span | null, status: number): void {
+  if (!span) return;
+  span.setAttribute(SPAN_ATTRS.HTTP_STATUS, status);
+  getPreboundMetrics().proxyRequests.add(1, proxyAttrs("POST", "proxy", status));
+}
+
+/**
+ * Record an upstream call duration. Emits a histogram sample with the
+ * upstream attrs (provider, status).
+ *
+ * @param provider - The provider id (or "unknown").
+ * @param status - The upstream HTTP status (or 0 on network error).
+ * @param durationMs - The wall-clock duration of the upstream call.
+ */
+export function recordUpstreamCall(provider: string, status: number, durationMs: number): void {
+  const m = getPreboundMetrics();
+  m.upstreamDuration.record(durationMs, { [SPAN_ATTRS.PROVIDER_ID]: provider, [SPAN_ATTRS.UPSTREAM_STATUS]: status });
+  m.proxyDuration.record(durationMs, { [SPAN_ATTRS.PROVIDER_ID]: provider });
+}
+
+/**
+ * Convenience helper for the `/api/health` endpoint. Creates a quick
+ * span, records the response time, returns nothing.
+ *
+ * @param durationMs - Total handler duration.
+ * @param healthy - Whether the health probe passed.
+ */
+export function recordHealthProbe(durationMs: number, healthy: boolean): void {
+  const handle = ensureHandle();
+  handle.tracer.withSpan(
+    SPAN_NAMES.HEALTH_CHECK,
+    async (span) => {
+      span.setAttribute("health.healthy", healthy);
+      return null;
+    },
+    { duration_ms: durationMs }
+  ).catch(() => {
+    /* ignore */
+  });
+  getPreboundMetrics().proxyDuration.record(durationMs, { "http.route": "/api/health" });
+}

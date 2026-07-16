@@ -1,0 +1,28 @@
+import subprocess
+import os
+import sys
+import json
+
+bash_exe = r"C:\Program Files\Git\usr\bin\bash.exe"
+work_dir = r"C:\Users\koosh\_compute_infra_audit\tmp\phenocompose_grade"
+
+# Run grade.sh with --json --fast via direct path
+result = subprocess.run(
+    [bash_exe, "grade.sh", "--json", "--fast"],
+    capture_output=True, text=True,
+    cwd=work_dir,
+    timeout=300
+)
+
+print("=== STDOUT ===")
+print(result.stdout)
+print("=== STDERR ===")
+print(result.stderr)
+print("=== EXIT CODE ===", result.returncode)
+
+# Also try to read the generated grade.json
+grade_json_path = os.path.join(work_dir, ".grade-reports", "grade.json")
+if os.path.isfile(grade_json_path):
+    print("=== GRADE JSON ===")
+    with open(grade_json_path) as f:
+        print(f.read())

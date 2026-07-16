@@ -1,0 +1,139 @@
+"""Append validator A+B+C results into the canonical DAG."""
+import json, re, datetime
+
+DAG = r"C:/Users/koosh/_owned_dag.json"
+with open(DAG) as f: dag = json.load(f)
+existing = {u["id"] for u in dag["units"]}
+
+def parse_unit(line):
+    s = line.strip().lstrip("-").strip().strip("`").strip()
+    m = re.match(
+        r'^ID:\s*([A-Za-z0-9_.\-]+)\s*\|\s*title:\s*(.+?)\s*\|\s*est:\s*(\S+)\s*\|\s*category:\s*([A-Za-z_]+)\s*(?:\|\s*deps:\s*\[([^\]]*)\])?',
+        s
+    )
+    if not m: return None
+    uid, title, est, cat, deps = m.groups()
+    deps_list = [d.strip() for d in (deps or "").split(",") if d.strip()]
+    return {"id": uid, "title": title.strip(), "est": est, "category": cat.strip(),
+            "deps": deps_list, "lane": "planned", "repo": "triage", "spec_id": None,
+            "notes": "validator-extended"}
+
+def repo_for(uid):
+    if uid.startswith("EYE") or uid.startswith("SOTA-eye") or uid.startswith("REG-COHERENCE-eyetracker"): return "eyetracker"
+    if uid.startswith("EVE") or uid.startswith("SOTA-eventra") or uid.startswith("REG-COHERENCE-eventra"): return "eventra"
+    if uid.startswith("CFG") or uid.startswith("SOTA-configra") or uid.startswith("REG-COHERENCE-configra"): return "configra"
+    if uid.startswith("BEN") or uid.startswith("SOTA-benchora") or uid.startswith("REG-COHERENCE-benchora"): return "benchora"
+    if uid.startswith("AVL") or uid.startswith("SOTA-authvault") or uid.startswith("REG-COHERENCE-authvault"): return "authvault"
+    if uid.startswith("QLR") or uid.startswith("SOTA-quillr") or uid.startswith("REG-COHERENCE-quillr"): return "quillr"
+    if uid.startswith("REG-COHERENCE") or uid.startswith("SPN"): return "phenotype-registry"
+    return "triage"
+
+A = """EYE-CI-001 | title: fix eyetracker main CI (17 fail @ d04d25d) | est: L | category: CI | deps: [karma, gh-actions-sha-pin]
+EVE-CI-002 | title: fix eventra main CI (41/44 fail @ ccd773b) | est: L | category: CI | deps: [sha-pin, gitleaks-baseline PR #42/#43]
+CFG-CI-003 | title: fix configra main CI (4/4 fail @ 1fd6a59) | est: M | category: CI | deps: [checkout SHA repin PR #64]
+BEN-CI-004 | title: fix benchora codeql intermittent (sha f6c00a0) | est: M | category: CI | deps: [PR #40 supply-chain]
+AVL-CI-005 | title: fix authvault main CI (11/20 fail @ 6436662) | est: M | category: CI | deps: [none]
+QLR-CI-006 | title: fix quillr main CI (4/14 fail @ 18491ea) | est: M | category: CI | deps: [traceability continue-on-error]
+EYE-GIT-007 | title: reconcile eyetracker PR #49 (workflow hygiene, 26d, CONFLICTING) | est: S | category: GIT | deps: [none]
+QLR-GIT-008 | title: reconcile quillr PR #22 (node bump, 45d, CONFLICTING) | est: S | category: GIT | deps: [none]
+CFG-GIT-009 | title: reconcile configra PR #58 (refactor consolidation, CONFLICTING) | est: M | category: GIT | deps: [main HEAD 1fd6a59]
+BEN-GIT-010 | title: reconcile benchora PR #40 (workflow integrity, DRAFT+CONFLICTING) | est: S | category: GIT | deps: [codeql fix]
+EVE-GIT-011 | title: finalize eventra gitleaks baseline PRs #42, #43 (DRAFT) | est: S | category: GIT | deps: [PR #44 phenotype-error-core drop]
+CFG-GIT-012 | title: finalize configra gitleaks baseline PR #63 (DRAFT) | est: S | category: GIT | deps: [none]
+EYE-REG-013 | title: close eyetracker kilo-duplicate #46 #45 #44 (welcome spam x3) | est: S | category: REGISTRY | deps: [kilo-duplicate label policy]
+AVL-REG-014 | title: close authvault kilo-duplicate #25 #24 #23 (welcome spam x3) | est: S | category: REGISTRY | deps: [kilo-duplicate label policy]
+QLR-REG-015 | title: close quillr kilo-duplicate #21 #20 #19 (welcome spam x3) | est: S | category: REGISTRY | deps: [kilo-duplicate label policy]
+EYE-AUDIT-016 | title: prune eyetracker 10 stale remote branches (sweep >30d) | est: S | category: AUDIT | deps: [gh-branch-protect]
+CFG-AUDIT-017 | title: prune configra 7 stale remote branches | est: S | category: AUDIT | deps: [gh-branch-protect]
+BEN-AUDIT-018 | title: prune benchora 6 stale remote branches | est: S | category: AUDIT | deps: [gh-branch-protect]
+QLR-AUDIT-019 | title: prune quillr 3 stale remote branches | est: S | category: AUDIT | deps: [gh-branch-protect]
+EVE-AUDIT-020 | title: prune eventra 1 stale bot branch (funding-koosha-*) | est: S | category: AUDIT | deps: [none]"""
+
+B = """REG-COHERENCE-eyetracker-projects | title: add eyetracker to projects/ | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-eyetracker-domain-roles | title: add eyetracker to registry/domain-roles.json | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-eyetracker-disposition-index | title: add eyetracker row to registry/disposition-index.json | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-eyetracker-boundary-owners | title: add eyetracker section to BOUNDARY_OWNERS.md | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-eyetracker-check-ecosystem-ts | title: add eyetracker to tools/check-ecosystem.ts CANONICAL_REPOS | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-eyetracker-validate-ecosystem-sh | title: add eyetracker to scripts/validate-ecosystem.sh REPOS | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-eventra-projects | title: add eventra to projects/ | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-eventra-domain-roles | title: add eventra to registry/domain-roles.json (as event domain) | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-configra-projects | title: add configra to projects/ | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-configra-domain-roles | title: add configra to registry/domain-roles.json (replace/supersede config) | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-configra-boundary-owners | title: add configra row to BOUNDARY_OWNERS.md Configuration table | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-configra-check-ecosystem-ts | title: add configra to tools/check-ecosystem.ts CANONICAL_REPOS | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-configra-validate-ecosystem-sh | title: add configra to scripts/validate-ecosystem.sh REPOS | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-benchora-projects | title: add benchora to projects/ | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-benchora-domain-roles | title: add benchora to registry/domain-roles.json (as bench domain) | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-benchora-disposition-index | title: add benchora row to registry/disposition-index.json | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-benchora-boundary-owners | title: add benchora section to BOUNDARY_OWNERS.md | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-benchora-check-ecosystem-ts | title: add benchora to tools/check-ecosystem.ts CANONICAL_REPOS | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-benchora-validate-ecosystem-sh | title: add benchora to scripts/validate-ecosystem.sh REPOS | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-authvault-boundary-owners | title: add authvault section to BOUNDARY_OWNERS.md (AuthKit absorbed 2026-06-20; doc stale) | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-authvault-check-ecosystem-ts | title: add authvault to tools/check-ecosystem.ts CANONICAL_REPOS | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-authvault-validate-ecosystem-sh | title: add authvault to scripts/validate-ecosystem.sh REPOS | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-quillr-projects | title: add quillr to projects/ | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-quillr-domain-roles | title: add quillr to registry/domain-roles.json (as http domain) | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-quillr-boundary-owners | title: add quillr section to BOUNDARY_OWNERS.md | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-quillr-check-ecosystem-ts | title: add quillr to tools/check-ecosystem.ts CANONICAL_REPOS | est: S | category: REGISTRY | deps: []
+REG-COHERENCE-quillr-validate-ecosystem-sh | title: add quillr to scripts/validate-ecosystem.sh REPOS | est: S | category: REGISTRY | deps: []"""
+
+C = """SOTA-eye-bindings-001 | title: add tobii-stream-engine for native Tobii Pro SDK gaze ingestion | est: L | category: SOTA | deps: [eyetracker-camera]
+SOTA-eye-model-002 | title: add ort crate for ONNX Runtime model interchange | est: L | category: SOTA | deps: [eyetracker-inference]
+SOTA-eye-gpu-003 | title: add wgpu for cross-platform GPU preprocessing | est: L | category: SOTA | deps: [eyetracker-camera, eyetracker-inference]
+SOTA-eventra-sqlx-001 | title: add sqlx (postgres+sqlite) for outbox/projection persistence | est: M | category: SOTA | deps: [phenotype-event-sourcing]
+SOTA-eventra-tonic-002 | title: add tonic + prost for gRPC event-bus transport | est: L | category: SOTA | deps: [phenotype-event-bus]
+SOTA-eventra-axum-003 | title: add axum for command/query HTTP ingress | est: M | category: SOTA | deps: [phenotype-event-contracts]
+SOTA-configra-notify-001 | title: add notify for hot-reload file-watch | est: M | category: SOTA | deps: [phenotype-config-loader]
+SOTA-configra-figment-002 | title: add figment for layered config resolution | est: M | category: SOTA | deps: [pheno-config]
+SOTA-configra-schemars-003 | title: add schemars + jsonschema for runtime validation | est: M | category: SOTA | deps: [config-schema]
+SOTA-configra-aesgcm-004 | title: add aes-gcm for at-rest encryption | est: M | category: SOTA | deps: [settly]
+SOTA-configra-clap-005 | title: add clap for configra CLI surface | est: S | category: SOTA | deps: [phenotype-config-loader]
+SOTA-benchora-criterion-table-001 | title: add criterion-table-formatter | est: S | category: SOTA | deps: [criterion]
+SOTA-benchora-gh-action-bench-002 | title: add github-action-benchmark integration | est: M | category: SOTA | deps: [criterion]
+SOTA-benchora-flamegraph-003 | title: add cargo-flamegraph + pprof | est: M | category: SOTA | deps: [criterion]
+SOTA-benchora-dhat-004 | title: add dhat + iai-callgrind | est: L | category: SOTA | deps: [criterion]
+SOTA-authvault-oauth2-001 | title: add oauth2 + openidconnect | est: L | category: SOTA | deps: [phenotype-auth-contracts]
+SOTA-authvault-biscuit-002 | title: add biscuit-auth for delegated tokens | est: L | category: SOTA | deps: [phenotype-casbin-wrapper]
+SOTA-authvault-oso-003 | title: add oso for declarative RBAC/ABAC | est: L | category: SOTA | deps: [phenotype-casbin-wrapper]
+SOTA-authvault-webauthn-004 | title: add webauthn-rs for FIDO2 | est: L | category: SOTA | deps: [phenotype-auth-contracts]
+SOTA-authvault-totp-005 | title: add totp-rs for RFC-6238 TOTP 2FA | est: M | category: SOTA | deps: [phenotype-crypto]
+SOTA-quillr-reqwest-001 | title: add reqwest for outbound HTTP client | est: M | category: SOTA | deps: [httpora-core]
+SOTA-quillr-h3-002 | title: add quinn + h3 for HTTP/3 | est: L | category: SOTA | deps: [httpora-core]
+SOTA-quillr-otel-003 | title: add tracing-opentelemetry + OTLP export | est: M | category: SOTA | deps: [httpora-core]
+SOTA-quillr-moka-004 | title: add moka for async response cache | est: M | category: SOTA | deps: [httpora-core]"""
+
+added = 0
+for src in (A, B, C):
+    for line in src.splitlines():
+        u = parse_unit(line)
+        if not u: continue
+        if u["id"] in existing: continue
+        u["repo"] = repo_for(u["id"])
+        dag["units"].append(u)
+        existing.add(u["id"])
+        added += 1
+
+dag["unit_count"] = len(dag["units"])
+dag["version"] = "1.3.0"
+dag["generated"] = datetime.datetime.utcnow().isoformat() + "Z"
+dag["extension_history"] = dag.get("extension_history", []) + [{
+    "merged_at": datetime.datetime.utcnow().isoformat() + "Z",
+    "source": "validator-A+B+C",
+    "added": added,
+}]
+
+with open(DAG, "w", encoding="utf-8") as f:
+    json.dump(dag, f, indent=2)
+
+print(f"MERGED {added} new units from validators A+B+C")
+print(f"New DAG total: {dag['unit_count']}")
+print()
+print("Categories:")
+from collections import Counter
+for c, n in sorted(Counter(u["category"] for u in dag["units"]).items()):
+    print(f"  {c}: {n}")
+print()
+print("Per-repo final counts:")
+for r in sorted({u["repo"] for u in dag["units"]}):
+    n = sum(1 for u in dag["units"] if u["repo"]==r)
+    print(f"  {r}: {n}")

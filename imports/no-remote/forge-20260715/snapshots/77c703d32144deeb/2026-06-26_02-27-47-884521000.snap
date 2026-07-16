@@ -1,0 +1,24 @@
+## Summary
+Add GitHub Actions release workflow that builds the `substrate` CLI binary for both Linux and Windows, and uploads/publishes them on version tags.
+
+## Context
+The project needs a CI pipeline to produce release binaries for the `substrate` CLI (from the `driver-cli` package) so users can download pre-built executables for Linux and Windows without building from source.
+
+## Changes
+- Added `.github/workflows/release-binary.yml` — a new workflow file
+- Fixed pre-existing formatting issues in `crates/dispatch-bridge/src/lib.rs` (cargo fmt)
+
+### Workflow Details
+- **Triggers**: `v*` tag pushes and `workflow_dispatch` (manual run)
+- **Build matrix**: `ubuntu-latest` and `windows-latest`
+- **Steps**: checkout → `dtolnay/rust-toolchain@stable` → `cargo build --release -p driver-cli` → upload artifact with OS-qualified name
+- **Release job**: On `v*` tags only, downloads all matrix artifacts and attaches them to a GitHub Release via `softprops/action-gh-release@v2` with auto-generated release notes
+
+## Local Checks Run
+The following local quality checks passed:
+- ✅ `cargo fmt --all -- --check` — formatting verified clean
+- ✅ YAML syntax validated via Python `yaml.safe_load`
+
+## Testing
+1. Trigger manually via GitHub UI (workflow_dispatch) — binaries should upload as artifacts
+2. Push a `v*` tag — workflow should additionally create a Release with binaries attached

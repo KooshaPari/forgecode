@@ -1,0 +1,19 @@
+import json
+d = json.load(open('actions_runs_clean.json', encoding='utf-8'))
+print(f"Total runs: {d['total_count']}")
+print()
+# Group by workflow name and latest
+by_wf = {}
+for run in d['workflow_runs']:
+    wf = run['name']
+    if wf not in by_wf:
+        by_wf[wf] = []
+    by_wf[wf].append(run)
+
+for wf, runs in by_wf.items():
+    runs.sort(key=lambda r: r['created_at'], reverse=True)
+    latest = runs[0]
+    print(f"=== {wf} ===")
+    print(f"  latest: [{latest['conclusion']:8}] {latest['event']} on {latest['branch']}  sha={latest['head_sha'][:8]}  at={latest['created_at']}")
+    print(f"  url: {latest['html_url']}")
+    print()

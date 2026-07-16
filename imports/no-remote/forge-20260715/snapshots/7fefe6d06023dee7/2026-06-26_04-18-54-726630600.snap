@@ -1,0 +1,168 @@
+//! OTel context propagation to child processes.
+//!
+//! This module provides helpers that inject the current OpenTelemetry
+//! trace context into environment variables so that spawned child
+//! processes (e.g. a Git sub-command, a build tool, or a sidecar)
+//! can pick up the trace and continue the same trace tree.
+//!
+//! ## W3C TraceContext format
+//!
+//! The propagator injects the standard W3C headers:
+//!
+//! - `TRACEPARENT` — version, trace-id, parent-span-id, trace-flags
+//! - `TRACESTATE` — vendor-specific trace state
+//!
+//! ## Usage
+//!
+//! ```rust,no_run
+//! use byteport_otel::propagation::propagate_to_cmd;
+//!
+//! let mut cmd = std::process::Command::new("git");
+//! propagate_to_cmd(&mut cmd);
+//! ```
+//!
+//! The child process must have the `TRACEPARENT` / `TRACESTATE` env
+//! vars read by its own OTel SDK (or a `TraceContextPropagator`) to
+//! continue the span tree.
+
+use opentelemetry::global;
+use opentelemetry::Context;
+
+/// Inject the current OTel context into a list of environment variable
+/// key=value pairs suitable for `Command::envs()` or `Command::env()`.
+///
+/// Returns a `Vec<(String, String)>` containing `TRACEPARENT` (and
+/// `TRACESTATE` if set) derived from the current [`Context`].
+///
+/// If there is no active span in the current context, the vector will
+/// be empty (safe to pass to `envs()` — no-op).
+pub fn current_context_envs() -> Vec<(String, String)> {
+    let cx = Context::current();
+    let mut carrier = Vec::new();
+
+    global::get_text_map_propagator(|propagator| {
+        propagator.inject(&mut carrier);
+    });
+
+    // `carrier` contains (key, value) pairs from the W3C propagator.
+    carrier
+}
+
+/// Apply the current OTel trace context to any type that implements
+/// `EnvSetter`, such as `std::process::Command` or
+/// `tokio::process::Command`.
+///
+/// This is a convenience wrapper around [`current_context_envs`].
+pub fn propagate_to_env(mut setter: impl EnvSetter) {
+    let envs = current_context_envs();
+    for (k, v) in &envs {
+        setter.set_env(k, v);
+    }
+}
+
+/// Convenience wrapper around [`propagate_to_env`] for
+/// `std::process::Command`.
+pub fn propagate_to_cmd(cmd: &mut std::process::Command) {
+    propagate_to_env(StdCommandWrapper(cmd));
+}
+
+/// Convenience wrapper for `tokio::process::Command`.
+#[cfg(feature = "tokio")]
+pub fn propagate_to_tokio_cmd(cmd: &mut tokio::process::Command) {
+    propagate_to_env(TokioCommandWrapper(cmd));
+}
+
+// ---------------------------------------------------------------------------
+// Trait + adapters
+// ---------------------------------------------------------------------------
+
+/// A trait for types that can accept environment variable key-value pairs.
+///
+/// Implemented for `std::process::Command` and (with the `tokio` feature)
+/// `tokio::process::Command`.
+pub trait EnvSetter {
+    /// Set an environment variable `key` to `value`.
+    fn set_env(&mut self, key: &str, value: &str);
+}
+
+struct StdCommandWrapper<'a>(&'a mut std::process::Command);
+
+impl EnvSetter for StdCommandWrapper<'_> {
+    fn set_env(&mut self, key: &str, value: &str) {
+        self.0.env(key, value);
+    }
+}
+
+#[cfg(feature = "tokio")]
+struct TokioCommandWrapper<'a>(&'a mut tokio::process::Command);
+
+#[cfg(feature = "tokio")]
+impl EnvSetter for TokioCommandWrapper<'_> {
+    fn set_env(&mut self, key: &str, value: &str) {
+        self.0.env(key, value);
+    }
+}
+
+// -- impl for Vec<(String, String)> (useful for Go-style env building)
+
+impl EnvSetter for Vec<(String, String)> {
+    fn set_env(&mut self, key: &str, value: &str) {
+        self.push((key.to_owned(), value.to_owned()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opentelemetry::trace::{Span, Tracer};
+    use opentelemetry::KeyValue;
+
+    /// With no global tracer provider set, propagation yields
+    /// an empty carrier (no-op).
+    #[test]
+    fn no_active_context_returns_empty() {
+        let envs = current_context_envs();
+        // Without a global provider / active span the propagator
+        // should inject nothing.
+        assert!(
+            envs.is_empty(),
+            "expected empty envs, got {envs:?}"
+        );
+    }
+
+    /// With a span active in the current context, propagation
+    /// should produce a TRACEPARENT header.
+    #[test]
+    fn active_span_injects_traceparent() {
+        // Set up a simple SDK tracer provider.
+        let provider = opentelemetry_sdk::trace::TracerProvider::default();
+        let tracer = provider.tracer("test");
+
+        // We must register the global propagator.
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry::sdk::propagation::TraceContextPropagator::new(),
+        );
+
+        let span = tracer.start("test-span");
+        let cx = Context::current_with_span(span);
+
+        // The propagator reads from cx when it's current.
+        let _guard = cx.clone().attach();
+        let envs = current_context_envs();
+
+        let keys: Vec<_> = envs.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(
+            keys.contains(&"traceparent"),
+            "expected traceparent in envs, got {keys:?}"
+        );
+    }
+
+    #[test]
+    fn propagate_to_std_command() {
+        let mut cmd = std::process::Command::new("echo");
+        // Should not panic even with no active context.
+        propagate_to_cmd(&mut cmd);
+        // Command is still valid.
+        assert!(cmd.get_program().to_str() == Some("echo"));
+    }
+}

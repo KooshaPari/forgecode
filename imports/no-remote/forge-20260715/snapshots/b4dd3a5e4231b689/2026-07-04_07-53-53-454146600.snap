@@ -1,0 +1,280 @@
+dag:
+      verify: "gh api repos/{owner}/{repo}/contents/.editorconfig --jq '.content' | base64 -d | diff - .editorconfig > /dev/null && echo SAME || echo DIFF"
+  title: Compute/Infra Compute & Reliability Audit (Phase 1)
+  scope:
+    repos:
+      - phenotype-infra
+      - PhenoCompose
+      - BytePort
+    pillars: 8
+  units:
+    # ── hygiene (4) ──
+    - id: A1
+      repo: all
+      pillar: branch_hygiene
+      title: Stale branch audit (>30d, cursor/*, wip/*)
+      verify: "gh api repos/{owner}/{repo}/branches --paginate | jq '[.[] | select(.protected==false) | ((.commit.committer.date | fromdateiso8601) as $d | (now - $d) > 2592000) | {name, age_days: ((now-$d)/86400)|floor}]'"
+    - id: A2
+      repo: all
+      pillar: branch_hygiene
+      title: Recover/reconcile branch inventory
+      verify: git for-each-ref --format='%(refname:short)|%(committerdate:short)|%(subject)' refs/heads/ refs/remotes/ | sort -t'|' -k2
+    - id: A3
+      repo: all
+      pillar: branch_hygiene
+      title: Cursor/WIP branch sweep
+      verify: gh api repos/{owner}/{repo}/branches --paginate | jq -r '.[].name' | grep -E '^(cursor|wip)/'
+    - id: A4
+      repo: all
+      pillar: branch_hygiene
+      title: Recently-merged cleanup candidates
+      verify: gh pr list --state merged --limit 30 --json number,title,mergedAt | jq '.[] | select(.mergedAt | (now - (.|fromdateiso8601)) < 604800) | .number'
+
+    # ── config (4) ──
+    - id: A5
+      repo: phenotype-infra
+      pillar: config
+      title: .editorconfig harmonize to phenoshared
+    - id: A6
+      repo: PhenoCompose
+      pillar: config
+      title: .editorconfig harmonize
+    - id: A7
+      repo: BytePort
+      pillar: config
+      title: .editorconfig harmonize
+    - id: A8
+      repo: all
+      pillar: config
+      title: .gitignore gap analysis vs phenoshared standard
+
+    # ── registry audit (3) ──
+    - id: B1
+      repo: phenotype-infra
+      pillar: registry_audit
+      title: registry.yaml completeness (L1, L2, L3)
+    - id: B2
+      repo: PhenoCompose
+      pillar: registry_audit
+      title: registry.yaml completeness
+    - id: B3
+      repo: BytePort
+      pillar: registry_audit
+      title: registry.yaml completeness
+
+    # ── dependencies (3) ──
+    - id: C1
+      repo: phenotype-infra
+      pillar: dependency_audit
+      title: Cargo.lock v4 compatibility check
+    - id: C2
+      repo: PhenoCompose
+      pillar: dependency_audit
+      title: Cargo.lock v4 compatibility check
+    - id: C3
+      repo: BytePort
+      pillar: dependency_audit
+      title: Cargo.lock v4 compatibility check
+
+    # ── sota (10) ──
+    - id: D1
+      repo: all
+      pillar: sota_research
+      title: SOTA compute/infra patterns 2026 (containers, sandbox, JIT)
+    - id: D2
+      repo: all
+      pillar: sota_research
+      title: SOTA process supervisor (systemd-run, supervisord, s6)
+    - id: D3
+      repo: all
+      pillar: sota_research
+      title: SOTA build systems (nix, bazel, please)
+    - id: D4
+      repo: all
+      pillar: sota_research
+      title: SOTA observability (openTelemetry, prometheus, grafana)
+    - id: D5
+      repo: all
+      pillar: sota_research
+      title: SOTA secrets management (vault, sops, age)
+    - id: D6
+      repo: phenotype-infra
+      pillar: sota_research
+      title: SOTA IaC (terraform, opentofu, pulumi)
+    - id: D7
+      repo: PhenoCompose
+      pillar: sota_research
+      title: SOTA container build (buildah, kaniko, buildkit)
+    - id: D8
+      repo: BytePort
+      pillar: sota_research
+      title: SOTA frontend bundle (vite, rolldown, turbopack)
+    - id: D9
+      repo: all
+      pillar: sota_research
+      title: SOTA testing (nextest, cargo-mutants, schemars)
+    - id: D10
+      repo: all
+      pillar: sota_research
+      title: SOTA supply-chain security (sigstore, in-toto, slsa)
+
+    # ── sota gap / implement (4) ──
+    - id: E1
+      repo: all
+      pillar: sota_gap
+      title: SOTA gap report (best-in-class benchmarks per repo)
+    - id: E2
+      repo: all
+      pillar: sota_gap
+      title: SOTA implementation plan (numbered, prioritized)
+    - id: E3
+      repo: all
+      pillar: sota_gap
+      title: SOTA quick wins (top-5 ≤1 day each)
+    - id: E4
+      repo: all
+      pillar: sota_gap
+      title: SOTA backfill plan (quarter-by-quarter)
+
+    # ── extension (3) ──
+    - id: F1
+      repo: all
+      pillar: extension
+      title: nanovms module scope/role consolidation
+    - id: F2
+      repo: all
+      pillar: extension
+      title: nanovms ↔ PhenoCompose interface contract
+    - id: F3
+      repo: all
+      pillar: extension
+      title: nanovms → PhenoCompose migration path (5 phases)
+
+    # ── consolidation (4) ──
+    - id: G1
+      repo: phenotype-infra
+      pillar: consolidation
+      title: 30-day tail of merged PRs → close stale ones
+    - id: G2
+      repo: PhenoCompose
+      pillar: consolidation
+      title: 30-day tail of merged PRs → close stale ones
+    - id: G3
+      repo: BytePort
+      pillar: consolidation
+      title: 30-day tail of merged PRs → close stale ones
+    - id: G4
+      repo: all
+      pillar: consolidation
+      title: Issues tagged stale (>90d) → triage and close
+
+    # ── stability (3) ──
+    - id: H1
+      repo: phenotype-infra
+      pillar: stability
+      title: Recent (30d) error & failure-mode analysis
+    - id: H2
+      repo: PhenoCompose
+      pillar: stability
+      title: Recent (30d) error & failure-mode analysis
+    - id: H3
+      repo: BytePort
+      pillar: stability
+      title: Recent (30d) error & failure-mode analysis
+
+    # ── polish (3) ──
+    - id: I1
+      repo: all
+      pillar: polish
+      title: README quick-start parity
+    - id: I2
+      repo: all
+      pillar: polish
+      title: CHANGELOG discipline
+    - id: I3
+      repo: all
+      pillar: polish
+      title: Issue templates / PR templates standardization
+
+    # ── dogfood / optimize (5) ──
+    - id: J1
+      repo: all
+      pillar: dogfood
+      title: Adopt phenoregistry pillars as standard across all 3
+    - id: J2
+      repo: all
+      pillar: dogfood
+      title: Adopt phenotooling as the canonical scaffold for any new service
+    - id: J3
+      repo: all
+      pillar: dogfood
+      title: Adopt phenodag workflow for new features / fixes
+    - id: J4
+      repo: all
+      pillar: dogfood
+      title: Adopt phenoshared license + SECURITY + CODEOWNERS (already partially done)
+    - id: J5
+      repo: all
+      pillar: dogfood
+      title: Adopt phenospecs drive-by spec discipline
+
+    # ── hygiene gardening (2) ──
+    - id: K1
+      repo: all
+      pillar: hygiene_gardening
+      title: 90-day TTL on stale branches (auto-prune)
+    - id: K2
+      repo: all
+      pillar: hygiene_gardening
+      title: Branch naming convention roll-out (feat/, fix/, chore/, ci/)
+
+  total_units: 48
+  pillars: 11
+  pillars_set:
+    - branch_hygiene
+    - config
+    - registry_audit
+    - dependency_audit
+    - sota_research
+    - sota_gap
+    - extension
+    - consolidation
+    - stability
+    - polish
+    - dogfood
+    - hygiene_gardening
+
+execution:
+  concurrency: 4
+  artifact_aware: true
+  pool_weights:
+    hygiene: 4
+    config: 4
+    registry: 1
+    deps: 2
+    sota: 4
+    gap: 2
+    extension: 1
+    consolidation: 1
+    stability: 1
+    polish: 1
+    dogfood: 1
+    gardening: 1
+  total_concurrent: 25
+
+deliverables_per_unit:
+  - report_path: "{repo}_pool/{unit_id}_report.md"
+  - artifacts_dir: "reports/{date}/{pool}/"
+  - summary_field: "findings[]"
+  - pr_opening_criteria: "any unit that finds actionable change must open a PR"
+
+quality_gates:
+  tier_0: ["build", "test", "fmt", "clippy", "lint", "deny", "audit"]
+  tier_1: ["security_audit", "sbom", "license_check", "changelog_check"]
+  tier_2: ["coverage>=71%"]
+
+branch_strategy:
+  main: main
+  per_unit_branch: "{repo}-compute-infra-audit-{unit_id}"
+  merge_via_pr: true
+  auto_cleanup: true

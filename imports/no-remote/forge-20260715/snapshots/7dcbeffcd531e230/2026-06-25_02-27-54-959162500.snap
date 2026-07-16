@@ -1,0 +1,14 @@
+import json
+with open('runs.json') as f:
+    data = json.load(f)
+seen = set()
+for r in data:
+    name = r.get('name', '')
+    branch = r.get('headBranch', '')
+    if branch == 'main':
+        key = (name, r.get('createdAt', ''))
+        if key in seen:
+            continue
+        seen.add(key)
+        line = f"{r.get('createdAt','')} | {name} | {r.get('conclusion','?')} | {r.get('databaseId')}"
+        print(line)

@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+
+# =============================================================================
+# phenotype-infra — Compute/Infra Consolidation Monorepo
+# =============================================================================
+#
+# Members will be added as crates are absorbed:
+#   - nanovms-core (Go static lib via CGo)
+#   - nvms-ffi     (Rust FFI bindings to NVMS Go Core)
+#   - pheno-compose-driver (High-level Rust driver)
+#
+# Tooling sub-projects live under tools/ and are NOT workspace members
+# (they use their own build systems).
+# =============================================================================
+
+members = [
+    "crates/nanovms-core",    # Go source — absorbed as C static lib
+    "crates/nvms-ffi",       # Rust FFI bindings
+    "crates/pheno-compose",  # Rust high-level driver
+    "crates/pheno-config",   # Shared configuration
+    "tests",                 # Cross-crate integration tests
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KooshaPari/phenotype-infra"
+description = "Phenotype Compute/Infra Consolidation Monorepo"
+authors = ["kooshapari"]
+publish = false
+
+[workspace.dependencies]
+async-trait = "0.1"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bindgen = "0.68"
+figment = { version = "0.10", features = ["toml", "env"] }

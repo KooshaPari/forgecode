@@ -1,0 +1,49 @@
+# PowerShell Core Profile - DINOForge Development Environment
+# Last updated: 2026-03-13
+
+# Set up working directory
+Set-Location C:\Users\koosh\Dino
+
+# Aliases for common commands
+Set-Alias -Name ll -Value Get-ChildItem
+Set-Alias -Name dev -Value 'C:\Program Files\Microsoft VS Code\code.exe'
+
+# Functions for DINOForge development
+function build { dotnet build src/DINOForge.sln }
+function test { dotnet test src/DINOForge.sln }
+function pack-validate { dotnet run --project src/Tools/PackCompiler -- validate }
+function pack-build { dotnet run --project src/Tools/PackCompiler -- build }
+function asset-import { dotnet run --project src/Tools/PackCompiler -- pipeline import }
+function asset-validate { dotnet run --project src/Tools/PackCompiler -- pipeline validate }
+function asset-optimize { dotnet run --project src/Tools/PackCompiler -- pipeline optimize }
+function asset-generate { dotnet run --project src/Tools/PackCompiler -- pipeline generate }
+
+# Optional: Pretty prompt
+function prompt {
+    $location = Get-Location
+    $branch = git rev-parse --abbrev-ref HEAD 2>$null
+    if ($branch) {
+        "🔷 DINOForge [$branch] $(Split-Path -Leaf $location)> "
+    } else {
+        "🔷 DINOForge $(Split-Path -Leaf $location)> "
+    }
+}
+
+# Clear screen on startup
+Clear-Host
+Write-Host "╔════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+Write-Host "║        DINOForge Development Environment - pwsh        ║" -ForegroundColor Cyan
+Write-Host "╚════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Quick commands:" -ForegroundColor Green
+Write-Host "  build              - dotnet build"
+Write-Host "  test               - dotnet test"
+Write-Host "  pack-validate      - Validate packs"
+Write-Host "  pack-build         - Build packs"
+Write-Host "  asset-import       - Import assets"
+Write-Host "  asset-validate     - Validate assets"
+Write-Host "  asset-optimize     - Optimize assets"
+Write-Host "  asset-generate     - Generate prefabs"
+Write-Host ""
+Write-Host "Location: $(Get-Location)" -ForegroundColor Yellow
+Write-Host ""

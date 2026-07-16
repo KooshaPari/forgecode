@@ -1,0 +1,17 @@
+$ErrorActionPreference = "Stop"
+$files = @(
+    "C:\Users\koosh\repos\phenotype-tooling\bin\repo-delete-gate.ps1",
+    "C:\Users\koosh\repos\phenotype-tooling\bin\absorption-justification.ps1"
+)
+foreach ($f in $files) {
+    $t = $null
+    $e = $null
+    [System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$t, [ref]$e) | Out-Null
+    if ($e.Count -eq 0) {
+        Write-Output ("PS_PARSE_OK  " + $f)
+    } else {
+        foreach ($err in $e) {
+            Write-Output ("PS_PARSE_ERR " + $f + " : " + $err.Message)
+        }
+    }
+}

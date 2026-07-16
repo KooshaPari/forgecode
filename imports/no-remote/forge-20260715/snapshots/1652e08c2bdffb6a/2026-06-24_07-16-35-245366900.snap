@@ -1,0 +1,11 @@
+$files = @('smart-mcp-go.json','nanovms.json','phenocompose.json','BytePort.json','go-nippon.json','phenotype-go-sdk.json','McpKit.json','phenotype-infra.json')
+$base = 'C:\Users\koosh\phenotype-registry\projects\'
+foreach ($f in $files) {
+    $p = Join-Path $base $f
+    try {
+        $obj = Get-Content $p -Raw | ConvertFrom-Json
+        Write-Host ("OK: $f -> name=$($obj.name) status=$($obj.status) adr=$($obj.adr) absorbed_into=$($obj.absorbed_into) disposition=$($obj.disposition) audited_at=$($obj.audited_at)")
+    } catch {
+        Write-Host ("FAIL: $f -> $_")
+    }
+}

@@ -1,0 +1,60 @@
+"""Search GitHub for the missing repos in scope: nanovms, PhenoCompose, byteport.
+Use gh api directly (no ANSI issues) and parse via -q jq."""
+import json
+import os
+import subprocess
+import re
+
+def gh_jq(query, jq_filter):
+    """Run gh api with --jq filter, return stripped output."""
+    tok = ""
+    env_path = r"C:\Users\koosh\.env"
+    if os.path.exists(env_path):
+        for line in open(env_path, encoding="utf-8", errors="replace"):
+            if line.startswith("GITHUB_TOKEN="):
+                tok = line.split("=", 1)[1].strip()
+                break
+    env = dict(os.environ)
+    env["GH_TOKEN"] = tok
+    env["NO_COLOR"] = "1"
+    env["CLI_COLOR"] = "0"
+    env["GH_FORCE_TTY"] = "false"
+    try:
+        r = subprocess.run(
+            ["gh", "api", query, "--jq", jq_filter],
+            capture_output=True, env=env, timeout=30,
+        )
+        out = r.stdout.decode("utf-8", errors="replace").strip()
+        err = r.stderr.decode("utf-8", errors="replace").strip()
+        if r.returncode != 0:
+            return f"ERR: {err[:200]}"
+        return out
+    except Exception as e:
+        return f"EXC: {e}"
+
+# 1. Search all repos for nanovms/PhenoCompose/pheno-compose/byteport
+print("=== SEARCH: nanovms ===")
+print(gh_jq("search/repositories?q=nanovms+user:kooshapari&per_page=5", '.items[] | "\(.name) | \(.description // "") | private=\(.private) | archived=\(.archived)"'))
+
+print("=== SEARCH: PhenoCompose ===")
+print(gh_jq("search/repositories?q=PhenoCompose+user:kooshapari&per_page=5", '.items[] | "\(.name) | \(.description // "") | private=\(.private) | archived=\(.archived)"'))
+
+print("=== SEARCH: pheno-compose ===")
+print(gh_jq("search/repositories?q=pheno-compose+user:kooshapari&per_page=5", '.items[] | "\(.name) | \(.description // "") | private=\(.private) | archived=\(.archived)"'))
+
+print("=== SEARCH: byteport ===")
+print(gh_jq("search/repositories?q=byteport+user:kooshapari&per_page=5", '.items[] | "\(.name) | \(.description // "") | private=\(.private) | archived=\(.archived)"'))
+
+# 2. Also search user's repos via /user/repos (catches everything)
+print("\n=== USER REPOS (nano/byteport/compose match) ===")
+print(gh_jq("user/repos?per_page=100&sort=updated", '.[] | select((.name | ascii_downcase | test("nano|byteport|compose|vms")) or ((.description // "") | ascii_downcase | test("nano|byteport|compose|vms|infra"))) | "\(.name) | \(.description // "") | private=\(.private) | archived=\(.archived)"'))
+
+print("\n=== USER REPOS (pheno-infra match) ===")
+print(gh_jq("user/repos?per_page=100&sort=updated", '.[] | select(.name | ascii_downcase | test("pheno.*infra|infra.*pheno|phenotype.*infra")) | "\(.name) | \(.description // "") | private=\(.private) | cloned=\(.clone_url)"'))
+
+# 3. Check org repos too
+print("\n=== ORG: phenotype-infra repos ===")
+print(gh_jq("orgs/phenotype-infra/repos?per_page=50", '.[] | .name + " | " + (.description // "")'))
+
+print("\n=== ORG: kooshapari repos ===")
+print(gh_jq("orgs/kooshapari/repos?per_page=50", '.[] | .name + " | " + (.description // "")'))

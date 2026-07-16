@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+cd "C:/Users/koosh/phenotype-registry" || exit 1
+echo "Arg passed:"
+echo "/c/Users/koosh/_sample_audit.md"
+echo "File exists check:"
+ls -la "/c/Users/koosh/_sample_audit.md" 2>&1 || true
+echo "---"
+bash "./registry/audit-absorption-justification/grade.sh" "/c/Users/koosh/_sample_audit.md"
+echo "---EXIT_CODE=$?---"

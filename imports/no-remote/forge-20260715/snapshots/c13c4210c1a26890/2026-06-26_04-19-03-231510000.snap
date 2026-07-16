@@ -1,0 +1,23 @@
+[package]
+name = "byteport-otel"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "BytePort OpenTelemetry instrumentation: metrics, tracing, and OTLP export"
+publish = false
+
+[dependencies]
+opentelemetry = { version = "0.28", features = ["metrics", "trace"] }
+opentelemetry_sdk = { version = "0.28", features = ["metrics", "trace", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.28", features = ["metrics", "trace", "grpc-tonic"] }
+opentelemetry-semantic-conventions = { version = "0.28", optional = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+tracing-opentelemetry = "0.30"
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+tokio = { version = "1", features = ["sync"] }
+
+[features]
+default = ["semconv"]
+semconv = ["opentelemetry-semantic-conventions"]

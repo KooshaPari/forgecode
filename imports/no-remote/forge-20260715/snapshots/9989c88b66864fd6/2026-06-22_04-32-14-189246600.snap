@@ -1,0 +1,30 @@
+"""Rewrite Go import paths in chatta absorbed files."""
+import sys
+import subprocess
+
+OLD = '"chatta/backend/internal'
+NEW = '"github.com/KooshaPari/phenotype-sdk/lang/go/packages/phenotype-chatta/internal'
+
+# get go files
+r = subprocess.run(
+    ['git', 'ls-files', '-z', 'lang/go/packages/phenotype-chatta'],
+    cwd=r'C:\Users\koosh\phenotype-sdk',
+    capture_output=True,
+)
+files = [f for f in r.stdout.decode('utf-8', 'replace').split('\0') if f.endswith('.go')]
+print(f'GOFILES: {len(files)}')
+
+total_files = 0
+total_hits = 0
+for f in files:
+    with open(f, 'r', encoding='utf-8', newline='') as fh:
+        src = fh.read()
+    n = src.count(OLD)
+    if n:
+        new = src.replace(OLD, NEW)
+        with open(f, 'w', encoding='utf-8', newline='') as fh:
+            fh.write(new)
+        total_files += 1
+        total_hits += n
+        print(f'  rewrote {n} in {f}')
+print(f'TOTAL: {total_files} files, {total_hits} imports')

@@ -1,0 +1,12 @@
+﻿cargo :     Blocking waiting for file lock on build directory
+At line:1 char:32
++ ... OR='never'; cargo check -p phenotype-event-store 
+--message-format=sho ...
++                 
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Blocking wa...bu 
+   ild directory:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    Checking phenotype-event-store v0.1.0 (C:\Users\koosh\forge\ph
+enoevents-merge\Eventra\rust\phenotype-event-store)

@@ -1,0 +1,10 @@
+# Project-local cargo config (Tauri)
+# Required because the workspace-root .cargo/config.toml applies
+# lto=thin (via rustflags), which is incompatible with Tauri 2.x's
+# webview2-com-sys dependency (which forces embed-bitcode=no on Windows).
+# Overriding only the rustflags for this crate is the minimal fix.
+# See: https://github.com/tauri-apps/wry/issues/1268 (lto+embed-bitcode conflict)
+[build]
+rustflags = []
+incremental = true
+jobs = 4

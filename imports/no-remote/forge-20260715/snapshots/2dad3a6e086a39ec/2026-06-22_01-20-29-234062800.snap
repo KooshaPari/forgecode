@@ -1,0 +1,43 @@
+"""
+Clone all 101 active non-archived KooshaPari repos in parallel batches
+into C:\Users\koosh\ecosystem\repos\{name}.
+Uses shallow clone (--depth 1) for speed.
+"""
+import subprocess, json, os, sys, time, concurrent.futures
+
+TARGET = r'C:\Users\koosh\ecosystem\repos'
+os.makedirs(TARGET, exist_ok=True)
+
+repos = json.load(open(r'C:\Users\koosh\_all_active_repos.json', encoding='utf-8'))
+print(f'total: {len(repos)}', file=sys.stderr)
+
+def clone_one(repo):
+    name = repo['name']
+    full = repo['full_name']
+    target = os.path.join(TARGET, name)
+    if os.path.isdir(os.path.join(target, '.git')) or os.path.isdir(target):
+        return name, 'exists'
+    try:
+        r = subprocess.run(
+            ['gh', 'repo', 'clone', full, target, '--', '--depth', '1', '--no-tags', '--single-branch'],
+            capture_output=True, text=True, timeout=120,
+            env={**os.environ, 'NO_COLOR':'1','GH_NO_COLOR':'1'},
+        )
+        return name, 'ok' if r.returncode == 0 else f'fail: {r.stderr[:80]}'
+    except Exception as e:
+        return name, f'exc: {e}'
+
+ok, fail = 0, 0
+with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+    futs = {ex.submit(clone_one, r): r for r in repos}
+    for i, fut in enumerate(concurrent.futures.as_completed(futs), 1):
+        name, status = fut.result()
+        if status == 'ok' or status == 'exists':
+            ok += 1
+        else:
+            fail += 1
+            print(f'  FAIL {name}: {status}', file=sys.stderr)
+        if i % 10 == 0:
+            print(f'  progress {i}/{len(repos)} ok={ok} fail={fail}', file=sys.stderr)
+
+print(f'done: ok={ok} fail={fail}', file=sys.stderr)

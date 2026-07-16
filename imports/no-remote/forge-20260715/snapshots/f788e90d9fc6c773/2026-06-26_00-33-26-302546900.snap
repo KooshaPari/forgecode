@@ -1,0 +1,39 @@
+## Summary
+Formalize completion of the terminal UI DAG foundation recovery (E1 → main lift) with grade verification and worklog audit.
+
+## Context
+E1 recovered the terminal UI worktree from stash side-219, materializing the `byteport-dag` crate (5 modules: dag, topo, scheduler, schema, serialize) on branch `recover/E1-terminal-ui-worktree`. PR #248 merged the worklog/grade-report, and the DAG crate was independently absorbed into `main` via Phase-6. E2 documents the successful completion of this recovery lift.
+
+## Changes
+- Verified E1 recovery branch `recover/E1-terminal-ui-worktree` (PR #248, merged)
+- Confirmed `byteport-dag` crate exists on `origin/main` with all 5 modules
+- Created clean branch `recover/E2-terminal-ui-pr` from `origin/main`
+- Ran grade.sh --fast and captured JSON report (B-, 80%)
+- Appended E2 worklog entry documenting the recovery lifecycle
+
+### Key Implementation Details
+The DAG foundation is fully operational on main:
+- `crates/byteport-dag/src/dag.rs` — Core DAG data structure with cycle detection
+- `crates/byteport-dag/src/topo.rs` — Kahn's algorithm + DFS topological sort
+- `crates/byteport-dag/src/scheduler.rs` — Parallel-bucket scheduler
+- `crates/byteport-dag/src/schema.rs` — Enriched node/edge schema with prereqs, acceptance, audit hooks
+- `crates/byteport-dag/src/serialize.rs` — YAML/JSON round-trip serialization
+
+## Use Cases
+- DAG-based compute orchestration for Phenotype CLI tools
+- Parallel task scheduling with dependency resolution
+- Portable YAML/JSON DAG serialization for infra-as-code
+
+## Testing
+```bash
+# Verify the branch
+git branch --list recover/E2-terminal-ui-pr
+
+# Check grade report
+cat .grade-reports/grade.json
+```
+
+## Links
+- Related PR: #248 (E1 terminal UI worktree recovery)
+- Label: `area:compute-infra`, `epic-e`
+- Epic: epic_E — BytePort: terminal UI, tools CLI, otel, governance

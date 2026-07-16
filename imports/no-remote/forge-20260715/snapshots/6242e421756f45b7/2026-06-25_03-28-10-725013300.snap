@@ -1,0 +1,6 @@
+Start-Process -FilePath 'cargo' -ArgumentList @('clippy','-p','civ-watch','-p','civis-cli','--all-targets','--no-deps','--message-format=short') `
+  -RedirectStandardOutput 'C:\Users\koosh\Dev\Civis\.worktrees\wt-watch-cli\.clippy_out.txt' `
+  -RedirectStandardError 'C:\Users\koosh\Dev\Civis\.worktrees\wt-watch-cli\.clippy_err.txt' `
+  -WorkingDirectory 'C:\Users\koosh\Dev\Civis\.worktrees\wt-watch-cli' `
+  -WindowStyle Hidden
+Write-Host "kicked off"

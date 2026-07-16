@@ -1,0 +1,3 @@
+@echo off
+chcp 65001 >nul
+"C:\program files\Git\usr\bin\bash.exe" --login -c "cd /c/Users/koosh/phenotype-registry/registry/audit-absorption-justification; for f in /c/Users/koosh/phenotype-registry/audits/absorption-justifications/*.md; do echo ===; bn=\${f##*/}; echo \"\$bn\"; ./grade.sh \"\$f\" | head -10; echo; done"

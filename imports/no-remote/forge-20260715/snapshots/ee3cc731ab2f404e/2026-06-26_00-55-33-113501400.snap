@@ -1,0 +1,190 @@
+/**
+ * Discovery + Bifrost shared types.
+ * Step-1 of the OmniRoute robust migration (TS7-native + bun + bifrost).
+ *
+ * This file is the canonical type module referenced by:
+ *   - src/bifrost/index.ts
+ *   - src/discovery/index.ts
+ *   - src/discovery/providers.ts
+ *   - src/server.ts
+ *
+ * Kept intentionally small and stable — schema changes here ripple into
+ * every downstream provider + adapter.
+ */
+
+// ─── Provider catalogue ─────────────────────────────────────────────────────
+
+/** A single LLM provider exposed via the bifrost gateway. */
+export interface ProviderDescriptor {
+  /** Stable id used by clients (e.g. "openai", "anthropic", "kiro", "copilot"). */
+  readonly id: string;
+
+  /** Human-readable display name (e.g. "OpenAI", "Anthropic Claude"). */
+  readonly name: string;
+
+  /** Endpoint family (used for routing + metrics). */
+  readonly family:
+    | "openai"
+    | "anthropic"
+    | "google"
+    | "azure"
+    | "bedrock"
+    | "vertex"
+    | "cohere"
+    | "mistral"
+    | "groq"
+    | "deepseek"
+    | "ollama"
+    | "openrouter"
+    | "web-cookie"
+    | "kiro"
+    | "copilot"
+    | "cursor"
+    | "windsurf"
+    | "codex"
+    | "codex-spark"
+    | "ponytail"
+    | "other";
+
+  /** Whether the provider requires a server-side API key. */
+  readonly requiresKey: boolean;
+
+  /** Whether auth is performed via web cookies (e.g. cookie-based scrapers). */
+  readonly cookieAuth: boolean;
+
+  /** Whether the provider streams tokens via SSE. */
+  readonly streaming: boolean;
+
+  /** Whether the provider supports tool/function calling. */
+  readonly tools: boolean;
+
+  /** Whether the provider supports vision/multimodal inputs. */
+  readonly vision: boolean;
+
+  /** Whether the provider supports structured JSON output. */
+  readonly jsonOutput: boolean;
+
+  /** Whether the provider is free / unlimited-tier (web-cookie providers). */
+  readonly freeTier: boolean;
+
+  /** Per-token pricing in USD (input/output) — null if variable/cookie-based. */
+  readonly pricing: {
+    readonly inputPerMTokUsd: number | null;
+    readonly outputPerMTokUsd: number | null;
+  };
+
+  /** Free-form notes (limits, quirks, status). May be undefined. */
+  readonly notes?: string | undefined;
+
+  /** Discovery probe function (URL-check or sentinel). */
+  readonly probe: ProbeFn;
+}
+
+// ─── Discovery ─────────────────────────────────────────────────────────────
+
+/** Async probe returns whether the provider is reachable + latency hint. */
+export type ProbeFn = () => Promise<ProbeResult>;
+
+/** Result of a provider reachability probe. */
+export interface ProbeResult {
+  readonly ok: boolean;
+  /** Round-trip latency in ms (only meaningful when ok=true). */
+  readonly latencyMs: number | null;
+  /** Failure reason when ok=false. */
+  readonly error: string | null;
+  /** ISO timestamp of probe execution. */
+  readonly checkedAt: string;
+}
+
+/** Discovery scan configuration. */
+export interface DiscoveryScanConfig {
+  /** Max concurrent probes (default: 8). */
+  readonly concurrency: number;
+  /** Per-probe timeout in ms (default: 5000). */
+  readonly timeoutMs: number;
+  /** Restrict scan to this provider id list (default: all). */
+  readonly only: readonly string[] | null;
+  /** Refresh cached results even if recent (default: false). */
+  readonly force: boolean;
+}
+
+/** Discovery scan report. */
+export interface DiscoveryScanReport {
+  /** ISO timestamp of scan start. */
+  readonly startedAt: string;
+  /** ISO timestamp of scan end. */
+  readonly finishedAt: string;
+  /** Providers successfully probed. */
+  readonly ok: readonly ProbeResult[];
+  /** Providers that failed probing. */
+  readonly failed: readonly ProbeResult[];
+}
+
+// ─── Bifrost gateway ───────────────────────────────────────────────────────
+
+/** Chat completion request shape (mirrors bifrost ChatRequest, trimmed). */
+export interface ChatRequest {
+  readonly model: string;
+  readonly messages: readonly ChatMessage[];
+  readonly temperature: number | null;
+  readonly maxTokens: number | null;
+  readonly stream: boolean;
+  readonly tools: readonly ToolSpec[] | null;
+  readonly responseFormat: "text" | "json" | null;
+}
+
+/** Chat message. */
+export interface ChatMessage {
+  readonly role: "system" | "user" | "assistant" | "tool";
+  readonly content: string;
+  readonly name: string | null;
+}
+
+/** Tool/function calling spec. */
+export interface ToolSpec {
+  readonly name: string;
+  readonly description: string;
+  readonly parameters: Readonly<Record<string, unknown>>;
+}
+
+/** Chat completion response shape (mirrors bifrost ChatResponse, trimmed). */
+export interface ChatResponse {
+  readonly id: string;
+  readonly model: string;
+  readonly provider: string;
+  readonly content: string;
+  readonly usage: {
+    readonly inputTokens: number;
+    readonly outputTokens: number;
+    readonly totalTokens: number;
+  };
+  readonly finishReason: "stop" | "length" | "tool_call" | "error";
+}
+
+/** Bifrost routing config. */
+export interface BifrostConfig {
+  /** Default provider when caller doesn't specify. */
+  readonly defaultProvider: string;
+  /** Fallback provider list (tried in order on failure). */
+  readonly fallbacks: readonly string[];
+  /** Per-provider rate limits (requests/min). */
+  readonly rateLimits: Readonly<Record<string, number>>;
+  /** Request timeout in ms. */
+  readonly timeoutMs: number;
+}
+
+/** Bifrost registry entry — extends ProviderDescriptor with runtime state. */
+export interface BifrostEntry extends ProviderDescriptor {
+  readonly config: BifrostConfig;
+}
+
+// ─── Server health ─────────────────────────────────────────────────────────
+
+/** /health endpoint response. */
+export interface HealthResponse {
+  readonly status: "ok" | "degraded" | "down";
+  readonly uptime: number;
+  readonly version: string;
+  readonly providers: number;
+  readonly pid: number;
+}

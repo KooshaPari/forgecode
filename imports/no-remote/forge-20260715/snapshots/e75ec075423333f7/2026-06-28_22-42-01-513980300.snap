@@ -1,0 +1,151 @@
+# Build Full dataset from bounded index.
+# Schema identical to Lite. Inline transcripts only for files <= 512KB.
+$ErrorActionPreference = 'Stop'
+$indexPath = 'C:\Users\koosh\AppData\Local\Temp\trace_index.jsonl'
+$outFull   = 'C:\Users\koosh\Downloads\traces_full.csv'
+$transcriptsDir = 'C:\Users\koosh\Downloads\trace_transcripts_full'
+New-Item -Path $transcriptsDir -ItemType Directory -Force | Out-Null
+
+$lines = Get-Content -LiteralPath $indexPath | Where-Object { $_ -notmatch '^#' -and $_.Trim().Length -gt 0 }
+$records = @()
+foreach ($l in $lines) { try { $records += ($l | ConvertFrom-Json) } catch {} }
+
+function Is-RealTrace($r) {
+  if ($r.bytes -le 0) { return $false }
+  if ($r.turn_count -le 0 -and $r.line_count -le 1) { return $false }
+  if ($r.source -eq 'forge') { return $false }
+  return $true
+}
+$records = @($records | Where-Object { Is-RealTrace $_ })
+Write-Output ("Real records after filtering: {0}" -f $records.Count)
+
+function Bucket($r) {
+  $turns = [int]$r.turn_count
+  $span  = if ($r.span_seconds) { [int]$r.span_seconds } else { 0 }
+  $bytes = [int]$r.bytes
+  if ($turns -le 5 -and $bytes -le 5120) { return 'short' }
+  if ($span -ge 86400 -or $turns -ge 500 -or $bytes -ge 512000) { return 'long_horizon' }
+  return 'medium'
+}
+
+# Full sample plan: take ALL valid records (no downsampling) - we have only 180 - 4 forge stubs = 176.
+# Stratification is implicit from the source composition.
+$picks = @($records | Sort-Object -Property source, path -Unique)
+
+Write-Output ("Picks (full corpus): {0}" -f $picks.Count)
+
+# Write CSV
+$utf8Bom = New-Object System.Text.UTF8Encoding($true)
+$writer = [System.IO.StreamWriter]::new($outFull, $false, $utf8Bom)
+$header = @('trace_id','source','source_path','source_file','size_bytes','line_count','turn_count','span_seconds','first_ts','last_ts','driver_type','driver_signal','driver_source','project_root','cwd','models','input_tokens','output_tokens','cache_creation_input_tokens','cache_read_input_tokens','tool_use','tool_result','bucket','length_class','transcript_path','transcript_json','sampled_at','sampling_notes')
+$writer.WriteLine( ($header -join ',') )
+
+$i = 0
+foreach ($p in $picks) {
+  $i++
+  $traceId = "full_$('{0:D4}' -f $i)"
+  $transcriptContent = ''
+  $transcriptFile = $null
+  try {
+    if ($p.bytes -lt 524288 -and (Test-Path -LiteralPath $p.path)) {
+      $transcriptContent = Get-Content -LiteralPath $p.path -Raw -ErrorAction SilentlyContinue
+    } else {
+      $safeName = ($traceId + '_' + ([System.IO.Path]::GetFileName($p.path)))
+      $transcriptFile = Join-Path $transcriptsDir $safeName
+      Copy-Item -LiteralPath $p.path -Destination $transcriptFile -Force
+      $transcriptContent = "<<external:{0}>>" -f $safeName
+    }
+  } catch {
+    $transcriptContent = "<<read_error: $($_.Exception.Message)>>"
+  }
+  $bucket = Bucket $p
+  $lengthClass = switch ($bucket) {
+    'short'        { 'short' }
+    'long_horizon' { 'long' }
+    default        { 'medium' }
+  }
+  $notes = switch ($p.source) {
+    'forge'      { 'forge_session_dir_has_no_conversation_traces_only_build_artifacts' }
+    'codex'      { 'all_codex_traces_in_corpus_are_human_initiated_exec_user' }
+    'claudecode' { 'human_or_agent_spawned_detected_via_subagents_dir' }
+  }
+  $row = [ordered]@{
+    trace_id                     = $traceId
+    source                       = $p.source
+    source_path                  = $p.path
+    source_file                  = [System.IO.Path]::GetFileName($p.path)
+    size_bytes                   = [int]$p.bytes
+    line_count                   = [int]$p.line_count
+    turn_count                   = [int]$p.turn_count
+    span_seconds                 = [int]$p.span_seconds
+    first_ts                     = $p.first_ts
+    last_ts                      = $p.last_ts
+    driver_type                  = $p.driver_type
+    driver_signal                = $p.driver_signal
+    driver_source                = switch ($p.source) { 'codex' {'session_meta.source+thread_source'} 'claudecode' {'subagents_dir_path_match'} 'forge' {'n/a'} default {'n/a'} }
+    project_root                 = $p.project_root
+    cwd                          = $p.cwd
+    models                       = $p.models
+    input_tokens                 = [int]$p.input_tokens
+    output_tokens                = [int]$p.output_tokens
+    cache_creation_input_tokens  = [int]$p.cache_creation_input_tokens
+    cache_read_input_tokens      = [int]$p.cache_read_input_tokens
+    tool_use                     = [int]$p.tool_use
+    tool_result                  = [int]$p.tool_result
+    bucket                       = $bucket
+    length_class                 = $lengthClass
+    transcript_path              = if ($transcriptFile) { $transcriptFile } else { '(inline)' }
+    transcript_json              = $transcriptContent
+    sampled_at                   = (Get-Date).ToString('o')
+    sampling_notes               = $notes
+  }
+  function Esc-Csv([string]$s) {
+    if ($null -eq $s) { return '' }
+    $s = $s -replace "`r`n", "`n"
+    if ($s -match '[",\n]') { return '"' + ($s -replace '"', '""') + '"' }
+    return $s
+  }
+  $csvRow = ($row.Values | ForEach-Object { Esc-Csv ([string]$_) }) -join ','
+  $writer.WriteLine($csvRow)
+}
+$writer.Flush(); $writer.Close()
+
+Write-Output ("WROTE {0} rows -> {1}" -f $picks.Count, $outFull)
+Write-Output ("FILE SIZE: {0:N0} bytes" -f (Get-Item -LiteralPath $outFull).Length)
+
+# Final distribution report
+Write-Output ""
+Write-Output "=== FINAL DISTRIBUTION ==="
+$rows = @()
+$csvLines = Get-Content -LiteralPath $outFull
+# Count distinct data rows by counting rows that start with `full_` or `lite_`
+$dataRows = @($csvLines | Where-Object { $_ -match '^(full|lite)_\d+,' })
+Write-Output ("DATA ROWS: {0}" -f $dataRows.Count)
+Write-Output ""
+Write-Output "BY SOURCE:"
+$dataRows | ForEach-Object {
+  if ($_ -match '^[^,]*,([^,]*),') {
+    $src = $Matches[1]
+    [void]($script:sourceTally[$src]++)
+  }
+}
+$script:sourceTally = @{}
+$dataRows | ForEach-Object {
+  if ($_ -match '^[^,]*,([^,]*),') {
+    $src = $Matches[1]
+    if (-not $script:sourceTally.ContainsKey($src)) { $script:sourceTally[$src] = 0 }
+    $script:sourceTally[$src]++
+  }
+}
+$script:sourceTally.GetEnumerator() | Sort-Object Name | ForEach-Object {
+  Write-Output ("  {0,-12} {1,4}" -f $_.Key, $_.Value)
+}
+
+# Also dump transcripts dir
+Write-Output ""
+Write-Output "=== TRANSCRIPTS DIR ==="
+Get-ChildItem -LiteralPath $transcriptsDir | Measure-Object | ForEach-Object {
+  Write-Output ("  external transcript files: {0}" -f $_.Count)
+}
+$totalBytes = (Get-ChildItem -LiteralPath $transcriptsDir -Recurse -File | Measure-Object -Property Length -Sum).Sum
+Write-Output ("  external transcript total: {0:N0} bytes" -f $totalBytes)

@@ -1,0 +1,18 @@
+# Workspace-wide cargo build configuration (v14 T2)
+[build]
+incremental = true
+jobs = 0
+# LTO is applied per-target below. We avoid setting it in [build] because
+# Tauri 2's webview2-com-sys dependency forces `-C embed-bitcode=no` on
+# Windows, which is incompatible with any LTO flag. Linux and macOS targets
+# opt into lto=thin via their [target.*] sections.
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-fobjc-arc"]
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=native", "-C", "lto=thin", "-C", "codegen-units=1", "-C", "opt-level=3", "-C", "debug-assertions=off"]
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "lto=thin", "-C", "codegen-units=1", "-C", "opt-level=3", "-C", "debug-assertions=off"]
+[net]
+git-fetch-with-cli = true
+[registries.crates-io]
+protocol = "sparse"

@@ -1,0 +1,121 @@
+/**
+ * Mistral → OpenAI response translator hub.
+ *
+ * Single public entry point used by `translateResponse` in
+ * `translator/index.ts`. Accepts any chunk shape (raw SSE `data:` string,
+ * parsed Mistral JSON, or non-streaming completion object) and routes it
+ * to the appropriate converter:
+ *
+ *   - **Streaming chunk** — `object === "chat.completion.chunk"` or raw
+ *     SSE `data:` line that parses to one.
+ *   - **Non-streaming completion** — `object === "chat.completion"`.
+ *
+ * Returns:
+ *   - `null` when the input represents a terminal `[DONE]` signal (no
+ *     chunks to forward).
+ *   - A single OpenAI-shaped object for non-streaming completions.
+ *   - An array of zero or more OpenAI-shaped chunks for streaming input.
+ *
+ * State threading: the caller passes the per-stream `state` object (built
+ * via `createMistralStreamState` from `./types.ts`) on every call so
+ * tool-call deltas can accumulate across chunks. For callers that don't
+ * yet thread typed state, a plain `Record<string, unknown>` is also
+ * accepted — the streaming module will populate its own fields on it.
+ */
+import { register } from "../registry.ts";
+import { FORMATS } from "../formats.ts";
+import type { MistralStreamState, OpenAICompletion, OpenAIStreamChunk } from "./types.ts";
+import {
+  convertMistralNonStreamResponse,
+  convertMistralStreamChunk,
+  parseSseData,
+} from "./streaming.ts";
+import { createMistralStreamState } from "./types.ts";
+
+// ─── Hub entry point ────────────────────────────────────────────────────────
+
+/**
+ * Convert a Mistral response chunk into OpenAI-shaped output.
+ *
+ * Return shape (matches the convention used by other translators in
+ * `response/*`):
+ *   - `null`               — terminal signal (`[DONE]`); nothing to forward.
+ *   - `OpenAICompletion`   — single non-streaming completion.
+ *   - `OpenAIStreamChunk[]`— zero or more streaming chunks.
+ *
+ * Callers in `translator/index.ts#translateResponse` accept all three.
+ */
+export function convertMistralToOpenAI(
+  chunk: unknown,
+  state: Record<string, unknown> | MistralStreamState | null | undefined
+): OpenAICompletion | OpenAIStreamChunk[] | null {
+  // ── Null / undefined ⇒ terminal signal; nothing to forward ──────────────
+  if (chunk === null || chunk === undefined) return null;
+
+  // ── String chunk ⇒ raw SSE `data:` line ─────────────────────────────────
+  if (typeof chunk === "string") {
+    const parsed = parseSseData(chunk);
+    if (parsed === null) return null;
+    return convertMistralToOpenAI(parsed, state);
+  }
+
+  if (typeof chunk !== "object") return null;
+
+  // ── Non-streaming completion ────────────────────────────────────────────
+  const obj = chunk as { object?: string; done?: boolean };
+  if (obj.done === true) return null;
+  if (obj.object === "chat.completion") {
+    return convertMistralNonStreamResponse(chunk);
+  }
+
+  // ── Streaming chunk (also matches pre-parsed chat.completion.chunk) ─────
+  if (
+    obj.object === "chat.completion.chunk" ||
+    Array.isArray((chunk as { choices?: unknown }).choices)
+  ) {
+    const streamState = ensureStreamState(state);
+    return convertMistralStreamChunk(chunk, streamState);
+  }
+
+  // Unknown shape — pass through as null so the hub doesn't double-emit.
+  return null;
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Coerce an arbitrary state object into the typed `MistralStreamState`
+ * shape the streaming converter expects. If the caller already passed a
+ * fully-typed state (with a `Map` toolCalls field), pass it through; if
+ * they passed `null`/`undefined`, build a fresh one.
+ */
+function ensureStreamState(
+  state: Record<string, unknown> | MistralStreamState | null | undefined
+): MistralStreamState {
+  if (
+    state &&
+    typeof state === "object" &&
+    (state as { toolCalls?: unknown }).toolCalls instanceof Map
+  ) {
+    return state as MistralStreamState;
+  }
+  return createMistralStreamState({});
+}
+
+// ─── Registry ───────────────────────────────────────────────────────────────
+
+register(FORMATS.MISTRAL, FORMATS.OPENAI, null, convertMistralToOpenAI);
+
+// Re-export the streaming & non-streaming helpers and the SSE parser so
+// downstream callers (executors, tests, debug tools) can import everything
+// from a single path.
+export {
+  convertMistralStreamChunk,
+  convertMistralNonStreamResponse,
+  parseSseData,
+  createMistralStreamState,
+} from "./streaming.ts";
+
+export type { OpenAICompletion, OpenAIStreamChunk } from "./types.ts";
+
+export const mistralResponseTranslatorVersion = "1.0.0";

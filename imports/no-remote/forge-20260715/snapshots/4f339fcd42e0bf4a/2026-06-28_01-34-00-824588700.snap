@@ -1,0 +1,59 @@
+$ErrorActionPreference = 'Stop'
+$in  = 'C:\Users\koosh\_compute_infra_audit\tmp\a3_branch_dates.tsv'
+$out = 'C:\Users\koosh\_compute_infra_audit\tmp\A3_report.md'
+
+$today     = Get-Date '2026-06-27T00:00:00Z'
+$threshold = $today.AddDays(-30)
+$thStr     = $threshold.ToString('yyyy-MM-dd')
+
+$rows = Get-Content $in -Encoding utf8 |
+  Select-Object -Skip 1 |
+  ForEach-Object {
+    $parts = $_ -split "`t"
+    [pscustomobject]@{
+      Name = $parts[0]
+      Sha  = $parts[1]
+      Date = [datetime]$parts[2]
+    }
+  }
+
+$stale = $rows | Where-Object { $_.Date -lt $threshold } | Sort-Object Date
+$fresh = $rows | Where-Object { $_.Date -ge $threshold } | Sort-Object Date -Descending
+
+$lines = @()
+$lines += '# Unit A3 - Stale Branches (>30d no commit)'
+$lines += ''
+$lines += 'Repo: KooshaPari/BytePort'
+$lines += 'As-of: 2026-06-27 (UTC)'
+$lines += ('Threshold: commit before {0} is stale' -f $thStr)
+$lines += ('Total remote branches: {0}' -f $rows.Count)
+$lines += ('Stale (>30d): {0}' -f $stale.Count)
+$lines += ('Fresh (<=30d): {0}' -f $fresh.Count)
+$lines += ''
+$lines += '## Stale branches (candidate archival)'
+$lines += ''
+$lines += '| Branch | Tip SHA | Last commit (UTC) | Age (days) | Status |'
+$lines += '|---|---|---|---|---|'
+foreach ($b in $stale) {
+  $age  = [int][math]::Floor(($today - $b.Date).TotalDays)
+  $prot = if ($b.Name -eq 'main') { 'protected' } else { 'archive-candidate' }
+  $lines += ('| `{0}` | `{1}` | {2:yyyy-MM-dd HH:mm:ss}Z | {3} | {4} |' -f $b.Name, $b.Sha.Substring(0,7), $b.Date, $age, $prot)
+}
+$lines += ''
+$lines += '## Fresh branches (active)'
+$lines += ''
+$lines += '| Branch | Tip SHA | Last commit (UTC) | Age (days) |'
+$lines += '|---|---|---|---|'
+foreach ($b in $fresh) {
+  $age = [int][math]::Floor(($today - $b.Date).TotalDays)
+  $lines += ('| `{0}` | `{1}` | {2:yyyy-MM-dd HH:mm:ss}Z | {3} |' -f $b.Name, $b.Sha.Substring(0,7), $b.Date, $age)
+}
+$lines += ''
+$lines += '## Recommendations'
+$lines += ''
+$lines += 'main is the only protected branch; safe to archive the stale branches above.'
+$lines += 'Candidate auto-add DAG units for each stale branch: arch/B<id>-delete-<slug> (B-tier, type=archive).'
+$lines += 'Open PR arch/A3-cleanup-stale-branches with one deletion commit per branch, keep main untouched.'
+
+$lines | Out-File -FilePath $out -Encoding utf8
+Get-Content $out

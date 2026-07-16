@@ -1,0 +1,47 @@
+import subprocess, json, time, os, sys
+
+classed = json.load(open(r'C:\Users\koosh\_repos_classified.json', encoding='utf-8'))
+classed_names = {r['name'] for r in classed['active_non_fork'] + classed['public_active_fork']}
+
+gh = json.load(open(r'C:\Users\koosh\_all_active_repos.json', encoding='utf-8'))
+gh_names = {r['nameWithOwner'].split('/',1)[1] for r in gh}
+
+unknown = sorted(classed_names - gh_names)
+print(f'unknown: {len(unknown)}', file=sys.stderr)
+
+results = []
+for n in unknown:
+    try:
+        r = subprocess.run(
+            ['gh', 'api', f'/repos/KooshaPari/{n}',
+             '--jq', '{name: .name, full: .full_name, arch: .archived, priv: .private, fork: .fork}'],
+            capture_output=True, text=True, timeout=15,
+            env={**os.environ, 'NO_COLOR': '1', 'GH_NO_COLOR': '1', 'GH_FORCE_TTY': '0'},
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            txt = r.stdout.strip()
+            if txt.startswith('{'):
+                try:
+                    d = json.loads(txt)
+                    d['status'] = 'found'
+                    results.append(d)
+                    continue
+                except Exception:
+                    pass
+        results.append({'name': n, 'status': 'not_found', 'code': r.returncode, 'err': (r.stderr or '')[:120]})
+    except Exception as e:
+        results.append({'name': n, 'status': 'exc', 'err': str(e)})
+    time.sleep(0.25)
+
+status_count = {}
+for r in results:
+    s = r.get('status', '?')
+    status_count[s] = status_count.get(s, 0) + 1
+print('status:', status_count, file=sys.stderr)
+
+# active non-fork non-private from probes
+active_new = [r for r in results if r.get('status')=='found' and not r.get('arch') and not r.get('fork')]
+print(f'newly found active: {len(active_new)}', file=sys.stderr)
+
+json.dump(results, open(r'C:\Users\koosh\_unknown_probe.json', 'w', encoding='utf-8'), indent=2)
+print('saved', len(results))

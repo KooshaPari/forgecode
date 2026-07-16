@@ -1,0 +1,26 @@
+import json
+from collections import Counter
+
+d = json.load(open('docs/audits/fr-matrix.json', encoding='utf-8'))
+rows = d['rows']
+
+# Candidates: SPEC-ONLY with tests and no code_refs
+cand = [r for r in rows if r.get('status') == 'SPEC-ONLY' and r.get('test_refs') and not r.get('code_refs')]
+
+# Group by test file crate
+test_crates = Counter()
+for r in cand:
+    if r['test_refs']:
+        path = r['test_refs'][0]
+        parts = path.split('/')
+        if len(parts) >= 3 and parts[1] == 'crates':
+            crate = parts[2]
+        else:
+            crate = 'other/' + parts[-1] if parts else 'unknown'
+        test_crates[crate] += 1
+
+print("SPEC-ONLY candidates with tests, by crate:")
+for crate, count in test_crates.most_common(30):
+    print(f"  {crate}: {count}")
+
+print(f"\nTotal SPEC-ONLY with tests: {len(cand)}")

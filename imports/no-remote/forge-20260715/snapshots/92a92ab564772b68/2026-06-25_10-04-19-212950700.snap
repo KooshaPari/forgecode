@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Atomic §7 wiring patch — apply via python _religion7_apply.py"""
+from pathlib import Path
+
+P = Path("crates/engine/src/engine.rs")
+src = P.read_text(encoding="utf-8")
+original = src
+changes = []
+
+# 1. Add religion import after the replay import line
+old = "use crate::replay::"
+if "use crate::religion::" not in src:
+    new = (
+        "use crate::religion::{\n"
+        "    apply_big_gods_response, last_religion_sample, substrate_gradients_for,\n"
+        "    ReligionEvent, ReligionEventKind, ReligiousProfile, SubstrateGradients,\n"
+        "};\n"
+        "use crate::replay::"
+    )
+    src = src.replace(old, new, 1)
+    changes.append("import")
+
+# 2. Add struct fields after the last_tick_mood field
+old = "    pub last_tick_mood: Vec<MoodSnapshot>,\n}"
+if "    pub religious_profiles:" not in src:
+    new = (
+        "    pub last_tick_mood: Vec<MoodSnapshot>,\n"
+        "    pub religious_profiles: BTreeMap<u32, ReligiousProfile>,\n"
+        "    pub last_tick_religion_events: Vec<ReligionEvent>,\n"
+        "}\n"
+        "\n"
+        "/// Per-tick religion event for the social-mood substrate hookup.\n"
+        "#[derive(Debug, Clone, PartialEq)]\n"
+        "pub struct ReligionEvent {\n"
+        "    pub settlement_id: u32,\n"
+        "    pub tick: u64,\n"
+        "    pub kind: ReligionEventKind,\n"
+        "    pub monitoring: f32,\n"
+        "    pub mythic_coherence: f32,\n"
+        "    pub uncertainty_reduction: f32,\n"
+        "}\n"
+        "\n"
+        "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n"
+        "pub enum ReligionEventKind {\n"
+        "    Taboo,\n"
+        "    Disruption,\n"
+        "    Dissolution,\n"
+        "}"
+    )
+    src = src.replace(old, new, 1)
+    changes.append("struct_fields")
+
+# 3. Add init to new() - unique anchor
+old = "        last_tick_mood: Vec::new(),\n        }\n    }\n\n    /// Deterministic seed constructor"
+if "        religious_profiles: BTreeMap::new()," not in src:
+    new = (
+        "        last_tick_mood: Vec::new(),\n"
+        "        religious_profiles: BTreeMap::new(),\n"
+        "        last_tick_religion_events: Vec::new(),\n"
+        "        }\n"
+        "    }\n"
+        "\n"
+        "    /// Deterministic seed constructor"
+    )
+    src = src.replace(old, new, 1)
+    changes.append("new_init")
+
+# 4. Replace phase_belief stub
+old = """    #[doc = "ADR-020 #4 — faith reserve (no-op stub)"]
+    pub fn phase_belief(&mut self) {}"""
+new = """    #[doc = "ADR-020 #4 — faith reserve (Big-Gods response per settlement per tick)"]
+    pub fn phase_belief(&mut self) {
+        use crate::religion::{
+            CERTAINTY_TRIPWIRE, DISSOLUTION_THRESHOLD, MAX_D_COHERENCE_PER_TICK,
+            MAX_D_MONITORING_PER_TICK, MAX_D_UNCERT_REDUCTION_TICK, MONITORING_TRIPWIRE,
+        };
+        let tick = self.current_tick;
+        // Iterate every settlement with a population profile.
+        let sids: Vec<u32> = self.religious_profiles.keys().copied().collect();
+        for sid in sids {
+            let profile = match self.religious_profiles.get_mut(&sid) {
+                Some(p) => p,
+                None => continue,
+            };
+            let gradients = substrate_gradients_for(&self.world_state, sid);
+            apply_big_gods_response(profile, &gradients, tick);
+            // Tripwire events for the social-mood substrate.
+            let kind = if profile.monitoring < DISSOLUTION_THRESHOLD {
+                ReligionEventKind::Dissolution
+            } else if profile.uncertainty_reduction > CERTAINTY_TRIPWIRE {
+                ReligionEventKind::Taboo
+            } else if profile.mythic_coherence < MONITORING_TRIPWIRE {
+                ReligionEventKind::Disruption
+            } else {
+                continue;
+            };
+            self.last_tick_religion_events.push(ReligionEvent {
+                settlement_id: sid,
+                tick,
+                kind,
+                monitoring: profile.monitoring,
+                mythic_coherence: profile.mythic_coherence,
+                uncertainty_reduction: profile.uncertainty_reduction,
+            });
+        }
+        // Cap the per-tick buffer (last 256 events) to avoid unbounded growth.
+        let len = self.last_tick_religion_events.len();
+        if len > 256 {
+            self.last_tick_religion_events.drain(..len - 256);
+        }
+        let _ = (
+            MAX_D_MONITORING_PER_TICK,
+            MAX_D_COHERENCE_PER_TICK,
+            MAX_D_UNCERT_REDUCTION_TICK,
+        );
+    }"""
+if "ADR-020 #4 — faith reserve (Big-Gods response" not in src:
+    src = src.replace(old, new, 1)
+    changes.append("phase_belief")
+
+if src != original:
+    P.write_text(src, encoding="utf-8")
+    print(f"OK: applied {changes}")
+else:
+    print("NO_CHANGES: nothing to patch")

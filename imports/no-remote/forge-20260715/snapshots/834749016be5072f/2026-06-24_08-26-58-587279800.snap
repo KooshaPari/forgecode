@@ -1,0 +1,129 @@
+use std::collections::HashMap;
+use thiserror::Error;
+
+/// Credential manager types absorbed from KVirtualStage.
+/// Separates credential handling from the virtual-stage engine
+/// for independent audit and reuse.
+
+#[derive(Error, Debug)]
+pub enum CredentialError {
+    #[error("not found: {0}")]
+    NotFound(String),
+    #[error("expired: {0}")]
+    Expired(String),
+    #[error("storage error: {0}")]
+    Storage(String),
+    #[error("decode error: {0}")]
+    Decode(#[from] base64::DecodeError),
+    #[error("serialization error: {0}")]
+    Serde(#[from] serde_json::Error),
+}
+
+pub type Result<T> = std::result::Result<T, CredentialError>;
+
+/// A stored credential with optional expiry.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Credential {
+    pub id: String,
+    pub key: String,
+    pub value: String,          // base64-encoded
+    pub expires_at: Option<i64>, // unix timestamp
+    pub metadata: HashMap<String, String>,
+}
+
+/// In-memory credential store (absorbed from KVirtualStage).
+pub struct CredentialManager {
+    store: HashMap<String, Credential>,
+}
+
+impl CredentialManager {
+    pub fn new() -> Self {
+        Self {
+            store: HashMap::new(),
+        }
+    }
+
+    pub fn store(&mut self, cred: Credential) -> Result<()> {
+        // Validate base64
+        let _ = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &cred.value)?;
+        self.store.insert(cred.id.clone(), cred);
+        Ok(())
+    }
+
+    pub fn get(&self, id: &str) -> Result<Credential> {
+        self.store
+            .get(id)
+            .cloned()
+            .ok_or_else(|| CredentialError::NotFound(id.to_string()))
+    }
+
+    pub fn delete(&mut self, id: &str) -> Result<()> {
+        self.store
+            .remove(id)
+            .ok_or_else(|| CredentialError::NotFound(id.to_string()))?;
+        Ok(())
+    }
+
+    pub fn list(&self) -> Vec<&Credential> {
+        self.store.values().collect()
+    }
+
+    pub fn cleanup_expired(&mut self) -> usize {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let before = self.store.len();
+        self.store.retain(|_, c| {
+            c.expires_at.map_or(true, |exp| exp > now)
+        });
+        before - self.store.len()
+    }
+}
+
+impl Default for CredentialManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_store_and_retrieve() {
+        let mut mgr = CredentialManager::new();
+        let cred = Credential {
+            id: "test-1".into(),
+            key: "api_key".into(),
+            value: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                b"secret-value",
+            ),
+            expires_at: None,
+            metadata: HashMap::new(),
+        };
+        mgr.store(cred.clone()).unwrap();
+        assert_eq!(mgr.get("test-1").unwrap().key, "api_key");
+    }
+
+    #[test]
+    fn test_cleanup_expired() {
+        let mut mgr = CredentialManager::new();
+        let past = 1000; // 1970-01-01
+        let cred = Credential {
+            id: "expired".into(),
+            key: "old_key".into(),
+            value: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                b"old",
+            ),
+            expires_at: Some(past),
+            metadata: HashMap::new(),
+        };
+        mgr.store(cred).unwrap();
+        assert_eq!(mgr.cleanup_expired(), 1);
+        assert!(mgr.get("expired").is_err());
+    }
+}

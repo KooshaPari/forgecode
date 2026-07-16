@@ -1,0 +1,22 @@
+apiVersion: v2
+name: tracera
+description: |
+  Tracera - graph-driven task runner (axum server + Go backend + Vue frontend).
+  Helm chart for desktop-as-dedicated-backend-server deployment.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/KooshaPari/Tracera
+sources:
+  - https://github.com/KooshaPari/Tracera
+maintainers:
+  - name: KooshaPari
+    email: kooshapari@gmail.com
+keywords:
+  - tracera
+  - graph
+  - task-runner
+  - axum
+  - desktop-backend
+annotations:
+  category: TaskManagement

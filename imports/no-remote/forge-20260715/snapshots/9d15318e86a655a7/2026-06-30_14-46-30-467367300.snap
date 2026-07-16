@@ -1,0 +1,26 @@
+name: Security (SAST)
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  schedule: [{cron: "0 2 * * *"}]
+jobs:
+  codeql:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+      - uses: github/codeql-action/init-action@b0c4fd77f6c559021d78430ec4d0d169ae74a4eb # v3
+        with:
+          languages: [typescript, python, rust, go]
+      - uses: github/codeql-action/autobuild@19b3a84f58f551a99396341585444cb37be03324  # was: no ref (default branch)
+      - uses: github/codeql-action/analyze@19b3a84f58f551a99396341585444cb37be03324  # was: no ref (default branch)

@@ -1,0 +1,67 @@
+// Programmatic tsc-style type-check filter for specific files.
+// We compile the whole project (since path mapping and project-wide checks
+// are required), then surface only diagnostics whose {file} matches any of
+// our 5 touched files (or any other path we want to inspect).
+const ts = require("typescript");
+const fs = require("fs");
+
+const TARGET_FILES = [
+  "src/lib/db/adapters/nodeSqliteShared.ts",
+  "src/lib/db/adapters/sqljsAdapter.ts",
+  "open-sse/utils/streamHandler.ts",
+  "open-sse/executors/cursor.ts",
+  "open-sse/utils/stream.ts",
+].map((p) => p.replace(/\//g, require("path").sep));
+
+function pickConfig(argv) {
+  // First positional that doesn't end with a stray semicolon
+  const positional = argv.find((a) => !a.startsWith("--") && !a.startsWith("-") && !a.endsWith(";"));
+  const cfgRel = positional || "tsconfig.json";
+  const cfgPath = require("path").resolve(cfgRel);
+  const text = ts.readConfigFile(cfgPath, ts.sys.readFile);
+  if (text.error) throw new Error("config read error: " + JSON.stringify(text.error));
+  return { cfgPath, config: ts.parseJsonConfigFileContent(text.config, ts.sys, require("path").dirname(cfgPath)) };
+}
+
+const args = process.argv.slice(2);
+const { cfgPath, config } = pickConfig(args);
+const allFiles = config.fileNames;
+
+// Restrict to TARGET_FILES ∪ their transitive imports (a cheap subset for speed).
+function norm(p) {
+  return require("path").resolve(p).toLowerCase().replace(/\//g, require("path").sep);
+}
+const targetSet = new Set(TARGET_FILES.map(norm));
+const keep = new Set();
+for (const f of allFiles) {
+  if (targetSet.has(f)) keep.add(f);
+}
+// Also keep all .ts/.tsx in open-sse to do a meaningful per-file check
+// (we want full open-sse errors because our 3 of the 5 files live there).
+function shouldKeep(f) {
+  return keep.has(f) || f.includes(`${require("path").sep}open-sse${require("path").sep}`);
+}
+const fileNames = allFiles.filter(shouldKeep);
+console.error(`[tsc] project=${cfgPath} total=${allFiles.length} subset=${fileNames.length}`);
+
+const program = ts.createProgram({ rootNames: fileNames, options: { ...config.options, noEmit: true, incremental: false } });
+const diags = ts.getPreEmitDiagnostics(program);
+
+const lines = [];
+let totalInTargets = 0;
+for (const d of diags) {
+  const msg = ts.flattenDiagnosticMessageText(d.messageText, "\n");
+  if (d.file && targetSet.has(d.file.fileName.replace(/\//g, require("path").sep))) {
+    totalInTargets++;
+    const { line, character } = d.file.getLineAndCharacterOfPosition(d.start || 0);
+    lines.push(`${d.file.fileName}:${line + 1}:${character + 1}  ${msg}`);
+  }
+}
+console.error(`[tsc] diagnostics total=${diags.length} inTargets=${totalInTargets}`);
+if (lines.length === 0) {
+  console.log("[tsc] OK - no errors in any of the 5 touched files");
+  process.exit(0);
+} else {
+  console.log(lines.join("\n"));
+  process.exit(1);
+}

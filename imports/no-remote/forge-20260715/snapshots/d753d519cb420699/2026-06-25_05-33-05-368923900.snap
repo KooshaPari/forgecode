@@ -1,0 +1,90 @@
+import os, json, subprocess, sys, time
+
+home = r'C:\Users\koosh'
+out_dir = os.path.join(home, '_clone_introspection')
+os.makedirs(out_dir, exist_ok=True)
+
+# Load default-branch map
+with open(os.path.join(home, '_confirmed_clones_branches.json'), 'r', encoding='utf-8') as f:
+    clone_info = json.load(f)
+
+results = {}
+errors = {}
+for info in clone_info:
+    name = info['name']
+    default_branch = info['default_branch']
+    path = os.path.join(home, name)
+    results[name] = {"path": path, "default_branch": default_branch, "commands": {}}
+    # 1. branch -a
+    r = subprocess.run(
+        ['git', '-C', path, 'branch', '-a'],
+        capture_output=True, text=True, timeout=30
+    )
+    results[name]['commands']['branch_-a'] = {
+        'returncode': r.returncode,
+        'stdout': r.stdout,
+        'stderr': r.stderr,
+    }
+    if r.returncode != 0:
+        errors.setdefault(name, []).append(f"branch -a failed: {r.stderr.strip()}")
+    # 2. worktree list
+    r = subprocess.run(
+        ['git', '-C', path, 'worktree', 'list'],
+        capture_output=True, text=True, timeout=30
+    )
+    results[name]['commands']['worktree_list'] = {
+        'returncode': r.returncode,
+        'stdout': r.stdout,
+        'stderr': r.stderr,
+    }
+    if r.returncode != 0:
+        errors.setdefault(name, []).append(f"worktree list failed: {r.stderr.strip()}")
+    # 3. stash list
+    r = subprocess.run(
+        ['git', '-C', path, 'stash', 'list'],
+        capture_output=True, text=True, timeout=30
+    )
+    results[name]['commands']['stash_list'] = {
+        'returncode': r.returncode,
+        'stdout': r.stdout,
+        'stderr': r.stderr,
+    }
+    if r.returncode != 0:
+        errors.setdefault(name, []).append(f"stash list failed: {r.stderr.strip()}")
+    # 4. status --short --branch
+    r = subprocess.run(
+        ['git', '-C', path, 'status', '--short', '--branch'],
+        capture_output=True, text=True, timeout=30
+    )
+    results[name]['commands']['status_short_branch'] = {
+        'returncode': r.returncode,
+        'stdout': r.stdout,
+        'stderr': r.stderr,
+    }
+    if r.returncode != 0:
+        errors.setdefault(name, []).append(f"status failed: {r.stderr.strip()}")
+    # 5. log origin/<default>..HEAD --oneline
+    r = subprocess.run(
+        ['git', '-C', path, 'log', f'origin/{default_branch}..HEAD', '--oneline'],
+        capture_output=True, text=True, timeout=30
+    )
+    results[name]['commands']['log_ahead'] = {
+        'returncode': r.returncode,
+        'stdout': r.stdout,
+        'stderr': r.stderr,
+    }
+    if r.returncode != 0:
+        errors.setdefault(name, []).append(f"log failed: {r.stderr.strip()}")
+
+# Save raw output
+with open(os.path.join(out_dir, 'raw.json'), 'w', encoding='utf-8') as f:
+    json.dump(results, f, indent=2)
+
+# Save error summary
+with open(os.path.join(out_dir, 'errors.json'), 'w', encoding='utf-8') as f:
+    json.dump(errors, f, indent=2)
+
+print(f"Processed {len(results)} clones")
+print(f"Clones with errors: {len(errors)}")
+for n, errs in errors.items():
+    print(f"  {n}: {len(errs)} errors")

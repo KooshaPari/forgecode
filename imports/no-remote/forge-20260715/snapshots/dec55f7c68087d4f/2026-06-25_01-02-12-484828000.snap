@@ -1,0 +1,13 @@
+$output = & gh api "repos/KooshaPari/kvirtualstage/commits/HEAD" 2>&1
+$raw = ($output -join "`n").Trim()
+Write-Host "Char codes of first 5:"
+for ($i = 0; $i -lt [Math]::Min(5, $raw.Length); $i++) {
+    Write-Host ("  [{0}] = {1} (0x{1:X})" -f $i, [int]$raw[$i])
+}
+Write-Host "Char codes of last 5:"
+$start = [Math]::Max(0, $raw.Length - 5)
+for ($i = $start; $i -lt $raw.Length; $i++) {
+    Write-Host ("  [{0}] = {1} (0x{1:X})" -f $i, [int]$raw[$i])
+}
+$j = $raw | ConvertFrom-Json
+Write-Host "Parsed SHA:" $j.sha

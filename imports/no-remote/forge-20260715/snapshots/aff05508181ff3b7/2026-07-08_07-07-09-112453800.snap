@@ -1,0 +1,22 @@
+@echo off
+setlocal
+set RETRIES=30
+set SLEEP_SECS=120
+set OUTFILE=C:\Users\koosh\_poll_mut.json
+
+:loop
+if %RETRIES% LEQ 0 goto :done
+gh api repos/KooshaPari/Benchora/actions/jobs/85805885203 1>%OUTFILE% 2>nul
+findstr /C:"\"status\": \"completed\"" %OUTFILE% 1>nul
+if %ERRORLEVEL% EQU 0 goto :done
+findstr /C:"\"completed_at\": \"20" %OUTFILE% 1>nul
+if %ERRORLEVEL% EQU 0 goto :done
+set /a RETRIES=%RETRIES%-1
+ping -n %SLEEP_SECS% 127.0.0.1 >nul
+goto :loop
+:done
+findstr /C:"status" %OUTFILE%
+findstr /C:"conclusion" %OUTFILE%
+findstr /C:"started_at" %OUTFILE%
+findstr /C:"completed_at" %OUTFILE%
+echo poll_done > C:\Users\koosh\_poll_mut.done

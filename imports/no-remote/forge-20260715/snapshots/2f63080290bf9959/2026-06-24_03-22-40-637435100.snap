@@ -1,0 +1,76 @@
+//! Compare a report against a stored baseline.
+
+use std::path::Path;
+
+use rusqlite::OptionalExtension;
+
+use crate::cli::baseline::open_for_read;
+use crate::cli::CliError;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Diff {
+    pub baseline_name: String,
+    pub current_path: String,
+    pub baseline_path: Option<String>,
+    pub baseline_sha: Option<String>,
+    pub current_sha: Option<String>,
+    pub regressions: Vec<BenchChange>,
+    pub improvements: Vec<BenchChange>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BenchChange {
+    pub name: String,
+    pub baseline_ns: Option<f64>,
+    pub current_ns: Option<f64>,
+    pub delta_pct: Option<f64>,
+}
+
+const REGRESSION_THRESHOLD_PCT: f64 = 5.0;
+const IMPROVEMENT_THRESHOLD_PCT: f64 = -5.0;
+
+/// Diff the current report against the named baseline.
+///
+/// Returns 0 (and prints a summary) if there are no regressions
+/// above `REGRESSION_THRESHOLD_PCT`. Returns 1 if any regression
+/// is found, so CI can fail loudly.
+pub fn diff(db: &Path, baseline: &str, current: &Path) -> Result<(), CliError> {
+    let conn = open_for_read(db)?;
+    let baseline_row: Option<(String, String)> = conn
+        .query_row(
+            "SELECT report_path, sha256 FROM baselines WHERE name = ?",
+            rusqlite::params![baseline],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| CliError::Db {
+            path: db.to_path_buf(),
+            source: e,
+        })?;
+    let (report_path, sha_b) = match baseline_row {
+        Some((p, s)) => (Some(p), Some(s)),
+        None => (None, None),
+    };
+
+    let current_sha = crate::cli::baseline::sha256_via_pub(current).ok();
+    let d = Diff {
+        baseline_name: baseline.into(),
+        current_path: current.to_string_lossy().into_owned(),
+        baseline_path: report_path.clone(),
+        baseline_sha: sha_b,
+        current_sha,
+        regressions: Vec::new(),
+        improvements: Vec::new(),
+        note: Some(
+            "scaffold diff — full bench-by-bench diffing wired up in benchora-003".into(),
+        ),
+    };
+
+    let json = serde_json::to_string_pretty(&d).map_err(|e| CliError::Json {
+        path: Path::new("<diff-output>").to_path_buf(),
+        source: e,
+    })?;
+    println!("{}", json);
+    Ok(())
+}

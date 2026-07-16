@@ -1,0 +1,55 @@
+[package]
+name = "phenotype-event-bus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Event bus abstractions for the Phenotype ecosystem"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+ulid = { workspace = true }
+dashmap = { workspace = true }
+phenotype-error-core = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+
+[features]
+default = []
+# Postgres-backed OutboxStore (EVE-SOTA-002). Activates the shared sqlx
+# dep (its `postgres` backend is compiled; the `sqlite` backend is
+# compiled but unreachable behind `#[cfg(feature = "sqlite")]`).
+postgres = ["dep:sqlx"]
+# SQLite-backed OutboxStore (EVE-SOTA-004). Mirrors the Postgres
+# adapter so the `OutboxRelay` is backend-agnostic. Compiles the
+# `sqlite` backend (the `postgres` backend is unreachable behind
+# `#[cfg(feature = "postgres")]`).
+sqlite = ["dep:sqlx"]
+
+[dependencies.sqlx]
+version = "0.8"
+default-features = false
+# Both backends declared so a single optional dep can back either
+# feature. Runtime code paths are gated by `#[cfg(feature = "...")]`,
+# so the unused backend is compile-time-only overhead.
+features = [
+    "runtime-tokio-rustls",
+    "macros",
+    "chrono",
+    "json",
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "sqlite",
+]
+optional = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

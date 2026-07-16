@@ -1,0 +1,8 @@
+import json, re
+data = open('tool_runs.json').read()
+data = re.sub(r'\x1b\[[0-9;]*m', '', data)
+data = json.loads(data)
+# Find deny.yml runs on main
+for r in data['workflow_runs']:
+    if 'deny' in r['name'].lower() and r['head_branch'] == 'main':
+        print(r['id'], '|', r['name'], '|', r['head_branch'], '|', r['conclusion'], '|', r['created_at'], '|', r.get('event'), '|', r.get('display_title'))

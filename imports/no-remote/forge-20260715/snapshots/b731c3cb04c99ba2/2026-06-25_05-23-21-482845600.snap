@@ -1,0 +1,18 @@
+package main
+
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+)
+
+func main() {
+	dir := `C:\Users\koosh\AppData\Local\Temp\1234567890`
+	p := filepath.Join(dir, "node_modules/foo.ts")
+	fmt.Println("Joined:", p)
+	fmt.Println("contains node_modules/:", strings.Contains(p, "node_modules/"))
+	fmt.Println("contains /node_modules:", strings.Contains(p, "/node_modules"))
+	fmt.Println("contains node_modules:", strings.Contains(p, "node_modules"))
+	fmt.Println("contains /.:", strings.Contains(p, "/."))
+	fmt.Println("contains .hidden/:", strings.Contains(p, ".hidden/"))
+}

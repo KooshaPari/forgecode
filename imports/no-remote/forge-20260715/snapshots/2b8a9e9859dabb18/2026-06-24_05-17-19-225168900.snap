@@ -1,0 +1,178 @@
+# Owned Scope — Execution Final Report
+
+Date: 2026-06-23
+Scope: eyetracker, eventra, configra, benchora, authvault, quillr
+Session owner: forge
+Phenotype-registry PR: #365
+AgilePlus specs: EYE-SOTA-002 (tobii), EVE-SOTA-001 (outbox+idempotency+otel)
+
+---
+
+## 1. Grade sweep progression
+
+### v1 (pre-fix, baseline)
+
+| Repo | Stack | Score | Grade | Failed |
+|---|---|---|---|---|
+| eyetracker | rust | 0/10 | F | build, test-unit, fmt, clippy, doc |
+| eventra | rust | 0/10 | F | same 5 |
+| configra | rust | 0/10 | F | same 5 |
+| benchora | rust | 0/10 | F | same 5 |
+| authvault | rust | 0/10 | F | same 5 |
+| quillr | python (mis-detected) | 0/11 | F | install, test-unit, lint, fmt, typecheck, security, audit |
+
+### v2 (post-fix, post-Phase 2 PRs, all OPEN — grades recomputed locally)
+
+| Repo | Stack | Score | Delta | Grade | Failed (remaining) |
+|---|---|---|---|---|---|
+| eyetracker | rust | 2/10 | +2 | F | build, test-unit, clippy, doc |
+| eventra | rust | 2/10 | +2 | F | same 4 |
+| configra | rust | 2/10 | +2 | F | same 4 |
+| benchora | rust | 2/10 | +2 | F | same 4 |
+| authvault | rust | 2/10 | +2 | F | same 4 |
+| quillr | **node** (correctly detected after elif fix) | 0/13 | (reset) | F | install, build, test-unit, lint, fmt, typecheck, audit |
+
+**Net change:** +10 grade points across 5 rust repos (every repo now has `fmt` PASSING).
+Quillr's stack detection corrected (was `python` due to if-if chain bug; now `node`).
+
+---
+
+## 2. PRs opened this session
+
+| Repo | PR # | Title | DAG unit |
+|---|---|---|---|
+| phenotype-registry | #365 | registry: sync owned scope (eyetracker, eventra, configra, benchora, authvault, quillr) | SPN-REG-001..006 |
+| eyetracker | #74 | ci: pin nightly toolchain + apply rustfmt-nightly | EYE-CI-101 |
+| eventra | #48 | ci: pin nightly toolchain + apply rustfmt-nightly | EVE-CI-101 |
+| configra | #70 | ci: pin nightly toolchain + apply rustfmt-nightly | CFG-CI-101 |
+| benchora | #42 | ci: pin nightly toolchain + apply rustfmt-nightly | BEN-CI-101 |
+| authvault | #92 | ci: pin nightly toolchain + apply rustfmt-nightly | AUT-CI-101 |
+| authvault | #93 | merge: GAP-010 middleware adapter docs | AUT-GIT-101 |
+| quillr | (opened) | ci: archive orphan python tooling (pyproject.toml, mypy.ini, pytest.ini) | QUI-CI-101 |
+
+**8 PRs total, 1 push direct (registry elif fix)**
+
+---
+
+## 3. Spine changes
+
+### phenotype-registry
+- `projects/Eyetracker.json` (47 lines) — full schema
+- `projects/Eventra.json` (full schema)
+- `projects/Configra.json` (full schema)
+- `projects/Benchora.json` (full schema)
+- `projects/Authvault.json` (full schema)
+- `projects/Quillr.json` (full schema)
+- `tools/check-ecosystem.ts` — 6 new entries
+- `scripts/validate-ecosystem.sh` — 6 new entries
+- `grade.sh` — if-if → elif chain in stack detection (Quillr was being graded as python)
+- `.grade-reports/` added to `.gitignore`
+
+All pushed on `wip/2026-06-23-owned-scope-registry-sync` (PR #365) +
+`fix/grade-sh-stack-detection` (direct push).
+
+---
+
+## 4. SOTA spec artifacts
+
+### `Dev/eyetracker/agileplus-specs/EYE-SOTA-002-tobii-stream-engine/`
+- `meta.json` — WP tracking
+- `spec.md` — Tobii Stream Engine integration spec (HAL trait, discovery, subscription, mapping)
+- `plan.md` — 17 WPs across 5 phases
+
+### `Dev/Eventra/agileplus-specs/EVE-SOTA-001-outbox-idempotency/`
+- `meta.json` — WP tracking; closes #22, #23, #24
+- `spec.md` — Outbox + idempotency + OTel; KEEP_COMPAT honored
+- `plan.md` — 20 WPs across 4 phases
+
+---
+
+## 5. Conflicts and follow-ups (flagged for human review)
+
+### AUT-GIT-102 (gap008 PKCE merge)
+- File: `src/middleware/mod.rs` (add/add conflict)
+- Status: merge aborted, branch NOT created
+- Action needed: human resolves the 2-way conflict in middleware mod registration
+- Spec entry needed: `Dev/Authvault/agileplus-specs/AUT-GIT-102/`
+
+### AUT-GIT-103 (11 vulnerabilities on default branch)
+- 1 High, 7 Moderate, 3 Low
+- Tracked but not yet addressed; requires `cargo audit` deep dive
+
+### Quillr branch state
+- `fix/ci-reds` upstream branch was `[gone]` (deleted on origin)
+- Local branch kept; new `fix/ci-reds-pyproject-template` created from it
+
+### Benchora fast-forward
+- `fix/benchora-wave7` is 4 commits behind origin/main
+- Per DAG: BEN-GIT-101 (rebase) + BEN-GIT-102 (push)
+
+### Stale stashes (unresolved, held for human decision)
+- eventra: 1 stash on `chore/lane-greenup`
+- configra: 2 stashes (`brand-icon-prep` + `WIP on chore/lane-greenup`)
+- quillr: 1 stash on deleted `feat/landing-site`
+
+---
+
+## 6. DAG final state
+
+419 base units (v1.3.0) + 8 new spec units (EVE-SOTA-001 plan 20 WPs + EYE-SOTA-002 plan 17 WPs counted as one spec each in the DAG spine) = **427 DAG units**.
+
+Validation loop remains live:
+- `C:/Users/koosh/_audit_loop.py` — local signal sweeper
+- `C:/Users/koosh/_audit_cron.bat` — Windows Task Scheduler wrapper
+- `C:/Users/koosh/_build_dag.py` — initial DAG generator
+- `C:/Users/koosh/_merge_validators.py` — appends validator outputs
+
+---
+
+## 7. Recommended next steps (post-session)
+
+1. **Resolve AUT-GIT-102 conflict** in Authvault — single file `src/middleware/mod.rs`. 30 min human work.
+2. **Land the 8 open PRs** once CI is green. Each should now pass `fmt`; remaining work is `build` + `test-unit` + `clippy` + `doc` per repo.
+3. **Tackle `build` failures** in each rust repo — likely a mix of:
+   - Missing system deps (Tobii SDK for eyetracker, sqlite for eventra outbox, etc.)
+   - Workspace member resolution (some sub-crates may have lost parent references)
+   - Lockfile drift (workspace lock out of sync with per-crate Cargo.toml)
+4. **Quillr TypeScript install baseline** — `package.json` exists but `grade.sh` can't install. Likely missing `engines` field, wrong package manager, or missing registry.
+5. **Authvault 11 vulnerabilities** — run `cargo audit`, then write AUT-SEC-001..011 plan to address.
+
+---
+
+## 8. Files written this session
+
+**Registry** (6 project entries + 2 spine files + 1 grade.sh fix):
+- `phenotype-registry/projects/{Eyetracker,Eventra,Configra,Benchora,Authvault,Quillr}.json`
+- `phenotype-registry/tools/check-ecosystem.ts`
+- `phenotype-registry/scripts/validate-ecosystem.sh`
+- `phenotype-registry/grade.sh`
+
+**Rust owned repos** (5 × rust-toolchain.toml + 5 × fmt reformat):
+- `Dev/{eyetracker,Eventra,Configra,Benchora,Authvault}/rust-toolchain.toml`
+- 5 × nightly fmt passes (committed on `fix/ci-reds-rustfmt-nightly` branches)
+
+**Quillr** (orphan python tooling archived):
+- `Dev/Quillr/archive/{pyproject.toml,mypy.ini,pytest.ini}`
+
+**Authvault** (1 new branch):
+- `feat/gap010-merged` (pushed)
+
+**Eyetracker spec**:
+- `Dev/eyetracker/agileplus-specs/EYE-SOTA-002-tobii-stream-engine/{meta.json,spec.md,plan.md}`
+
+**Eventra spec**:
+- `Dev/Eventra/agileplus-specs/EVE-SOTA-001-outbox-idempotency/{meta.json,spec.md,plan.md}`
+
+**DAG infrastructure** (machine files):
+- `C:/Users/koosh/_owned_dag.json` (419 units, machine-readable)
+- `C:/Users/koosh/_owned_dag.md` (summary)
+- `C:/Users/koosh/_gh_meta2.json` (GitHub metadata for 10 repos)
+- `C:/Users/koosh/_build_dag.py` (DAG generator)
+- `C:/Users/koosh/_audit_loop.py` (local signal sweeper)
+- `C:/Users/koosh/_audit_cron.bat` (Windows scheduler wrapper)
+- `C:/Users/koosh/_merge_validators.py` (validator output appender)
+- `C:/Users/koosh/_merge_extensions.py` (extension output appender)
+- `C:/Users/koosh/_grade_owned_*.txt` (per-repo grade reports v1)
+- `C:/Users_grade_v2_*.txt` (per-repo grade reports v2)
+- `C:/Users/koosh/_grade_owned/FINAL_REPORT.md` (grade sweep analysis)
+- `C:/Users/koosh/_hygiene_report.md` (per-repo git state)

@@ -1,0 +1,88 @@
+import json
+
+data = {
+    "title": "Phenotype Compute/Infra - DAG Work Breakdown",
+    "description": "Interactive DAG showing the work breakdown across all compute/infra epics (A-H).",
+    "lastUpdated": "2026-06-24T12:00:00.000Z",
+    "nodes": [],
+    "edges": []
+}
+
+nodes = [
+    ("a01","Infra provisioning (Pulumi)","completed","impl","Epic A - Infrastructure Foundations","phenotype-infra"),
+    ("a02","Kubernetes cluster bootstrap","in-progress","impl","Epic A - Infrastructure Foundations","phenotype-infra"),
+    ("a03","VPC and networking setup","completed","impl","Epic A - Infrastructure Foundations","phenotype-infra"),
+    ("a04","Secrets management (Vault)","pending","impl","Epic A - Infrastructure Foundations","phenotype-infra"),
+    ("a05","Observability stack (OTel)","in-progress","impl","Epic A - Infrastructure Foundations","phenotype-infra"),
+    ("b01","Schema registry (protobuf)","completed","spec","Epic B - Data and Schema Layer","phenotype-registry"),
+    ("b02","Migration runner","completed","tooling","Epic B - Data and Schema Layer","phenotype-registry"),
+    ("b03","Query router","in-progress","impl","Epic B - Data and Schema Layer","phenotype-registry"),
+    ("b04","Audit trail storage","pending","impl","Epic B - Data and Schema Layer","phenotype-registry"),
+    ("c01","MCP router gateway","completed","impl","Epic C - MCP Router and SDK","pheno-mcp-router"),
+    ("c02","SDK core types","completed","spec","Epic C - MCP Router and SDK","pheno-sdk"),
+    ("c03","Transport layer (gRPC)","in-progress","impl","Epic C - MCP Router and SDK","pheno-mcp-router"),
+    ("c04","SDK client bindings","in-progress","impl","Epic C - MCP Router and SDK","pheno-sdk"),
+    ("c05","Rate limiter middleware","pending","impl","Epic C - MCP Router and SDK","pheno-mcp-router"),
+    ("d01","Port adapter interface","completed","spec","Epic D - Port Adapters and Integrations","pheno-port-adapter"),
+    ("d02","GitHub webhook adapter","completed","impl","Epic D - Port Adapters and Integrations","pheno-port-adapter"),
+    ("d03","Slack notification adapter","in-progress","impl","Epic D - Port Adapters and Integrations","pheno-port-adapter"),
+    ("d04","Email gateway adapter","pending","impl","Epic D - Port Adapters and Integrations","pheno-port-adapter"),
+    ("d05","Webhook retry + dedup","pending","impl","Epic D - Port Adapters and Integrations","pheno-port-adapter"),
+    ("e01","Execution engine spec","completed","spec","Epic E - Execution Engine","phenotype-landing"),
+    ("e02","DAG runtime","in-progress","impl","Epic E - Execution Engine","phenotype-landing"),
+    ("e03","Step retry policy","pending","impl","Epic E - Execution Engine","phenotype-landing"),
+    ("e04","Concurrency limiter","pending","impl","Epic E - Execution Engine","phenotype-landing"),
+    ("f01","DAG data model (spec)","completed","spec","Epic F - DAG Foundation and Automation","phenotype-landing"),
+    ("f02","DAG schema validation","completed","impl","Epic F - DAG Foundation and Automation","phenotype-landing"),
+    ("f03","DAG YAML/JSON parser","completed","impl","Epic F - DAG Foundation and Automation","phenotype-landing"),
+    ("f04","DAG topological sort","completed","impl","Epic F - DAG Foundation and Automation","phenotype-landing"),
+    ("f05","DAG cycle detection","completed","impl","Epic F - DAG Foundation and Automation","phenotype-landing"),
+    ("f06","DAG execution engine","in-progress","impl","Epic F - DAG Foundation and Automation","phenotype-landing"),
+    ("f07","DAG state persistence","pending","impl","Epic F - DAG Foundation and Automation","phenotype-landing"),
+    ("f08","DAG status reporting","pending","impl","Epic F - DAG Foundation and Automation","phenotype-landing"),
+    ("f09","DAG CLI tooling","pending","tooling","Epic F - DAG Foundation and Automation","phenotype-landing"),
+    ("f10","DAG web renderer (this page)","in-progress","render","Epic F - DAG Foundation and Automation","phenotype-landing"),
+    ("f11","DAG CI integration","pending","tooling","Epic F - DAG Foundation and Automation","phenotype-landing"),
+    ("f12","DAG observability hooks","completed","impl","Epic F - DAG Foundation and Automation","phenotype-landing"),
+    ("f13","DAG test suite","in-progress","qa","Epic F - DAG Foundation and Automation","phenotype-landing"),
+    ("f14","DAG documentation","failed","docs","Epic F - DAG Foundation and Automation","phenotype-landing"),
+    ("f15","DAG deployment pipeline","pending","tooling","Epic F - DAG Foundation and Automation","phenotype-landing"),
+    ("g01","OTel collector config","completed","impl","Epic G - Observability","pheno-otel"),
+    ("g02","Metrics dashboard","in-progress","render","Epic G - Observability","pheno-otel"),
+    ("g03","Distributed tracing setup","in-progress","impl","Epic G - Observability","pheno-otel"),
+    ("g04","Alert routing rules","pending","impl","Epic G - Observability","pheno-otel"),
+    ("h01","Runtime security policy","completed","spec","Epic H - Security and Compliance","phenotype-infra"),
+    ("h02","CVE scanning pipeline","in-progress","tooling","Epic H - Security and Compliance","phenotype-infra"),
+    ("h03","SBOM generation","pending","tooling","Epic H - Security and Compliance","phenotype-infra"),
+    ("h04","Access audit log","pending","impl","Epic H - Security and Compliance","phenotype-infra"),
+]
+
+for n in nodes:
+    data["nodes"].append({"id": n[0], "label": n[1], "status": n[2], "type": n[3], "epic": n[4], "repo": n[5]})
+
+edges = [
+    ("a03","a01"),("a01","a02"),("a01","a04"),("a02","a05"),
+    ("b01","b02"),("b02","b03"),("b03","b04"),
+    ("c01","c03"),("c02","c04"),("c03","c05"),
+    ("d01","d02"),("d02","d03"),("d02","d04"),("d04","d05"),
+    ("e01","e02"),("e02","e03"),("e03","e04"),
+    ("f01","f02"),("f02","f03"),("f03","f04"),("f03","f05"),
+    ("f04","f06"),("f05","f06"),("f06","f07"),("f06","f08"),
+    ("f07","f09"),("f08","f09"),("f09","f10"),("f06","f11"),
+    ("f10","f11"),("f06","f12"),("f03","f13"),("f10","f14"),
+    ("f11","f15"),("f13","f14"),
+    ("g01","g02"),("g01","g03"),("g03","g04"),
+    ("h01","h02"),("h02","h03"),("h03","h04"),
+]
+
+for e in edges:
+    data["edges"].append({"from": e[0], "to": e[1]})
+
+path = r"C:\Users\koosh\phenotype-landing\sites\projects-landing\data\dag-data.json"
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+print(f"Written {len(data['nodes'])} nodes, {len(data['edges'])} edges")
+repos = set(n["repo"] for n in data["nodes"])
+epics = set(n["epic"] for n in data["nodes"])
+print(f"Repos ({len(repos)}): {sorted(repos)}")
+print(f"Epics ({len(epics)}): {sorted(epics)}")

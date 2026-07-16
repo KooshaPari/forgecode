@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Registry accuracy sweep — diff GitHub repo list vs ECOSYSTEM_MAP.md."""
+import json, re, sys
+
+# Read raw file (may have ANSI codes + BOM from gh CLI)
+with open(r"C:\Users\koosh\AppData\Local\Temp\gh_repos.json",
+          "rb") as f:
+    raw = f.read().decode("utf-8")
+clean = re.sub(r"\x1b\[[0-9;]*m", "", raw).lstrip("\ufeff")
+all_repos = json.loads(clean)
+
+gh_names = {r["name"] for r in all_repos}
+print(f"Total KooshaPari repos on GitHub: {len(gh_names)}", file=sys.stderr)
+
+with open(r"C:\Users\koosh\infra-research\phenotype-registry\ECOSYSTEM_MAP.md",
+          "r", encoding="utf-8") as f:
+    eco = f.read()
+
+mentioned = set()
+for m in re.finditer(r"KooshaPari/([A-Za-z0-9._\-]+)", eco):
+    mentioned.add(m.group(1))
+
+for m in re.finditer(r"\*\*([A-Z][A-Za-z0-9._\-]+)\*\*", eco):
+    name = m.group(1)
+    if name in gh_names:
+        mentioned.add(name)
+
+# Also map known aliases (e.g. phenotype-infra = "phenotype-infra",
+# "Phenotype-infra", etc.)
+aliases = {
+    "phenotype-infra": "phenotype-infra",
+    "PhenoCompose": "PhenoCompose",
+    "BytePort": "BytePort",
+    "nanovms": "nanovms",
+    "AgilePlus": "AgilePlus",
+    "phenotype-registry": "phenotype-registry",
+    "phenotype-org-audits": "phenotype-org-audits",
+    "phenotype-org-governance": "phenotype-org-governance",
+    "phenokits-commons": "phenokits-commons",
+    "phenodag": "phenodag",
+    "HexaKit": "HexaKit",
+    "HeliosApp": "HeliosApp",
+    "Tracera": "Tracera",
+    "Benchora": "Benchora",
+    "thegent": "thegent",
+    "authvault-cve-13RjMo": "authvault-cve-13RjMo",
+    "clap-ext": "clap-ext",
+    "Civis": "Civis",
+    "Agentora": "Agentora",
+    "CodeWatch": "CodeWatch",
+    "pluggedin-app": "pluggedin-app",
+    "portage": "portage",
+    "vibeproxy-monitoring-unified": "vibeproxy-monitoring-unified",
+    "OmniRoute-main-check": "OmniRoute-main-check",
+    "OmniRoute-upstream": "OmniRoute-upstream",
+    "heliosBench": "heliosBench",
+    "helioslab-bootstrap": "helioslab-bootstrap",
+    "Tasken": "Tasken",
+    "Tokn": "Tokn",
+}
+for canon, _ in aliases.items():
+    mentioned.add(canon)
+
+unknown = sorted(gh_names - mentioned)
+print(f"\n=== UNKNOWN (live on GitHub, NOT in ECOSYSTEM_MAP.md): {len(unknown)} ===",
+      file=sys.stderr)
+
+# CSV header to stdout
+print("name,language,archived,pushed,description")
+unknown_set = set(unknown)
+for r in all_repos:
+    if r["name"] in unknown_set:
+        desc = (r.get("description") or "").replace(",", ";").replace('"', "'")
+        pushed = (r.get("pushedAt") or "")[:10]
+        print(f"{r['name']},{r.get('primaryLanguage', '')},{r.get('isArchived', False)},{pushed},{desc}")

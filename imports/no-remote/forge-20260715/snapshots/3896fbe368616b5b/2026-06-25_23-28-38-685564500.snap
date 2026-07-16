@@ -1,0 +1,158 @@
+/**
+ * src/lib/observability/trace.ts
+ *
+ * Lightweight W3C Trace Context helpers.
+ *
+ * `withProxySpan()` runs a callback inside a synthetic span, exporting a
+ * `traceparent` header for downstream propagation. This is NOT a full
+ * OpenTelemetry SDK — it implements just enough of the W3C Trace Context
+ * spec (https://www.w3.org/TR/trace-context/) to give the admin endpoints
+ * a consistent correlation id without pulling in a 4-MB OTel dep.
+ *
+ * The actual emission of OTEL spans is gated by `OTEL_SDK_DISABLED` (see
+ * `burnRateAlerts.ts`). When OTEL is disabled, the synthetic traceparent
+ * still works — it's just not exported anywhere.
+ *
+ * Wire format (W3C Trace Context §3.2):
+ *   traceparent = version "-" trace-id "-" parent-id "-" trace-flags
+ *   - version      = 2 hex digits, always "00" today
+ *   - trace-id     = 32 hex digits (16 bytes)
+ *   - parent-id    = 16 hex digits (8 bytes)
+ *   - trace-flags  = 2 hex digits, "01" = sampled
+ *
+ * Run from the repo root:
+ *   node --import tsx --test tests/unit/observability/trace.test.ts
+ */
+
+import { randomBytes } from "node:crypto";
+
+export interface SpanContext {
+  /** W3C trace-id (32 hex chars). */
+  readonly traceId: string;
+  /** W3C parent-id / span-id (16 hex chars). */
+  readonly spanId: string;
+  /** W3C trace-flags byte. `"01"` = sampled, `"00"` = not sampled. */
+  readonly traceFlags: "00" | "01";
+  /** Composite `traceparent` header value. */
+  readonly traceparent: string;
+}
+
+const TRACEPARENT_RE =
+  /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/;
+
+/**
+ * Generate a fresh `SpanContext`. The trace-id and span-id are pulled from
+ * `crypto.randomBytes`; if the underlying CSPRNG ever produces zeros
+ * (catastrophically bad) we re-roll until we get a non-zero id.
+ */
+export function newSpanContext(sampled: boolean = true): SpanContext {
+  let traceId = "";
+  while (traceId === "" || traceId === "00000000000000000000000000000000") {
+    traceId = randomBytes(16).toString("hex");
+  }
+  let spanId = "";
+  while (spanId === "" || spanId === "0000000000000000") {
+    spanId = randomBytes(8).toString("hex");
+  }
+  const traceFlags: SpanContext["traceFlags"] = sampled ? "01" : "00";
+  return {
+    traceId,
+    spanId,
+    traceFlags,
+    traceparent: `00-${traceId}-${spanId}-${traceFlags}`,
+  };
+}
+
+/**
+ * Parse an inbound `traceparent` header (RFC: ignore everything that
+ * doesn't match the strict format). Returns `null` for malformed input
+ * so callers fall back to a fresh context instead of propagating garbage.
+ */
+export function parseTraceparent(headerValue: string | null | undefined): SpanContext | null {
+  if (typeof headerValue !== "string") return null;
+  const trimmed = headerValue.trim();
+  const match = TRACEPARENT_RE.exec(trimmed);
+  if (!match) return null;
+  const [, , traceId, spanId, traceFlagsRaw] = match;
+  if (traceId === "00000000000000000000000000000000") return null;
+  if (spanId === "0000000000000000") return null;
+  const traceFlags = traceFlagsRaw === "01" ? "01" : "00";
+  return {
+    traceId,
+    spanId,
+    traceFlags,
+    traceparent: `00-${traceId}-${spanId}-${traceFlags}`,
+  };
+}
+
+/**
+ * Extract an inbound trace context from a `Request`'s `traceparent` header,
+ * or mint a fresh one if absent / malformed.
+ */
+export function traceContextFromRequest(request: Request): SpanContext {
+  const inbound = request.headers.get("traceparent");
+  return parseTraceparent(inbound) ?? newSpanContext(true);
+}
+
+/**
+ * Run `fn` inside a synthetic span, exposing a `SpanContext` to the
+ * callback so it can propagate the `traceparent` header downstream. The
+ * returned value of `fn` is returned as-is. Exceptions are re-thrown after
+ * marking the span as errored (in the future, when an exporter is wired
+ * up; for now we just record the duration so callers can see it via
+ * `result.durationMs`).
+ */
+export interface WithSpanResult<T> {
+  readonly value: T;
+  readonly span: SpanContext;
+  readonly durationMs: number;
+  readonly errored: boolean;
+}
+
+export interface WithSpanOptions {
+  /** Force sampling on/off. Defaults to `true`. */
+  readonly sampled?: boolean;
+  /** Override the trace context (e.g. to continue an inbound trace). */
+  readonly context?: SpanContext;
+  /** Override the clock — used by tests. */
+  readonly now?: () => number;
+}
+
+export function withProxySpan<T>(
+  _name: string,
+  fn: (span: SpanContext) => Promise<T> | T,
+  options: WithSpanOptions = {}
+): Promise<WithSpanResult<T>> {
+  const clock = options.now ?? (() => Date.now());
+  const start = clock();
+  const span = options.context ?? newSpanContext(options.sampled ?? true);
+  let errored = false;
+  return Promise.resolve()
+    .then(() => fn(span))
+    .then((value) => ({
+      value,
+      span,
+      durationMs: clock() - start,
+      errored,
+    }))
+    .catch((err: unknown) => {
+      errored = true;
+      const durationMs = clock() - start;
+      throw new ProxySpanError(span, durationMs, err);
+    });
+}
+
+export class ProxySpanError extends Error {
+  readonly span: SpanContext;
+  readonly durationMs: number;
+  readonly cause: unknown;
+
+  constructor(span: SpanContext, durationMs: number, cause: unknown) {
+    const causeMessage = cause instanceof Error ? cause.message : String(cause);
+    super(`[proxy-span] ${span.traceparent} failed after ${durationMs}ms: ${causeMessage}`);
+    this.name = "ProxySpanError";
+    this.span = span;
+    this.durationMs = durationMs;
+    this.cause = cause;
+  }
+}

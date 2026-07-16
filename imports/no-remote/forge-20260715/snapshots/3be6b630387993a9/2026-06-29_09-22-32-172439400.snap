@@ -1,0 +1,11 @@
+{
+  "depth": "all345",
+  "nanovms_repoint": true,
+  "phenotype_sdk": "leave",
+  "history": [
+    {
+      "ts": "2026-06-27T00:00:00Z",
+      "decision": "proceed all 345"
+    }
+  ]
+}

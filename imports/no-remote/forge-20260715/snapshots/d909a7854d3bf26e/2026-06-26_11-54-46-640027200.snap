@@ -1,0 +1,18 @@
+OMNIROUTE_REDIS_URL="redis://127.0.0.1:6379"
+REDIS_URL="redis://127.0.0.1:6379"
+STORAGE_ENCRYPTION_KEY=60c6b3f742c161dcd2342898c253a7338370d02c6d4180e05debf999445a9ad9
+DEBUG_LOGGING=true
+DEBUG_AUTH=true
+DATA_DIR=C:\Users\koosh\AppData\Roaming\omniroute
+OMNIROUTE_MEMORY_MB=16384
+REQUEST_TIMEOUT_MS=600000
+OMNIROUTE_DEFAULT_FETCH_TIMEOUT_MS=480000
+RATE_LIMIT_MAX_WAIT_MS=480000
+FETCH_KEEPALIVE_TIMEOUT_MS=60000
+DEFAULT_REQUEST_TIMEOUT_MS=120000
+# Live-WS sidecar (port 20129) is not running in this single-port deployment.
+# Without this, every dashboard event POSTs to 20129 → ECONNREFUSED → [ProxyFetch] flood.
+# Upstream fix tracked in upstream issue #4604 (deployed build 3.8.37 already has the
+# lazy backoff helper; setting this avoids the fetch path entirely).
+OMNIROUTE_DISABLE_LIVE_WS=true
+OMNIROUTE_DISABLE_DASHBOARD_BRIDGE=true

@@ -1,0 +1,8 @@
+$env:CARGO_INCREMENTAL = "1"
+# Library-only check; tests are checked separately below
+cargo check --lib --locked --message-format=short | Tee-Object C:\Users\koosh\_benchora_check.log
+"lib_exit=$LASTEXITCODE" | Add-Content C:\Users\koosh\_benchora_check.log
+echo "--- now tests ---" | Add-Content C:\Users\koosh\_benchora_check.log
+cargo check --bins --tests --locked --message-format=short | Tee-Object -Append C:\Users\koosh\_benchora_check.log
+"tests_exit=$LASTEXITCODE" | Add-Content C:\Users\koosh\_benchora_check.log
+

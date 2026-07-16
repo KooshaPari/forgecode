@@ -1,0 +1,23 @@
+{
+  "project": "BytePort",
+  "stack": "rust",
+  "mode": "e2-verification",
+  "score": 2,
+  "max": 10,
+  "percentage": 20,
+  "grade": "F",
+  "checks": [
+    {"name":"build","status":"pass","score":2,"max":2,"detail":"cargo build --workspace passes (exit 0)"},
+    {"name":"test-unit","status":"skipped","score":0,"max":3,"detail":"deferred — network-dependent (cargo test timed out)"},
+    {"name":"fmt","status":"fail","score":0,"max":2,"detail":"cargo fmt fails: network.rs mod resolution (pre-existing, not in E2 scope)"},
+    {"name":"clippy","status":"skipped","score":0,"max":2,"detail":"deferred — network-dependent (cargo clippy timed out)"},
+    {"name":"deny","status":"skipped","score":0,"max":1,"detail":"deferred — requires cargo-deny installed"},
+    {"name":"doc","status":"skipped","score":0,"max":1,"detail":"deferred — network-dependent (cargo doc timed out)"},
+    {"name":"test-snapshot","status":"skipped","score":0,"max":1,"detail":"deferred in fast mode"},
+    {"name":"test-fuzz","status":"skipped","score":0,"max":1,"detail":"deferred in fast mode"},
+    {"name":"coverage","status":"skipped","score":0,"max":2,"detail":"deferred in fast mode"},
+    {"name":"audit","status":"skipped","score":0,"max":1,"detail":"deferred in fast mode"},
+    {"name":"bench","status":"skipped","score":0,"max":1,"detail":"deferred in fast mode"}
+  ],
+  "timestamp": "2026-06-25T23:35:00Z"
+}

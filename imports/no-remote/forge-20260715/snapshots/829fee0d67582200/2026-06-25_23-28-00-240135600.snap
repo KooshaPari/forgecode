@@ -1,0 +1,107 @@
+/*!
+ * Scenario 08 — Cascading quota exhaustion across 5 tenants.
+ *
+ * What this proves:
+ *   • When 5 tenants simultaneously exhaust their quota, the fair-share
+ *     algorithm still serves each tenant — no single tenant starves.
+ *   • Excess requests beyond a tenant's quota queue (do not error).
+ *   • The fair-share invariant (`fair-share-no-starvation`) confirms
+ *     no tenant receives < 50% of the average per-tenant share.
+ *
+ * Hermetic:
+ *   A tiny in-memory quota manager with per-tenant counters and a
+ *   round-robin scheduler. No DB.
+ *
+ * Cleanup:
+ *   No injectors pushed. Default invariants apply, plus the
+ *   `fair-share-no-starvation` invariant added for this scenario.
+ */
+import { fairShareNoStarvation } from "../invariants.ts";
+import type { ScenarioContext } from "../runner.ts";
+
+export const id = "08-cascading-quota-exhaustion";
+export const title = "5 tenants exhaust quota simultaneously — fair-share holds, no starvation";
+
+const TENANTS = ["acme", "globex", "initech", "umbrella", "wayne"];
+const PER_TENANT_QUOTA = 100;
+const REQUESTS_PER_TENANT = 150; // > quota to force overflow
+const GLOBAL_CAP = 400;           // total cap for the time window
+
+export async function run(ctx: ScenarioContext): Promise<void> {
+  ctx.addInvariant(fairShareNoStarvation);
+
+  // ── Synthetic fair-share scheduler ────────────────────────────────
+  // We model a queue per tenant. When a tenant's quota is hit, requests
+  // are queued. A round-robin scheduler drains the queues fairly.
+  const quotas: Record<string, { used: number; queued: number; served: number }> = {};
+  for (const t of TENANTS) quotas[t] = { used: 0, queued: 0, served: 0 };
+
+  const queueOrder: string[] = [];
+  let totalServed = 0;
+
+  function submit(tenant: string): "served" | "queued" | "rejected" {
+    const q = quotas[tenant];
+    if (totalServed >= GLOBAL_CAP) return "rejected";
+    if (q.used < PER_TENANT_QUOTA) {
+      q.used++;
+      q.served++;
+      totalServed++;
+      return "served";
+    }
+    q.queued++;
+    queueOrder.push(tenant);
+    return "queued";
+  }
+
+  function drainQueuesFair(): void {
+    // Round-robin: visit each tenant in order while there is any queued
+    // work and any global budget left.
+    let progressed = true;
+    while (progressed && totalServed < GLOBAL_CAP) {
+      progressed = false;
+      for (const t of TENANTS) {
+        const q = quotas[t];
+        if (q.queued > 0 && totalServed < GLOBAL_CAP) {
+          q.queued--;
+          q.served++;
+          totalServed++;
+          progressed = true;
+        }
+      }
+    }
+  }
+
+  // ── Submit all requests ───────────────────────────────────────────
+  let submittedQueued = 0;
+  let submittedServed = 0;
+  let submittedRejected = 0;
+  for (const t of TENANTS) {
+    for (let i = 0; i < REQUESTS_PER_TENANT; i++) {
+      const r = submit(t);
+      if (r === "queued") submittedQueued++;
+      else if (r === "served") submittedServed++;
+      else submittedRejected++;
+    }
+  }
+  drainQueuesFair();
+
+  // ── Per-tenant served counters feed the invariant ─────────────────
+  for (const t of TENANTS) {
+    ctx.state.perTenantServed[t] = quotas[t].served;
+  }
+
+  // ── Assertions ────────────────────────────────────────────────────
+  ctx.assert("all-tenants-served", TENANTS.every((t) => (quotas[t].served ?? 0) > 0));
+  ctx.assert("fair-share-no-rejection", submittedRejected === 0, `rejected=${submittedRejected}`);
+  ctx.assert("every-tenant-queued-work-drained", TENANTS.every((t) => quotas[t].queued === 0), `queues=${JSON.stringify(quotas)}`);
+  ctx.assert(
+    "fair-distribution",
+    (() => {
+      const counts = Object.values(ctx.state.perTenantServed);
+      const max = Math.max(...counts);
+      const min = Math.min(...counts);
+      return max - min <= 1; // round-robin can differ by at most 1
+    })(),
+    `served=${JSON.stringify(ctx.state.perTenantServed)}`,
+  );
+}

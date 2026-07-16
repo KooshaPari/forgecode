@@ -1,0 +1,513 @@
+/**
+ * PR #36 — TPROXY decrypt complete: HTTPS MITM forward proxy.
+ *
+ * Standard HTTP/1.1 forward proxy that:
+ *
+ *   1. Accepts an unencrypted `CONNECT host:port HTTP/1.1` request from a
+ *      client (curl, an IDE, a CLI tool) configured with
+ *      `HTTPS_PROXY=http://127.0.0.1:<port>`.
+ *   2. Replies `HTTP/1.1 200 Connection Established` and stacks a TLS server
+ *      socket on top of the same TCP connection using a per-host leaf cert
+ *      signed by the dynamic CA (`CaCertManager`).
+ *   3. The TLS-decrypted stream is handed to the existing TLS capture engine
+ *      (`tlsCapture.ts`) which parses the HTTP request, captures the
+ *      exchange, forwards it to the upstream, and re-encrypts the response.
+ *   4. On the way back out, the HSTS stripper (`hstsBypass.ts`) drops
+ *      `Strict-Transport-Security` from upstream responses so the client's
+ *      HSTS cache never pins the original CA. (#4294, #4295)
+ *   5. TLS sessions are cached (`sessionCache.ts`) on both the upstream side
+ *      (skip the upstream handshake) and the server side (skip the handshake
+ *      from the client) — without this, chatty IDEs (Cursor, Antigravity,
+ *      Copilot) eat full handshake latency on every reconnect.
+ *
+ * The proxy is intentionally separate from the kernel-bound TPROXY listener
+ * (`captureMode.ts`) — it does NOT require `IP_TRANSPARENT` or root. It is
+ * the "client says `HTTPS_PROXY=...`" path; the kernel path is the "client
+ * doesn't know we exist" path. Both share `tlsCapture.ts` for the actual
+ * request lifecycle and `dynamicCert.ts` for cert issuance.
+ *
+ * Wire format: HTTP/1.1 with CONNECT, plain TLS 1.2/1.3 on the inner tunnel.
+ * No HTTP/2 yet — most IDE HTTP clients still negotiate HTTP/1.1 to a
+ * forward proxy.
+ */
+import { randomUUID } from "node:crypto";
+import http from "node:http";
+import net from "node:net";
+import tls from "node:tls";
+import { sanitizeErrorMessage } from "@omniroute/open-sse/utils/error";
+import { applyIdleTimeout, MITM_IDLE_TIMEOUT_MS } from "../../socketTimeouts.ts";
+import {
+  createTlsCaptureServer,
+  type TlsCaptureServer,
+} from "../tlsCapture.ts";
+import { CaCertManager, resolveCaPaths } from "./caCertManager.ts";
+import { createHstsBypasser } from "./hstsBypass.ts";
+import { TlsInspector, hostMatches } from "./tlsInspector.ts";
+import { TlsSessionCache } from "./sessionCache.ts";
+import type {
+  CaCertChain,
+  CertManagerLike,
+  InterceptedForwarder,
+  InterceptedRequest,
+  InterceptedResponse,
+  TlsInterceptConfig,
+  TlsInterceptLogger,
+} from "./types.ts";
+import { silentLogger } from "./types.ts";
+
+/** Standard HTTPS port when the CONNECT target omits one. */
+const DEFAULT_HTTPS_PORT = 443;
+
+/**
+ * Default forwarder: opens a fresh `tls.connect` to `host:443` and forwards
+ * the decrypted request/response. The TLS session ticket is captured and
+ * cached so subsequent connections skip the upstream handshake.
+ * `rejectUnauthorized: true` by default — the proxy must not accept an
+ * upstream cert the client itself would have rejected.
+ */
+function defaultForwarder(opts: {
+  sessionCache: TlsSessionCache;
+  logger: TlsInterceptLogger;
+  rejectUnauthorized?: boolean;
+}): InterceptedForwarder {
+  const rejectUnauthorized = opts.rejectUnauthorized ?? true;
+  return async (req: InterceptedRequest): Promise<InterceptedResponse> => {
+    const startedAt = Date.now();
+    const port = req.sniHint && /^:\d+$/.test(req.path)
+      ? Number(req.path.slice(1))
+      : DEFAULT_HTTPS_PORT;
+    const cached = opts.sessionCache.get(req.host);
+    return new Promise<InterceptedResponse>((resolve, reject) => {
+      const tlsSocket = tls.connect({
+        host: req.host,
+        port,
+        servername: req.sni ?? req.host,
+        rejectUnauthorized,
+        session: cached ?? undefined,
+        ALPNProtocols: ["http/1.1"],
+      });
+
+      const chunks: Buffer[] = [];
+      const headers: Record<string, string> = {};
+      let status = 0;
+      tlsSocket.setEncoding("utf8");
+
+      tlsSocket.on("secureConnect", () => {
+        const lines: string[] = [];
+        lines.push(`${req.method} ${req.path} HTTP/1.1`);
+        for (const [k, v] of Object.entries(req.headers)) {
+          const lower = k.toLowerCase();
+          if (
+            lower === "host" ||
+            lower === "connection" ||
+            lower === "keep-alive" ||
+            lower === "proxy-authenticate" ||
+            lower === "proxy-authorization" ||
+            lower === "te" ||
+            lower === "trailer" ||
+            lower === "transfer-encoding" ||
+            lower === "upgrade" ||
+            lower === "content-length"
+          ) {
+            continue;
+          }
+          lines.push(`${lower}: ${v}`);
+        }
+        lines.push(`host: ${req.host}`);
+        lines.push("");
+        lines.push("");
+        tlsSocket.write(Buffer.from(lines.join("\r\n"), "utf8"));
+        if (req.body.length > 0) tlsSocket.write(req.body);
+      });
+
+      tlsSocket.on("data", (chunk: Buffer) => chunks.push(chunk));
+      tlsSocket.on("end", () => {
+        const raw = Buffer.concat(chunks).toString("utf8");
+        const split = raw.indexOf("\r\n\r\n");
+        const head = split >= 0 ? raw.slice(0, split) : raw;
+        const body = split >= 0
+          ? Buffer.from(raw.slice(split + 4), "utf8")
+          : Buffer.alloc(0);
+        const headerLines = head.split("\r\n");
+        const statusLine = headerLines.shift() ?? "";
+        const m = /^HTTP\/1\.[01] (\d{3})/.exec(statusLine);
+        status = m ? Number(m[1]) : 0;
+        for (const line of headerLines) {
+          const colon = line.indexOf(":");
+          if (colon === -1) continue;
+          const name = line.slice(0, colon).trim();
+          const value = line.slice(colon + 1).trim();
+          headers[name.toLowerCase()] = value;
+        }
+        opts.sessionCache.set(req.host, tlsSocket.getSession());
+        resolve({
+          status,
+          headers,
+          body,
+          upstreamLatencyMs: Date.now() - startedAt,
+        });
+      });
+      tlsSocket.on("error", (err: Error) => reject(err));
+      tlsSocket.setTimeout(MITM_IDLE_TIMEOUT_MS, () => {
+        tlsSocket.destroy(new Error("upstream connect/read timeout"));
+      });
+    });
+  };
+}
+
+/**
+ * Wrap the TLS socket's `write()` so HSTS-stripped response headers reach
+ * the wire. Every response that the capture engine flushes back through this
+ * socket is scanned for `Strict-Transport-Security:` header lines, dropped,
+ * and (conservatively) `Content-Length` is removed so Node falls back to
+ * chunked framing.
+ */
+function wireHstsBypassOnSocket(
+  tlsSocket: tls.TLSSocket,
+  hstsBypass: (host: string, headers: Record<string, string>) => boolean,
+  host: string
+): void {
+  const origWrite = tlsSocket.write.bind(tlsSocket);
+  const patched = function patched(
+    data: unknown,
+    ...rest: unknown[]
+  ): boolean {
+    if (Buffer.isBuffer(data) && /strict-transport-security/i.test(data.toString("utf8"))) {
+      const stripped = stripHstsFromFrame(data.toString("utf8"));
+      return origWrite(Buffer.from(stripped, "utf8"), ...(rest as []));
+    }
+    if (
+      typeof data === "string" &&
+      /strict-transport-security/i.test(data)
+    ) {
+      const stripped = stripHstsFromFrame(data);
+      return origWrite(stripped, ...(rest as []));
+    }
+    return origWrite(data as never, ...(rest as []));
+  } as typeof origWrite;
+  tlsSocket.write = patched;
+  void hstsBypass;
+  void host;
+}
+
+function stripHstsFromFrame(httpFrame: string): string {
+  const headerEnd = httpFrame.indexOf("\r\n\r\n");
+  if (headerEnd < 0) return httpFrame;
+  const headersPart = httpFrame.slice(0, headerEnd);
+  const body = httpFrame.slice(headerEnd + 4);
+  const withoutHsts = headersPart
+    .split(/\r\n/)
+    .filter((line) => !/^strict-transport-security\s*:/i.test(line))
+    .join("\r\n");
+  // Drop Content-Length so the body is framed with chunked transfer — we
+  // don't try to recompute the byte count exactly (the HSTS line size varies).
+  const adjusted = withoutHsts.replace(/^content-length\s*:\s*\d+\r\n/im, "");
+  return adjusted + "\r\n\r\n" + body;
+}
+
+/**
+ * Handle a CONNECT request from the client. After this returns, the raw
+ * `clientSocket` has a TLS server socket stacked on top of it, ready to
+ * exchange decrypted HTTP/1.1 requests.
+ */
+function handleConnect(args: {
+  req: http.IncomingMessage;
+  clientSocket: net.Socket;
+  head: Buffer;
+  inspector: TlsInspector;
+  sessionCache: TlsSessionCache;
+  hstsBypass: (host: string, headers: Record<string, string>) => boolean;
+  logger: TlsInterceptLogger;
+  capture: TlsCaptureServer;
+  certManager: CertManagerLike;
+}): void {
+  const {
+    req,
+    clientSocket,
+    head,
+    inspector,
+    sessionCache,
+    hstsBypass,
+    logger,
+    capture,
+    certManager,
+  } = args;
+
+  const rawTarget = req.url ?? "";
+  const [hostRaw, portRaw] = rawTarget.split(":");
+  const host = (hostRaw ?? "").trim();
+  const port = Number(portRaw) || DEFAULT_HTTPS_PORT;
+
+  // Decide inspection strategy for this host.
+  const decision = inspector.decide(host, host);
+
+  if (decision.kind === "bypass") {
+    logger.info("tproxy-decrypt: bypass host", { host });
+    // Raw tunnel: forward TCP bytes straight through, do not touch TLS.
+    const upstream = net.connect(port, host, () => {
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      if (head && head.length > 0) upstream.write(head);
+      upstream.pipe(clientSocket);
+      clientSocket.pipe(upstream);
+    });
+    upstream.on("error", () => {
+      try {
+        clientSocket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+      } catch {
+        // already closed
+      }
+    });
+    clientSocket.on("error", () => upstream.destroy());
+    return;
+  }
+
+  // Inspect: terminate TLS, capture, forward.
+  const connectionId = randomUUID();
+  const serverSession = sessionCache.getServer(connectionId);
+
+  inspector
+    .getContextForDecision({ kind: "inspect", host: decision.host })
+    .then((ctx) => {
+      if (!ctx) {
+        throw new Error("missing SecureContext for inspection");
+      }
+      const sniCallback = certManager.createSNICallback();
+      const tlsSocket = new tls.TLSSocket(clientSocket, {
+        isServer: true,
+        secureContext: ctx,
+        SNICallback: sniCallback,
+        session: serverSession ?? undefined,
+      });
+
+      // Apply HSTS stripping on the wire as the capture engine flushes
+      // responses back to the client.
+      wireHstsBypassOnSocket(tlsSocket, hstsBypass, decision.host);
+
+      // Remember the session ticket we just issued so the client can resume.
+      tlsSocket.on("session", (session: Buffer) => {
+        sessionCache.setServer(connectionId, session);
+      });
+
+      tlsSocket.on("error", (err: Error) => {
+        logger.warn("tproxy-decrypt: tls server socket error", {
+          host,
+          error: sanitizeErrorMessage(err),
+        });
+        try {
+          clientSocket.destroy();
+        } catch {
+          // already destroyed
+        }
+      });
+
+      // Hand the decrypted stream to the existing capture engine.
+      capture.terminate(tlsSocket as unknown as net.Socket, {
+        ip: host,
+        port,
+        sni: decision.host,
+      });
+
+      // Pipe any leftover bytes from the head buffer into the TLS layer so
+      // the first request isn't truncated.
+      if (head && head.length > 0) tlsSocket.write(head);
+
+      // Acknowledge CONNECT so the client begins sending TLS bytes.
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    })
+    .catch((err) => {
+      logger.error("tproxy-decrypt: failed to start TLS server", {
+        host,
+        error: sanitizeErrorMessage(err),
+      });
+      try {
+        clientSocket.end(
+          "HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\n\r\nTLS setup failed"
+        );
+      } catch {
+        // socket already closed
+      }
+    });
+}
+
+export interface InterceptedHttpsProxyHandle {
+  port: number;
+  server: http.Server;
+  capture: TlsCaptureServer;
+  certManager: CertManagerLike;
+  inspector: TlsInspector;
+  /** Stop the proxy and tear down all internals (idempotent). */
+  stop(): Promise<void>;
+  /** Current CA chain (resolved). */
+  getCa(): Promise<CaCertChain>;
+}
+
+/**
+ * Build a default `InterceptedForwarder` that uses a real `tls.connect` +
+ * `TlsSessionCache` for upstream session resumption. Exported so callers can
+ * wrap it (e.g. to add metrics, retries, or upstream CA pinning).
+ */
+export function createDefaultForwarder(deps: {
+  sessionCache: TlsSessionCache;
+  logger?: TlsInterceptLogger;
+  rejectUnauthorized?: boolean;
+}): InterceptedForwarder {
+  return defaultForwarder({
+    sessionCache: deps.sessionCache,
+    logger: deps.logger ?? silentLogger,
+    rejectUnauthorized: deps.rejectUnauthorized,
+  });
+}
+
+/**
+ * Start the HTTPS MITM forward proxy. Returns a handle whose `stop()` closes
+ * the listener and tears down the TLS capture engine. The cert manager is
+ * started immediately (lazy CA load + atomic persist on first use).
+ *
+ * The proxy uses port `config.port`; bind errors reject the returned promise
+ * with `err.code === "EADDRINUSE"` so the caller can surface a clean message.
+ */
+export async function startInterceptedHttpsProxy(
+  config: TlsInterceptConfig
+): Promise<InterceptedHttpsProxyHandle> {
+  const logger = config.logger ?? silentLogger;
+  // Resolve cert paths from env if blank.
+  const paths = resolveCaPaths(process.env);
+  const caCertPath = config.caCertPath || paths.caCertPath;
+  const caKeyPath = config.caKeyPath || paths.caKeyPath;
+
+  const certManager =
+    config.certManager ??
+    new CaCertManager({
+      caName: config.caName,
+      caValidityYears: config.caValidityYears,
+      leafValidityDays: config.leafValidityDays,
+      caCertPath,
+      caKeyPath,
+    });
+
+  // Eagerly resolve the CA so a broken config fails fast, not on first request.
+  await certManager.getCa();
+
+  const sessionCache = new TlsSessionCache({
+    maxEntries: config.sessionCacheMax,
+    ttlMs: config.sessionCacheTtlMs,
+  });
+
+  const forward = config.forward ?? createDefaultForwarder({ sessionCache, logger });
+  const inspector = new TlsInspector({
+    certManager,
+    forward,
+    bypassHosts: config.bypassHosts,
+    forceInterceptHosts: config.forceInterceptHosts,
+    logger,
+  });
+
+  const hstsBypass = createHstsBypasser({
+    enabled: !config.preserveHsts,
+    preserveHosts: config.bypassHosts,
+  });
+
+  const capture = createTlsCaptureServer(certManager, {
+    forward: (dest, init) => {
+      const req: InterceptedRequest = {
+        method: init.method,
+        path: init.path,
+        host: dest.ip,
+        sni: dest.sni,
+        headers: init.headers,
+        body: init.body,
+        connectionId: randomUUID(),
+        finalizedAt: Date.now(),
+      };
+      return forward(req).then((res) => ({
+        status: res.status,
+        headers: res.headers,
+        body: res.body,
+      }));
+    },
+  });
+
+  const server = http.createServer();
+  // Bound lifetimes + reap idle sockets so a hung tunnel cannot exhaust FDs.
+  server.requestTimeout = MITM_IDLE_TIMEOUT_MS * 5;
+  server.headersTimeout = MITM_IDLE_TIMEOUT_MS;
+  server.keepAliveTimeout = MITM_IDLE_TIMEOUT_MS;
+  server.on("connection", (socket) => applyIdleTimeout(socket));
+
+  server.on("connect", (req, socket, head) => {
+    handleConnect({
+      req,
+      clientSocket: socket as net.Socket,
+      head,
+      inspector,
+      sessionCache,
+      hstsBypass,
+      logger,
+      capture,
+      certManager,
+    });
+  });
+
+  // Bare HTTP/1.1 GET on the proxy itself — common debug probe (`curl -x
+  // http://127.0.0.1:8443 http://example.com/`). Refuse politely so callers
+  // learn quickly that this is a CONNECT-only proxy.
+  server.on("request", (_req, res) => {
+    res.writeHead(400, { "Content-Type": "text/plain" });
+    res.end("OmniRoute TPROXY decrypt proxy: CONNECT-only. Use HTTPS_PROXY.");
+  });
+
+  const port = config.port;
+  const host = config.host;
+
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", (err: NodeJS.ErrnoException) => {
+      reject(Object.assign(err, { code: err.code ?? "ELISTEN" }));
+    });
+    server.once("listening", () => {
+      server.removeAllListeners("error");
+      resolve();
+    });
+    server.listen(port, host);
+  });
+
+  const boundAddr = server.address();
+  const boundPort = typeof boundAddr === "object" && boundAddr ? boundAddr.port : port;
+
+  return {
+    port: boundPort,
+    server,
+    capture,
+    certManager,
+    inspector,
+    async stop() {
+      // Close in reverse-construction order so no in-flight TLS handshake
+      // can crash on a closed SecureContext.
+      try {
+        await capture.close();
+      } catch {
+        // already closed
+      }
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+      sessionCache.clear();
+    },
+    async getCa() {
+      return certManager.getCa();
+    },
+  };
+}
+
+/**
+ * Read-only helper for the CLI: given a list of `bypassHosts`, decide for a
+ * host whether to bypass. Exposed so the status endpoint can render the
+ * active bypass set without instantiating a full proxy.
+ */
+export function shouldBypassHost(
+  host: string,
+  bypassHosts: ReadonlyArray<string>,
+  forceInterceptHosts: ReadonlyArray<string> = []
+): boolean {
+  if (hostMatches(host, forceInterceptHosts)) return false;
+  return hostMatches(host, bypassHosts);
+}

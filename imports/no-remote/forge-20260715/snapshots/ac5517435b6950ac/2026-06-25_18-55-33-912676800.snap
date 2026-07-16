@@ -1,0 +1,67 @@
+# A25 — Sweep orphaned scripts in `iac/`
+
+**Date:** 2026-06-25
+**Executor:** Forge (A25 DAG unit)
+**Branch:** `sweep/A25-orphaned-scripts`
+**Repo:** `phenotype-infra` (at `C:\Users\koosh\phenotype-infra-ci-fix`)
+
+## Scope
+
+Scan `iac/` for scripts (\*.sh, \*.ps1, \*.py, \*.bat) and check if they
+are referenced anywhere in the codebase (Cargo.toml, CI configs, Makefile,
+Taskfile.yml, Rust source files, documentation).
+
+## Inventory
+
+| # | Script | Lines | Type | Verdict |
+|---|--------|-------|------|---------|
+| 1 | `iac/oci-post-acquire/oci-post-acquire.sh` | 7 | bash | **KEPT** — active, called from `oci-lottery/src/hooks.rs` (line 58-62) |
+| 2 | `iac/oci-post-acquire/hooks.d.example/10-update-portfolio-card.sh` | 12 | bash | **KEPT** — intentional example scaffold, referenced in docs |
+| 3 | `iac/scripts/bootstrap-oci.sh` | 7 | bash | **ORPHANED** — documented only in comment (`terraform-plan.yml:47`) + README |
+| 4 | `iac/scripts/health-check.sh` | 7 | bash | **ORPHANED** — referenced only in docs, not called from any code |
+| 5 | `iac/scripts/register-home-runner.sh` | 29 | bash | **ORPHANED** — referenced only in docs |
+| 6 | `iac/scripts/install-windows-runner.ps1` | 370 | powershell | **ORPHANED** — referenced only in docs |
+| 7 | `iac/tailscale/apply-acl.sh` | 9 | bash | **ORPHANED** — referenced only in docs/comments |
+
+## Disposition
+
+### Orphaned scripts → moved to `iac/archive/`
+
+| Script | Archived to | Reason |
+|--------|-------------|--------|
+| `bootstrap-oci.sh` | `iac/archive/scripts/bootstrap-oci.sh` | Not called from any code path; 5-line Terraform+Ansible glue |
+| `health-check.sh` | `iac/archive/scripts/health-check.sh` | Not called from any code path; manual health probe |
+| `register-home-runner.sh` | `iac/archive/scripts/register-home-runner.sh` | Not called from any code path; single-use macOS setup |
+| `install-windows-runner.ps1` | `iac/archive/scripts/install-windows-runner.ps1` | Not called from any code path; platform-specific Windows setup |
+| `apply-acl.sh` | `iac/archive/tailscale/apply-acl.sh` | Not called from any code path; 5-line curl wrapper |
+
+### Scripts intentionally kept
+
+| Script | Reason |
+|--------|--------|
+| `oci-post-acquire.sh` | Active fallback — `oci-lottery/src/hooks.rs` line 58-62 resolves it at runtime |
+| `10-update-portfolio-card.sh` | Intentionally shipped example hook; referenced in docs |
+
+## Documentation updates
+
+The following files were updated to reflect new paths:
+
+- `iac/scripts/README.md` — rewritten as archiving notice with cross-ref table
+- `iac/README.md` — updated `scripts/` directory description
+- `docs/runbooks/day1-oci-first-light.md` — updated health-check path
+- `docs/runbooks/day1-home-runner-setup.md` — updated register-home-runner path
+- `docs/runbooks/windows-desktop-runner.md` — updated install-windows-runner paths (x3)
+- `docs/runbooks/node-rebuild-recovery.md` — updated health-check path
+- `docs/governance/tailscale-policy.md` — updated apply-acl path
+- `docs/specs/rollback-kill-switch-spec.md` — updated health-check path
+- `.github/workflows/terraform-plan.yml` — updated bootstrap-oci path comment
+
+Archive READMEs created:
+- `iac/archive/README.md` — overview of archive contents
+- `iac/archive/scripts/README.md` — per-script documentation for preserved scripts
+
+## Refs
+
+- **Epic:** epic_A — Hygiene garden & branch slim
+- **Unit:** A25 — Sweep orphaned scripts in iac/
+- **Branch:** `sweep/A25-orphaned-scripts`

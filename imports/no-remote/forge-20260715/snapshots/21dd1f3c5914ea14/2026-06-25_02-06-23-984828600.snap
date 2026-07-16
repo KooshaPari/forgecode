@@ -1,0 +1,19 @@
+import subprocess, sys, os
+os.chdir(r'C:\Users\koosh\OmniRoute-upstream')
+# Try multiple tsc configs in priority order
+for cfg in ['tsconfig.json']:
+    print(f'=== tsc -p {cfg} ===')
+    r = subprocess.run(['npx', 'tsc', '-p', cfg, '--noEmit'], capture_output=True, text=True, encoding='utf-8', errors='replace')
+    out = r.stdout + r.stderr
+    print(f'exit={r.returncode}')
+    # Filter errors mentioning observability
+    obs_lines = [l for l in out.split('\n') if 'observability' in l]
+    print(f'observability errors: {len(obs_lines)}')
+    for l in obs_lines[:30]:
+        print(l)
+    print('---')
+    # All errors
+    err_lines = [l for l in out.split('\n') if 'error TS' in l]
+    print(f'total error TS lines: {len(err_lines)}')
+    for l in err_lines[:10]:
+        print(l)

@@ -1,0 +1,18 @@
+import json, sys
+path = r'C:\Users\koosh\phenotype-registry\registry\disposition-index.json'
+d = json.load(open(path, encoding='utf-8'))
+rows = d['rows']
+target_ids = {
+    'repo-go-nippon-archive-only',
+    'repo-smart-mcp-go-no-merit',
+    'repo-mcpkit-superseded',
+    'repo-phenocompose-archive',
+    'repo-nanovms-archive',
+}
+mine = [r for r in rows if isinstance(r, dict) and r.get('id') in target_ids]
+print(f'rows_added: {len(mine)} of 5 expected')
+for r in mine:
+    print(f"  - {r['id']} | {r['path']} | {r['disposition']} | {r.get('fsm','-')}")
+print(f'total_rows: {len(rows)}')
+print(f'updated: {d.get("updated")}')
+sys.stdout.flush()

@@ -1,0 +1,27 @@
+## Summary
+Remove orphaned `/preview/[prNumber]` Astro microfrontend page that has zero references in the codebase.
+
+## Context
+The `/preview` microfrontend was designed to redirect to Vercel preview deploys for open PRs, but it was never wired into site navigation or referenced by any import, link, or route configuration. After a thorough scan of all `.astro`, `.ts`, `.js`, `.md`, and config files, zero references were found beyond the file itself.
+
+This is part of epic_A hygiene garden & branch slim — removing dead code to reduce build surface and cognitive overhead.
+
+## Changes
+- Delete `src/pages/preview/[prNumber].astro` (283 lines) — Astro page with `getStaticPaths`, GitHub API integration, and Vercel preview URL resolution
+- Remove the now-empty `src/pages/preview/` directory
+
+## Testing
+```bash
+# Verify no references were missed
+rg -l "preview" --type-add 'code:*.{astro,ts,js,mjs,cjs,json,md}' --type code src/ frontend/ docs/
+
+# Check build is unaffected
+cd frontend/web && npm run build
+```
+
+No functional impact — no pages link to `/preview/*` and no sitemap entry references it.
+
+## Links
+- Related issues: N/A (standalone sweep)
+- Part of: epic_A — Hygiene garden & branch slim
+- Area: compute-infra

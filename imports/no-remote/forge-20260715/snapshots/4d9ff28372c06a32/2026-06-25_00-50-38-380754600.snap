@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Check archive + push state of every KooshaPari repo in scope."""
+import json, subprocess, sys
+
+REPOS = [
+    "Benchora", "portage", "AgilePlus", "pheno-harness", "Tracera",
+    "phenodag", "vibeproxy-monitoring-unified", "phenotype-org-audits",
+    "heliosBench", "phenotype-registry", "nanovms", "PhenoCompose", "BytePort",
+]
+
+print(f"{'repo':32s} | {'archived':8s} | {'default':10s}")
+print("-" * 60)
+
+for r in REPOS:
+    try:
+        # Write to temp file to bypass any stdout buffering in gh
+        tmp = f"C:\\Users\\koosh\\_gh_tmp_{r}.json"
+        rc = subprocess.call(
+            f'gh repo view KooshaPari/{r} --json name,isArchived,defaultBranchRef > "{tmp}" 2>&1',
+            shell=True, timeout=20,
+        )
+        try:
+            with open(tmp, encoding="utf-8") as fh:
+                out_str = fh.read().strip()
+        finally:
+            import os
+            try: os.remove(tmp)
+            except: pass
+        if rc != 0 or not out_str or not out_str.startswith("{"):
+            print(f"{r:32s} | ERROR rc={rc} out={out_str[:60]}")
+            continue
+        d = json.loads(out_str)
+        default = d.get("defaultBranchRef", {}).get("name") if d.get("defaultBranchRef") else "?"
+        print(f"{d['name']:32s} | {str(d.get('isArchived',False)):8s} | {default:10s}")
+    except subprocess.TimeoutExpired:
+        print(f"{r:32s} | TIMEOUT")
+    except Exception as e:
+        print(f"{r:32s} | EXC: {e}")

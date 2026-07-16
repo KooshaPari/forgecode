@@ -1,0 +1,139 @@
+/**
+ * proxySpan.test.ts — PR-002 auto-instrumentation tests.
+ *
+ * Verifies that withProxySpan / withUpgradeSpan:
+ *   1. Run the wrapped fn unchanged when telemetry is disabled (stub mode).
+ *   2. Emit the right http.* attributes on the resulting span.
+ *   3. Feed httpMetricsMiddleware with the right duration.
+ *   4. Propagate the W3C traceparent header into span attributes.
+ *   5. Sanitize the URL (strip query string + userinfo).
+ *   6. Guess a stable route name from the path.
+ */
+import { test, beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import { currentSpanContext, withSpan } from "@/lib/observability/otel";
+import { withProxySpan, withUpgradeSpan } from "@/lib/observability/proxySpan";
+import { metricsRegistry } from "@/lib/observability/metrics";
+
+beforeEach(() => {
+  metricsRegistry.reset();
+});
+
+test("proxySpan: withProxySpan returns the proxy result unchanged", async () => {
+  const expected = new Response("ok", { status: 200 });
+  const proxy = withProxySpan(async () => expected);
+  const got = await proxy(new Request("http://localhost:20128/api/system/version"));
+  assert.equal(got, expected);
+  assert.equal(got.status, 200);
+});
+
+test("proxySpan: withProxySpan records http_request_duration_seconds", async () => {
+  const proxy = withProxySpan(async () => new Response("ok", { status: 200 }));
+  await proxy(new Request("http://localhost:20128/api/system/version"));
+  const rendered = metricsRegistry.render();
+  assert.match(rendered, /omniroute_http_request_duration_seconds/);
+  assert.match(rendered, /http\.route="api\/system\/version"/);
+  assert.match(rendered, /http\.method="GET"/);
+  assert.match(rendered, /http\.status_code="200"/);
+});
+
+test("proxySpan: withProxySpan counts in-flight requests even when telemetry disabled", async () => {
+  const proxy = withProxySpan(
+    async () => new Response("ok", { status: 200, headers: { "x-after": "1" } })
+  );
+  await proxy(new Request("http://localhost:20128/api/system/version"));
+  const rendered = metricsRegistry.render();
+  assert.match(rendered, /omniroute_http_requests_in_flight/);
+});
+
+test("proxySpan: withProxySpan handles thrown proxy fn", async () => {
+  const proxy = withProxySpan(async () => {
+    throw new Error("upstream blew up");
+  });
+  await assert.rejects(
+    proxy(new Request("http://localhost:20128/api/system/version")),
+    /upstream blew up/
+  );
+  const rendered = metricsRegistry.render();
+  assert.match(rendered, /omniroute_http_request_duration_seconds/);
+});
+
+test("proxySpan: URL query string is stripped from span attributes", async () => {
+  const proxy = withProxySpan(async () => new Response("ok", { status: 200 }));
+  await proxy(
+    new Request("http://localhost:20128/api/system/version?token=secret&q=foo")
+  );
+  const rendered = metricsRegistry.render();
+  assert.doesNotMatch(rendered, /secret/);
+  assert.doesNotMatch(rendered, /q=foo/);
+});
+
+test("proxySpan: guessRouteName normalizes dynamic segments to :id", async () => {
+  const proxy = withProxySpan(async () => new Response("ok", { status: 200 }));
+  await proxy(
+    new Request("http://localhost:20128/api/combos/4747a985-c074-4f60-a7f0-d8bb6132d1fc")
+  );
+  const rendered = metricsRegistry.render();
+  assert.match(rendered, /http\.route="api\/combos\/:id"/);
+});
+
+test("proxySpan: guessRouteName keeps literal segments unchanged", async () => {
+  const proxy = withProxySpan(async () => new Response("ok", { status: 200 }));
+  await proxy(new Request("http://localhost:20128/api/system/version"));
+  const rendered = metricsRegistry.render();
+  assert.match(rendered, /http\.route="api\/system\/version"/);
+});
+
+test("proxySpan: W3C traceparent header is captured as span attribute", async () => {
+  const traceId = "0af7651916cd43dd8448eb211c80319c";
+  const parentSpanId = "b7ad6b7169203331";
+  const tp = `00-${traceId}-${parentSpanId}-01`;
+  const proxy = withProxySpan(async () => new Response("ok", { status: 200 }));
+  await withSpan("outer", async () => {
+    await proxy(
+      new Request("http://localhost:20128/api/system/version", {
+        headers: { traceparent: tp },
+      })
+    );
+  });
+  const ctx = currentSpanContext();
+  assert.ok(ctx);
+});
+
+test("proxySpan: malformed traceparent is silently ignored", async () => {
+  const proxy = withProxySpan(async () => new Response("ok", { status: 200 }));
+  await proxy(
+    new Request("http://localhost:20128/api/system/version", {
+      headers: { traceparent: "not-a-valid-traceparent" },
+    })
+  );
+  const rendered = metricsRegistry.render();
+  assert.match(rendered, /omniroute_http_request_duration_seconds/);
+});
+
+test("proxySpan: withUpgradeSpan wraps WebSocket upgrade handler", async () => {
+  const upgrade = withUpgradeSpan(
+    () =>
+      new Response("upgrade accepted", {
+        status: 101,
+        headers: { upgrade: "websocket" },
+      })
+  );
+  const got = await upgrade(
+    new Request("http://localhost:20128/live-ws", { method: "CONNECT" })
+  );
+  assert.equal(got.status, 101);
+  const rendered = metricsRegistry.render();
+  assert.match(rendered, /http\.method="CONNECT"/);
+  assert.match(rendered, /http\.route="ws\.upgrade"/);
+});
+
+test("proxySpan: withUpgradeSpan accepts a custom route name", async () => {
+  const upgrade = withUpgradeSpan(
+    () => new Response(null, { status: 101 }),
+    "ws.live-dashboard"
+  );
+  await upgrade(new Request("http://localhost:20128/live-ws"));
+  const rendered = metricsRegistry.render();
+  assert.match(rendered, /http\.route="ws\.live-dashboard"/);
+});

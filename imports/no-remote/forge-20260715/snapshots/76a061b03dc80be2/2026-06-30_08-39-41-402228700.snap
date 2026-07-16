@@ -1,0 +1,26 @@
+import type { RegistryEntry } from "../../shared.ts";
+
+// PENDING PLACEHOLDER — see diegosouzapw/OmniRoute#5518.
+// The real ClinePass API host, official model catalog, and full upstream
+// contract are awaiting confirmation from the ClinePass maintainer. Until
+// that lands, this entry mirrors the canonical OpenAI-compat precedent
+// (Crof — registry/crof/index.ts) so consumers see a stable `clinepass`
+// id, but the resolvable endpoints and any model ids are intentionally
+// unresolved. No model ids are invented here; passthroughModels is set so
+// live /v1/models discovery can populate the catalog once the host is wired.
+export const clinepassProvider: RegistryEntry = {
+  id: "clinepass",
+  alias: "clinepass",
+  format: "openai",
+  executor: "default",
+  // Placeholder base URL — see issue #5518 for the real host.
+  baseUrl: "https://<pending-clinepass-api-host>/v1/chat/completions",
+  authType: "apikey",
+  authHeader: "bearer",
+  // Real model list pending — see issue #5518. Empty seed list lets the
+  // runtime /v1/models discovery fill the catalog once the real host is
+  // available. Do NOT invent model ids; downstream snapshots get the
+  // authoritative list from the upstream catalog at runtime.
+  models: [],
+  passthroughModels: true,
+};

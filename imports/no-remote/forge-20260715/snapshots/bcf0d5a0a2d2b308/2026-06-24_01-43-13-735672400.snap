@@ -1,0 +1,68 @@
+"""Append a comparison table to PR #4725 body and re-validate proof artifacts."""
+import json
+import subprocess
+import os
+import sys
+import re
+
+os.chdir(r"C:\Users\koosh\OmniRoute-upstream")
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+# Read current body
+r = subprocess.run(
+    ["gh", "pr", "view", "4725", "--repo", "diegosouzapw/OmniRoute", "--json", "body"],
+    capture_output=True, text=True
+)
+clean = ANSI_RE.sub("", r.stdout)
+data = json.loads(clean)
+body = data["body"]
+print(f"Current body length: {len(body)}")
+
+comparison_table = """
+
+---
+
+## Addressing the self-flagged "duplicate" concern
+
+@diegosouzapw asked for a comparison with prior PRs to confirm this is not a duplicate. Here is the lineage.
+
+| PR | What it split | What stayed in the parent | Files this PR overlaps with |
+|---|---|---|---|
+| **#4381** (combos split) | 8 React UI components in `src/app/(dashboard)/dashboard/combos/` | All server-side logic; the moved blocks are `.tsx` UI | **None.** This PR moves server-side code under `open-sse/handlers/`, `open-sse/providers/`, and `open-sse/utils/`. |
+| **#4480** (chatLogHelpers extraction) | 1 helper block (chatLogHelpers, ~340 LOC) from `open-sse/handlers/chatCore.ts` | 11 other helper blocks in the same parent file | **None.** This PR moves from `imageGeneration.ts`, `providers/index.ts`, and `tokenRefresh.ts` — three different parents. |
+| **#4725** (this PR) | 8 provider handlers from `imageGeneration.ts`, 12 per-provider token refreshers from `tokenRefresh.ts`, 1 block from `providers/index.ts` (1,820 LOC of `APIKEY_PROVIDERS`) | The remaining 24, 6, and 0 sibling blocks respectively | Self — see below. |
+
+The same leaf-extraction *pattern* is reused (move a fully-independent block to a co-located file + re-export from the parent), but the moved code is disjoint from #4381 and #4480. The re-exports preserve all import paths, so no consumer is affected.
+
+---
+
+## Proof artifact re-validation (re-ran 2026-06-23)
+
+| Check | Command | Result |
+|---|---|---|
+| Env/docs contract sync | `node scripts/check/check-env-doc-sync.mjs` | "Env / docs contract is in sync" |
+| No fabricated references | `node scripts/check/check-fabricated-docs.mjs --strict` | "No fabricated API/env/CLI/hook/file references found" |
+| Docs internal sync | `node scripts/check/check-docs-sync.mjs` | "PASS" |
+| DB module rules | `node scripts/check/check-db-rules.mjs` | "OK (85 modulos db/, 57 re-exportados, 28 intencionalmente-internos)" |
+| `node --check` parents | 3 parent files | clean |
+| `node --check` new files | 21 new files | clean |
+| Commit SHAs | 3 commits in PR head | (see PR commits tab) |
+
+`@diegosouzapw` — ready for manual review whenever you have a moment. The gemini-code-assist[bot] reviewer hit its daily quota; the empty commit + reviewer-retrigger dance is documented in `plans/2026-06-23-omniroute-diego-review-triage.md` if you want to spot-check the re-validation.
+"""
+
+new_body = body + comparison_table
+print(f"New body length: {len(new_body)}")
+
+# Update via gh pr edit
+with open("tmp_pr4725_new_body.md", "w", encoding="utf-8") as f:
+    f.write(new_body)
+
+r2 = subprocess.run(
+    ["gh", "pr", "edit", "4725", "--repo", "diegosouzapw/OmniRoute", "--body-file", "tmp_pr4725_new_body.md"],
+    capture_output=True, text=True
+)
+print("STDOUT:", r2.stdout[-500:] if r2.stdout else "")
+print("STDERR:", r2.stderr[-500:] if r2.stderr else "")
+print("EXIT:", r2.returncode)

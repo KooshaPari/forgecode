@@ -1,0 +1,10 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/byteport-transport",
+    "crates/byteport-cli",
+    "crates/byteport-dag",
+    "crates/byteport-otel",
+    "crates/byteport-registry-adapter",
+    "frontend/web/src-tauri",
+]

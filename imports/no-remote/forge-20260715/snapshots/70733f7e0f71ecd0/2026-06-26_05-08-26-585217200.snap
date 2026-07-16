@@ -1,0 +1,201 @@
+//! Tiny tag structs that replace raw world state in LLM prompts
+//! (FR-CIV-LLM-002).
+//!
+//! Prompts SHALL bind to these tag structs (event/sphere/theme) instead of
+//! receiving raw snapshot / world state data. The tag system is deliberately
+//! narrow: it carries only the information a generative garnish prompt needs,
+//! and no mechanism exists to pass unbounded state through this channel.
+//!
+//! # Safety property
+//!
+//! None of these types implement `From<SimSnapshot>` or any other conversion
+//! that could accidentally leak raw world state. The only way to construct a
+//! `PromptTags` is via its explicit field-based constructor.
+
+/// Tag that describes the **kind** of event that triggered the LLM call.
+///
+/// Examples: `"founding"`, `"war"`, `"treaty"`, `"disaster"`, `"discovery"`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EventTag(String);
+
+impl EventTag {
+    /// Create a new event tag. The string should be a short, bounded
+    /// identifier (e.g. `"founding"`, `"battle"`, `"treaty"`).
+    #[must_use]
+    pub fn new(kind: impl Into<String>) -> Self {
+        Self(kind.into())
+    }
+
+    /// Return the tag value.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Tag that describes the **sphere** or domain of the LLM call.
+///
+/// Examples: `"diplomacy"`, `"culture"`, `"military"`, `"economy"`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SphereTag(String);
+
+impl SphereTag {
+    /// Create a new sphere tag.
+    #[must_use]
+    pub fn new(sphere: impl Into<String>) -> Self {
+        Self(sphere.into())
+    }
+
+    /// Return the tag value.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Tag that describes the **theme** or tone for the generated text.
+///
+/// Examples: `"heroic"`, `"tragic"`, `"whimsical"`, `"solemn"`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ThemeTag(String);
+
+impl ThemeTag {
+    /// Create a new theme tag.
+    #[must_use]
+    pub fn new(theme: impl Into<String>) -> Self {
+        Self(theme.into())
+    }
+
+    /// Return the tag value.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Bounded collection of tag structs that replaces raw world state in prompts.
+///
+/// Per FR-CIV-LLM-002, the caller MUST construct this from event/sphere/theme
+/// identifiers, NEVER from raw snapshot or world state data. There is no
+/// `From<SimSnapshot>` impl or any other conversion that could accidentally
+/// leak unbounded state.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct PromptTags {
+    /// Kind of event that triggered the call.
+    pub event: Option<EventTag>,
+    /// Sphere / domain of the call.
+    pub sphere: Option<SphereTag>,
+    /// Thematic tone.
+    pub theme: Option<ThemeTag>,
+}
+
+impl PromptTags {
+    /// Build a new `PromptTags` from explicit tag values.
+    ///
+    /// Each parameter is optional — omit any field that is not relevant.
+    /// This is the sole constructor (no `From` / `Into` from snapshot types).
+    #[must_use]
+    pub fn new(
+        event: Option<EventTag>,
+        sphere: Option<SphereTag>,
+        theme: Option<ThemeTag>,
+    ) -> Self {
+        Self { event, sphere, theme }
+    }
+
+    /// Render the tags as a compact, human-readable description suitable for
+    /// prompt interpolation. Omits empty fields.
+    ///
+    /// Example output: `"event: founding, sphere: diplomacy, theme: heroic"`
+    #[must_use]
+    pub fn describe(&self) -> String {
+        let mut parts: Vec<&str> = Vec::new();
+        let mut buf = String::new();
+
+        if let Some(ref ev) = self.event {
+            buf.push_str("event: ");
+            buf.push_str(ev.as_str());
+            parts.push(Box::leak(buf.clone().into_boxed_str()));
+            buf.clear();
+        }
+        if let Some(ref sp) = self.sphere {
+            buf.push_str("sphere: ");
+            buf.push_str(sp.as_str());
+            parts.push(Box::leak(buf.clone().into_boxed_str()));
+            buf.clear();
+        }
+        if let Some(ref th) = self.theme {
+            buf.push_str("theme: ");
+            buf.push_str(th.as_str());
+            parts.push(Box::leak(buf.clone().into_boxed_str()));
+            buf.clear();
+        }
+        parts.join(", ")
+    }
+}
+
+impl std::fmt::Display for PromptTags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.describe())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// FR-CIV-LLM-002 — tags can be constructed from bounded identifiers.
+    #[test]
+    fn tags_construct_from_bounded_ids() {
+        let ev = EventTag::new("founding");
+        let sp = SphereTag::new("culture");
+        let th = ThemeTag::new("heroic");
+
+        let tags = PromptTags::new(Some(ev), Some(sp), Some(th));
+        assert_eq!(tags.event.as_ref().map(|t| t.as_str()), Some("founding"));
+        assert_eq!(tags.sphere.as_ref().map(|t| t.as_str()), Some("culture"));
+        assert_eq!(tags.theme.as_ref().map(|t| t.as_str()), Some("heroic"));
+    }
+
+    /// FR-CIV-LLM-002 — tags can omit optional fields.
+    #[test]
+    fn tags_omit_optional_fields() {
+        let tags = PromptTags::new(Some(EventTag::new("war")), None, None);
+        assert_eq!(tags.describe(), "event: war");
+    }
+
+    /// FR-CIV-LLM-002 — tags produce compact description.
+    #[test]
+    fn tags_produce_compact_description() {
+        let tags = PromptTags::new(
+            Some(EventTag::new("discovery")),
+            Some(SphereTag::new("science")),
+            Some(ThemeTag::new("solemn")),
+        );
+        let desc = tags.describe();
+        assert!(desc.contains("event: discovery"));
+        assert!(desc.contains("sphere: science"));
+        assert!(desc.contains("theme: solemn"));
+    }
+
+    /// FR-CIV-LLM-002 — default tags are empty.
+    #[test]
+    fn tags_default_is_empty() {
+        let tags = PromptTags::default();
+        assert!(tags.event.is_none());
+        assert!(tags.sphere.is_none());
+        assert!(tags.theme.is_none());
+        assert_eq!(tags.describe(), "");
+    }
+
+    /// FR-CIV-LLM-002 — Display output matches describe.
+    #[test]
+    fn display_matches_describe() {
+        let tags = PromptTags::new(
+            Some(EventTag::new("founding")),
+            Some(SphereTag::new("culture")),
+            Some(ThemeTag::new("heroic")),
+        );
+        assert_eq!(format!("{tags}"), tags.describe());
+    }
+}

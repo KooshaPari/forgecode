@@ -1,0 +1,26 @@
+"""Copy the freshly-made shim files into Git Bash's /tmp/qs-shims/."""
+import shutil
+from pathlib import Path
+
+src_dir = Path(r"C:\Users\koosh\AppData\Local\Temp\qs-5ombapvn")
+
+# We need to find where bash's /tmp really maps to. On Git Bash for Windows,
+# it's typically C:\Users\<user>\AppData\Local\Temp\ via the %TEMP% env, but
+# sometimes it's a separate dir. List candidates:
+candidates = [
+    Path(r"C:\Users\koosh\AppData\Local\Temp\qs-shims-bash"),
+    Path(r"C:\tmp\qs-shims-bash"),
+]
+
+for c in candidates:
+    c.mkdir(parents=True, exist_ok=True)
+
+# Just copy into C:\tmp if it doesn't exist
+dst = Path(r"C:\tmp\qs-shims-bash")
+dst.mkdir(parents=True, exist_ok=True)
+
+for src_file in src_dir.iterdir():
+    shutil.copy2(src_file, dst / src_file.name)
+    print(f"copied {src_file.name} -> {dst / src_file.name}")
+
+print(f"\nWindows dst: {dst}")

@@ -1,0 +1,74 @@
+import re
+
+# === Step 1: Append isTokenExpiringSoon to upstreamTimeouts.ts ===
+with open('open-sse/handlers/chatCore/upstreamTimeouts.ts', 'r', encoding='utf-8') as f:
+    u = f.read()
+
+if 'function isTokenExpiringSoon' not in u:
+    u += '''
+
+/**
+ * Check whether an auth token is close to expiry.
+ *
+ * @param expiresAt - ISO string, Date, or epoch-ms; falsy means not expiring.
+ * @param bufferMs  - grace window in ms (default 5 min).
+ */
+export function isTokenExpiringSoon(
+  expiresAt: string | Date | number | null | undefined,
+  bufferMs = 5 * 60 * 1000,
+): boolean {
+  if (!expiresAt) return false;
+  const expiresAtMs = new Date(expiresAt).getTime();
+  return expiresAtMs - Date.now() < bufferMs;
+}
+'''
+    with open('open-sse/handlers/chatCore/upstreamTimeouts.ts', 'w', encoding='utf-8') as f:
+        f.write(u)
+    print('1. Appended to upstreamTimeouts.ts')
+else:
+    print('1. Already in upstreamTimeouts.ts')
+
+# === Step 2: Remove inline function from chatCore.ts ===
+with open('open-sse/handlers/chatCore.ts', 'r', encoding='utf-8') as f:
+    c = f.read()
+    lines = c.splitlines()
+
+removed = False
+for i in range(len(lines) - 6, -1, -1):
+    m = re.search(r'function\s+isTokenExpiringSoon\s*\(', lines[i])
+    if m:
+        del lines[i:i+5]
+        removed = True
+        print(f'2. Removed inline at line {i+1}')
+        break
+
+if not removed:
+    print('2. ERROR: inline function not found')
+    for i, l in enumerate(lines):
+        if 'isTokenExpiringSoon' in l:
+            print(f'   Found at L{i+1}: {l.strip()[:100]}')
+
+# === Step 3: Add import ===
+if not any('upstreamTimeouts' in l for l in lines):
+    for i in range(min(210, len(lines)-1), -1, -1):
+        if lines[i].startswith('import') and 'from' in lines[i]:
+            lines.insert(i+1, "import { isTokenExpiringSoon } from './chatCore/upstreamTimeouts.ts';")
+            print(f'3. Added import at line {i+2}')
+            break
+
+with open('open-sse/handlers/chatCore.ts', 'w', encoding='utf-8') as f:
+    f.write('\n'.join(lines) + '\n')
+print(f'4. Written: {len(lines)} lines')
+
+# === Verify ===
+with open('open-sse/handlers/chatCore.ts', 'r', encoding='utf-8') as f:
+    c2 = f.read()
+with open('open-sse/handlers/chatCore/upstreamTimeouts.ts', 'r', encoding='utf-8') as f:
+    u2 = f.read()
+
+ok = 'function isTokenExpiringSoon' not in c2 and 'function isTokenExpiringSoon' in u2 and 'upstreamTimeouts' in c2
+print(f'5. chatCore: {len(c2.splitlines())} lines')
+print(f'   func: {"function isTokenExpiringSoon" in c2}')
+print(f'   import: {"upstreamTimeouts" in c2}')
+print(f'   upstreamTimeouts: {len(u2.splitlines())} lines, func: {"function isTokenExpiringSoon" in u2}')
+print(f'   SUCCESS: {ok}')

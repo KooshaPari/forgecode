@@ -1,0 +1,8 @@
+import subprocess, json, os
+cmd = "gh api repos/KooshaPari/Tracera/git/ref/heads/main | cat"
+r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+print("RC:", r.returncode)
+print("LEN:", len(r.stdout))
+print("FIRST 100:", repr(r.stdout[:100]))
+data = json.loads(r.stdout)
+print("PARSED:", data["object"]["sha"])

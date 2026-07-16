@@ -1,0 +1,169 @@
+/**
+ * Budget recommender — heuristic, side-effect-free.
+ *
+ * Given a `BudgetSnapshotSequence`, produce a list of `BudgetRecommendation`
+ * entries the dashboard can render. The recommender is intentionally
+ * conservative: it never *applies* a change, it only describes one. The
+ * user always has the final say.
+ *
+ * Heuristics, in priority order:
+ *   1. CRITICAL: utilization >= criticalUtilizationRatio → recommend
+ *      tightening the cap or switching to a stronger default mode.
+ *   2. WARNING:  utilisation > 1.0 *or* savings < targetSavingsRatio →
+ *      recommend ramping up an engine or lowering the autoTriggerTokens
+ *      threshold.
+ *   3. INFO:     healthy, but the realised savings is *much* higher than
+ *      the target → recommend widening the cap to use the headroom
+ *      (avoids over-paying for unused compression).
+ *   4. INFO:     window is empty / too small → "collecting data" notice.
+ */
+
+import type {
+  BudgetRecommendation,
+  BudgetSnapshot,
+  BudgetSnapshotSequence,
+  ContextBudgetConfig,
+} from "./types.ts";
+import { normaliseBudgetConfig } from "./calculator.ts";
+
+/**
+ * Default intensity ladders, used by the recommender when it suggests
+ * "turn up the dial" without the user having to pick a level. Kept here
+ * (not in `types.ts`) because they're presentation, not config.
+ */
+const CAVEMAN_LADDER = ["lite", "full", "ultra"] as const;
+const RTK_LADDER = ["minimal", "standard", "aggressive"] as const;
+
+/**
+ * Produce zero or more `BudgetRecommendation`s. Always returns an array
+ * (never null) — an empty array means "no action needed".
+ */
+export function recommendAdjustments(
+  snapshots: BudgetSnapshotSequence,
+  config: ContextBudgetConfig,
+  nowMs: number = Date.now()
+): BudgetRecommendation[] {
+  const safeConfig = normaliseBudgetConfig(config);
+  const recommendations: BudgetRecommendation[] = [];
+
+  const last = snapshots[snapshots.length - 1];
+  if (!last) {
+    recommendations.push({
+      id: "empty-history",
+      title: "Collecting data",
+      rationale:
+        "No compression snapshots in the current window. Once a few requests have been processed, this panel will start surfacing recommendations.",
+      severity: "info",
+    });
+    return recommendations;
+  }
+
+  // ── CRITICAL: over the cap ──────────────────────────────────────────
+  if (last.utilizationRatio >= safeConfig.criticalUtilizationRatio) {
+    const headroomRatio = Math.max(
+      0,
+      safeConfig.maxContextTokens - last.compressedTokens
+    );
+    recommendations.push({
+      id: "critical-utilization",
+      title: "Context cap is nearly exhausted",
+      rationale: `Compressed prompts are using ${(last.utilizationRatio * 100).toFixed(1)}% of the ${safeConfig.maxContextTokens.toLocaleString()}-token ceiling. Approximately ${Math.round(headroomRatio).toLocaleString()} tokens of headroom remain. Consider raising the cap or strengthening compression.`,
+      severity: "critical",
+      suggestedConfigPatch: {
+        targetContextTokens: Math.round(safeConfig.maxContextTokens * 0.9),
+      },
+    });
+  }
+
+  // ── WARNING: missing the savings target ─────────────────────────────
+  if (
+    last.status !== "healthy" &&
+    last.savingsRatio < safeConfig.targetSavingsRatio
+  ) {
+    const nextCaveman = nextIntensity(
+      CAVEMAN_LADDER,
+      safeConfig.cavemanIntensity
+    );
+    const nextRtk = nextIntensity(RTK_LADDER, safeConfig.rtkIntensity);
+    recommendations.push({
+      id: "below-target-savings",
+      title: "Compression is under-delivering",
+      rationale: `Realised savings are ${(last.savingsRatio * 100).toFixed(1)}% versus a target of ${(safeConfig.targetSavingsRatio * 100).toFixed(0)}%. Bumping up the default engine intensity should close the gap.`,
+      severity: "warning",
+      suggestedConfigPatch: {
+        ...(nextCaveman ? { cavemanIntensity: nextCaveman } : {}),
+        ...(nextRtk ? { rtkIntensity: nextRtk } : {}),
+        // Lower the auto-trigger threshold so compression engages earlier
+        // in the conversation.
+        autoTriggerTokens: Math.max(
+          0,
+          Math.round(safeConfig.autoTriggerTokens * 0.5)
+        ),
+      },
+    });
+  }
+
+  // ── WARNING: compressed > target (i.e. soft cap exceeded) ────────────
+  if (last.targetUtilizationRatio > 1) {
+    recommendations.push({
+      id: "soft-cap-exceeded",
+      title: "Soft target exceeded",
+      rationale: `Compressed prompts are ${(last.targetUtilizationRatio * 100).toFixed(1)}% of the soft target of ${safeConfig.targetContextTokens.toLocaleString()} tokens. Either raise the soft target or enable a stronger compression mode.`,
+      severity: "warning",
+      suggestedConfigPatch: {
+        targetContextTokens: Math.round(
+          last.compressedTokens * 1.1
+        ),
+      },
+    });
+  }
+
+  // ── INFO: massive over-savings — likely over-compressing ────────────
+  if (
+    last.status === "healthy" &&
+    last.savingsRatio > safeConfig.targetSavingsRatio + 0.3
+  ) {
+    recommendations.push({
+      id: "over-savings",
+      title: "Compression headroom available",
+      rationale: `Realised savings are ${(last.savingsRatio * 100).toFixed(1)}% — well above the ${(safeConfig.targetSavingsRatio * 100).toFixed(0)}% target. You can either raise the context cap to use the budget on higher-quality answers, or relax compression to preserve fidelity.`,
+      severity: "info",
+      suggestedConfigPatch: {
+        maxContextTokens: Math.round(safeConfig.maxContextTokens * 1.25),
+      },
+    });
+  }
+
+  // ── INFO: stale history (no recent samples) ─────────────────────────
+  if (snapshots.length > 1) {
+    const mostRecent = last.timestamp;
+    if (nowMs - mostRecent > safeConfig.windowMs) {
+      recommendations.push({
+        id: "stale-history",
+        title: "History is stale",
+        rationale: `Most recent snapshot is ${Math.round((nowMs - mostRecent) / 60_000).toLocaleString()} minutes old. If traffic has dropped, the gauge may be misleading — verify the analytics feed is healthy.`,
+        severity: "info",
+      });
+    }
+  }
+
+  return recommendations;
+}
+
+// ─── helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Given a ladder of intensity levels and a current level, return the
+ * next-higher level. Returns `null` if we're already at the top — the
+ * recommender should then fall back to a different lever.
+ */
+function nextIntensity<L extends string>(
+  ladder: ReadonlyArray<L>,
+  current: L | undefined
+): L | null {
+  if (current === undefined) return ladder[Math.min(1, ladder.length - 1)];
+  const idx = ladder.indexOf(current);
+  if (idx < 0) return ladder[Math.min(1, ladder.length - 1)];
+  if (idx >= ladder.length - 1) return null;
+  return ladder[idx + 1];
+}

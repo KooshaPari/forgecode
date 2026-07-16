@@ -1,0 +1,3 @@
+Get-Content _test_full.txt | Where-Object { $_ -match 'pass|fail|tests' } | Select-Object -First 20
+"---"
+Get-Content _test_full.txt | Where-Object { $_ -match '[✔✖]' } | Select-Object -First 15

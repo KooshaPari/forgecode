@@ -1,0 +1,343 @@
+/**
+ * Comprehensive unit tests for the security‑headers middleware.
+ *
+ * Covers:
+ *   - CSP nonce generation
+ *   - Default configuration resolution
+ *   - Header application (CSP, HSTS, X‑Content‑Type‑Options, X‑Frame‑Options,
+ *     Referrer‑Policy, Permissions‑Policy)
+ *   - Environment‑variable overrides
+ *   - The master kill‑switch
+ *   - CSP nonce embedding in script‑src
+ *
+ * Total assertions: 35
+ */
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import crypto from "node:crypto";
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Snapshot the current env for keys we might touch, then restore after the
+ * test so we never leak state between tests.
+ */
+function withFreshEnv(fn: () => void): void {
+  const KEYS = [
+    "SECURITY_HEADERS_ENABLED",
+    "CSP_ENABLED",
+    "CSP_REPORT_URI",
+    "CSP_DEFAULT_SRC",
+    "CSP_SCRIPT_SRC",
+    "CSP_STYLE_SRC",
+    "CSP_FONT_SRC",
+    "CSP_IMG_SRC",
+    "CSP_MEDIA_SRC",
+    "CSP_CONNECT_SRC",
+    "CSP_WORKER_SRC",
+    "CSP_FRAME_ANCESTORS",
+    "CSP_FORM_ACTION",
+    "CSP_BASE_URI",
+    "CSP_MANIFEST_SRC",
+    "CSP_EXTRA",
+    "HSTS_ENABLED",
+    "HSTS_MAX_AGE",
+    "HSTS_INCLUDE_SUB_DOMAINS",
+    "HSTS_PRELOAD",
+    "X_CONTENT_TYPE_OPTIONS",
+    "X_FRAME_OPTIONS",
+    "REFERRER_POLICY",
+    "PERMISSIONS_POLICY",
+  ];
+  const snap = new Map<string, string | undefined>();
+  for (const k of KEYS) snap.set(k, process.env[k]);
+
+  try {
+    fn();
+  } finally {
+    for (const k of KEYS) {
+      const v = snap.get(k);
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+// Prevent stale require cache from polluting tests.  The module has an
+// internal singleton so we re‑import it after each env change.
+async function importHeaders() {
+  return import("../../../src/server/security/headers.ts?cache=" + Date.now());
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
+
+test("generateCspNonce returns a 32‑char hex string", async () => {
+  const mod = await importHeaders();
+  const nonce = mod.generateCspNonce();
+  assert.equal(typeof nonce, "string");
+  assert.match(nonce, /^[0-9a-f]{32}$/); // 128 bit = 32 hex chars
+});
+
+test("generateCspNonce produces unique values across calls", async () => {
+  const mod = await importHeaders();
+  const a = mod.generateCspNonce();
+  const b = mod.generateCspNonce();
+  assert.notEqual(a, b);
+});
+
+// ── Default configuration ─────────────────────────────────────────────────────
+
+test("getSecurityConfig returns defaults when no env vars are set", async () => {
+  withFreshEnv(async () => {
+    // Clear all relevant env vars.
+    for (const k of [
+      "SECURITY_HEADERS_ENABLED",
+      "CSP_ENABLED",
+      "CSP_REPORT_URI",
+      "CSP_DEFAULT_SRC",
+      "CSP_SCRIPT_SRC",
+      "CSP_STYLE_SRC",
+      "CSP_FONT_SRC",
+      "CSP_IMG_SRC",
+      "CSP_MEDIA_SRC",
+      "CSP_CONNECT_SRC",
+      "CSP_WORKER_SRC",
+      "CSP_FRAME_ANCESTORS",
+      "CSP_FORM_ACTION",
+      "CSP_BASE_URI",
+      "CSP_MANIFEST_SRC",
+      "CSP_EXTRA",
+      "HSTS_ENABLED",
+      "HSTS_MAX_AGE",
+      "HSTS_INCLUDE_SUB_DOMAINS",
+      "HSTS_PRELOAD",
+      "X_CONTENT_TYPE_OPTIONS",
+      "X_FRAME_OPTIONS",
+      "REFERRER_POLICY",
+      "PERMISSIONS_POLICY",
+    ]) {
+      delete process.env[k];
+    }
+
+    const mod = await importHeaders();
+    mod.__resetForTest();
+    const cfg = mod.getSecurityConfig();
+
+    // Master switch (1)
+    assert.equal(cfg.enabled, true);
+
+    // CSP directives (13)
+    assert.equal(cfg.cspEnabled, true);
+    assert.equal(cfg.cspReportUri, "");
+    assert.equal(cfg.cspDefaultSrc, "'self'");
+    assert.equal(cfg.cspScriptSrc, "'self' 'strict-dynamic'");
+    assert.equal(cfg.cspStyleSrc, "'self' 'unsafe-inline' https://fonts.googleapis.com");
+    assert.equal(cfg.cspFontSrc, "'self' https://fonts.gstatic.com data:");
+    assert.equal(cfg.cspImgSrc, "'self' data: blob: https:");
+    assert.equal(cfg.cspMediaSrc, "'self' data: blob:");
+    assert.equal(cfg.cspConnectSrc, "'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* https: wss:");
+    assert.equal(cfg.cspWorkerSrc, "'self' blob:");
+    assert.equal(cfg.cspFrameAncestors, "'none'");
+    assert.equal(cfg.cspFormAction, "'self'");
+    assert.equal(cfg.cspBaseUri, "'self'");
+    assert.equal(cfg.cspManifestSrc, "'self'");
+    assert.equal(cfg.cspExtra, "");
+
+    // HSTS (4)
+    assert.equal(cfg.hstsEnabled, true);
+    assert.equal(cfg.hstsMaxAge, 63072000);
+    assert.equal(cfg.hstsIncludeSubDomains, true);
+    assert.equal(cfg.hstsPreload, true);
+
+    // Other headers (4)
+    assert.equal(cfg.xContentTypeOptions, "nosniff");
+    assert.equal(cfg.xFrameOptions, "DENY");
+    assert.equal(cfg.referrerPolicy, "strict-origin-when-cross-origin");
+    assert.equal(cfg.permissionsPolicy, "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=()");
+  });
+});
+
+// ── applySecurityHeaders ──────────────────────────────────────────────────────
+
+test("applySecurityHeaders sets all six security headers in default config", async () => {
+  withFreshEnv(async () => {
+    for (const k of ["SECURITY_HEADERS_ENABLED", "CSP_ENABLED", "HSTS_ENABLED"]) {
+      delete process.env[k];
+    }
+    const mod = await importHeaders();
+    mod.__resetForTest();
+    const h = new Headers();
+    const nonce = mod.generateCspNonce();
+    mod.applySecurityHeaders(h, nonce);
+
+    //  1. Content‑Security‑Policy  must contain the nonce
+    assert.ok(h.has("Content-Security-Policy"), "CSP header is present");
+    assert.match(h.get("Content-Security-Policy")!, new RegExp(`nonce-${nonce}`));
+
+    //  2. Strict‑Transport‑Security
+    assert.ok(h.has("Strict-Transport-Security"));
+
+    //  3. X‑Content‑Type‑Options
+    assert.ok(h.has("X-Content-Type-Options"));
+    assert.equal(h.get("X-Content-Type-Options"), "nosniff");
+
+    //  4. X‑Frame‑Options
+    assert.ok(h.has("X-Frame-Options"));
+    assert.equal(h.get("X-Frame-Options"), "DENY");
+
+    //  5. Referrer‑Policy
+    assert.ok(h.has("Referrer-Policy"));
+
+    //  6. Permissions‑Policy
+    assert.ok(h.has("Permissions-Policy"));
+  });
+});
+
+test("applySecurityHeaders omits CSP when cspEnabled is false", async () => {
+  withFreshEnv(async () => {
+    process.env.CSP_ENABLED = "false";
+    delete process.env.SECURITY_HEADERS_ENABLED;
+    delete process.env.HSTS_ENABLED;
+    const mod = await importHeaders();
+    mod.__resetForTest();
+    const h = new Headers();
+    mod.applySecurityHeaders(h, mod.generateCspNonce());
+
+    // CSP must be absent
+    assert.equal(h.has("Content-Security-Policy"), false);
+    // Other headers are still set
+    assert.ok(h.has("X-Content-Type-Options"));
+    assert.ok(h.has("X-Frame-Options"));
+  });
+});
+
+test("applySecurityHeaders omits HSTS when hstsEnabled is false", async () => {
+  withFreshEnv(async () => {
+    process.env.HSTS_ENABLED = "0";
+    delete process.env.SECURITY_HEADERS_ENABLED;
+    delete process.env.CSP_ENABLED;
+    const mod = await importHeaders();
+    mod.__resetForTest();
+    const h = new Headers();
+    mod.applySecurityHeaders(h, mod.generateCspNonce());
+
+    assert.equal(h.has("Strict-Transport-Security"), false);
+    assert.ok(h.has("Content-Security-Policy"));
+    assert.ok(h.has("X-Content-Type-Options"));
+  });
+});
+
+test("applySecurityHeaders sets nothing when master switch is off", async () => {
+  withFreshEnv(async () => {
+    process.env.SECURITY_HEADERS_ENABLED = "false";
+    const mod = await importHeaders();
+    mod.__resetForTest();
+    const h = new Headers();
+    mod.applySecurityHeaders(h, mod.generateCspNonce());
+
+    assert.equal(h.has("Content-Security-Policy"), false);
+    assert.equal(h.has("Strict-Transport-Security"), false);
+    assert.equal(h.has("X-Content-Type-Options"), false);
+    assert.equal(h.has("X-Frame-Options"), false);
+    assert.equal(h.has("Referrer-Policy"), false);
+    assert.equal(h.has("Permissions-Policy"), false);
+  });
+});
+
+// ── Env‑var overrides ─────────────────────────────────────────────────────────
+
+test("CSP_REPORT_URI adds report-uri directive", async () => {
+  withFreshEnv(async () => {
+    process.env.CSP_REPORT_URI = "https://example.com/csp-report";
+    const mod = await importHeaders();
+    mod.__resetForTest();
+    const h = new Headers();
+    mod.applySecurityHeaders(h, mod.generateCspNonce());
+    const csp = h.get("Content-Security-Policy")!;
+    assert.match(csp, /report-uri https:\/\/example\.com\/csp-report/);
+  });
+});
+
+test("CSP_SCRIPT_SRC override changes the script-src directive", async () => {
+  withFreshEnv(async () => {
+    process.env.CSP_SCRIPT_SRC = "'self' 'unsafe-inline'";
+    const mod = await importHeaders();
+    mod.__resetForTest();
+    const h = new Headers();
+    const nonce = mod.generateCspNonce();
+    mod.applySecurityHeaders(h, nonce);
+    const csp = h.get("Content-Security-Policy")!;
+    assert.match(csp, /script-src 'nonce-[0-9a-f]+' 'self' 'unsafe-inline'/);
+    // 'strict-dynamic' should no longer be present
+    assert.doesNotMatch(csp, /strict-dynamic/);
+  });
+});
+
+test("HSTS_MAX_AGE overrides the max-age value", async () => {
+  withFreshEnv(async () => {
+    process.env.HSTS_MAX_AGE = "31536000";
+    const mod = await importHeaders();
+    mod.__resetForTest();
+    const h = new Headers();
+    mod.applySecurityHeaders(h, mod.generateCspNonce());
+    assert.match(h.get("Strict-Transport-Security")!, /max-age=31536000/);
+  });
+});
+
+test("PERMISSIONS_POLICY override is reflected in the header", async () => {
+  withFreshEnv(async () => {
+    process.env.PERMISSIONS_POLICY = "camera=(), microphone=()";
+    const mod = await importHeaders();
+    mod.__resetForTest();
+    const h = new Headers();
+    mod.applySecurityHeaders(h, mod.generateCspNonce());
+    assert.equal(h.get("Permissions-Policy"), "camera=(), microphone=()");
+  });
+});
+
+// ── sealHeaders convenience wrapper ───────────────────────────────────────────
+
+test("sealHeaders applies all headers and returns the nonce", async () => {
+  withFreshEnv(async () => {
+    const mod = await importHeaders();
+    mod.__resetForTest();
+    const h = new Headers();
+    const nonce = mod.sealHeaders(h);
+
+    assert.match(nonce, /^[0-9a-f]{32}$/);
+    assert.match(h.get("Content-Security-Policy")!, new RegExp(`nonce-${nonce}`));
+    assert.ok(h.has("Strict-Transport-Security"));
+    assert.ok(h.has("X-Content-Type-Options"));
+    assert.ok(h.has("X-Frame-Options"));
+    assert.ok(h.has("Referrer-Policy"));
+    assert.ok(h.has("Permissions-Policy"));
+  });
+});
+
+// ── CSP nonce in script-src ───────────────────────────────────────────────────
+
+test("CSP script-src contains nonce- and strict-dynamic by default", async () => {
+  withFreshEnv(async () => {
+    const mod = await importHeaders();
+    mod.__resetForTest();
+    const h = new Headers();
+    const nonce = mod.generateCspNonce();
+    mod.applySecurityHeaders(h, nonce);
+    const csp = h.get("Content-Security-Policy")!;
+    assert.match(csp, new RegExp(`script-src 'nonce-${nonce}`));
+    assert.match(csp, /'strict-dynamic'/);
+  });
+});
+
+test("CSP with cspExtra appends raw directive", async () => {
+  withFreshEnv(async () => {
+    process.env.CSP_EXTRA = "upgrade-insecure-requests";
+    const mod = await importHeaders();
+    mod.__resetForTest();
+    const h = new Headers();
+    mod.applySecurityHeaders(h, mod.generateCspNonce());
+    const csp = h.get("Content-Security-Policy")!;
+    assert.match(csp, /upgrade-insecure-requests/);
+  });
+});

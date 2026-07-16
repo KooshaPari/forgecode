@@ -1,0 +1,25 @@
+@echo off
+REM Phase 10 final - parallel deletion using del + rd
+setlocal EnableDelayedExpansion
+set LOG=C:\Users\koosh\_phase10_v10.log
+echo === START %DATE% %TIME% === > %LOG%
+
+REM Get list of strays first
+dir E:\ /AD /B 2>nul | findstr /I "civis" > C:\Users\koosh\_E_v10.txt
+
+REM Process each - skip backups explicitly
+for /f "delims=" %%P in (C:\Users\koosh\_E_v10.txt) do (
+    echo %%P | findstr /I "^civis_backup$ ^civis_strays_backup" >nul
+    if errorlevel 1 (
+        if errorlevel 2 (
+            REM Not a backup - delete via del+rd in background
+            echo GONE: %%P >> %LOG%
+            echo START_DELETE: %%P %TIME% >> %LOG%
+            start /B "" cmd /c "del /f /s /q \"E:\%%P\" 2>nul & rd /s /q \"E:\%%P\" 2>nul & if exist \"E:\%%P\" (echo STILL: %%P) else (echo DELETED: %%P) >> %LOG%"
+        ) else (
+            echo SKIP_BACKUP: %%P >> %LOG%
+        )
+    )
+)
+echo === END %TIME% === >> %LOG%
+del C:\Users\koosh\_E_v10.txt 2>nul

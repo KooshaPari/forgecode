@@ -1,0 +1,22 @@
+//! KVirtualDesktop Core MCP Protocol Implementation
+//! 
+//! This crate provides the core MCP protocol types and schema definitions
+//! based on the 2025-06-18 specification.
+
+pub mod protocol;
+pub mod transport;
+pub mod types;
+pub mod error;
+pub mod security;
+
+pub use protocol::*;
+pub use transport::*;
+pub use types::*;
+pub use error::*;
+pub use security::*;
+
+/// MCP Protocol Version
+pub const MCP_VERSION: &str = "2025-06-18";
+
+/// KVirtualDesktop MCP Implementation Version
+pub const KVIRTUALDESKTOP_VERSION: &str = "0.1.0";

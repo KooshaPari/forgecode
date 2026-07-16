@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""Pretty-print PR JSON data saved to disk."""
+import json, sys
+from pathlib import Path
+
+HOME = Path("C:/Users/koosh")
+
+def load(name):
+    p = HOME / name
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"!! Failed to load {name}: {e}", file=sys.stderr)
+        return None
+
+def hr(title):
+    print()
+    print("=" * 80)
+    print(title)
+    print("=" * 80)
+
+# PR meta
+for pr in ("4616", "4725"):
+    hr(f"PR {pr} METADATA")
+    d = load(f"_pr{pr}_meta.json")
+    if d:
+        print(f"Title : {d.get('title')}")
+        print(f"State : {d.get('state')}  Merged: {d.get('merged')}  Draft: {d.get('draft')}")
+        print(f"Author: {d.get('user',{}).get('login')}")
+        print(f"Base  : {d.get('base',{}).get('ref')}  ({d.get('base',{}).get('repo',{}).get('full_name')})")
+        print(f"Head  : {d.get('head',{}).get('ref')}  ({d.get('head',{}).get('repo',{}).get('full_name')})")
+        print(f"Created: {d.get('created_at')}  Updated: {d.get('updated_at')}")
+        print(f"Closed : {d.get('closed_at')}  Merged_at: {d.get('merged_at')}")
+        print(f"URL    : {d.get('html_url')}")
+        print(f"Commits: {d.get('commits')}  Additions: {d.get('additions')}  Deletions: {d.get('deletions')}")
+        print(f"Changed files: {d.get('changed_files')}")
+        body = d.get('body') or '(empty)'
+        print("\n--- BODY ---")
+        print(body)
+
+# Reviews
+for pr in ("4616", "4725"):
+    hr(f"PR {pr} REVIEWS (state, user, body)")
+    rs = load(f"_pr{pr}_reviews.json") or []
+    print(f"Total reviews: {len(rs)}")
+    for r in rs:
+        print(f"\n--- Review id={r.get('id')} state={r.get('state')} ---")
+        print(f"User: {r.get('user',{}).get('login')}  (assoc={r.get('author_association')})")
+        print(f"Commit: {r.get('commit_id')}  Submitted: {r.get('submitted_at')}")
+        print(f"HTML  : {r.get('html_url')}")
+        print("Body:")
+        print(r.get('body') or '(empty)')
+
+# Inline PR review comments
+for pr in ("4616", "4725"):
+    hr(f"PR {pr} INLINE REVIEW COMMENTS (path:line)")
+    cs = load(f"_pr{pr}_pcomments.json") or []
+    print(f"Total inline comments: {len(cs)}")
+    for c in cs:
+        print(f"\n--- Comment id={c.get('id')} ---")
+        print(f"User  : {c.get('user',{}).get('login')}  (assoc={c.get('author_association')})")
+        print(f"Path  : {c.get('path')}")
+        print(f"Line  : {c.get('line')}  original_line: {c.get('original_line')}")
+        print(f"Commit: {c.get('commit_id')}")
+        print(f"Created: {c.get('created_at')}")
+        print("Body:")
+        print(c.get('body') or '(empty)')
+
+# Issue comments
+for pr in ("4616", "4725"):
+    hr(f"PR {pr} ISSUE COMMENTS")
+    cs = load(f"_pr{pr}_icomments.json") or []
+    print(f"Total issue comments: {len(cs)}")
+    for c in cs:
+        print(f"\n--- Issue comment id={c.get('id')} ---")
+        print(f"User  : {c.get('user',{}).get('login')}  (assoc={c.get('author_association')})")
+        print(f"Created: {c.get('created_at')}")
+        print("Body:")
+        print(c.get('body') or '(empty)')
+
+# Files
+for pr in ("4616", "4725"):
+    hr(f"PR {pr} FILES CHANGED")
+    fs = load(f"_pr{pr}_files.json") or []
+    print(f"Total files: {len(fs)}")
+    for f in fs:
+        print(f"  +{f.get('additions'):>4} -{f.get('deletions'):>4}  {f.get('status'):>10}  {f.get('filename')}")

@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+"""Validate the 8 absorption-justification project cards parse as valid JSON."""
+import json
+import sys
+
+cards = [
+    'go-nippon.json',
+    'smart-mcp-go.json',
+    'McpKit.json',
+    'phenotype-go-sdk.json',
+    'phenocompose.json',
+    'nanovms.json',
+    'phenotype-infra.json',
+    'BytePort.json',
+]
+
+print(f"{'Card':<28} {'Status':<6} {'Disposition':<22} {'Audit Artifact'}")
+print('-' * 110)
+ok = 0
+fail = 0
+for c in cards:
+    try:
+        d = json.load(open(c, encoding='utf-8'))
+        ok += 1
+        print(f"  {c:<26} OK     {str(d.get('disposition')):<22} {d.get('audit_artifact', 'MISSING')}")
+    except Exception as e:
+        fail += 1
+        print(f"  {c:<26} FAIL   {str(e)}")
+
+print('-' * 110)
+print(f"  {ok} cards OK, {fail} cards FAIL of {len(cards)} target cards")
+sys.exit(0 if fail == 0 else 1)

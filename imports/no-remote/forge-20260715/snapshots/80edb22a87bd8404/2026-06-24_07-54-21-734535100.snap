@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+"/c/Users/koosh/phenotype-registry/registry/audit-absorption-justification/grade.sh" "/c/Users/koosh/_sample_audit.md"
+echo "---EXIT_CODE=$?---"

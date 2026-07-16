@@ -1,0 +1,48 @@
+## Summary
+Add per-IP+tenant sliding-window rate limiting with configurable tiers (free=10/m, pro=100/m, enterprise=unlimited) and wire it into the authz pipeline for CLIENT_API routes.
+
+## Context
+OmniRoute currently lacks per-client rate limiting, making it possible for a single tenant or IP to saturate upstream capacity. This PR introduces a defense-in-depth layer that enforces per-IP+tenant rate limits after successful authentication, with tier-aware budgets that match the product's free/pro/enterprise model.
+
+## Changes
+- **Rate limiter core** (`src/lib/security/rateLimiter.ts`): Sliding-window counter algorithm with Redis-backed Lua atomic script and transparent in-memory fallback when Redis is unavailable or in test mode
+- **Tier configuration**: Free (10/60s), Pro (100/60s), Enterprise (unlimited/Infinity)
+- **Composite key isolation**: Counters are keyed by `rl:sec:<ip>:<tenant>`, ensuring one tenant's bursts never starve another on the same IP
+- **Authz pipeline integration** (`src/server/authz/pipeline.ts`): Rate limits are enforced on every CLIENT_API route after successful auth; denied requests return HTTP 429 with `x-ratelimit-remaining`, `x-ratelimit-reset`, and `retry-after` headers
+- **Fail-open**: Redis errors degrade to in-memory counters; if both backends fail, the request is allowed and the error is logged
+- **Automatic memory store cleanup**: Stale entries are evicted every 5 minutes to prevent unbounded growth
+
+### Key Implementation Details
+- Uses the canonical sliding-window counter formula: `weighted = prevCount * (1 - elapsedRatio) + currCount`
+- Redis Lua script atomically increments the current window, reads the previous window, and computes the estimate in one round-trip
+- In-memory fallback implements the same algorithm using a plain `Map<string, SlidingWindowEntry>`
+- The `resolveTier()` helper maps empty tenant → `free`, any non-empty tenant → `pro`, with `RATE_LIMIT_TIER_OVERRIDE` env var for testing/early rollout
+
+## Testing
+```bash
+# Run rate limiter unit tests (34 tests, 85 assertions)
+set DISABLE_SQLITE_AUTO_BACKUP=true && node --import tsx --import ./open-sse/utils/setupPolyfill.ts --test --test-force-exit tests/unit/security/rateLimiter.test.ts
+```
+
+### Test coverage:
+- Tier configuration verification (limits, window sizes)
+- Free tier: within-limit, at-limit, over-limit behavior
+- Pro tier: 100-request budget
+- Enterprise tier: unlimited (Infinity limit)
+- Per-IP isolation (different IPs have independent counters)
+- Per-tenant isolation (same IP, different tenants)
+- Cross-tenant mixing (different IPs, same tenant)
+- IPv6 address handling
+- `buildRateLimitContext` and `resolveTier` helper functions
+- Decision shape verification (all fields present)
+- Sliding-window monotonicity
+- Special characters in tenant/IP keys
+- Port notation in IP strings
+- Empty IP edge case
+- Memory store cleanup (no crash on repeated calls)
+- Rapid sequential calls behavior
+- Env var override (valid and invalid values)
+
+## Links
+- Related code: `src/lib/security/rateLimiter.ts`, `tests/unit/security/rateLimiter.test.ts`
+- Integration point: `src/server/authz/pipeline.ts`

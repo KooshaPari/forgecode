@@ -1,0 +1,92 @@
+name: Deps Triage
+description: Triage a dependency advisory (Phase 3 — WP-06)
+labels: ["dependencies", "security", "phase3:wp06"]
+body:
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: GitHub/RUSTSEC severity classification
+      options:
+        - critical
+        - high
+        - moderate
+        - low
+      validations:
+        required: true
+  - type: input
+    id: advisory_id
+    attributes:
+      label: Advisory ID
+      placeholder: RUSTSEC-2024-XXXX | GHSA-xxxx | CVE-xxxx
+      validations:
+        required: true
+  - type: input
+    id: package
+    attributes:
+      label: Affected Package (name:version)
+      placeholder: serde:1.0.123
+      validations:
+        required: true
+  - type: dropdown
+    id: ecosystem
+    attributes:
+      label: Ecosystem
+      options:
+        - cargo
+        - npm
+        - github-actions
+        - docker
+        - other
+      validations:
+        required: true
+  - type: dropdown
+    id: reachable
+    attributes:
+      label: Reachable in our dead-code path?
+      options:
+        - yes
+        - no
+        - dev-only (acceptable to defer)
+      validations:
+        required: true
+  - type: input
+    id: fix_version
+    attributes:
+      label: Fix version (name:version, or N/A)
+      placeholder: serde:1.0.124  (or `N/A` if no upstream)
+      validations:
+        required: true
+  - type: input
+    id: owner
+    attributes:
+      label: Owner handle
+      placeholder: @KooshaPari
+      validations:
+        required: true
+  - type: dropdown
+    id: sla_tier
+    attributes:
+      label: SLA tier
+      description: Tier derived from severity. Override only with justification.
+      options:
+        - P0 (24h)
+        - P1 (7d)
+        - P2 (30d)
+        - P3 (90d)
+        - P4 (next minor release — wontfix)
+      validations:
+        required: true
+  - type: textarea
+    id: justification
+    attributes:
+      label: Justification (esp. for overrides or P4)
+      placeholder: short rationale
+      validations:
+        required: false
+  - type: input
+    id: due_date
+    attributes:
+      label: Due date (YYYY-MM-DD)
+      validations:
+        required: true

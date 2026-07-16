@@ -1,0 +1,121 @@
+# Getting Started
+
+This guide walks you through cloning Configra, building the workspace,
+and running the test suite. It is derived from the project
+[`README.md`](https://github.com/KooshaPari/Configra) and
+[`Cargo.toml`](https://github.com/KooshaPari/Configra/blob/main/Cargo.toml).
+
+## Prerequisites
+
+- **Rust** `>= 1.75` (workspace MSRV — see `[workspace.package].rust-version`
+  in `Cargo.toml`).
+- **Cargo** (ships with Rust).
+- A C toolchain for the SQLite-backed crates if you enable those features.
+
+## Clone the repository
+
+```bash
+git clone https://github.com/KooshaPari/Configra.git
+cd Configra
+```
+
+## Workspace layout
+
+Configra is a **Cargo workspace** with four tier-2 sub-crates, each with
+its own concern (ADR-022 / ADR-031):
+
+```
+Configra/                                  v0.4.0 (workspace)
+├── crates/
+│   ├── pheno-config/                      typed runtime Config + ConfigBuilder
+│   ├── settly/                            settings lifecycle (validation, migration)
+│   ├── config-schema/                     JSON schema validation primitives
+│   └── phenotype-config-loader/           generic JSON/TOML file loaders
+├── docs/                                  this VitePress site
+├── typescript/packages/conft/             TS edge layer
+└── Cargo.toml                             workspace manifest
+```
+
+Workspace dependencies (pinned in `Cargo.toml`):
+
+```toml
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "2"
+anyhow = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = "0.4"
+tempfile = "3"
+criterion = "0.5"
+tracing = "0.1"
+```
+
+## Build the workspace
+
+```bash
+cargo build --workspace
+```
+
+For an optimized build:
+
+```bash
+cargo build --workspace --release
+```
+
+## Run the tests
+
+```bash
+cargo test --workspace
+```
+
+## Lint and format
+
+The CI pipeline enforces `cargo fmt --check` and
+`cargo clippy --all-targets --all-features -- -D warnings`. Run them
+locally before pushing:
+
+```bash
+cargo fmt --all
+cargo clippy --all-targets --all-features -- -D warnings
+```
+
+## Tier-2 quality bar
+
+Every sub-crate must ship:
+
+- `README.md`, `CHANGELOG.md`, `AGENTS.md`
+- `cargo clippy -- -D warnings`
+- ≥ 80 % line coverage (ADR-040)
+
+## A minimal end-to-end snippet
+
+The following is illustrative pseudocode for loading a typed config —
+the real API lives in each crate's `lib.rs`. Tokens below are
+**placeholders**, not real credentials:
+
+```rust
+// pseudo-code — exact API lives in crates/pheno-config
+use pheno_config::{Config, ConfigBuilder};
+
+let cfg = ConfigBuilder::new()
+    .load_toml("Config.toml")?              // see phenotype-config-loader
+    .overlay_env("MYAPP_")?                 // MYAPP_FOO=bar -> foo = "bar"
+    .validate_with(config_schema::schema()) // see config-schema
+    .build()?;
+
+assert_eq!(cfg.get("api_token"), "YOUR_API_TOKEN");
+```
+
+For deeper guides, see the source-repo migration notes in
+[`docs/migrations/`](https://github.com/KooshaPari/Configra/tree/main/docs/migrations).
+
+## Next steps
+
+- Browse the [Architecture overview](https://github.com/KooshaPari/Configra/blob/main/docs/ARCHITECTURE.md).
+- Review the per-crate READMEs under `crates/*/README.md`.
+- Open an issue or PR on
+  [GitHub](https://github.com/KooshaPari/Configra) — contributions welcome.

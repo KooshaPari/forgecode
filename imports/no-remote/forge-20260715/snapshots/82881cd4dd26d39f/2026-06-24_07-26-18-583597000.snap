@@ -1,0 +1,30 @@
+@echo off
+setlocal
+set GIT_TRACE=
+set GIT_TERMINAL_PROMPT=0
+echo === PI-CARGO-LOCK-FIX ===
+git -C "C:\Users\koosh\phenotype-journeys" status --short
+echo --- del --
+del /Q "C:\Users\koosh\phenotype-journeys\Cargo.lock" 2>&1
+git -C "C:\Users\koosh\phenotype-journeys" status --short
+echo === PI-HEAD ===
+git -C "C:\Users\koosh\phenotype-infra" log --oneline -3
+echo === PI-DIFF ===
+git -C "C:\Users\koosh\phenotype-infra" diff --stat HEAD~1..HEAD
+echo === OMNI-RELEASES ===
+git -C "C:\Users\koosh\OmniRoute-upstream" log --oneline -3 release/v3.8.34
+echo === OMNI-FORK-BRANCHES ===
+git -C "C:\Users\koosh\OmniRoute-upstream" branch -vv | findstr /C:"koosha/"
+echo === OMNI-STASH-LIST ===
+git -C "C:\Users\koosh\OmniRoute-upstream" stash list
+echo === OMNI-REMOTE ===
+git -C "C:\Users\koosh\OmniRoute-upstream" remote -v
+echo === PR-LAN ===
+gh pr list --repo diegosouzapw/OmniRoute --head koosha/feat/live-ws-lan-allowlist --state all --json number,title,state,url,mergedAt 2>&1
+echo === PR-TS ===
+gh pr list --repo diegosouzapw/OmniRoute --head koosha/feat/authz-tailscale-cgnat --state all --json number,title,state,url,mergedAt,closedAt 2>&1
+echo === PR-COMBO ===
+gh pr list --repo diegosouzapw/OmniRoute --head koosha/feat/combo-api-error-shape --state all --json number,title,state,url 2>&1
+echo === PR-BIFROST ===
+gh pr list --repo diegosouzapw/OmniRoute --head koosha/refactor/bifrost-lazy-reader-cancel-status --state all --json number,title,state,url 2>&1
+endlocal

@@ -1,0 +1,318 @@
+//! 3D tiled Wave Function Collapse wrapper (`FR-CIV-ARCH-001`).
+//!
+//! This module is the **thin, authoritative adapter** between Civis's
+//! [`BuildingGraph`](crate::BuildingGraph) (the source of truth for parcels,
+//! provenance, and facade style) and the
+//! [`ghx_proc_gen`](https://crates.io/crates/ghx_proc_gen) 3D model-synthesis
+//! solver, which we use as a black-box Wave Function Collapse (WFC) engine.
+//!
+//! ## Contract
+//!
+//! * `BuildingGraph` stays authoritative: the solver only **selects voxel
+//!   tiles** (`TileInstance`s) for [`BuildingId`](crate::BuildingId) nodes
+//!   that the graph already knows about. No graph mutation, no parcel
+//!   invention.
+//! * No hand-rolled constraint propagation. Every adjacency rule declared by
+//!   the caller is forwarded verbatim to `ghx_proc_gen`, and the only
+//!   `Result` we surface to the caller is whatever the solver produces.
+//! * Deterministic given the same `(TileSet, initial hints, BuildingGraph)`
+//!   triple: the solver uses its internal `cha cha` seed.
+//!
+//! ## Non-goals
+//!
+//! * This module does **not** import or mutate any voxel buffer; the tile
+//!   instances returned are abstract selections, and downstream rendering
+//!   / serialization layers translate them into actual voxels. Crates other
+//!   than `civ-build` are untouched.
+//! * Capability enforcement, hot reload, mod signing, and mod marketplace
+//!   concerns are explicitly out of scope (`FR-CIV-ARCH-001` partial-good,
+//!   see `AGENTS.md`).
+//!
+//! ## See also
+//!
+//! * [`solve_tiles`] — primary entry point.
+//! * [`TileSet`], [`TileModelTemplate`], [`AdjacencyRule`], [`FaceIndex`].
+
+use std::collections::BTreeSet;
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use ghx_proc_gen::generator::model::{ModelCollection, ModelRotation, SocketsCartesian3D};
+use ghx_proc_gen::generator::rules::{Rules, RulesBuilder};
+use ghx_proc_gen::generator::socket::{Socket, SocketCollection};
+use ghx_proc_gen::ghx_grid::cartesian::coordinates::Cartesian3D;
+use ghx_proc_gen::ghx_grid::cartesian::grid::CartesianGrid;
+use ghx_proc_gen::proc_gen::generator::{Generator, GeneratorBuilder};
+
+use crate::{BuildingGraph, BuildingId};
+
+// ---------------------------------------------------------------------------
+// Face indexing
+// ---------------------------------------------------------------------------
+
+/// Number of cube faces. Used to size per-face arrays.
+///
+/// `ghx_proc_gen` exposes faces in the order
+/// `(x_pos, x_neg, z_pos, z_neg, y_pos, y_neg)`. We adopt the same order so
+/// the caller's intuition transfers 1:1 from the upstream documentation.
+pub const FACES_PER_CUBE: usize = 6;
+
+/// Identifies one face of an axis-aligned voxel.
+///
+/// The order matches `ghx_proc_gen::SocketsCartesian3D::Simple`.
+#[allow(clippy::module_name_repetitions)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum FaceIndex {
+    /// `+X` (right).
+    XP = 0,
+    /// `-X` (left).
+    XN = 1,
+    /// `+Z` (front — Z is horizontal in the ghx coordinate system).
+    ZP = 2,
+    /// `-Z` (back).
+    ZN = 3,
+    /// `+Y` (up).
+    YP = 4,
+    /// `-Y` (down).
+    YN = 5,
+}
+
+impl FaceIndex {
+    /// All six face indices in ghx order.
+    #[must_use]
+    pub const fn all() -> [FaceIndex; FACES_PER_CUBE] {
+        [
+            FaceIndex::XP,
+            FaceIndex::XN,
+            FaceIndex::ZP,
+            FaceIndex::ZN,
+            FaceIndex::YP,
+            FaceIndex::YN,
+        ]
+    }
+
+    /// The face on the *opposite* side of this voxel (e.g. `XP` ↔ `XN`).
+    ///
+    /// Used by [`solve_tiles`] when expanding directional adjacency rules
+    /// into bidirectional connections, since `ghx_proc_gen` treats a
+    /// `SocketCollection` connection as unidirectional and expects callers
+    /// to register both halves of every edge.
+    #[must_use]
+    pub const fn opposite(self) -> FaceIndex {
+        match self {
+            FaceIndex::XP => FaceIndex::XN,
+            FaceIndex::XN => FaceIndex::XP,
+            FaceIndex::ZP => FaceIndex::ZN,
+            FaceIndex::ZN => FaceIndex::ZP,
+            FaceIndex::YP => FaceIndex::YN,
+            FaceIndex::YN => FaceIndex::YP,
+        }
+    }
+}
+
+impl fmt::Display for FaceIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            FaceIndex::XP => "+X",
+            FaceIndex::XN => "-X",
+            FaceIndex::ZP => "+Z",
+            FaceIndex::ZN => "-Z",
+            FaceIndex::YP => "+Y",
+            FaceIndex::YN => "-Y",
+        };
+        f.write_str(label)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public input / output descriptors
+// ---------------------------------------------------------------------------
+
+/// One model in a [`TileSet`].
+///
+/// Faces are encoded in `ghx_proc_gen` order
+/// `[X+, X−, Z+, Z−, Y+, Y−]`; use [`FaceIndex::all`] to iterate.
+///
+/// A socket id of `None` means "this face has no socket", which forbids any
+/// neighbour via that face in the resulting arrangement.
+#[allow(clippy::module_name_repetitions)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TileModelTemplate {
+    /// Optional human-readable name, surfaced in error messages and (when
+    /// `ghx_proc_gen`'s `models-names` feature is enabled) carried through
+    /// to debug traces.
+    pub name: String,
+    /// Which parcel node this tile *fills* in the caller-supplied graph.
+    ///
+    /// WFC does not validate that this id exists — that is the caller's
+    /// contract. We keep the reference for cross-referencing the returned
+    /// [`TileInstance`]s back to the [`BuildingGraph`].
+    pub parcel: BuildingId,
+    /// Per-face socket ids (`None` = no socket). Must be exactly
+    /// [`FACES_PER_CUBE`] entries.
+    pub face_sockets: [Option<u32>; FACES_PER_CUBE],
+    /// Rotation variants to expose. Defaults to `Rot0` only.
+    pub rotation_variants: RotationVariants,
+    /// Optional selection weight. `None` falls back to `1u32`.
+    pub weight: Option<u32>,
+}
+
+/// Which rotations ghx_proc_gen generates for a [`TileModelTemplate`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RotationVariants {
+    /// Only the unrotated (`Rot0`) orientation.
+    Rot0,
+    /// Allowed orientations: `Rot0` and `Rot90`.
+    Rot90,
+    /// Allowed orientations: full `2x2x2` cube symmetry group
+    /// (`Rot0`, `Rot90`, `Rot180`, `Rot270`).
+    Rot90x4,
+}
+
+impl Default for RotationVariants {
+    fn default() -> Self {
+        Self::Rot0
+    }
+}
+
+impl RotationVariants {
+    /// Apply this variant policy to a base `SocketsCartesian3D::Simple` group,
+    /// producing either the base model or one with `with_additional_rotation`.
+    fn apply(self, base: SocketsCartesian3D) -> ghx_proc_gen::generator::model::Model {
+        use ghx_proc_gen::generator::model::Model;
+        match self {
+            RotationVariants::Rot0 => Model::from_template(base),
+            RotationVariants::Rot90 => {
+                base.to_template()
+                    .with_additional_rotation(ModelRotation::Rot90)
+            }
+            RotationVariants::Rot90x4 => {
+                base.to_template()
+                    .with_additional_rotation(ModelRotation::Rot90)
+                    .with_additional_rotation(ModelRotation::Rot180)
+                    .with_additional_rotation(ModelRotation::Rot270)
+            }
+        }
+    }
+}
+
+/// A bidirectional adjacency rule: "model A's face `fa` may touch model B's
+/// face `fb`", and the symmetric counterpart. The caller does **not** need
+/// to declare the inverse — [`solve_tiles`] expands both directions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdjacencyRule {
+    /// Index into the [`TileSet::models`] slice.
+    pub model_a: u32,
+    /// Face on model A.
+    pub face_a: FaceIndex,
+    /// Index into the [`TileSet::models`] slice.
+    pub model_b: u32,
+    /// Face on model B (typically the opposite face of model A).
+    pub face_b: FaceIndex,
+}
+
+/// A self-contained description of the tile-set the caller wants solved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TileSet {
+    /// The 3D voxel grid to be solved.
+    ///
+    /// Each axis is the integer number of voxels along that axis. `2×2×2`
+    /// gives 8 voxels, etc.
+    pub grid_size: [u32; 3],
+    /// Models registered with the solver. Each index doubles as a stable
+    /// handle used by [`AdjacencyRule`].
+    pub models: Vec<TileModelTemplate>,
+    /// Undirected adjacency constraints between models.
+    pub adjacency: Vec<AdjacencyRule>,
+    /// Optional hint: pin a model at a specific voxel coordinate before
+    /// generation. Useful for seeding a deterministic arrangement.
+    pub initial_nodes: Vec<InitialNode>,
+}
+
+/// A model pinned at a grid coordinate before generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InitialNode {
+    /// `(x, y, z)` voxel coordinate.
+    pub grid_pos: [u32; 3],
+    /// Index into the [`TileSet::models`] slice.
+    pub model: u32,
+}
+
+/// One selected voxel tile in the solved arrangement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TileInstance {
+    /// The `BuildingId` from [`TileModelTemplate::parcel`] this tile fills,
+    /// enabling cross-referencing with the authoritative [`BuildingGraph`].
+    pub parcel: BuildingId,
+    /// Stable model index within the [`TileSet::models`] slice.
+    pub model_index: u32,
+    /// Rotation in degrees `[0, 270]` selected by the solver
+    /// (`0`, `90`, `180`, or `270`).
+    pub rotation_deg: u16,
+    /// `(x, y, z)` grid coordinate of this tile.
+    pub grid_pos: [u32; 3],
+}
+
+/// The full solved arrangement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct TileSolution {
+    /// Selected tiles, in ghx's internal row-major order
+    /// (`x` varies slowest, then `y`, then `z`).
+    pub tiles: Vec<TileInstance>,
+    /// Total voxels actually produced (`grid_size.x * grid_size.y * grid_size.z`).
+    pub voxel_count: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/// Errors surfaced from [`solve_tiles`].
+///
+/// All variants carry context sufficient to point the caller at the
+/// offending input without having to re-run the solver.
+#[derive(Debug, Error)]
+pub enum WfcError {
+    /// The grid size was malformed (zero on some axis, or overflow in the
+    /// total voxel count).
+    #[error("invalid grid size {0:?}: every axis must be >= 1")]
+    InvalidGridSize([u32; 3]),
+
+    /// A [`TileModelTemplate`] carried a `face_sockets` slot missing from
+    /// its expected position. Should be unreachable — surfaces as a
+    /// defensive guard if the source code is refactored badly.
+    #[error("model {model_index} ({model_name:?}) has malformed face_sockets slot {slot}")]
+    MalformedFaceSlot {
+        /// Position in the slice.
+        model_index: u32,
+        /// Name of the offending model.
+        model_name: String,
+        /// Index into the `face_sockets` array.
+        slot: usize,
+    },
+
+    /// An [`AdjacencyRule`] references a model index that does not exist.
+    #[error("adjacency rule references unknown model index {0}")]
+    UnknownModelInAdjacency(u32),
+
+    /// An [`InitialNode`] references a model index that does not exist.
+    #[error("initial node references unknown model index {0}")]
+    UnknownModelInInitial(u32),
+
+    /// `ghx_proc_gen` rejected the constructed [`Rules`].
+    #[error("ghx_proc_gen Rules build failed: {0}")]
+    RulesBuild(String),
+
+    /// `ghx_proc_gen` rejected the constructed [`Generator`].
+    #[error("ghx_proc_gen Generator build failed: {0}")]
+    GeneratorBuild(String),
+
+    /// The solver ran to completion but could not produce a contradiction-
+    /// free arrangement (WFC sometimes restarts and ultimately gives up,
+    /// especially on underconstrained or impossible grids).
+    #[error("ghx_proc_gen solver failed: {0}")]
+    SolverFailed(String),
+}

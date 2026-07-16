@@ -1,0 +1,38 @@
+name: Rust Tests
+
+on:
+  push:
+    branches:
+      - feature/tracera-core-phase-0-1-2-3
+      - integration/consolidate
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - ".github/workflows/rust-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-hack:
+    name: cargo-hack per-crate tests
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
+        with:
+          toolchain: stable
+
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595
+        with:
+          tool: cargo-hack
+
+      - name: Test each crate feature set
+        run: cargo hack test --workspace --each-feature

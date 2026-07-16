@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+cd /c/Users/koosh || exit 1
+./phenotype-registry/registry/audit-absorption-justification/grade.sh ./_sample_audit.md > /c/Users/koosh/_grade.json
+python -c "
+import json
+with open('/c/Users/koosh/_grade.json') as f:
+    d = json.load(f)
+print('JSON_OK keys:', list(d.keys()))
+print('pillars count:', len(d['pillars']))
+print('grade:', d['grade'])
+print('score:', d['score'], '/', d['max'])
+print('percentage:', d['percentage'])
+print('classification:', d['classification'])
+print('project:', d['project'])
+print('timestamp:', d['timestamp'])
+for p in d['pillars']:
+    print('  P%d %s: %d/%d (%s)' % (p['id'], p['name'], p['score'], p['max'], p['status']))
+"

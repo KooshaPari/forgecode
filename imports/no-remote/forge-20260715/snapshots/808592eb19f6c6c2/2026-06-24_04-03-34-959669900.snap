@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""Final clean dedup of nippon search output - keep only ORIGINAL files.
+Excludes everything starting with _nippon_ or .codex logs/sessions.
+"""
+import sys
+import re
+from collections import defaultdict
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+# The regex anchored to the *first* path component (the actual file path)
+PATH_IS_NOISE = re.compile(r"^[A-Z]:\\Users\\koosg\\_nippon_", re.IGNORECASE)
+PATH_IS_CODEX = re.compile(r"^[A-Z]:\\Users\\koosh\\\.codex\\(logs|sessions|cache)\\", re.IGNORECASE)
+
+# We treat a content line as "noise" if it itself contains a reference to one of our
+# tooling output files (echoes from earlier findstr/Select-String pipelines).
+CONTENT_HAS_NOISE = re.compile(
+    r"(?:"
+    r"_nippon_(?:search|filter|summarize|toplevel|state|run_a)\."
+    r"|_nippon_done_"
+    r"|_arch_go-nippon\.json"  # this is a real source file - DO NOT exclude
+    r")",
+    re.IGNORECASE,
+)
+
+def parse_line(line):
+    """Parse 'PATH:LINENO:CONTENT' with Windows path containing C: drive colon."""
+    parts = line.rsplit(":", 2)
+    if len(parts) != 3:
+        return None
+    path, lineno, content = parts
+    if not lineno.isdigit():
+        return None
+    return path, int(lineno), content
+
+
+with open(r"C:\Users\koosh\_nippon_search.out", "r", encoding="utf-8", errors="replace") as f:
+    raw_lines = f.read().splitlines()
+
+file_to_hits = defaultdict(list)
+total = 0
+path_noise = 0
+content_noise = 0
+for ln in raw_lines:
+    if not ln or ln.startswith("#"):
+        continue
+    parsed = parse_line(ln)
+    if not parsed:
+        continue
+    path, lineno, content = parsed
+    total += 1
+    if PATH_IS_NOISE.match(path) or PATH_IS_CODEX.match(path):
+        path_noise += 1
+        continue
+    # Lines whose content carries our tooling artifacts are echoes
+    if "_nippon_" in path and path.lower().endswith((".out", ".txt", ".err", ".bat", ".py")):
+        # path itself is one of our outputs -> noise
+        content_noise += 1
+        continue
+    file_to_hits[path].append((lineno, content))
+
+print(f"# Raw hits: {total}")
+print(f"# Path-noise filtered (self-tooling): {path_noise}")
+print(f"# Content-noise filtered (echoes): {content_noise}")
+print(f"# Real hits: {sum(len(v) for v in file_to_hits.values())} across {len(file_to_hits)} files")
+print()
+print("# === Unique ORIGINAL files with 'nippon' (sorted by hit count desc, then path) ===")
+for path in sorted(file_to_hits.keys(), key=lambda p: (-len(file_to_hits[p]), p.lower())):
+    hits = file_to_hits[path]
+    cnt = len(hits)
+    # Show first 5 unique line numbers
+    seen = set()
+    sample_lines = []
+    for ln, c in hits:
+        if ln in seen:
+            continue
+        seen.add(ln)
+        snippet = c if len(c) <= 280 else c[:277] + "..."
+        sample_lines.append((ln, snippet))
+        if len(sample_lines) >= 5:
+            break
+    line_list = ",".join(str(x[0]) for x in sample_lines)
+    print(f"  [{cnt}] {path}  lines=[{line_list}{' ...' if cnt>len(sample_lines) else ''}]")
+    for ln, snippet in sample_lines:
+        print(f"        L{ln}: {snippet}")

@@ -1,0 +1,184 @@
+# verify.ps1 - WorldSphere3D + Compound-Spheres-3D integrity check
+#
+# Re-runs the full offline test suite and verifies SHA parity across all 4
+# local working copies + 2 GitHub backup repos. Exits 0 on success, non-zero
+# on any failure. Designed to be run before any push, after any major merge,
+# or as a pre-commit hook.
+#
+# Usage:
+#   powershell -ExecutionPolicy Bypass -File scripts/verify.ps1
+#
+# Requirements: dotnet SDK on PATH, gh CLI authenticated, git on PATH.
+# Skip-flags (for partial runs): -SkipTests, -SkipSHA, -SkipPush
+
+[CmdletBinding()]
+param(
+    [switch]$SkipTests,
+    [switch]$SkipSHA,
+    [switch]$SkipPush,
+    [string]$CPath = "C:\Users\koosh\Dev\WorldSphereMod",
+    [string]$EPath = "E:\dev\WorldSphereMod",
+    [string]$WS3DBackup = "KooshaPari/WorldSphereMod",
+    [string]$CS3DBackup = "KooshaPari/Compound-Spheres-3D-Backup"
+)
+
+$ErrorActionPreference = 'Stop'
+$failures = @()
+
+function Step($name, $block) {
+    Write-Host ""
+    Write-Host "=== $name ===" -ForegroundColor Cyan
+    & $block
+}
+
+function Fail($msg) {
+    Write-Host "  FAIL: $msg" -ForegroundColor Red
+    $script:failures += $msg
+}
+
+function Ok($msg) {
+    Write-Host "  OK: $msg" -ForegroundColor Green
+}
+
+# --- Step 1: SHA parity across all 6 locations ---
+Step "Step 1: SHA parity check" {
+    if ($SkipSHA) { Write-Host "  SKIPPED (-SkipSHA)"; return }
+
+    $cMain = git -C $CPath rev-parse main 2>$null
+    $eMain = git -C $EPath rev-parse main 2>$null
+    $cCS3D = git -C "$CPath\.git\modules\External\Compound-Spheres" rev-parse wsm3d/main 2>$null
+    $eCS3D = git -C "$EPath\.git\modules\External\Compound-Spheres" rev-parse wsm3d/main 2>$null
+    $ghWS3DRaw = gh api repos/$WS3DBackup/branches/main 2>$null
+    $ghCS3DRaw = gh api repos/$CS3DBackup/branches/wsm3d/main 2>$null
+    $ghWS3D = if ($ghWS3DRaw -match '"sha":\s*"([a-f0-9]+)"') { $Matches[1] } else { '' }
+    # gh API returns nested JSON: {"commit": {"sha": "..."}} or top-level for some endpoints.
+    # Match the first "sha" with a 40-char hex value.
+    $extractSha = {
+        param($raw)
+        if ($raw -match '"sha":\s*"([a-f0-9]{40})"') { $Matches[1] } else { '' }
+    }
+    $ghWS3D = & $extractSha $ghWS3DRaw
+    $ghCS3D = & $extractSha $ghCS3DRaw
+    $ghWS3Dbackup = & $extractSha $ghWS3DbackupRaw
+    Write-Host "  C:    WS3D main                  = $cMain"
+    Write-Host "  E:    WS3D main                  = $eMain"
+    Write-Host "  gh:   WS3D backup main           = $ghWS3D"
+    Write-Host "  gh:   WS3D backup/e-main-snapshot = $ghWS3Dbackup"
+    Write-Host "  C:    CS3D wsm3d/main            = $cCS3D"
+    Write-Host "  E:    CS3D wsm3d/main            = $eCS3D"
+    Write-Host "  gh:   CS3D backup wsm3d/main     = $ghCS3D"
+
+    if ($cMain -ne $ghWS3D) {
+        Fail "C: WS3D main ($cMain) != backup WS3D main ($ghWS3D) - local is behind"
+    } else { Ok "WS3D C: <-> backup in sync" }
+
+    if ($eMain -ne $ghWS3Dbackup) {
+        Fail "E: WS3D main ($eMain) != backup/e-main-snapshot ($ghWS3Dbackup) - local diverged"
+    } else { Ok "E: WS3D main <-> backup/e-main-snapshot in sync" }
+
+    if ($cCS3D -ne $ghCS3D) {
+        Fail "C: CS3D wsm3d/main ($cCS3D) != backup CS3D wsm3d/main ($ghCS3D)"
+    } else { Ok "CS3D C: <-> backup in sync" }
+
+    if ($eCS3D -ne $ghCS3D) {
+        Fail "E: CS3D wsm3d/main ($eCS3D) != backup CS3D wsm3d/main ($ghCS3D)"
+    } else { Ok "CS3D E: <-> backup in sync" }
+}
+
+# --- Step 2: Working tree cleanliness ---
+Step "Step 2: Working tree cleanliness" {
+    foreach ($repo in @(
+        @{ Path = $CPath; Name = "C: WS3D" },
+        @{ Path = $EPath; Name = "E: WS3D" },
+        @{ Path = "$CPath\.git\modules\External\Compound-Spheres"; Name = "C: CS3D" },
+        @{ Path = "$EPath\.git\modules\External\Compound-Spheres"; Name = "E: CS3D" }
+    )) {
+        $status = git -C $repo.Path status --porcelain 2>$null
+        if ($status) {
+            Fail "$($repo.Name) has uncommitted changes:`n$status"
+        } else {
+            Ok "$($repo.Name) clean"
+        }
+    }
+}
+
+# --- Step 3: Re-run full test suite (offline projects only) ---
+Step "Step 3: Test suite" {
+    if ($SkipTests) { Write-Host "  SKIPPED (-SkipTests)"; return }
+
+    $testProjects = @(
+        @{ Path = "$CPath\External\Compound-Spheres\Tests\CompoundSpheres.Tests"; Name = "CompoundSpheres.Tests" },
+        @{ Path = "$CPath\tests\WorldSphereMod.Tests.Unit"; Name = "WorldSphereMod.Tests.Unit" },
+        @{ Path = "$CPath\tests\WorldSphereMod.Tests.E2E"; Name = "WorldSphereMod.Tests.E2E" }
+    )
+
+    foreach ($t in $testProjects) {
+        Write-Host "  Running $($t.Name)..." -ForegroundColor Yellow
+        Push-Location $t.Path
+        try {
+            dotnet test --no-build 2>&1 | Tee-Object -Variable testOut | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Fail "$($t.Name) failed (exit $LASTEXITCODE)"
+            } else {
+                # Look for "Passed!" or "0 Failed" in output
+                if ($testOut -match "0 Failed|413/413|158/158|19/19") {
+                    Ok "$($t.Name) PASSED"
+                } else {
+                    Fail "$($t.Name) - exit 0 but success pattern not found in output"
+                }
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+}
+
+# --- Step 4: Stash integrity ---
+Step "Step 4: Stash integrity (NOT dropped)" {
+    $cStashes = git -C $CPath stash list 2>$null | Measure-Object -Line
+    $eStashes = git -C $EPath stash list 2>$null | Measure-Object -Line
+    Write-Host "  C: WS3D stashes: $($cStashes.Lines)"
+    Write-Host "  E: WS3D stashes: $($eStashes.Lines)"
+
+    # Baseline from audit: C: had 9 stashes, E: had 2 stashes
+    if ($cStashes.Lines -lt 9) {
+        Fail "C: WS3D stash count dropped below baseline (9). Was $($cStashes.Lines) - check if stashes were lost"
+    } else { Ok "C: WS3D stashes intact ($($cStashes.Lines) >= 9 baseline)" }
+
+    if ($eStashes.Lines -lt 2) {
+        Fail "E: WS3D stash count dropped below baseline (2). Was $($eStashes.Lines)"
+    } else { Ok "E: WS3D stashes intact ($($eStashes.Lines) >= 2 baseline)" }
+
+    # Verify preserve/* branches exist for each stash
+    $preserveBranches = git -C $CPath branch --no-color 2>$null | Where-Object { $_ -match '^\s*preserve/stash-' }
+    Write-Host "  C: WS3D preserve/stash-* branches: $($preserveBranches.Count)"
+    if ($preserveBranches.Count -lt 8) {
+        Fail "C: WS3D missing preserve/stash-* branches (found $($preserveBranches.Count), expected >= 8)"
+    } else { Ok "C: WS3D preserve/stash-* branches intact" }
+}
+
+# --- Step 5: Git push dry-run (verify backup is reachable) ---
+Step "Step 5: Push dry-run" {
+    if ($SkipPush) { Write-Host "  SKIPPED (-SkipPush)"; return }
+
+    $reach = git -C $CPath ls-remote origin main 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Fail "Cannot reach backup repo $WS3DBackup (gh auth may have expired)"
+    } else { Ok "Backup repo $WS3DBackup reachable" }
+}
+
+# --- Final summary ---
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Cyan
+if ($failures.Count -eq 0) {
+    Write-Host "  ALL CHECKS PASSED - integrity verified" -ForegroundColor Green
+    Write-Host "========================================" -ForegroundColor Cyan
+    exit 0
+} else {
+    Write-Host "  $($failures.Count) CHECK(S) FAILED:" -ForegroundColor Red
+    foreach ($f in $failures) {
+        Write-Host "    - $f" -ForegroundColor Red
+    }
+    Write-Host "========================================" -ForegroundColor Cyan
+    exit 1
+}

@@ -1,0 +1,14 @@
+import path from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { resolveConfig } from 'vitepress'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const repoRoot = path.resolve(__dirname, '..')
+
+const resolved = await resolveConfig(repoRoot, 'build', 'production')
+console.log('Resolved config keys:', Object.keys(resolved).join(', '))
+console.log('srcDir:', resolved.srcDir)
+console.log('siteConfig.ignoreDeadLinks:', resolved.site?.ignoreDeadLinks)
+console.log('ignoreDeadLinks:', resolved.ignoreDeadLinks)
+console.log('pages:', resolved.pages)
+console.log('dynamicRoutes:', resolved.dynamicRoutes)

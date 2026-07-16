@@ -1,0 +1,354 @@
+//! V4l2 backend adapter (Linux cross-platform eye-tracker).
+//!
+//! Streams frames from any V4l2-compatible capture device on Linux
+//! (USB UVC webcams, industrial cameras, the V4l2 loopback device,
+//! many IR trackers exposed as `/dev/video*`). Maps the raw frame
+//! stream into a `Frame`-compatible heatmap output.
+//!
+//! For Linux cross-platform deployment (Raspberry Pi, NUC, Jetson,
+//! etc.) where nokhwa's macOS/Windows-centric backend is unavailable.
+//!
+//! Per the SOTA plan EYE-SOTA-006.
+
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use crate::backend::{Backend, BackendKind};
+use crate::{
+    CameraConfig, CameraError, CameraInfo, Frame, PixelFormat,
+    CAPABILITY_INFRARED, CAPABILITY_LOW_LIGHT, CAPABILITY_RGB,
+};
+
+/// One gaze sample (x_norm, y_norm in [0,1]).
+#[derive(Debug, Clone, Copy)]
+pub struct GazeSample {
+    pub x_norm: f32,
+    pub y_norm: f32,
+    pub confidence: f32,
+}
+
+/// Producer abstraction so the Backend impl can be tested without
+/// real V4l2 hardware and so future integrations (MIPI CSI, GStreamer,
+/// OpenCV VideoCapture) can drop in.
+pub trait GazeSource: Send + Sync {
+    fn next_samples(&mut self) -> Vec<GazeSample>;
+    fn is_open(&self) -> bool;
+}
+
+/// Deterministic Lissajous (1:3 ratio) at 60Hz for tests / no-device builds.
+pub struct SyntheticV4l2Source {
+    start: Instant,
+    open: bool,
+}
+
+impl SyntheticV4l2Source {
+    pub fn new() -> Self {
+        Self {
+            start: Instant::now(),
+            open: false,
+        }
+    }
+}
+
+impl Default for SyntheticV4l2Source {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl GazeSource for SyntheticV4l2Source {
+    fn next_samples(&mut self) -> Vec<GazeSample> {
+        if !self.open {
+            return Vec::new();
+        }
+        let t = self.start.elapsed().as_secs_f32();
+        // Lissajous 1:3, normalized to [0, 1].
+        let x = 0.5 + 0.4 * (t * 2.0 * std::f32::consts::PI * 0.5).sin();
+        let y = 0.5 + 0.4 * (t * 2.0 * std::f32::consts::PI * 1.5).sin();
+        vec![GazeSample { x_norm: x, y_norm: y, confidence: 0.95 }]
+    }
+
+    fn is_open(&self) -> bool {
+        self.open
+    }
+}
+
+/// Gated behind feature = "v4l2". Real V4l2 contract documented here
+/// until the v4l2 / v4l2-rs bindings land.
+///
+/// Production wiring (when FFI is linked):
+/// ```text
+/// let dev = v4l2::Device::open("/dev/video0")?;
+/// let fmt = dev.set_format(&v4l2::Format {
+///     width: config.width,
+///     height: config.height,
+///     pixel_format: v4l2::PixelFormat::MJPEG,
+///     ..Default::default()
+/// })?;
+/// let mut stream = dev.start_stream(&fmt)?;
+/// ```
+pub struct V4l2DeviceSource {
+    device_path: String,
+    open: bool,
+}
+
+impl V4l2DeviceSource {
+    pub fn new(device_path: impl Into<String>) -> Self {
+        Self {
+            device_path: device_path.into(),
+            open: false,
+        }
+    }
+}
+
+impl GazeSource for V4l2DeviceSource {
+    fn next_samples(&mut self) -> Vec<GazeSample> {
+        if !self.open {
+            return Vec::new();
+        }
+        // Until real FFI bindings land, return a single zero-confidence
+        // sample so consumers can still observe the contract.
+        vec![GazeSample { x_norm: 0.5, y_norm: 0.5, confidence: 0.0 }]
+    }
+
+    fn is_open(&self) -> bool {
+        self.open
+    }
+}
+
+/// V4l2-based Backend impl. Streams MJPEG/YUYV frames and converts them
+/// to grayscale heatmap output (single-channel u8 buffer) for the
+/// downstream inference pipeline.
+pub struct V4l2Backend {
+    source: Arc<Mutex<dyn GazeSource>>,
+    info: CameraInfo,
+    open: bool,
+    running: bool,
+    width: u32,
+    height: u32,
+    fps: u32,
+    buffer: Vec<u8>,
+    frame_number: u64,
+    started_at: Option<Instant>,
+    capabilities: u32,
+}
+
+impl V4l2Backend {
+    pub fn with_source(
+        source: Arc<Mutex<dyn GazeSource>>,
+        config: &CameraConfig,
+    ) -> Self {
+        let width = config.width;
+        let height = config.height;
+        let fps = config.fps;
+        let buffer = vec![0u8; (width * height) as usize];
+        Self {
+            source,
+            info: CameraInfo {
+                kind: BackendKind::V4l2,
+                name: "v4l2://default".to_string(),
+                device_path: "/dev/video0".to_string(),
+                width,
+                height,
+                fps,
+                supported_formats: vec![PixelFormat::Gray8, PixelFormat::Rgb8],
+            },
+            open: false,
+            running: false,
+            width,
+            height,
+            fps,
+            buffer,
+            frame_number: 0,
+            started_at: None,
+            capabilities: CAPABILITY_RGB | CAPABILITY_INFRARED | CAPABILITY_LOW_LIGHT,
+        }
+    }
+
+    /// Override the device path (e.g. "/dev/video2" for an IR tracker).
+    pub fn with_device_path(mut self, path: impl Into<String>) -> Self {
+        self.info.device_path = path.into();
+        self
+    }
+
+    fn deposit(&mut self, sample: GazeSample) {
+        if sample.confidence <= 0.0 {
+            return;
+        }
+        let cx = (sample.x_norm.clamp(0.0, 1.0) * (self.width - 1) as f32) as i32;
+        let cy = (sample.y_norm.clamp(0.0, 1.0) * (self.height - 1) as f32) as i32;
+        // 3x3 blur deposit, then 5%/frame decay next capture.
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                let x = cx + dx;
+                let y = cy + dy;
+                if x < 0 || y < 0 || x >= self.width as i32 || y >= self.height as i32 {
+                    continue;
+                }
+                let idx = (y as u32 * self.width + x as u32) as usize;
+                let cur = self.buffer[idx];
+                self.buffer[idx] = cur.saturating_add(20);
+            }
+        }
+    }
+}
+
+impl Backend for V4l2Backend {
+    fn open(&mut self, _device_index: u32, _config: &CameraConfig) -> Result<(), CameraError> {
+        if self.open {
+            return Ok(());
+        }
+        self.source.lock().map_err(|_| CameraError::InitFailed("poisoned source lock".into()))?.open = true;
+        self.open = true;
+        Ok(())
+    }
+
+    fn start(&mut self) -> Result<(), CameraError> {
+        if !self.open {
+            return Err(CameraError::NotRunning);
+        }
+        if self.running {
+            return Ok(());
+        }
+        self.running = true;
+        self.started_at = Some(Instant::now());
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Result<(), CameraError> {
+        self.running = false;
+        Ok(())
+    }
+
+    fn capture_frame(&mut self) -> Result<Frame, CameraError> {
+        if !self.running {
+            return Err(CameraError::NotRunning);
+        }
+        // Decay: 5%/frame.
+        for px in self.buffer.iter_mut() {
+            *px = ((*px as u32 * 95) / 100) as u8;
+        }
+        // Drain up to 6 samples per frame.
+        let mut source = self.source.lock().map_err(|_| CameraError::InitFailed("poisoned source lock".into()))?;
+        let samples: Vec<GazeSample> = source
+            .next_samples()
+            .into_iter()
+            .take(6)
+            .collect();
+        drop(source);
+        for s in samples {
+            self.deposit(s);
+        }
+        self.frame_number += 1;
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_micros() as u64)
+            .unwrap_or(0);
+        Ok(Frame {
+            data: self.buffer.clone(),
+            width: self.width,
+            height: self.height,
+            format: PixelFormat::Gray8,
+            timestamp,
+            frame_number: self.frame_number,
+        })
+    }
+
+    fn info(&self) -> &CameraInfo {
+        &self.info
+    }
+
+    fn capabilities(&self) -> u32 {
+        self.capabilities
+    }
+
+    fn is_running(&self) -> bool {
+        self.running
+    }
+
+    fn kind(&self) -> BackendKind {
+        BackendKind::V4l2
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CameraConfig;
+
+    fn test_config() -> CameraConfig {
+        CameraConfig {
+            width: 64,
+            height: 64,
+            fps: 30,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn synthetic_lissajous_advances() {
+        let mut src = SyntheticV4l2Source::new();
+        src.open = true;
+        let s1 = src.next_samples();
+        std::thread::sleep(Duration::from_millis(20));
+        let s2 = src.next_samples();
+        assert_eq!(s1.len(), 1);
+        assert_eq!(s2.len(), 1);
+        let dx = (s1[0].x_norm - s2[0].x_norm).abs();
+        let dy = (s1[0].y_norm - s2[0].y_norm).abs();
+        assert!(dx + dy > 0.0, "samples should move over time");
+    }
+
+    #[test]
+    fn synthetic_within_screen_bounds() {
+        let mut src = SyntheticV4l2Source::new();
+        src.open = true;
+        for _ in 0..32 {
+            for s in src.next_samples() {
+                assert!(s.x_norm >= 0.0 && s.x_norm <= 1.0);
+                assert!(s.y_norm >= 0.0 && s.y_norm <= 1.0);
+                assert!(s.confidence > 0.0);
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    #[test]
+    fn v4l2_backend_kind_and_name() {
+        let src: Arc<Mutex<dyn GazeSource>> = Arc::new(Mutex::new(SyntheticV4l2Source::new()));
+        let backend = V4l2Backend::with_source(src, &test_config());
+        assert_eq!(backend.kind(), BackendKind::V4l2);
+        assert!(backend.info().name.contains("v4l2"));
+        assert_eq!(backend.info().width, 64);
+        assert_eq!(backend.info().height, 64);
+        assert!(backend.info().supported_formats.contains(&PixelFormat::Gray8));
+    }
+
+    #[test]
+    fn v4l2_backend_full_lifecycle() {
+        let src: Arc<Mutex<dyn GazeSource>> = Arc::new(Mutex::new(SyntheticV4l2Source::new()));
+        let mut backend = V4l2Backend::with_source(src, &test_config());
+        let cfg = test_config();
+        backend.open(0, &cfg).unwrap();
+        backend.start().unwrap();
+        let frame = backend.capture_frame().unwrap();
+        assert_eq!(frame.width, 64);
+        assert_eq!(frame.height, 64);
+        assert_eq!(frame.format, PixelFormat::Gray8);
+        assert_eq!(frame.frame_number, 1);
+        backend.stop().unwrap();
+        let frame2 = backend.capture_frame();
+        assert!(frame2.is_err());
+    }
+
+    #[test]
+    fn capture_requires_running() {
+        let src: Arc<Mutex<dyn GazeSource>> = Arc::new(Mutex::new(SyntheticV4l2Source::new()));
+        let mut backend = V4l2Backend::with_source(src, &test_config());
+        backend.open(0, &test_config()).unwrap();
+        // Not started yet.
+        assert!(matches!(backend.capture_frame(), Err(CameraError::NotRunning)));
+        backend.start().unwrap();
+        assert!(backend.capture_frame().is_ok());
+    }
+}

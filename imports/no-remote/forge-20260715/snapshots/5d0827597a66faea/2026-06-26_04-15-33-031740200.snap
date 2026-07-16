@@ -1,0 +1,36 @@
+## Summary
+
+Add OpenTelemetry instrumentation to BytePort's Rust crates: a new `byteport-otel` crate with OTLP gRPC export, metrics per ADR-008, tracing spans for CLI commands, and feature-gated instrumentation in the DAG scheduler and transport layer.
+
+## Context
+
+This implements DAG unit E6 (OTel instrumentation review) as part of the Phenotype compute/infra epic E — BytePort: terminal UI, tools CLI, otel, governance. The instrumentation follows ADR-008 metric conventions and uses opentelemetry 0.28 SDK.
+
+## Changes
+
+### New crate: `crates/byteport-otel/`
+- **`config.rs`**: `TelemetryConfig` struct with builder pattern (service name, version, OTLP endpoint, enable flags, log level)
+- **`init.rs`**: `init_telemetry()` bootstraps global `TracerProvider` / `MeterProvider`, integrates `tracing-subscriber` with JSON + OTLP layers, graceful `TelemetryGuard` for flush-on-drop
+- **`metrics.rs`**: 17 metric instruments per ADR-008 table (serialization, transport, compression, schema) + CLI invocation/error counters
+- **`tracing.rs`**: Span helpers: `start_request_span`, `start_encode_span`, `start_decode_span`, `start_transport_span`
+- **`lib.rs`**: Module exports + re-exports of common OTel types
+
+### Instrumented crates
+- **`byteport-cli`**: `record_cli_invocation` / `record_cli_error` on every command; `init_default()` on startup; `tracing::info!` structured logging
+- **`byteport-dag/scheduler.rs`**: `#[instrument]` on `schedule()` gated behind `otel` feature
+- **`byteport-transport/lib.rs`**: `#[instrument]` on `S3UploadTransport::create_upload` gated behind `otel` feature
+
+### Feature gates
+All consuming crates declare `otel` feature (default = on) that pulls in `byteport-otel` + `tracing` as optional deps. Consumers can opt-out with `default-features = false`.
+
+## Verification
+- `cargo check --workspace`: pass
+- `cargo test --workspace`: all pass (config tests, metrics construct, span no-panic)
+- `cargo fmt --check`: pass
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: pass
+- `cargo doc --workspace --no-deps`: pass
+- Grade: **A+** (10/10, 100%)
+
+## Related
+- DAG unit E6 (this review)
+- DAG unit E7 (CLI trace follow-up, merged into this branch)

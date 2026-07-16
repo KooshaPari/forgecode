@@ -1,0 +1,6 @@
+@echo off
+setlocal
+set CARGO_TARGET_DIR=E:\cargo-target\benchora-verify
+cd /d C:\Users\koosh\Benchora
+cargo test --locked 1>C:\Users\koosh\_test5.out.log 2>C:\Users\koosh\_test5.err.log
+echo "test_exit=%ERRORLEVEL%" 1>C:\Users\koosh\_test5.exit.log 2>nul

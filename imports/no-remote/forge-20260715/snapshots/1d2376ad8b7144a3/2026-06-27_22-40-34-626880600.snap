@@ -1,0 +1,60 @@
+$ErrorActionPreference = 'Stop'
+Push-Location 'E:\phase-finish-stack\Tracera'
+
+Write-Host '=== Recent commits on feat/tracera-native-exe ==='
+& 'C:\Program Files\Git\cmd\git.exe' log --oneline -20 2>$null
+
+Write-Host ''
+Write-Host '=== subdir: Tracera/ (likely the main service) ==='
+$inner = Get-ChildItem 'Tracera' -Force -ErrorAction SilentlyContinue
+if ($inner) {
+  $inner | Sort-Object Name | ForEach-Object {
+    $note = if ($_.PSIsContainer) { 'DIR' } else { '{0}KB' -f [math]::Round($_.Length/1KB,0) }
+    '  {0,-30} {1}' -f $_.Name, $note
+  }
+}
+
+Write-Host ''
+Write-Host '=== Crates (Rust workspace) ==='
+if (Test-Path 'crates') {
+  Get-ChildItem 'crates' -Force -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object {
+    '  crate: ' + $_.Name
+  }
+}
+
+Write-Host ''
+Write-Host '=== pyproject.toml name ==='
+Get-Content 'pyproject.toml' -TotalCount 20
+Write-Host ''
+Write-Host '=== Cargo.toml ==='
+Get-Content 'Cargo.toml' -TotalCount 30
+Write-Host ''
+Write-Host '=== go.mod head ==='
+Get-Content 'go.mod' -TotalCount 14
+
+Write-Host ''
+Write-Host '=== README.md first 50 lines ==='
+Get-Content 'README.md' -TotalCount 50
+
+Write-Host ''
+Write-Host '=== docker-compose.yml services ==='
+Get-Content 'docker-compose.yml' -Raw | ConvertFrom-Json | Select-Object -ExpandProperty services -ErrorAction SilentlyContinue | ForEach-Object { '  service: ' + $_.Key }
+
+Write-Host ''
+Write-Host '=== server.exe (the bundled binary) ==='
+$b = Get-Item '.\server.exe' -ErrorAction SilentlyContinue
+if ($b) {
+  Write-Host ('  size: ' + [math]::Round($b.Length/1MB,1) + 'MB')
+  Write-Host ('  version (if any): ')
+  & '.\server.exe' --version 2>&1 | Out-String | Write-Host
+}
+
+Write-Host ''
+Write-Host '=== Test directories ==='
+@('tests','crates/*/tests','src/**/tests','Tracera/tests') | ForEach-Object {
+  if (Get-ChildItem $_ -ErrorAction SilentlyContinue | Measure-Object).Count {
+    Write-Host ('  ' + $_ + ' exits')
+  }
+}
+
+Pop-Location

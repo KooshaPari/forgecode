@@ -1,0 +1,22 @@
+DAG A28 Verification
+=====================
+Branch:     dag-A28-2026-06-25
+Commit SHA: c9e511c66ebaa29b6e6a5af35a9935af1919f8fb
+Timestamp:  2026-06-25T22:30:00Z
+Status:     VERIFIED
+
+What was done:
+- Checked out main branch (up to date with origin/main)
+- Created branch dag-A28-2026-06-25
+- Identified 4 orphaned Mojo kernel experiment files in bindings/mojo/src/:
+  - gpu.mojo     (377 lines - GPU backend selection, stubs/placeholders, no real impl)
+  - memory.mojo  (252 lines - memory pool management, all stubs/placeholders)
+  - nvms_ml.mojo (175 lines - ML/AI bindings, VectorEmbedding/TextClassifier/MLInferenceServer - all stubs)
+  - tensor.mojo  (286 lines - Tensor ops with GPU acceleration, naive impl with stubs)
+- These files were orphaned: already migrated to thegent per bindings/README.md
+  (their canonical home is now github.com/KooshaPari/thegent/src/thegent/infra/mojo_bridge.py)
+- No Mojo build infrastructure exists in this repo (no mojoproject, mojo.toml, etc.)
+- Removed the 4 .mojo files via git rm
+- Cleaned up empty bindings/mojo/ and bindings/mojo/src/ directories
+- Committed with message: 'deadcode(A28): sweep orphaned Mojo kernel experiments'
+- Pushed branch dag-A28-2026-06-25 to origin

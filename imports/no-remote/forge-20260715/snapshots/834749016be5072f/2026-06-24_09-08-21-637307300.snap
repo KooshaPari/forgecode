@@ -1,0 +1,86 @@
+//! Credential Manager for KVirtualStage / phenotype-infra.
+//!
+//! This crate provides secure credential storage, OAuth2 flows,
+//! cryptographic operations, and credential injection for virtual
+//! desktop environments.
+//!
+//! Absorbed from: KVirtualStage (credential_manager/)
+//! Original source: C:\Users\koosh\_tmp_kvirtualstage\credential_manager
+//! Absorbed on: 2026-06-24
+
+pub mod config;
+pub mod crypto;
+pub mod error;
+pub mod oauth;
+pub mod vault;
+
+// Re-exports
+pub use config::CredentialConfig;
+pub use crypto::CryptoEngine;
+pub use error::{CredentialError, Result};
+pub use oauth::{OAuthManager, StoredToken, TokenResponse};
+pub use vault::{AuditEntry, CredentialEntry, CredentialMetadata, CredentialType, CredentialVault};
+
+use std::path::Path;
+
+/// High-level credential manager that coordinates vault, crypto, OAuth, and injection
+pub struct CredentialManager {
+    pub config: CredentialConfig,
+    pub vault: CredentialVault,
+    pub crypto: CryptoEngine,
+    pub oauth: OAuthManager,
+}
+
+impl CredentialManager {
+    /// Create a new credential manager with the given configuration
+    pub fn new(config: CredentialConfig) -> Self {
+        let crypto = CryptoEngine::new(config.security.encryption.clone());
+        let vault = CredentialVault::new(config.storage.clone(), crypto);
+        let oauth = OAuthManager::new(config.oauth.clone());
+
+        Self {
+            config,
+            vault,
+            crypto,
+            oauth,
+        }
+    }
+
+    /// Initialize the credential manager (load vault, setup crypto)
+    pub fn initialize(&mut self, master_password: &str) -> Result<()> {
+        let salt = CryptoEngine::generate_salt(self.config.security.key_derivation.salt_length);
+        self.crypto.initialize_from_password(master_password, &salt)?;
+        self.vault.initialize()
+    }
+
+    /// Load configuration from a file and create a credential manager
+    pub fn from_config<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let config = CredentialConfig::from_file(path)?;
+        Ok(Self::new(config))
+    }
+
+    /// Store a credential securely
+    pub fn store_credential(&mut self, entry: CredentialEntry) -> Result<()> {
+        self.vault.store(entry)
+    }
+
+    /// Retrieve a credential
+    pub fn get_credential(&self, id: &str) -> Result<CredentialEntry> {
+        self.vault.retrieve(id)
+    }
+
+    /// Delete a credential
+    pub fn delete_credential(&mut self, id: &str) -> Result<()> {
+        self.vault.delete(id)
+    }
+
+    /// List all credential IDs
+    pub fn list_credentials(&self) -> Vec<String> {
+        self.vault.list()
+    }
+
+    /// Search credentials
+    pub fn search_credentials(&self, query: &str) -> Vec<&CredentialEntry> {
+        self.vault.search(query)
+    }
+}

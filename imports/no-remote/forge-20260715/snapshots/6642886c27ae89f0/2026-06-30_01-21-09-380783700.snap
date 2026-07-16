@@ -1,0 +1,60 @@
+[package]
+name = "phenotype-event-bus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Event bus abstractions for the Phenotype ecosystem"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+ulid = { workspace = true }
+dashmap = { workspace = true }
+phenotype-error-core = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+
+[features]
+default = []
+# Postgres-backed OutboxStore (EVE-SOTA-002). Adds sqlx with the postgres
+# backend enabled.
+postgres = ["sqlx-postgres"]
+# SQLite-backed OutboxStore (EVE-SOTA-004). Adds sqlx with the sqlite
+# backend enabled so the embedded adapter can use the same
+# `OutboxStore` trait surface as `PostgresOutbox`.
+sqlite = ["sqlx-sqlite"]
+
+[dependencies.sqlx]
+# Common sqlx bits shared by both backends. Each feature below
+# activates its own backend on top via a thin alias.
+version = "0.8"
+default-features = false
+features = ["runtime-tokio-rustls", "macros", "chrono", "json"]
+optional = true
+
+# Per-feature alias so each backend only adds its own sqlx feature.
+# Using `dep:` indirection keeps the optional dep shared but routes
+# features correctly.
+[dependencies.sqlx-postgres]
+package = "sqlx"
+version = "0.8"
+default-features = false
+features = ["runtime-tokio-rustls", "macros", "chrono", "json", "postgres"]
+optional = true
+
+[dependencies.sqlx-sqlite]
+package = "sqlx"
+version = "0.8"
+default-features = false
+features = ["runtime-tokio-rustls", "macros", "chrono", "json", "sqlite"]
+optional = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

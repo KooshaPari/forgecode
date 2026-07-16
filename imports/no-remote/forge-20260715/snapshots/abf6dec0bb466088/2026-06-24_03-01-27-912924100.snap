@@ -1,0 +1,21 @@
+import os
+import validate_governance as v
+
+repo = os.path.dirname(os.path.abspath('validate_governance.py'))
+print('repo:', repo)
+checks_list = [
+    ('CLAUDE.md', os.path.exists(os.path.join(repo, 'CLAUDE.md'))),
+    ('AGENTS.md', os.path.exists(os.path.join(repo, 'AGENTS.md'))),
+    ('README.md', os.path.exists(os.path.join(repo, 'README.md'))),
+    ('ai-traceability.yaml', os.path.exists(os.path.join(repo, '.phenotype/ai-traceability.yaml'))),
+    ('traceability.yml', os.path.exists(os.path.join(repo, '.github/workflows/traceability.yml'))),
+    ('specs dir', os.path.isdir(os.path.join(repo, 'specs'))),
+    ('ptrace', v.run_ptrace_check(repo)),
+]
+for name, ok in checks_list:
+    print(f'  {name}: {ok}')
+passed = sum(c[1] for c in checks_list)
+total = len(checks_list)
+print(f'Pass: {passed}/{total} = {passed/total*100:.1f}%')
+print('Threshold: 80%')
+print('Result:', 'PASS' if (passed/total*100) >= 80 else 'FAIL')

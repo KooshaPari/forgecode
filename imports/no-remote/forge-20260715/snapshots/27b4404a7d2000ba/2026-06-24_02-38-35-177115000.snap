@@ -1,0 +1,112 @@
+name: Security Scans
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+"on":
+  push:
+    branches:
+    - main
+    - develop
+  pull_request:
+    branches:
+    - main
+    - develop
+  schedule:
+  - cron: 0 6 * * 1
+  workflow_dispatch: null
+permissions:
+  contents: read
+  security-events: write
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+    - name: Run npm audit
+      run: 'npm audit --audit-level=moderate --json > npm-audit.json || true
+
+        '
+      continue-on-error: true
+    - name: Run pip-audit
+      run: 'pip install pip-audit
+
+        pip-audit --format=json > pip-audit.json || true
+
+        '
+      continue-on-error: true
+    - name: Run Trivy
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+      with:
+        scan-type: fs
+        format: json
+        output: trivy.json
+      continue-on-error: true
+    - name: Upload security reports
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: security-reports
+        path: 'npm-audit.json
+
+          pip-audit.json
+
+          trivy.json
+
+          '
+    - name: Check for critical vulnerabilities
+      run: "echo \"=== Security Scan Summary ===\"\necho \"Review security reports\
+        \ at: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id\
+        \ }}\"\n\n# Check npm audit results\nif [ -f npm-audit.json ]; then\n  CRITICAL=$(cat\
+        \ npm-audit.json | jq '.metadata.vulnerabilities.critical // 0')\n  if [ \"\
+        $CRITICAL\" -gt 0 ]; then\n    echo \"::warning::npm: $CRITICAL critical vulnerabilities\
+        \ found\"\n  fi\nfi\n"
+    timeout-minutes: 45
+  daily-vuln-check:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+    - name: Check for new vulnerabilities
+      run: "echo \"Checking for new CVEs...\"\n\n# This creates a GitHub issue for\
+        \ new vulnerabilities\ngh issue create \\\n  --repo \"${{ github.repository\
+        \ }}\" \\\n  --title \"Weekly Security Scan - $(date +%Y-%m-%d)\" \\\n  --body\
+        \ \"Automated security scan completed. Check Dependabot alerts and security\
+        \ reports.\" \\\n  --label \"security,automated\" || echo \"Issue creation\
+        \ skipped\"\n"
+    timeout-minutes: 45
+  codeql:
+  codeql:
+    runs-on: ubuntu-latest
+    # Default CodeQL setup is enabled at the repo/org level for this public repo.
+    # Running an advanced CodeQL job alongside it produces:
+    #   "Code Scanning could not process the submitted SARIF file:
+    #    CodeQL analyses from advanced configurations cannot be processed
+    #    when the default setup is enabled."
+    # We disable this advanced job; the default setup covers javascript, python and go.
+    if: false
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@0daab03d71ff584ef619d027a3fd9146679c5d84
+        with:
+          languages: javascript, python, go
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@0daab03d71ff584ef619d027a3fd9146679c5d84
+        with:
+          category: /language:javascript,python,go
+      timeout-minutes: 45
+  dependency-review:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Dependency Review
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+    timeout-minutes: 45

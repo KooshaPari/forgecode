@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Final clean dedup of nippon search output - keep only ORIGINAL files.
+Strips ANSI escape codes from content lines so colon-counting parses correctly.
+"""
+import sys
+import re
+import os
+from collections import defaultdict
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+NOISE_BASENAMES = {
+    "_nippon_search.py", "_nippon_filter.py", "_nippon_summarize.py",
+    "_nippon_search.out", "_nippon_search.err",
+    "_nippon_filter.out", "_nippon_summarize.out",
+    "_nippon_toplevel.txt", "_nippon_state.txt",
+    "_nippon_run_a.bat", "_nippon_batch_a.txt",
+    "_nippon_debug.py", "_nippon_debug.out",
+}
+NOISE_BASENAME_PREFIXES = ("_nippon_done_",)
+NOISE_DIR_PARTS = (".codex\\logs_", ".codex\\sessions\\", ".codex\\cache\\")
+
+def is_self_tooling(path):
+    p_low = path.lower()
+    if any(n in p_low for n in NOISE_BASENAMES):
+        return True
+    if any(p in path for p in NOISE_BASENAME_PREFIXES):
+        return True
+    if any(d in path for d in NOISE_DIR_PARTS):
+        return True
+    return False
+
+def parse_line(line):
+    """Parse 'PATH:LINENO:CONTENT' tolerating extra colons in CONTENT.
+    Strips ANSI escape sequences first. Uses rsplit(':', 2) but verifies
+    that the second-to-last field is all digits (the line number)."""
+    # Strip ANSI escapes
+    if isinstance(line, bytes):
+        line = ANSI_ESCAPE.sub("", line.decode("utf-8", errors="replace"))
+    else:
+        line = ANSI_ESCAPE.sub("", line)
+    parts = line.rsplit(":", 2)
+    if len(parts) != 3:
+        return None
+    path, lineno, content = parts
+    if not lineno.isdigit():
+        return None
+    return path, int(lineno), content
+
+
+with open(r"C:\Users\koosh\_nippon_search.out", "rb") as f:
+    raw_bytes = f.read()
+
+# Strip ANSI escapes from the entire blob first
+clean_bytes = ANSI_ESCAPE.sub(b"", raw_bytes)
+clean_text = clean_bytes.decode("utf-8", errors="replace")
+raw_lines = clean_text.splitlines()
+
+file_to_hits = defaultdict(list)
+total = 0
+path_noise = 0
+for ln in raw_lines:
+    if not ln or ln.startswith("#"):
+        continue
+    parsed = parse_line(ln)
+    if not parsed:
+        continue
+    path, lineno, content = parsed
+    total += 1
+    if is_self_tooling(path):
+        path_noise += 1
+        continue
+    file_to_hits[path].append((lineno, content))
+
+print(f"# Raw hits: {total}")
+print(f"# Self-tooling noise filtered: {path_noise}")
+print(f"# Real hits: {sum(len(v) for v in file_to_hits.values())} across {len(file_to_hits)} files")
+print()
+print("# === Unique ORIGINAL files with 'nippon' (sorted by hit count desc, then path) ===")
+for path in sorted(file_to_hits.keys(), key=lambda p: (-len(file_to_hits[p]), p.lower())):
+    hits = file_to_hits[path]
+    cnt = len(hits)
+    seen = set()
+    sample_lines = []
+    for ln, c in hits:
+        if ln in seen:
+            continue
+        seen.add(ln)
+        snippet = c if len(c) <= 320 else c[:317] + "..."
+        sample_lines.append((ln, snippet))
+        if len(sample_lines) >= 8:
+            break
+    line_list = ",".join(str(x[0]) for x in sample_lines)
+    print(f"  [{cnt}x] {path}  lines=[{line_list}{' ...' if cnt>len(sample_lines) else ''}]")
+    for ln, snippet in sample_lines:
+        print(f"        L{ln}: {snippet}")

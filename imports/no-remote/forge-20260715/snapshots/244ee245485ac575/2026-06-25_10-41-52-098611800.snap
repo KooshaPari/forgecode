@@ -1,0 +1,21 @@
+' delete_archived_20260625_final.vbs
+' Launches the .cmd file fully detached (no stdio blocking)
+' Logs to C:\Users\koosh\_cu_audit\delete_archived_final_vbs.log
+
+Dim shell, fso, logPath
+Set shell = CreateObject("WScript.Shell")
+Set fso = CreateObject("Scripting.FileSystemObject")
+
+logPath = "C:\Users\koosh\_cu_audit\delete_archived_final_vbs.log"
+
+Dim logFile
+Set logFile = fso.OpenTextFile(logPath, 8, True)
+logFile.WriteLine "[" & Now() & "] Launching delete_archived_20260625.cmd detached..."
+
+' WindowStyle=0 (hidden), bWaitOnReturn=False (truly async)
+shell.Run "cmd /c C:\Users\koosh\_cu_audit\archives\delete_archived_20260625.cmd", 0, False
+
+logFile.WriteLine "[" & Now() & "] Launch call returned. Delete running in background."
+logFile.Close
+
+WScript.Quit 0

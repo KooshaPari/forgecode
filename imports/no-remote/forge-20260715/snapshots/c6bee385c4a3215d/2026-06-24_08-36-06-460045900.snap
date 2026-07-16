@@ -1,0 +1,52 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/pyright/main/packages/vscode-pyright/schemas/pyrightconfig.schema.json",
+  "include": [
+    "src",
+    "tests"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.venv",
+    "**/venv",
+    "**/site-packages",
+    "**/dist",
+    "**/build",
+    "**/.pytest_cache",
+    "**/.mypy_cache",
+    "**/.ruff_cache",
+    "**/htmlcov",
+    "**/.tox",
+    "**/.git",
+    "**/.idea",
+    "**/.vscode",
+    "**/.worktrees",
+    "**/.next",
+    "**/out"
+  ],
+  "typeCheckingMode": "strict",
+  "reportMissingTypeStubs": false,
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": false,
+  "reportUnusedImport": "none",
+  "reportUnusedClass": "none",
+  "reportUnusedFunction": "none",
+  "reportUnusedVariable": "none",
+  "reportDuplicateImport": "none",
+  "reportWildcardImportFromLibrary": false,
+  "reportOptionalMemberAccess": false,
+  "reportOptionalSubscript": false,
+  "reportPrivateUsage": false,
+  "reportDeprecated": "none",
+  "reportUnnecessaryTypeIgnoreComment": "none",
+  "reportMissingTypeArgument": "none",
+  "reportUnknownVariableType": "none",
+  "reportUnknownArgumentType": "none",
+  "reportUnknownMemberType": "none",
+  "reportUnknownParameterType": "none",
+  "pythonVersion": "3.13",
+  "pythonPlatform": "All",
+  "extraPaths": [
+    "src"
+  ]
+}

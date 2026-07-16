@@ -1,0 +1,102 @@
+param()
+
+$repo = "C:\Users\koosh\_compute_infra_audit\PhenoCompose.git"
+$now = 1782600032
+$cutoff = $now - (90 * 86400)
+
+# Read timestamps
+$lines = Get-Content "C:\Users\koosh\_compute_infra_audit\timestamps.txt"
+
+$active = @()
+$stale = @()
+
+foreach ($line in $lines) {
+    $parts = $line.Split(' ', 2)
+    $ts = [long]$parts[0]
+    $file = $parts[1]
+    $dt = (Get-Date -UnixTimeSeconds $ts).ToString('yyyy-MM-dd')
+    if ($ts -ge $cutoff) {
+        $active += @{File=$file; Timestamp=$ts; Date=$dt}
+    } else {
+        $stale += @{File=$file; Timestamp=$ts; Date=$dt}
+    }
+}
+
+Write-Output ("Active files: " + $active.Count)
+Write-Output ("Stale files (90d+): " + $stale.Count)
+
+# For stale files, check if referenced elsewhere in repo
+$allFiles = git -C $repo ls-tree -r HEAD --name-only
+$orphaned = @()
+$referencedStale = @()
+
+foreach ($sf in $stale) {
+    $filepath = $sf.File
+    $stem = [System.IO.Path]::GetFileNameWithoutExtension($filepath)
+    $basename = [System.IO.Path]::GetFileName($filepath)
+    
+    $hasRef = $false
+    foreach ($af in $allFiles) {
+        if ($af -eq $filepath) { continue }
+        $content = git -C $repo show "HEAD:$af"
+        $escaped = [regex]::Escape($basename)
+        if ($content -match $escaped) {
+            $hasRef = $true
+            break
+        }
+    }
+    
+    if (-not $hasRef) {
+        $orphaned += $sf
+    } else {
+        $referencedStale += $sf
+    }
+}
+
+Write-Output ("Orphaned (no refs): " + $orphaned.Count)
+Write-Output ("Stale (has refs): " + $referencedStale.Count)
+
+# Build report
+$report = New-Object PSObject -Property @{
+    report_id = "A8-dead-code-sweep"
+    repo = "PhenoCompose"
+    generated_at = (Get-Date -UFormat "%Y-%m-%dT%H:%M:%SZ")
+    current_timestamp = $now
+    cutoff_timestamp = $cutoff
+    cutoff_days = 90
+    summary = @{
+        total_files = $active.Count + $stale.Count
+        active = $active.Count
+        stale = $stale.Count
+        orphaned = $orphaned.Count
+    }
+    categories = @{}
+}
+
+$report.summary.total_files = $active.Count + $stale.Count
+
+$activeList = @()
+foreach ($f in $active) {
+    $activeList += @{file = $f.File; last_modified = $f.Date; timestamp = $f.Timestamp}
+}
+
+$staleList = @()
+foreach ($f in $referencedStale) {
+    $staleList += @{file = $f.File; last_modified = $f.Date; timestamp = $f.Timestamp}
+}
+
+$orphanedList = @()
+foreach ($f in $orphaned) {
+    $orphanedList += @{file = $f.File; last_modified = $f.Date; timestamp = $f.Timestamp}
+}
+
+$report.categories = @{
+    active = $activeList
+    stale = $staleList
+    orphaned = $orphanedList
+}
+
+$json = $report | ConvertTo-Json -Depth 10
+$outPath = "C:\Users\koosh\_compute_infra_audit\reports\A8_dead_code_sweep.json"
+$json | Out-File -FilePath $outPath -Encoding UTF8
+Write-Output ("Report written to " + $outPath)

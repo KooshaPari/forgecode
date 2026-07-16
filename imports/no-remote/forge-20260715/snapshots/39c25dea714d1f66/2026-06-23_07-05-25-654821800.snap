@@ -1,0 +1,19 @@
+import json, sys, io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+p = r'C:/Users/koosh/phenotype-registry-pr172-check/registry/disposition-index.json'
+d = json.load(open(p, encoding='utf-8'))
+rows = d.get('rows', [])
+print('total:', len(rows))
+print(f"{'id':32s} | {'disposition':14s} | {'target':20s} | {'wave':6s} | {'path':40s} | {'fsm':8s} | {'gh':12s} | {'owner':14s}")
+print('-' * 180)
+for r in rows:
+    rid = r.get('id', '?')[:32]
+    dispo = r.get('disposition', '?')[:14]
+    target = r.get('target', '?')[:20]
+    wave = str(r.get('wave', '?'))[:6]
+    path = (r.get('path') or r.get('local_path') or '?')[:40]
+    fsm = r.get('fsm', '?')[:8]
+    gh = r.get('github') or r.get('gh_path') or '?'
+    gh = gh[:12]
+    owner = r.get('owner', '?')[:14]
+    print(f"{rid:32s} | {dispo:14s} | {target:20s} | {wave:6s} | {path:40s} | {fsm:8s} | {gh:12s} | {owner:14s}")

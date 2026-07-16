@@ -1,0 +1,14 @@
+@echo off
+setlocal
+cd /d C:\Users\koosh\Civis
+
+git config --local --unset-all credential.https://github.com.helper 2>nul
+git config --local credential.helper ""
+
+set GIT_ASKPASS=C:\Users\koosh\Civis\_askpass.bat
+set GIT_TERMINAL_PROMPT=0
+set GIT_TRACE=1
+set GIT_TRACE_CURL=1
+
+git push -u origin fix/security-replay-path-traversal 1>C:\Users\koosh\Civis\_push_stdout.log 2>C:\Users\koosh\Civis\_push_stderr.log
+echo --- EXIT %ERRORLEVEL% ---

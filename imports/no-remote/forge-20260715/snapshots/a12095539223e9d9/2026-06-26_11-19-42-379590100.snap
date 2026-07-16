@@ -1,0 +1,27 @@
+# Prune old rows from call_logs / proxy_logs / usage_history in chunks.
+# Reads SQL queries from SQL/*.sql and runs them with bound LIMIT batches.
+
+$sqlite = 'C:\Users\koosh\platform-tools\sqlite3.exe'
+$db     = 'C:\Users\koosh\AppData\Roaming\omniroute\storage.sqlite'
+$batch  = 1000
+
+function Invoke-ChunkedDelete([string]$table) {
+    $total = 0
+    while ($true) {
+        $sql = "DELETE FROM $table WHERE id IN (SELECT id FROM $table WHERE timestamp < datetime('now','-7 days') ORDER BY timestamp ASC LIMIT $batch);"
+        $tmp = New-TemporaryFile
+        Set-Content -Path $tmp -Value $sql -Encoding UTF8
+        $n = & $sqlite $db < $tmp.FullName
+        Remove-Item $tmp -Force
+        if ([int]$n -le 0) { break }
+        $total += [int]$n
+        Write-Host "  $table chunk=$n total=$total"
+        if ($total -gt 500000) { break }
+    }
+    Write-Host "$table DONE deleted=$total"
+}
+
+foreach ($t in 'call_logs','proxy_logs','usage_history') {
+    Write-Host "Pruning $t ..."
+    Invoke-ChunkedDelete $t
+}

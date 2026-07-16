@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Use relative path after cd into project root
+cd '/c/Users/koosh/phenotype-registry' || exit 1
+cd '/c/Users/koosh' || exit 1
+# Now invoke grade.sh with relative path
+'./phenotype-registry/registry/audit-absorption-justification/grade.sh' './_sample_audit.md'
+echo "---EXIT_CODE=$?---"

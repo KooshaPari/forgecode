@@ -1,0 +1,19 @@
+DAG G2 Verification
+=====================
+Branch:     dag-G2-2026-06-25
+Commit SHA: 596178ddcdb5b9c8da5bd9ad6b6882f8f547f3c6
+Timestamp:  2026-06-25T23:30:00Z
+Status:     VERIFIED
+
+What was done:
+- Checked out main branch (up to date with origin/main)
+- Created branch dag-G2-2026-06-25
+- Created Dockerfile for NVMS OCI image build (multi-stage Rust builder + distroless runtime)
+- Created .github/workflows/slsa-provenance.yml with SLSA Build L3 provenance configuration:
+  - Build OCI image step (docker/build-push-action@v5 with provenance + SBOM)
+  - Generate provenance step (slsa-framework/slsa-github-generator containerized_slsa3.yml@v2)
+  - Verify provenance step (cosign verify-attestation + gh attestation verify)
+- Created docs/adr/NVMS_OCI_SLSA.md with full SLSA L3 gap analysis and ADR documentation
+- Updated docs/slsa.md to reflect dual provenance (L2 for native binaries, L3 for NVMS OCI image)
+- Committed with message: 'slsa(G2): SLSA L3 on NVMS OCI image'
+- Pushed branch dag-G2-2026-06-25 to origin

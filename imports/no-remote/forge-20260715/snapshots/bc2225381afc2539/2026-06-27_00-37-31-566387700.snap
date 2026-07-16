@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Populate working tree for all workspace member crates using checkout-index.
+set -eu
+
+cd "C:/Users/koosh/repos/phenotype-tooling"
+
+# Crates listed in root Cargo.toml members
+CRATES=(
+  acceptance-contract
+  dag-scheduler
+  docs-health
+  fr-trace
+  quality-gate
+  legacy-scan
+  agent-orchestrator
+  audit-privacy
+  bench-guard
+  commit-msg-check
+  doc-link-check
+  fr-coverage
+  release-cut
+  sbom-gen
+  fuzz-setup
+  anthropic-usage-poll
+  agent-forecast
+  temporal-grounding
+  phenotype-resilience
+  phenotype-service-registry
+  phenotype-config
+  phenotype-diff
+  worktree-manager
+  phenotype-tooling-observability
+)
+
+for c in "${CRATES[@]}"; do
+  echo "=== $c ==="
+  # Discover files at HEAD inside the crate dir
+  files=$(git ls-tree -r --name-only HEAD "crates/$c/" 2>/dev/null || true)
+  if [ -z "$files" ]; then
+    echo "  (no files at HEAD)"
+    continue
+  fi
+  # checkout-index them all, ignoring skip-worktree bits
+  git checkout-index --ignore-skip-worktree-bits -f -- $files 2>&1 | grep -v "warning:" || true
+done
+
+# Also restore bin/hook-entry
+echo "=== bin/hook-entry ==="
+files=$(git ls-tree -r --name-only HEAD "bin/" 2>/dev/null || true)
+if [ -n "$files" ]; then
+  git checkout-index --ignore-skip-worktree-bits -f -- $files 2>&1 | grep -v "warning:" || true
+fi
+
+echo "=== done ==="
+ls crates/

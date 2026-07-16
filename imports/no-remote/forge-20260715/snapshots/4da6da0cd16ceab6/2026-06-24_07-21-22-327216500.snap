@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Debug helper
+AUDIT="/c/Users/koosh/phenotype-registry/audits/absorption-justifications/go-nippon-2026-06-23.md"
+
+echo "=== Has section tests ==="
+for sec in "Source" "Target" "Status" "Last-Resort-Exceptions" "Restore-Command" "Branch Inventory Summary" "Confidence" "Final Recommendation"; do
+  lower=$(echo "$sec" | tr '[:upper:]' '[:lower:]')
+  if grep -Eiq "^##[[:space:]]+${lower}([[:space:]]|$)" "$AUDIT"; then
+    echo "  [OK] $sec"
+  else
+    echo "  [MISS] $sec"
+  fi
+done
+
+echo ""
+echo "=== Section body (Branch Inventory Summary) ==="
+awk -v IGNORECASE=1 -v sec='branch inventory summary' '
+  /^##[[:space:]]/ {
+    h = tolower($0)
+    sub(/^##[[:space:]]+/, "", h)
+    sub(/[[:space:]].*$/, "", h)
+    if (in_sec && h != "") { exit }
+    if (h == sec) { in_sec = 1; next }
+  }
+  in_sec { print }
+' "$AUDIT"
+echo "[END]"

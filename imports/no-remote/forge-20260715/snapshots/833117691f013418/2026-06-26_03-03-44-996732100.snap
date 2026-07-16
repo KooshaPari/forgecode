@@ -1,0 +1,20 @@
+{
+  "project": "BytePort",
+  "dag_unit": "E6",
+  "stack": "rust",
+  "mode": "fast",
+  "branch": "feat/otel-instrumentation",
+  "pr": 253,
+  "score": 0,
+  "max": 10,
+  "percentage": 0,
+  "grade": "PENDING",
+  "checks": [
+    {"name":"build","status":"running","score":0,"max":2,"detail":"cargo check --workspace — OTel 0.28 deps downloading"},
+    {"name":"test-unit","status":"pending","score":0,"max":3,"detail":"blocked on build"},
+    {"name":"fmt","status":"pending","score":0,"max":2,"detail":"blocked on cargo metadata"},
+    {"name":"clippy","status":"pending","score":0,"max":2,"detail":"blocked on build"},
+    {"name":"doc","status":"pending","score":0,"max":1,"detail":"blocked on build"}
+  ],
+  "timestamp": "2026-06-26T02:45:00Z"
+}

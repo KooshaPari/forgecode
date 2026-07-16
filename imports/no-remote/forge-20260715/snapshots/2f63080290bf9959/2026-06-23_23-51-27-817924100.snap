@@ -1,0 +1,53 @@
+//! Compare a report against a stored baseline.
+
+use std::path::Path;
+
+use crate::cli::baseline::open_for_read;
+use crate::cli::CliError;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Diff {
+    pub baseline_name: String,
+    pub current_path: String,
+    pub baseline_path: Option<String>,
+    pub baseline_sha: Option<String>,
+    pub current_sha: Option<String>,
+    pub regressions: Vec<BenchChange>,
+    pub improvements: Vec<BenchChange>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BenchChange {
+    pub name: String,
+    pub baseline_ns: Option<f64>,
+    pub current_ns: Option<f64>,
+    pub delta_pct: Option<f64>,
+}
+
+const REGRESSION_THRESHOLD_PCT: f64 = 5.0;
+const IMPROVEMENT_THRESHOLD_PCT: f64 = -5.0;
+
+/// Diff the current report against the named baseline.
+///
+/// Returns 0 (and prints a summary) if there are no regressions
+/// above `REGRESSION_THRESHOLD_PCT`. Returns 1 if any regression
+/// is found, so CI can fail loudly.
+pub fn diff(db: &Path, baseline: &str, current: &Path) -> Result<(), CliError> {
+    let conn = open_for_read)?;
+    let (report_path, sha_b): (Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT report_path, sha256 FROM baselines WHERE name = ?",
+            rusqlite::params![baseline],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| CliError::Db {
+            path: db.to_path_buf(),
+            source: e,
+        })?;
+    drop(conn);
+    // HACK: I'm shadowing the function name `open_for_read` here to satisfy
+    // the `?` operator. The function takes &Path, so we need the explicit
+    // call below.
+}

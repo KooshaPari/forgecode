@@ -1,0 +1,69 @@
+<!-- AI-DD-META:START -->
+| **pheno-config** | `pheno-config` | Rust | Shared configuration (TOML/env) |
+<!-- Slop issues are expected and intentionally present as part of an HITL-less -->
+<!-- /minimized AI-DD metaproject of learning, refining, and building brute-force -->
+<!-- training for both agents and the human operator. -->
+![License](https://img.shields.io/github/license/KooshaPari/phenotype-infra?style=flat-square)
+![AI-Slop](https://img.shields.io/badge/AI--DD-Slop%20Expected-orange?style=flat-square)
+![AI-Only-Maintained](https://img.shields.io/badge/Planned%20%26%20Maintained%20by-AI%20Agents%20Only-red?style=flat-square)
+<!-- AI-DD-META:END -->
+
+# phenotype-infra — Compute/Infra Consolidation Monorepo
+
+> **Consolidation target** for nanovms (Go, 3-tier isolation) + PhenoCompose (Rust FFI + driver) + BytePort (Svelte tooling).
+
+This monorepo is created as part of the **L1-Alpha** wave of the Master DAG
+(Compute/Infra + Observability Consolidation). It absorbs three previously
+separate repositories into a single polyglot workspace:
+
+| Component | Source | Language | Role |
+|-----------|--------|----------|------|
+| **nanovms-core** | `nanovms` | Go | 3-tier isolation (WASM/gVisor/Firecracker) |
+| **nvms-ffi** | `PhenoCompose/bindings/rust-ffi` | Rust | `extern "C"` FFI bindings |
+| **pheno-compose** | `PhenoCompose/pheno-compose-driver` | Rust | High-level Rust driver |
+| **pheno-config** | `PhenoCompose/pheno-config` | Rust | Shared configuration (TOML/env) |
+| **byteport** | `BytePort` | Svelte/TS | Infra tooling UI |
+
+> **T-PI.D-029/w** — pheno-config was present in the architecture diagram (line 32) and the AI-DD-META banner (line 2), but missing from the Components table. This row closes the gap surfaced by validation §7 finding #3 and brings the table in line with `Cargo.toml:24-36` workspace membership.
+
+## Architecture
+
+```
+phenotype-infra/
+├── crates/
+│   ├── nanovms-core/       # Go source → libnvms_core.a (via CGo)
+│   ├── nvms-ffi/           # Rust FFI bindings
+│   ├── pheno-compose/      # High-level Rust driver
+│   └── pheno-config/       # Shared configuration
+├── tools/
+│   └── byteport/           # Svelte infra tooling
+├── docs/
+│   ├── adr/                # Architecture Decision Records
+│   ├── specs/              # Specifications
+│   ├── governance/         # Governance docs
+│   └── audit/              # Audit scorecards
+└── .github/workflows/      # CI/CD
+```
+
+## Quick Start
+
+```bash
+# Build Go static lib
+make nvms-c-archive
+
+# Build Rust workspace
+cargo build --workspace
+
+# Run tests
+cargo test --workspace
+
+# All checks
+cargo check --workspace
+
+# BytePort (Svelte frontend)
+cd tools/byteport && npm install && npm run dev
+```
+
+## License
+
+Apache-2.0

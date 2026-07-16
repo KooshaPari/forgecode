@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Fetch repo sizes via gh API and rank by size."""
+import json, subprocess, sys
+
+# Load candidates
+candidates = json.load(open('audit_candidates.json', encoding='utf-8'))
+
+results = []
+for c in candidates:
+    name = c['name']
+    path = c['path']
+    print(f'Querying {path}...', flush=True)
+    try:
+        out = subprocess.check_output(
+            ['gh', 'api', f'repos/{path}'],
+            stderr=subprocess.DEVNULL, timeout=15
+        ).decode('utf-8', errors='replace')
+        data = json.loads(out)
+        size_kb = data.get('size', 0)
+        archived = data.get('archived', False)
+        pushed = data.get('pushed_at', '?')
+        results.append({
+            **c,
+            'size_kb': size_kb,
+            'archived_remote': archived,
+            'pushed_at': pushed,
+        })
+        print(f'  -> {size_kb} KB, archived={archived}, pushed={pushed}', flush=True)
+    except subprocess.CalledProcessError as e:
+        print(f'  -> ERROR: gh api failed', flush=True)
+        results.append({**c, 'size_kb': 0, 'archived_remote': None, 'pushed_at': '?', 'error': True})
+    except subprocess.TimeoutExpired:
+        print(f'  -> TIMEOUT', flush=True)
+        results.append({**c, 'size_kb': 0, 'archived_remote': None, 'pushed_at': '?', 'error': True})
+
+# Sort by size desc
+results.sort(key=lambda r: r.get('size_kb', 0), reverse=True)
+
+# Write full results
+with open('audit_candidates_with_size.json', 'w', encoding='utf-8') as f:
+    json.dump(results, f, indent=2)
+
+# Print top 10
+print('\nTop 10 candidates by size:')
+for i, r in enumerate(results[:10], 1):
+    err = ' [ERR]' if r.get('error') else ''
+    arc = ' [REMOTE-ARCHIVED]' if r.get('archived_remote') else ''
+    print(f'{i:2d}. {r["name"]:30s} {r["size_kb"]:>6d} KB | fsm={r["fsm"]:12s} disp={r["disp"]:18s}{arc}{err}')

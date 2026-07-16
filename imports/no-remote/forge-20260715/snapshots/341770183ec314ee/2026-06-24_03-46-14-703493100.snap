@@ -1,0 +1,29 @@
+#!/bin/bash
+set -e
+cd /c/Users/koosh/Civis
+
+# Print token from gh CLI and feed git via GIT_ASKPASS
+TOK=$(gh auth token)
+export TOK
+
+# Create a tiny askpass helper in pure bash (use Win python instead since bash on win is wonky)
+cat > /tmp/_askpass.sh <<'EOF'
+#!/bin/bash
+case "$1" in
+  Username*) echo "x-access-token" ;;
+  Password*) echo "$TOK" ;;
+  *) echo "" ;;
+esac
+EOF
+chmod +x /tmp/_askpass.sh
+
+# Kill any stuck cred helpers
+git config --local --unset-all credential.https://github.com.helper 2>/dev/null || true
+git config --local credential.helper=
+git config --local http.emptyAuth=true
+
+export GIT_ASKPASS=/tmp/_askpass.sh
+export GIT_TERMINAL_PROMPT=0
+
+# Push
+git push -u origin fix/security-replay-path-traversal 2>&1

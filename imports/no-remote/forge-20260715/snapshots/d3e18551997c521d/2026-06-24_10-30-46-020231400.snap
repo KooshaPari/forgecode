@@ -1,0 +1,52 @@
+"""Create bash shims for Windows-side Python tools so lefthook's pre-push
+`./grade.sh` can find them in the Git Bash environment, and install them
+into the location bash sees as `/tmp/qs-shims-bash/`."""
+
+import shutil
+import stat
+import tempfile
+from pathlib import Path
+
+TOOLS = {
+    "ruff": r"C:\Python313\Scripts\ruff.exe",
+    "pytest": r"C:\Python313\Scripts\pytest.exe",
+    "mypy": r"C:\Python314\Scripts\mypy.exe",
+    "bandit": r"C:\Python314\Scripts\bandit.exe",
+    "pip-audit": r"C:\Python314\Scripts\pip-audit.exe",
+    "uv": r"C:\Python314\Scripts\uv.exe",
+}
+
+# Bash on Git Bash for Windows sees /tmp as %TEMP%
+BASH_TMP_DIR = Path(r"C:\Users\koosh\AppData\Local\Temp\qs-shims-bash")
+
+
+def main() -> None:
+    # Make fresh shims in a temp dir (with correct /c/... paths this time)
+    work_dir = Path(tempfile.mkdtemp(prefix="qs-"))
+    for tool, win_src in TOOLS.items():
+        win_path = Path(win_src)
+        if not win_path.exists():
+            print(f"SKIP {tool}: {win_path} missing")
+            continue
+        # bash path form: strip drive colon and leading slash, prepend /
+        s = str(win_path).replace("\\", "/")
+        if len(s) >= 2 and s[1] == ":":
+            s = s[0].lower() + s[2:]
+        bash_src = "/" + s
+        shim = work_dir / tool
+        shim.write_text(f"#!/bin/bash\nexec '{bash_src}' \"$@\"\n", encoding="utf-8", newline="\n")
+        shim.chmod(0o755)
+        print(f"shim: {shim} -> {bash_src}")
+
+    # Install into the location bash's /tmp maps to
+    BASH_TMP_DIR.mkdir(parents=True, exist_ok=True)
+    for shim in work_dir.iterdir():
+        dst = BASH_TMP_DIR / shim.name
+        shutil.copy2(shim, dst)
+        # Ensure executable bit (Windows copy preserves it, but be explicit)
+        dst.chmod(stat.S_IRWXU | stat.S_IRGRP | stat.S_IROTH)
+        print(f"installed: {dst}")
+
+
+if __name__ == "__main__":
+    main()

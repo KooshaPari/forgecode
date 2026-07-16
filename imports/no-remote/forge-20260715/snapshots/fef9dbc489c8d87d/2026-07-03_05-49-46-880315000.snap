@@ -1,0 +1,18 @@
+process.env.DATA_DIR = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'omniroute-debug-'));
+(async () => {
+  const localDb = await import('./src/lib/localDb.ts');
+  const providersDb = await import('./src/lib/db/providers.ts');
+  const conn = await localDb.createProviderConnection({ provider: 'opencode-go', authType: 'api_key', name: 'Debug Test' });
+  const connId = conn.id;
+  console.log('connId:', connId, 'typeof:', typeof connId);
+  console.log('isRateLimited before:', providersDb.isConnectionRateLimited(connId));
+  localDb.markConnectionRateLimitedUntil(connId, 60000);
+  console.log('isRateLimited after wrapper:', providersDb.isConnectionRateLimited(connId));
+  providersDb.setConnectionRateLimitUntil(connId, Date.now() + 60000);
+  console.log('isRateLimited after direct:', providersDb.isConnectionRateLimited(connId));
+  // Inspect the row directly
+  const db = (await import('./src/lib/db/core.ts')).getDbInstance();
+  const row = db.prepare('SELECT id, rate_limited_until FROM provider_connections WHERE id = ?').get(connId);
+  console.log('row:', row);
+  process.exit(0);
+})().catch(e => { console.error('ERR:', e); process.exit(1); });

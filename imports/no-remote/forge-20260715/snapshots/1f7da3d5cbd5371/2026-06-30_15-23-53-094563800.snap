@@ -1,0 +1,12 @@
+import json, re
+t = open('E:/lanes/runs.json', encoding='utf-8').read()
+t = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', t)
+d = json.loads(t)
+# Filter for the four formerly borked workflows, post PR #7 merge (~15:02:34 UTC)
+target = '2026-06-30T15:02:34Z'
+for r in d:
+    if r['startedAt'] < target:
+        continue
+    name = r['name'].lower()
+    if any(k in name for k in ['sast', 'coverage', 'security-guard', 'security-deep-scan']):
+        print(r['databaseId'], '|', r['name'], '|', r['startedAt'], '|', r['conclusion'])

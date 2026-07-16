@@ -1,0 +1,61 @@
+[user]
+	email = kooshapari@gmail.com
+	name = KooshaPari
+[filter "lfs"]
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+	required = true
+[submodule]
+	recurse = true
+[core]
+	longpaths = true
+	askPass = 
+	compression = 9
+[credential "https://github.com"]
+	helper = 
+	helper = !'C:\\Program Files\\GitHub CLI\\gh.exe' auth git-credential
+[credential "https://gist.github.com"]
+	helper = 
+	helper = !'C:\\Program Files\\GitHub CLI\\gh.exe' auth git-credential
+[safe]
+	directory = C:/Users/koosh/Dev/Eidolon
+	directory = C:/Users/koosh/Dev/Agentora
+	directory = C:/Users/koosh/migration-work/phenotype-python-sdk
+	directory = C:/Users/koosh/migration-work/phenotype-registry
+	directory = C:/Users/koosh/archive-migration/HexaKit
+	directory = C:/Users/koosh/archive-migration/PhenoObservability
+	directory = C:/Users/koosh/migration-work/phenoUtils
+	directory = C:/Users/koosh/.cursor/audit-tmp/phenotype-python-sdk
+	directory = C:/Users/koosh/migration-work/PhenoLang
+	directory = C:/Users/koosh/migration-work/HexaKit
+	directory = C:/Users/koosh/migration-work/phenotype-registry
+	directory = C:/Users/koosh/migration-work/phenotype-registry
+	directory = C:/Users/koosh/archive-migration/PhenoPlugins
+	directory = C:/Users/koosh/archive-migration/phenotype-tooling
+	directory = C:/Users/koosh/archive-migration/phenotype-org-audits
+	directory = C:/Users/koosh/archive-migration/phenokits-commons
+	directory = C:/Users/koosh/pheno-harness
+	directory = C:/Users/koosh/Tracera
+	directory = C:/Users/koosh/AgilePlus
+	directory = C:/Users/koosh/BytePort
+	directory = C:/Users/koosh/PhenoCompose
+	directory = C:/Users/koosh/nanovms
+	directory = C:/Users/koosh/phenodag
+	directory = C:/Users/koosh/vibeproxy-monitoring-unified
+	directory = C:/Users/koosh/phenotype-org-audits
+	directory = C:/Users/koosh/heliosBench
+	directory = C:/Users/koosh/phenotype-registry
+	directory = C:/Users/koosh/Benchora
+	directory = C:/Users/koosh/portage
+[http]
+	postBuffer = 524288000
+	lowSpeedLimit = 1000
+	lowSpeedTime = 5
+	version = HTTP/1.1
+[uploadpack]
+	allowfilter = true
+[advice]
+	detachedHead = false
+[credential]
+	helper = C:/program files/Git/mingw64/bin/git-credential-manager.exe

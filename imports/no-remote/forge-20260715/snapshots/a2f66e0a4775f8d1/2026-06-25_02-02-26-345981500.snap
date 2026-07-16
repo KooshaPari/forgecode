@@ -1,0 +1,190 @@
+//! `Fixed` — i64 fixed-point arithmetic used across the engine.
+//!
+//! Historical note: `Fixed` and `SCALE` used to be defined inline in `lib.rs`,
+//! which (a) made `pub use engine::Fixed` impossible to wire without a duplicate-
+//! type error and (b) prevented [`crate::metrics`] and [`crate::invariants`]
+//! from `use crate::Fixed` once `lib.rs` was reduced to a module manifest.
+//! Moved here so both `crate::Fixed` (path-style) and the re-exported
+//! `pub use fixed::Fixed` keep working.
+
+use serde::{Deserialize, Serialize};
+
+/// Raw-value scaling factor for [`Fixed`]. 10^6 (1 million) — picked over
+/// 10^18 so the engine's most-touched multiplications don't overflow i64
+/// on world-scale totals (population × per-capita, etc.).
+pub const SCALE: i64 = 1_000_000;
+
+/// Deterministic fixed-point value. Stored as a raw i64; divided by
+/// [`SCALE`] to recover the actual number.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash, Serialize, Deserialize,
+)]
+pub struct Fixed {
+    /// Raw value scaled by [`SCALE`].
+    pub raw: i64,
+}
+
+impl Fixed {
+    /// `0` constant.
+    pub const ZERO: Fixed = Fixed { raw: 0 };
+    /// `1` constant.
+    pub const ONE: Fixed = Fixed { raw: SCALE };
+
+    /// Build a `Fixed` from an integer or float-ish value by multiplying it
+    /// by [`SCALE`]. Falls back to `0` when `n` does not fit `i128`.
+    pub fn from_num<T: TryInto<i128>>(n: T) -> Self {
+        let scaled = n.try_into().unwrap_or(0) * SCALE as i128;
+        Fixed { raw: scaled as i64 }
+    }
+
+    /// Wrap an already-scaled raw `i64`.
+    pub fn from_raw(raw: i64) -> Self {
+        Fixed { raw }
+    }
+
+    /// Convert back to `f64`. Lossy but useful for HUD/JSON.
+    pub fn to_f64(self) -> f64 {
+        self.raw as f64 / SCALE as f64
+    }
+
+    /// Saturating addition — never overflows, even at i64::MAX.
+    pub fn saturating_add(self, other: Fixed) -> Fixed {
+        Fixed {
+            raw: self.raw.saturating_add(other.raw),
+        }
+    }
+
+    /// Saturating subtraction — never underflows below i64::MIN.
+    pub fn saturating_sub(self, other: Fixed) -> Fixed {
+        Fixed {
+            raw: self.raw.saturating_sub(other.raw),
+        }
+    }
+
+    /// Clamp to `[min, max]`.
+    pub fn clamp(self, min: Fixed, max: Fixed) -> Fixed {
+        Fixed {
+            raw: self.raw.clamp(min.raw, max.raw),
+        }
+    }
+}
+
+impl std::ops::Add for Fixed {
+    type Output = Fixed;
+    fn add(self, other: Fixed) -> Fixed {
+        Fixed {
+            raw: self.raw + other.raw,
+        }
+    }
+}
+
+impl std::ops::Sub for Fixed {
+    type Output = Fixed;
+    fn sub(self, other: Fixed) -> Fixed {
+        Fixed {
+            raw: self.raw - other.raw,
+        }
+    }
+}
+
+impl std::ops::Mul for Fixed {
+    type Output = Fixed;
+    fn mul(self, other: Fixed) -> Fixed {
+        let result = (self.raw as i128 * other.raw as i128) / SCALE as i128;
+        Fixed { raw: result as i64 }
+    }
+}
+
+impl std::ops::Div for Fixed {
+    type Output = Fixed;
+    fn div(self, other: Fixed) -> Fixed {
+        let denom = other.raw.max(1) as i128;
+        let result = (self.raw as i128 * SCALE as i128) / denom;
+        Fixed { raw: result as i64 }
+    }
+}
+
+impl std::ops::AddAssign for Fixed {
+    fn add_assign(&mut self, other: Fixed) {
+        self.raw += other.raw;
+    }
+}
+
+impl std::ops::SubAssign for Fixed {
+    fn sub_assign(&mut self, other: Fixed) {
+        self.raw -= other.raw;
+    }
+}
+
+/// Tick the world one step, debiting `consumption_joules` from the energy
+/// budget (clamped at zero). Used by the simple-API regression tests; the
+/// full ECS lives in [`crate::engine::Simulation`].
+#[must_use]
+pub fn step(
+    mut state: crate::engine::WorldState,
+    consumption_joules: Fixed,
+) -> crate::engine::WorldState {
+    state.tick += 1;
+    let result = state
+        .energy_budget_joules
+        .saturating_sub(consumption_joules);
+    state.energy_budget_joules = if result.raw < 0 { Fixed::ZERO } else { result };
+    state
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn step_advances_tick() {
+        let s = crate::engine::WorldState::default();
+        let n = step(s, Fixed::from_num(100));
+        assert_eq!(n.tick, 1);
+    }
+
+    #[test]
+    fn step_decreases_energy() {
+        let s = crate::engine::WorldState::default();
+        let expected = Fixed::from_num(1_000_000_000_000_i64) - Fixed::from_num(1000);
+        let n = step(s, Fixed::from_num(1000));
+        assert_eq!(n.energy_budget_joules, expected);
+    }
+
+    #[test]
+    fn step_energy_floor_at_zero() {
+        let s = crate::engine::WorldState {
+            energy_budget_joules: Fixed::from_num(50),
+            ..crate::engine::WorldState::default()
+        };
+        let n = step(s, Fixed::from_num(100));
+        assert_eq!(n.energy_budget_joules, Fixed::ZERO);
+    }
+
+    #[test]
+    fn determinism_same_seed_same_output() {
+        let s1 = crate::engine::WorldState {
+            tick: 0,
+            population: 100,
+            energy_budget_joules: Fixed::from_num(1000),
+            rng_seed: 12345,
+            factions: HashMap::new(),
+            faction_treasury: HashMap::new(),
+            ..crate::engine::WorldState::default()
+        };
+        let s2 = crate::engine::WorldState {
+            tick: 0,
+            population: 100,
+            energy_budget_joules: Fixed::from_num(1000),
+            rng_seed: 12345,
+            factions: HashMap::new(),
+            faction_treasury: HashMap::new(),
+            ..crate::engine::WorldState::default()
+        };
+        let r1 = step(s1, Fixed::from_num(10));
+        let r2 = step(s2, Fixed::from_num(10));
+        assert_eq!(r1.tick, r2.tick);
+        assert_eq!(r1.energy_budget_joules, r2.energy_budget_joules);
+    }
+}

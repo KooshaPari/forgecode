@@ -1,0 +1,13 @@
+{
+  "name": "vibeproxy-monitoring-unified",
+  "languages": [],
+  "primary_language": "unknown",
+  "status": "archived",
+  "has_readme": false,
+  "type": "stub",
+  "path": "repos/vibeproxy-monitoring-unified",
+  "disposition": "FOLDED",
+  "wave": "G19",
+  "folded_into": "KooshaPari/substrate@e772ed4",
+  "absorption_note": "Stub folded 2026-06-24; canonical OTLP/observability in substrate/crates/substrate-trace::PhenoOtelTrace backed by PhenoObservability/pheno-otel HttpExporter; redirects in phenotype-infra/docs/absorbed-from/"
+}

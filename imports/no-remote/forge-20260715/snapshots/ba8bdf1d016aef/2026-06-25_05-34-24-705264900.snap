@@ -1,0 +1,309 @@
+/**
+ * alertValidator.test.ts — tests for the Prometheus alert rule validator.
+ *
+ * Coverage targets the PR-008 deliverable: a CI gate that validates every
+ * YAML file under ops/prometheus/rules/ before deploy. The test file is
+ * isolated from any other observability test — it uses no real env vars
+ * and no IO outside its in-process YAML strings.
+ *
+ * @see src/lib/observability/alertValidator.ts
+ */
+
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  validateAlertRule,
+  validateSloRule,
+  loadAlertRules,
+  extractAlertRules,
+  parsePrometheusYaml,
+  VALID_SEVERITIES,
+} from "../../../src/lib/observability/alertValidator";
+
+// ────────────────────────────────────────────────────────────────────────────
+// Fixtures
+// ────────────────────────────────────────────────────────────────────────────
+
+const VALID_RULE_YAML = `
+groups:
+  - name: omniroute.error_rate
+    interval: 30s
+    rules:
+      - alert: OmniRouteHighErrorRate
+        expr: 'sum(rate(omniroute_http_requests_total{status=~"5.."}[5m])) by (route)'
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+        annotations:
+          summary: "High 5xx rate on {{ $labels.route }}"
+          description: "5xx rate above 5% for 5m on route {{ $labels.route }}."
+          runbook_url: "https://runbooks/omniroute/HighErrorRate"
+`;
+
+const MINIMAL_RULE_YAML = `
+groups:
+  - name: g
+    rules:
+      - alert: Foo
+        expr: 'up == 0'
+        labels:
+          severity: warning
+        annotations:
+          summary: "Foo"
+          description: "Foo description"
+`;
+
+const MISSING_ALERT_YAML = `
+groups:
+  - name: g
+    rules:
+      - expr: 'up == 0'
+        labels:
+          severity: critical
+        annotations:
+          summary: "x"
+          description: "x"
+`;
+
+const MISSING_EXPR_YAML = `
+groups:
+  - name: g
+    rules:
+      - alert: Foo
+        labels:
+          severity: critical
+        annotations:
+          summary: "x"
+          description: "x"
+`;
+
+const INVALID_SEVERITY_YAML = `
+groups:
+  - name: g
+    rules:
+      - alert: Foo
+        expr: 'up == 0'
+        labels:
+          severity: catastrophe
+        annotations:
+          summary: "x"
+          description: "x"
+`;
+
+const MISSING_ANNOTATIONS_YAML = `
+groups:
+  - name: g
+    rules:
+      - alert: Foo
+        expr: 'up == 0'
+        labels:
+          severity: critical
+`;
+
+const MISSING_LABELS_YAML = `
+groups:
+  - name: g
+    rules:
+      - alert: Foo
+        expr: 'up == 0'
+        annotations:
+          summary: "x"
+          description: "x"
+`;
+
+const LABEL_CARDINALITY_YAML = `
+groups:
+  - name: g
+    rules:
+      - alert: Foo
+        expr: 'up == 0'
+        labels:
+          severity: critical
+          a: "1"
+          b: "2"
+          c: "3"
+          d: "4"
+          e: "5"
+          f: "6"
+          g: "7"
+          h: "8"
+          i: "9"
+          j: "10"
+          k: "11"
+        annotations:
+          summary: "x"
+          description: "x"
+`;
+
+const MALFORMED_YAML = `
+groups:
+  - name: g
+    rules:
+      - alert: Foo
+        expr oops
+`;
+
+const VALID_SLO_YAML = `
+groups:
+  - name: omniroute.slos
+    rules:
+      - record: omniroute:http_request_duration_seconds:p95
+        expr: 'histogram_quantile(0.95, sum(rate(omniroute_http_request_duration_seconds_bucket[5m])) by (le, route))'
+`;
+
+const BAD_SLO_NAME_YAML = `
+groups:
+  - name: g
+    rules:
+      - record: "bad name with spaces"
+        expr: 'up == 0'
+`;
+
+// ────────────────────────────────────────────────────────────────────────────
+// Tests
+// ────────────────────────────────────────────────────────────────────────────
+
+describe("validateAlertRule — valid YAML", () => {
+  test("accepts a well-formed single rule", () => {
+    const r = validateAlertRule(VALID_RULE_YAML);
+    assert.equal(r.valid, true);
+    assert.deepEqual(r.errors, []);
+  });
+
+  test("accepts a minimal rule (only required fields)", () => {
+    const r = validateAlertRule(MINIMAL_RULE_YAML);
+    assert.equal(r.valid, true);
+  });
+
+  test("accepts multiple groups with multiple rules each", () => {
+    const yaml = `
+groups:
+  - name: g1
+    rules:
+      - alert: A
+        expr: 'up == 0'
+        labels:
+          severity: info
+        annotations:
+          summary: "a"
+          description: "a"
+  - name: g2
+    rules:
+      - alert: B
+        expr: 'up == 1'
+        labels:
+          severity: warning
+        annotations:
+          summary: "b"
+          description: "b"
+`;
+    const r = validateAlertRule(yaml);
+    assert.equal(r.valid, true);
+  });
+
+  test("extractAlertRules returns one entry per alert", () => {
+    const parsed = parsePrometheusYaml(VALID_RULE_YAML);
+    const rules = extractAlertRules(parsed);
+    assert.equal(rules.length, 1);
+    assert.equal(rules[0].alert, "OmniRouteHighErrorRate");
+    assert.equal(rules[0].group, "omniroute.error_rate");
+    assert.equal(rules[0].labels.severity, "critical");
+    assert.equal(rules[0].annotations.summary.length > 0, true);
+  });
+});
+
+describe("validateAlertRule — invalid YAML", () => {
+  test("rejects missing alert field", () => {
+    const r = validateAlertRule(MISSING_ALERT_YAML);
+    assert.equal(r.valid, false);
+    assert.ok(r.errors.some((e) => /missing 'alert'/.test(e)));
+  });
+
+  test("rejects missing expr field", () => {
+    const r = validateAlertRule(MISSING_EXPR_YAML);
+    assert.equal(r.valid, false);
+    assert.ok(r.errors.some((e) => /missing 'expr'/.test(e)));
+  });
+
+  test("rejects invalid severity value", () => {
+    const r = validateAlertRule(INVALID_SEVERITY_YAML);
+    assert.equal(r.valid, false);
+    assert.ok(r.errors.some((e) => /severity must be one of/.test(e)));
+    // The error message should mention the allowed values.
+    assert.ok(r.errors.some((e) => e.includes("critical") && e.includes("warning")));
+  });
+
+  test("rejects missing annotations", () => {
+    const r = validateAlertRule(MISSING_ANNOTATIONS_YAML);
+    assert.equal(r.valid, false);
+    assert.ok(r.errors.some((e) => /annotations\.summary/.test(e)));
+  });
+
+  test("rejects missing labels", () => {
+    const r = validateAlertRule(MISSING_LABELS_YAML);
+    assert.equal(r.valid, false);
+    assert.ok(r.errors.some((e) => /missing 'labels'/.test(e)));
+  });
+
+  test("rejects label cardinality > 10", () => {
+    const r = validateAlertRule(LABEL_CARDINALITY_YAML);
+    assert.equal(r.valid, false);
+    assert.ok(r.errors.some((e) => /too many labels/.test(e)));
+  });
+
+  test("tolerates malformed YAML gracefully (does not throw)", () => {
+    // The minimal parser may not throw but rather skip unparseable lines.
+    // We assert: either it's invalid with errors, or it parses but flags
+    // missing fields — never throws.
+    let threw = false;
+    try {
+      const r = validateAlertRule(MALFORMED_YAML);
+      // If parser didn't throw, the result should be invalid.
+      assert.equal(r.valid, false);
+    } catch {
+      threw = true;
+    }
+    assert.equal(threw, false);
+  });
+
+  test("rejects top-level YAML without groups key", () => {
+    const r = validateAlertRule("not_a_map:");
+    assert.equal(r.valid, false);
+    assert.ok(r.errors.some((e) => /groups/.test(e)));
+  });
+
+  test("rejects empty groups array", () => {
+    const r = validateAlertRule("groups: []\n");
+    assert.equal(r.valid, false);
+    assert.ok(r.errors.some((e) => /non-empty array/.test(e)));
+  });
+});
+
+describe("validateSloRule — recording rules", () => {
+  test("accepts a well-formed recording rule", () => {
+    const r = validateSloRule(VALID_SLO_YAML);
+    assert.equal(r.valid, true);
+  });
+
+  test("rejects bad record name (spaces)", () => {
+    const r = validateSloRule(BAD_SLO_NAME_YAML);
+    assert.equal(r.valid, false);
+    assert.ok(r.errors.some((e) => /record name/.test(e)));
+  });
+});
+
+describe("VALID_SEVERITIES", () => {
+  test("is the canonical [critical, warning, info] tuple", () => {
+    assert.deepEqual([...VALID_SEVERITIES], ["critical", "warning", "info"]);
+  });
+});
+
+describe("loadAlertRules — directory walk", () => {
+  test("reports an issue for a non-existent dir, returns empty rules", () => {
+    const result = loadAlertRules("Z:/__nonexistent_dir_for_pr008_tests__");
+    assert.equal(result.rules.length, 0);
+    assert.equal(result.issues.length, 1);
+    assert.ok(/directory not found/.test(result.issues[0].errors[0]));
+  });
+});

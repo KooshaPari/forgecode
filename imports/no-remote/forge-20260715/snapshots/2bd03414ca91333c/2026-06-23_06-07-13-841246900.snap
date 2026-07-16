@@ -1,0 +1,45 @@
+import json, subprocess, os, tempfile
+repos = [
+    "decolua/9router",
+    "musistudio/claude-code-router",
+    "kaitranntt/CLIProxyAPIPlus",
+    "mksglu/context-mode",
+    "MaximAI/bifrost",
+    "diegosouzapw/OmniRoute",
+    "coder/agentapi",
+    "KooshaPari/agentapi-plusplus",
+    "KooshaPari/cliproxyapi-plusplus",
+    "KooshaPari/OmniRoute",
+    "KooshaPari/substrate",
+    "KooshaPari/phenotype-registry",
+    "KooshaPari/phenokits",
+    "KooshaPari/phenoAI",
+]
+print(f"{'full':<35} {'stars':>6} {'arch':<6} {'pushed':<11} {'lic':<10} desc")
+for r in repos:
+    outf = tempfile.mktemp(suffix=".json")
+    errf = tempfile.mktemp(suffix=".err")
+    with open(outf, "w") as fo, open(errf, "w") as fe:
+        p = subprocess.run(["gh", "api", f"/repos/{r}"], stdout=fo, stderr=fe)
+    with open(outf, "r", encoding="utf-8", errors="replace") as f:
+        sout = f.read().strip()
+    with open(errf, "r", encoding="utf-8", errors="replace") as f:
+        serr = f.read().strip()
+    if p.returncode != 0 or not sout.startswith("{"):
+        msg = serr.splitlines()[-1] if serr else "empty"
+        print(f"{r:<35} <err: {msg[:70]}>")
+        try:
+            os.remove(outf); os.remove(errf)
+        except: pass
+        continue
+    try:
+        d = json.loads(sout)
+    except Exception as e:
+        print(f"{r:<35} parse_err: {e}")
+        continue
+    lic = (d.get("license") or {}).get("name") or "-"
+    pushed = (d.get("pushed_at") or "")[:10]
+    print(f"{d.get('full_name'):<35} {d.get('stargazers_count',0):>6} {str(d.get('archived',False)):<6} {pushed:<11} {lic:<10} {(d.get('description') or '')[:80]}")
+    try:
+        os.remove(outf); os.remove(errf)
+    except: pass

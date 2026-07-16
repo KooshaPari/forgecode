@@ -1,0 +1,10 @@
+$ErrorActionPreference = 'Continue'
+$tmp = "C:\Users\koosh\_top_repos.json"
+gh api 'search/repositories?q=user:KooshaPari&per_page=100' > $tmp 2> "C:\Users\koosh\_top_repos.err"
+$json = Get-Content $tmp -Raw | ConvertFrom-Json
+Write-Host ("Total count: {0} | Items returned: {1}" -f $json.total_count, $json.items.Count)
+$top = $json.items |
+    Where-Object { -not $_.fork } |
+    Sort-Object { $_.size } -Descending |
+    Select-Object -First 25 name, size, stargazers_count, language, pushed_at, fork
+$top | Format-Table -AutoSize | Out-String -Width 220

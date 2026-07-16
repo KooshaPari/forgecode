@@ -1,0 +1,7 @@
+//! Public re-exports for the Benchora CLI module.
+pub mod baseline;
+pub mod compare;
+pub mod error;
+pub mod report;
+
+pub use error::CliError;

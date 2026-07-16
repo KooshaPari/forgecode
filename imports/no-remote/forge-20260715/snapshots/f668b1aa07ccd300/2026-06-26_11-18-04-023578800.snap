@@ -1,0 +1,113 @@
+#!/usr/bin/env pwsh
+# fix-omniroute-db.ps1
+# Triage/fix the OmniRoute local DB to stop the OOM and "too many SQL variables" loop.
+# - Prunes call_logs older than the 7-day retention window (the path that explodes the IN-clause)
+# - Prunes proxy_logs and usage_history older than 7 days
+# - Removes orphan call_log artifact files (referenced set from SQLite) that no longer have a row
+# - VACUUMs the DB to reclaim disk
+# - Backs up the DB and the artifact tree before touching anything
+#
+# All operations are idempotent and guarded by pre-checks. Safe to re-run.
+#
+# Usage: pwsh -File fix-omniroute-db.ps1
+
+$ErrorActionPreference = "Stop"
+
+$DataDir   = Join-Path $env:APPDATA "omniroute"
+$DbPath    = Join-Path $DataDir "storage.sqlite"
+$CallDir   = Join-Path $DataDir "call_logs"
+$SqliteExe = "C:\Users\koosh\platform-tools\sqlite3.exe"
+$RetentionDays = 7
+
+if (-not (Test-Path $DbPath)) { throw "DB not found at $DbPath" }
+if (-not (Test-Path $SqliteExe)) { throw "sqlite3.exe not found at $SqliteExe" }
+
+function Invoke-Sqlite([string]$Sql) {
+  & $SqliteExe $DbPath $Sql
+}
+
+# ── 0. backup ──────────────────────────────────────────────────────────────
+$stamp      = Get-Date -Format "yyyyMMdd-HHmmss"
+$dbBackup   = Join-Path $DataDir "storage.sqlite.fixbak-$stamp"
+$callBackup = Join-Path $DataDir "call_logs.fixbak-$stamp"
+Copy-Item $DbPath $dbBackup -Force
+if (Test-Path $CallDir) {
+  Write-Host "[backup] $dbBackup"
+  Write-Host "[backup] $callBackup"
+} else {
+  Write-Host "[backup] $dbBackup (call_logs dir not present)"
+}
+
+# ── 1. integrity check ─────────────────────────────────────────────────────
+$integrity = Invoke-Sqlite "PRAGMA integrity_check;"
+if ($integrity -notmatch "^ok$") {
+  throw "DB integrity_check failed: $integrity"
+}
+Write-Host "[integrity] ok"
+
+# ── 2. row counts (before) ─────────────────────────────────────────────────
+$before = Invoke-Sqlite "SELECT 'call_logs', COUNT(*) UNION ALL SELECT 'proxy_logs', COUNT(*) FROM proxy_logs UNION ALL SELECT 'usage_history', COUNT(*) FROM usage_history;"
+Write-Host "[before] $before"
+
+# ── 3. delete old rows in chunks (avoid the >999 bind-variable error) ──────
+$deleteChunk = @"
+DELETE FROM call_logs WHERE id IN (
+  SELECT id FROM call_logs WHERE timestamp < datetime('now','-$($RetentionDays) days') ORDER BY timestamp ASC LIMIT 500
+);
+"@
+$deleteProxy = "DELETE FROM proxy_logs WHERE timestamp < datetime('now','-$($RetentionDays) days');"
+$deleteUsage = "DELETE FROM usage_history WHERE timestamp < datetime('now','-$($RetentionDays) days');"
+
+$totalCallBefore = [int](Invoke-Sqlite "SELECT COUNT(*) FROM call_logs;")
+$deletedTotal = 0
+while ($true) {
+  $n = [int](Invoke-Sqlite "$deleteChunk SELECT changes();")
+  if ($n -le 0) { break }
+  $deletedTotal += $n
+  Write-Host "[call_logs] deleted chunk of $n (total so far: $deletedTotal)"
+}
+Write-Host "[call_logs] deleted $deletedTotal rows"
+
+Write-Host "[proxy_logs] pruning…"
+Invoke-Sqlite $deleteProxy | Out-Null
+Write-Host "[usage_history] pruning…"
+Invoke-Sqlite $deleteUsage | Out-Null
+
+# ── 4. remove orphan call_log artifacts on disk ────────────────────────────
+# referenced relpaths come from the surviving call_logs rows; any file in
+# call_logs/ not in this set is orphan (server crash before artifact pointer
+# was deleted).
+Write-Host "[artifacts] scanning $CallDir for orphans…"
+$referencedRel = New-Object 'System.Collections.Generic.HashSet[string]'
+Invoke-Sqlite "SELECT artifact_relpath FROM call_logs WHERE artifact_relpath IS NOT NULL;" | ForEach-Object {
+  if ($_ -and $_.Trim().Length -gt 0) { [void]$referencedRel.Add($_.Trim()) }
+}
+
+$deleted = 0
+$kept = 0
+Get-ChildItem $CallDir -Directory | ForEach-Object {
+  $dayDir = $_.FullName
+  Get-ChildItem $dayDir -File | ForEach-Object {
+    $rel = "{0}/{1}" -f $_.Directory.Name, $_.Name
+    if ($referencedRel.Contains($rel)) { $kept++ } else {
+      Remove-Item $_.FullName -Force
+      $deleted++
+    }
+  }
+  # remove empty day dir
+  if ((Get-ChildItem $dayDir -Force | Measure-Object).Count -eq 0) {
+    Remove-Item $dayDir -Force -Recurse
+  }
+}
+Write-Host "[artifacts] deleted=$deleted kept=$kept"
+
+# ── 5. vacuum (reclaim disk) ───────────────────────────────────────────────
+Write-Host "[vacuum] running (may take a minute)…"
+Invoke-Sqlite "VACUUM;" | Out-Null
+
+# ── 6. row counts (after) ──────────────────────────────────────────────────
+$after = Invoke-Sqlite "SELECT 'call_logs', COUNT(*) UNION ALL SELECT 'proxy_logs', COUNT(*) FROM proxy_logs UNION ALL SELECT 'usage_history', COUNT(*) FROM usage_history;"
+$newSize = (Get-Item $DbPath).Length
+Write-Host "[after]  $after"
+Write-Host "[after]  db size: $([math]::Round($newSize/1MB,2)) MB"
+Write-Host "[done]   backup: $dbBackup"

@@ -1,0 +1,49 @@
+# Microsoft.PowerShell_profile.ps1
+# pwsh equivalent of ~/.zshrc Claude Code / Codex profile helpers.
+# Loaded automatically on every pwsh launch.
+#
+# Usage:
+#   claude-omni [any flags]   # → http://100.96.135.160:20128/v1 (OmniRoute)
+#   claude-mm   [any flags]   # → https://api.minimax.io/anthropic (direct)
+#   codex-omni  [any flags]   # → --profile omniroute
+#   codex-mm    [any flags]   # → --profile minimax
+# All flags (-p, --dangerously-skip-permissions, --resume, etc.) pass through.
+
+# ── Shared Claude env bundle ──────────────────────────────────────────────
+$script:ClaudeAuthToken = 'sk-cp-gPIgSPD1rxNMDQqvb4nYNj0HE4HfElst4cbyJQby9eMhod_1FU5OVTh1KisjFDPoPSngE-R_WwHAhA4ehgzqoIKhaXfipS-1CmEjUqCTPk2brR2Fq6PH0OA'
+
+function Set-ClaudeEnv {
+    $env:ANTHROPIC_AUTH_TOKEN                = $script:ClaudeAuthToken
+    $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW     = '512000'
+    $env:ANTHROPIC_MODEL                     = 'MiniMax-M3[1m]'
+    $env:ANTHROPIC_DEFAULT_SONNET_MODEL      = 'MiniMax-M3[1m]'
+    $env:ANTHROPIC_DEFAULT_OPUS_MODEL        = 'MiniMax-M3[1m]'
+    $env:ANTHROPIC_DEFAULT_HAIKU_MODEL       = 'MiniMax-M3[1m]'
+}
+
+# ── Claude Code profiles ───────────────────────────────────────────────────
+function claude-omni {
+    Set-ClaudeEnv
+    $env:ANTHROPIC_BASE_URL = 'http://100.96.135.160:20128/v1'
+    & claude @args
+}
+
+function claude-mm {
+    Set-ClaudeEnv
+    $env:ANTHROPIC_BASE_URL = 'https://api.minimax.io/anthropic'
+    & claude @args
+}
+
+# Default `claude` → omniroute (matches the ~/.zshrc default)
+function claude {
+    claude-omni @args
+}
+
+# ── Codex profiles ─────────────────────────────────────────────────────────
+function codex-omni {
+    & codex --profile omniroute @args
+}
+
+function codex-mm {
+    & codex --profile minimax @args
+}

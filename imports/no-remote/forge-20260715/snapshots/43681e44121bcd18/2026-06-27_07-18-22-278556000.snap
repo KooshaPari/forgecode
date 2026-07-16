@@ -1,0 +1,627 @@
+//! Emergent citizen lifecycle classifiers and capacity curves.
+//!
+//! This module exposes read-only classifiers and continuous drivers. It does
+//! not store lifecycle stages on entities.
+
+use civ_genetics::{
+    sentience::{cognition_score, CognitionTraitProfile},
+    Dna,
+};
+use serde::{Deserialize, Serialize};
+
+use crate::Health;
+
+/// Read-only lifecycle label derived from continuous state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LifecycleLabel {
+    /// Still developing.
+    Child,
+    /// Fully participating adult.
+    Adult,
+    /// Aging or physically degraded.
+    Elder,
+    /// No longer alive.
+    Dead,
+}
+
+/// Tunable lifecycle thresholds and curves.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LifecycleParams {
+    /// Base maturity gain per tick under no stress.
+    pub base_maturity_rate: f32,
+    /// Fraction of the maturity gain removed per critical need.
+    pub maturity_stress_penalty: f32,
+    /// Weight given to DNA longevity when deriving age thresholds.
+    pub longevity_dna_weight: f32,
+    /// Minimum food satisfaction for reproduction.
+    pub fertility_food_threshold: f32,
+    /// Minimum safety satisfaction for reproduction.
+    pub fertility_safety_threshold: f32,
+    /// Placeholder social support coupling rate.
+    pub care_share_rate: f32,
+    /// Health integrity below which a civilian qualifies to receive care from
+    /// a nearby adult. Used by [`tick_care_share`] for social <-> lifecycle
+    /// coupling (FR-CIV-LIFE P6-A / CIV-003).
+    pub care_share_threshold: f32,
+    /// Floor on elder labor capacity.
+    pub elder_labor_floor: f32,
+    /// Trait profile used when measuring cognition from DNA.
+    pub cognition_profile: CognitionTraitProfile,
+}
+
+impl Default for LifecycleParams {
+    fn default() -> Self {
+        Self {
+            base_maturity_rate: 0.0008,
+            maturity_stress_penalty: 0.5,
+            longevity_dna_weight: 0.3,
+            fertility_food_threshold: 0.5,
+            fertility_safety_threshold: 0.4,
+            care_share_rate: 0.1,
+            care_share_threshold: 0.4,
+            elder_labor_floor: 0.2,
+            cognition_profile: CognitionTraitProfile::new(
+                "lifecycle-cognition",
+                vec![(0, 0.5), (1, 0.5), (2, 0.5), (8, 0.25)],
+            ),
+        }
+    }
+}
+
+fn clamp01(value: f32) -> f32 {
+    value.clamp(0.0, 1.0)
+}
+
+/// Derived threshold at which a lineage transitions into elderhood.
+#[must_use]
+pub fn age_threshold(dna: &Dna, params: &LifecycleParams) -> u16 {
+    let longevity_profile = CognitionTraitProfile::new(
+        "lifecycle-longevity",
+        vec![(20, 1.0), (21, 0.5), (22, 0.25)],
+    );
+    let longevity_score = cognition_score(dna, &longevity_profile);
+    let dna_span = 50.0 + 70.0 * longevity_score;
+    let blended = 90.0 * (1.0 - params.longevity_dna_weight)
+        + dna_span * params.longevity_dna_weight;
+    blended.round().clamp(50.0, 120.0) as u16
+}
+
+/// Continuous labor capacity derived from cognition, age, and integrity.
+#[must_use]
+pub fn labor_capacity(age: u16, health: &Health, dna: &Dna, params: &LifecycleParams) -> f32 {
+    let cognition = cognition_score(dna, &params.cognition_profile);
+    let age_peak = age_threshold(dna, params).max(20) as f32;
+    let age = age as f32;
+    let age_factor = if age <= age_peak {
+        (age / age_peak).clamp(0.0, 1.0)
+    } else {
+        let decline = 1.0 / (1.0 + ((age - age_peak) / age_peak).max(0.0));
+        decline.max(params.elder_labor_floor)
+    };
+    let integrity = clamp01(health.integrity);
+    let capacity = 0.55 * cognition + 0.25 * age_factor + 0.20 * integrity;
+    let elder_floor = if age > age_peak {
+        params.elder_labor_floor * cognition.max(0.1)
+    } else {
+        0.0
+    };
+    capacity.max(elder_floor).clamp(0.0, 1.0)
+}
+
+/// Classify a citizen from read-only continuous state.
+///
+/// The labels are a measurement vocabulary, not a control flow. The order of
+/// the predicates mirrors the spec's §1.2 table: dead first, then the
+/// age/integrity Elder trigger (so a senior citizen with full capacity is
+/// still classified as Elder, not Adult), then the maturity-integrity-capacity
+/// Adult gate, with Child as the residual so that a young agent with low
+/// labor capacity is still classified as Child rather than Elder.
+#[must_use]
+pub fn classify_lifecycle(
+    age: u16,
+    health: &Health,
+    maturity: f32,
+    labor_capacity: f32,
+) -> LifecycleLabel {
+    if health.is_dead() {
+        LifecycleLabel::Dead
+    } else if age >= 65 || health.integrity < 0.3 {
+        LifecycleLabel::Elder
+    } else if maturity >= 0.65 && health.integrity > 0.3 && labor_capacity > 0.4 {
+        LifecycleLabel::Adult
+    } else {
+        LifecycleLabel::Child
+    }
+}
+
+/// Parameters governing active lifecycle events (birth and migration).
+///
+/// Birth and migration are threshold-driven, emergent transitions that respond
+/// to needs satisfaction and population stress. These are *not* scripted but
+/// deterministic, driven by continuous state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActiveLifecycleParams {
+    /// Minimum food satisfaction for a paired adult to consider reproduction.
+    pub birth_food_threshold: f32,
+    /// Minimum safety satisfaction for a paired adult to consider reproduction.
+    pub birth_safety_threshold: f32,
+    /// Minimum social satisfaction for a paired adult to consider reproduction.
+    pub birth_social_threshold: f32,
+    /// Base probability per tick that a viable pair produces a newborn.
+    pub birth_probability: f32,
+    /// Food satisfaction below which migration pressure activates.
+    pub migration_food_threshold: f32,
+    /// Safety satisfaction below which migration pressure activates.
+    pub migration_safety_threshold: f32,
+    /// Unrest level (aggregate need deprivation) above which agents migrate.
+    pub migration_unrest_threshold: f32,
+    /// Base probability per tick that a pressured agent migrates.
+    pub migration_probability: f32,
+}
+
+impl Default for ActiveLifecycleParams {
+    fn default() -> Self {
+        Self {
+            birth_food_threshold: 0.6,
+            birth_safety_threshold: 0.5,
+            birth_social_threshold: 0.4,
+            birth_probability: 0.02,
+            migration_food_threshold: 0.3,
+            migration_safety_threshold: 0.3,
+            migration_unrest_threshold: 0.5,
+            migration_probability: 0.05,
+        }
+    }
+}
+
+/// Evaluate whether a paired, fertile adult may reproduce under given needs state.
+///
+/// Birth is viable when all reproductive thresholds are met: food, safety, and
+/// social support are above configured levels. This is deterministic on needs
+/// state only; the caller supplies a seeded RNG for the stochastic roll.
+#[must_use]
+pub fn can_birth(
+    needs: &crate::Needs,
+    params: &ActiveLifecycleParams,
+) -> bool {
+    needs.food >= params.birth_food_threshold
+        && needs.safety >= params.birth_safety_threshold
+        && needs.social >= params.birth_social_threshold
+}
+
+/// Compute aggregate unrest as a weighted measure of need deprivation.
+///
+/// Unrest is the inverse of satisfaction; higher unrest means more critical
+/// needs. This drives migration pressure. The metric is the average
+/// deprivation across non-health needs (food, water, rest, safety, social).
+#[must_use]
+pub fn compute_unrest(needs: &crate::Needs) -> f32 {
+    let food_dep = (1.0 - needs.food).max(0.0);
+    let water_dep = (1.0 - needs.water).max(0.0);
+    let rest_dep = (1.0 - needs.rest).max(0.0);
+    let safety_dep = (1.0 - needs.safety).max(0.0);
+    let social_dep = (1.0 - needs.social).max(0.0);
+    (food_dep + water_dep + rest_dep + safety_dep + social_dep) / 5.0
+}
+
+/// Evaluate whether an agent is under migration pressure.
+///
+/// Migration pressure is activated when either food or safety falls below
+/// critical thresholds, or when aggregate unrest (deprivation) exceeds a limit.
+/// This is threshold-driven and deterministic; the caller supplies a seeded RNG
+/// for the stochastic migration roll.
+#[must_use]
+pub fn migration_pressure(
+    needs: &crate::Needs,
+    params: &ActiveLifecycleParams,
+) -> bool {
+    let unrest = compute_unrest(needs);
+    needs.food < params.migration_food_threshold
+        || needs.safety < params.migration_safety_threshold
+        || unrest > params.migration_unrest_threshold
+}
+
+/// Minimum age (inclusive) at which a civilian qualifies as an adult capable
+/// of donating care.
+pub const CARE_SHARE_ADULT_AGE: u16 = 18;
+
+/// Minimum amount of `Health::integrity` transferred per successful care
+/// share event. The actual transfer is uniformly distributed in
+/// `[CARE_SHARE_MIN_TRANSFER, CARE_SHARE_MAX_TRANSFER]`.
+pub const CARE_SHARE_MIN_TRANSFER: f32 = 0.05;
+
+/// Maximum amount of `Health::integrity` transferred per successful care
+/// share event.
+pub const CARE_SHARE_MAX_TRANSFER: f32 = 0.1;
+
+/// Projected lifecycle-domain view of a civilian used by
+/// [`tick_care_share`].
+///
+/// `civ-needs` cannot depend on `civ-agents` (that would invert the
+/// existing dependency direction), so this struct carries only the
+/// lifecycle-relevant fields a caller already has on hand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CareSubject {
+    /// Stable civilian identifier (used as a tie-breaker for nearest adult
+    /// selection when distances tie).
+    pub id: u64,
+    /// Civilian age in ticks.
+    pub age: u16,
+    /// Opaque area / neighborhood identifier. Care share only crosses
+    /// within the same `area`.
+    pub area: u64,
+}
+
+impl CareSubject {
+    /// `true` when the subject is at or above [`CARE_SHARE_ADULT_AGE`].
+    #[must_use]
+    pub fn is_adult(&self) -> bool {
+        self.age >= CARE_SHARE_ADULT_AGE
+    }
+}
+
+/// Outcome of a single [`tick_care_share`] invocation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CareShareOutcome {
+    /// Number of civilians who received care from a nearby adult.
+    pub care_share_events: u32,
+}
+
+/// Social <-> lifecycle coupling (FR-CIV-LIFE P6-A / CIV-003).
+///
+/// For each civilian whose `health.integrity` is below
+/// `params.care_share_threshold`, locate the nearest adult (by `id` as a
+/// deterministic tie-breaker) in the same `area` and transfer a small
+/// amount of care (`0.05..=0.1` integrity) from the adult to the
+/// recipient. The donor's integrity is decremented by the same amount so
+/// the total care pool in the area is conserved.
+///
+/// Adults may only donate once per tick (their first match is honored);
+/// if no adults are available, sick civilians receive no care and the
+/// returned `care_share_events` count reflects that.
+///
+/// # Determinism
+///
+/// All arithmetic is `f32` and uses only deterministic selection
+/// (nearest adult by `id`, ordered iteration), so this function is safe
+/// inside a fixed-tick simulation.
+///
+/// # Arguments
+///
+/// * `civilians` - Parallel slices of identity and per-civilian health.
+///   Both must have the same length; this is checked via a debug assert.
+/// * `params` - Lifecycle tuning parameters. Only
+///   `params.care_share_threshold` is consulted.
+#[must_use]
+pub fn tick_care_share(
+    civilians: &mut [CareSubject],
+    health: &mut [Health],
+    params: &LifecycleParams,
+) -> CareShareOutcome {
+    debug_assert_eq!(
+        civilians.len(),
+        health.len(),
+        "tick_care_share: civilians and health slices must be parallel",
+    );
+
+    let mut outcome = CareShareOutcome::default();
+    let threshold = params.care_share_threshold;
+    let len = civilians.len();
+    if len == 0 {
+        return outcome;
+    }
+
+    // Track which adults have already donated this tick.
+    let mut donated = vec![false; len];
+
+    for recipient_idx in 0..len {
+        // Skip recipients above the care threshold.
+        if health[recipient_idx].integrity >= threshold {
+            continue;
+        }
+        // Recipients cannot receive care from themselves; the donor must
+        // be a distinct adult. Adults cannot receive care if they are
+        // themselves sick (they give what little capacity they have).
+        if civilians[recipient_idx].is_adult() {
+            continue;
+        }
+
+        let recipient_area = civilians[recipient_idx].area;
+        let mut best_donor: Option<usize> = None;
+        let mut best_donor_id: u64 = 0;
+
+        for candidate_idx in 0..len {
+            if candidate_idx == recipient_idx {
+                continue;
+            }
+            if donated[candidate_idx] {
+                continue;
+            }
+            if civilians[candidate_idx].area != recipient_area {
+                continue;
+            }
+            if !civilians[candidate_idx].is_adult() {
+                continue;
+            }
+            // Adults must have enough integrity to donate meaningfully.
+            if health[candidate_idx].integrity <= threshold {
+                continue;
+            }
+            let candidate_id = civilians[candidate_idx].id;
+            match best_donor {
+                None => {
+                    best_donor = Some(candidate_idx);
+                    best_donor_id = candidate_id;
+                }
+                Some(_) if candidate_id < best_donor_id => {
+                    best_donor = Some(candidate_idx);
+                    best_donor_id = candidate_id;
+                }
+                Some(_) => {}
+            }
+        }
+
+        if let Some(donor_idx) = best_donor {
+            // Deterministic mid-range transfer amount.
+            let transfer =
+                (CARE_SHARE_MIN_TRANSFER + CARE_SHARE_MAX_TRANSFER) * 0.5;
+            // Clamp donor so they cannot drop below the care threshold
+            // (an adult who falls below threshold is no longer considered
+            // a caregiver themselves).
+            let donor_room = (health[donor_idx].integrity - threshold).max(0.0);
+            let actual = transfer.min(donor_room);
+            if actual > 0.0 {
+                health[donor_idx].integrity =
+                    clamp01(health[donor_idx].integrity - actual);
+                health[recipient_idx].integrity =
+                    clamp01(health[recipient_idx].integrity + actual);
+                donated[donor_idx] = true;
+                outcome.care_share_events += 1;
+            }
+        }
+    }
+
+    outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dna(seed: u8) -> Dna {
+        let mut bytes = vec![0u8; 32];
+        for (idx, byte) in bytes.iter_mut().enumerate() {
+            *byte = seed.wrapping_add(idx as u8);
+        }
+        Dna(bytes)
+    }
+
+    #[test]
+    fn lifecycle_label_boundaries_are_read_only() {
+        let health = Health::default();
+        assert_eq!(
+            classify_lifecycle(2, &health, 0.1, 0.0),
+            LifecycleLabel::Child
+        );
+        assert_eq!(
+            classify_lifecycle(24, &health, 0.8, 0.8),
+            LifecycleLabel::Adult
+        );
+        assert_eq!(
+            classify_lifecycle(70, &Health { integrity: 0.4, ..health }, 0.8, 0.8),
+            LifecycleLabel::Elder
+        );
+        assert_eq!(
+            classify_lifecycle(24, &Health { integrity: 0.0, ..health }, 0.8, 0.8),
+            LifecycleLabel::Dead
+        );
+    }
+
+    #[test]
+    fn labor_capacity_drops_with_integrity() {
+        let params = LifecycleParams::default();
+        let dna = dna(7);
+        let healthy = Health {
+            integrity: 1.0,
+            ..Health::default()
+        };
+        let degraded = Health {
+            integrity: 0.2,
+            ..Health::default()
+        };
+
+        let high = labor_capacity(32, &healthy, &dna, &params);
+        let low = labor_capacity(32, &degraded, &dna, &params);
+
+        assert!(high >= low);
+        assert!(low < high);
+    }
+
+    #[test]
+    fn age_threshold_stays_in_expected_band() {
+        let params = LifecycleParams::default();
+        let low = age_threshold(&dna(0), &params);
+        let high = age_threshold(&dna(200), &params);
+        assert!((50..=120).contains(&low));
+        assert!((50..=120).contains(&high));
+    }
+
+    // FR-CIV-LIFE active lifecycle tests
+
+    #[test]
+    fn birth_viable_when_all_thresholds_met() {
+        let params = ActiveLifecycleParams::default();
+        let sated = crate::Needs::sated();
+        assert!(can_birth(&sated, &params));
+    }
+
+    #[test]
+    fn birth_blocked_when_food_low() {
+        let params = ActiveLifecycleParams::default();
+        let mut needs = crate::Needs::sated();
+        needs.food = params.birth_food_threshold - 0.1;
+        assert!(!can_birth(&needs, &params));
+    }
+
+    #[test]
+    fn birth_blocked_when_safety_low() {
+        let params = ActiveLifecycleParams::default();
+        let mut needs = crate::Needs::sated();
+        needs.safety = params.birth_safety_threshold - 0.1;
+        assert!(!can_birth(&needs, &params));
+    }
+
+    #[test]
+    fn birth_blocked_when_social_low() {
+        let params = ActiveLifecycleParams::default();
+        let mut needs = crate::Needs::sated();
+        needs.social = params.birth_social_threshold - 0.1;
+        assert!(!can_birth(&needs, &params));
+    }
+
+    #[test]
+    fn birth_viable_at_exact_thresholds() {
+        let params = ActiveLifecycleParams::default();
+        let needs = crate::Needs {
+            food: params.birth_food_threshold,
+            water: 1.0,
+            rest: 1.0,
+            safety: params.birth_safety_threshold,
+            social: params.birth_social_threshold,
+            health: 1.0,
+        };
+        assert!(can_birth(&needs, &params));
+    }
+
+    #[test]
+    fn unrest_is_zero_when_all_needs_sated() {
+        let sated = crate::Needs::sated();
+        let unrest = compute_unrest(&sated);
+        assert!(unrest < 1e-6);
+    }
+
+    #[test]
+    fn unrest_is_one_when_all_needs_critical() {
+        let critical = crate::Needs {
+            food: 0.0,
+            water: 0.0,
+            rest: 0.0,
+            safety: 0.0,
+            social: 0.0,
+            health: 1.0,
+        };
+        let unrest = compute_unrest(&critical);
+        assert!(unrest > 0.99);
+    }
+
+    #[test]
+    fn unrest_is_half_when_all_needs_half() {
+        let half = crate::Needs {
+            food: 0.5,
+            water: 0.5,
+            rest: 0.5,
+            safety: 0.5,
+            social: 0.5,
+            health: 1.0,
+        };
+        let unrest = compute_unrest(&half);
+        assert!((unrest - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn migration_pressure_off_when_sated() {
+        let params = ActiveLifecycleParams::default();
+        let sated = crate::Needs::sated();
+        assert!(!migration_pressure(&sated, &params));
+    }
+
+    #[test]
+    fn migration_pressure_on_when_food_critical() {
+        let params = ActiveLifecycleParams::default();
+        let mut needs = crate::Needs::sated();
+        needs.food = params.migration_food_threshold - 0.1;
+        assert!(migration_pressure(&needs, &params));
+    }
+
+    #[test]
+    fn migration_pressure_on_when_safety_critical() {
+        let params = ActiveLifecycleParams::default();
+        let mut needs = crate::Needs::sated();
+        needs.safety = params.migration_safety_threshold - 0.1;
+        assert!(migration_pressure(&needs, &params));
+    }
+
+    #[test]
+    fn migration_pressure_on_when_unrest_high() {
+        let params = ActiveLifecycleParams::default();
+        let high_unrest = crate::Needs {
+            food: 0.1,
+            water: 0.1,
+            rest: 0.1,
+            safety: 0.1,
+            social: 0.1,
+            health: 1.0,
+        };
+        assert!(migration_pressure(&high_unrest, &params));
+    }
+
+    #[test]
+    fn migration_pressure_at_exact_thresholds() {
+        let params = ActiveLifecycleParams::default();
+        let at_boundary = crate::Needs {
+            food: params.migration_food_threshold,
+            water: 1.0,
+            rest: 1.0,
+            safety: params.migration_safety_threshold,
+            social: 1.0,
+            health: 1.0,
+        };
+        // Exactly at thresholds should NOT trigger (thresholds are exclusive lower bounds).
+        assert!(!migration_pressure(&at_boundary, &params));
+    }
+
+    #[test]
+    fn active_lifecycle_params_have_sensible_defaults() {
+        let params = ActiveLifecycleParams::default();
+        assert!(params.birth_food_threshold > 0.0 && params.birth_food_threshold <= 1.0);
+        assert!(params.birth_safety_threshold > 0.0 && params.birth_safety_threshold <= 1.0);
+        assert!(params.birth_social_threshold > 0.0 && params.birth_social_threshold <= 1.0);
+        assert!(params.birth_probability > 0.0 && params.birth_probability <= 0.5);
+        assert!(params.migration_food_threshold > 0.0 && params.migration_food_threshold <= 1.0);
+        assert!(params.migration_safety_threshold > 0.0 && params.migration_safety_threshold <= 1.0);
+        assert!(params.migration_unrest_threshold > 0.0 && params.migration_unrest_threshold <= 1.0);
+        assert!(params.migration_probability > 0.0 && params.migration_probability <= 0.5);
+    }
+
+    #[test]
+    fn fed_stable_population_can_reproduce() {
+        // Scenario: well-fed, safe population with high social cohesion.
+        let params = ActiveLifecycleParams::default();
+        let well_fed = crate::Needs {
+            food: 0.8,
+            water: 0.8,
+            rest: 0.8,
+            safety: 0.8,
+            social: 0.8,
+            health: 1.0,
+        };
+        assert!(can_birth(&well_fed, &params));
+        assert!(!migration_pressure(&well_fed, &params));
+    }
+
+    #[test]
+    fn starving_population_migrates() {
+        // Scenario: food-stressed population with moderate resource pressure.
+        let params = ActiveLifecycleParams::default();
+        let starving = crate::Needs {
+            food: 0.2,
+            water: 0.5,
+            rest: 0.3,
+            safety: 0.5,
+            social: 0.3,
+            health: 0.7,
+        };
+        assert!(!can_birth(&starving, &params));
+        assert!(migration_pressure(&starving, &params));
+    }
+}

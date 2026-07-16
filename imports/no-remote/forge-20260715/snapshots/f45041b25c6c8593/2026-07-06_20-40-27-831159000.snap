@@ -1,0 +1,272 @@
+# ArgisMonitor / HeliosLite Renames + Release Program — gate ledger
+
+Authoritative reference for the 8-gate program. Anything not pinned here is
+subject to a fresh decision at the next gate. This file is the **only** place
+the upstreams-merge-safety policy lives; gates 1-8 read from it.
+
+---
+
+## Gate 0 — baseline (2026-07-05)
+
+| Repo                         | HEAD       | Branch                | Working tree | CI (latest main) |
+|------------------------------|------------|-----------------------|--------------|------------------|
+| `KooshaPari/OmniRoute`       | a7db426db  | `renames/argismonitor`* | clean        | success          |
+| `KooshaPari/forgecode`       | 71c6a7a4c  | `main`                | clean        | success          |
+
+\* local only, not pushed.
+
+Existing GitHub secrets:
+- `KooshaPari/OmniRoute`: `SONAR_TOKEN`
+- `KooshaPari/forgecode`: (none)
+
+Local-only secrets (not yet wired to actions):
+- `~/.env`: `NPM_TOKEN` — **value exposed in context, expired/revoked.** Rotation
+  required before any `npm publish` runs. Will be wired via
+  `gh secret set NPM_TOKEN --repo <owner>/<repo>` with a fresh token.
+
+Active agent worktrees (untouched):
+- `OmniRoute-pr015` (prunable)
+- `OmniRoute-worktrees/agent-bifrost-docs`
+- `OmniRoute-worktrees/agent-ci-5467`
+- `OmniRoute-worktrees/agent-native-sidecar-scan`
+- `OmniRoute-worktrees/agent-relay-fallback-tests`
+- `OmniRoute-worktrees/bifrost-failure-cooldown`
+- `OmniRoute-worktrees/bifrost-sidecar-ops-guide`
+- `OmniRoute-worktrees/fix-onboarding-browser-ioredis`
+
+---
+
+## Across-gate policy (binding for gates 1-8)
+
+### Naming map
+
+| Old (upstream-derived)        | New (publish surface)         | Tactic                          |
+|-------------------------------|-------------------------------|---------------------------------|
+| `omniroute` (npm pkg)         | `argismonitor`                | new npm pkg + deprecate old     |
+| `omniroute` (CLI bin)         | `argismonitor`                | new bin + alias shim            |
+| `@omniroute/opencode-plugin`  | `@argismonitor/opencode-plugin` | new + deprecate old            |
+| `OMNIROUTE_*` env vars        | `ARGIS_*`                     | new vars + alias shim map       |
+| `OmniRoute` (title/branding)  | `ArgisMonitor`                | flip docs+landing, keep CI ids  |
+| `omniroute.online` (URL)      | `argismonitor.phenotype.space` | DNS+landing flip                |
+| `forgecode` (Cargo ws name)   | `helioslite`                  | new pkg + deprecate             |
+| `forge-dev` (binary name)     | `helioslite`                  | new bin + alias shim            |
+| `forge-dev-*` (crates.io)     | `helioslite-*`                | new pkgs                        |
+| `KooshaPari/forgecode`        | `KooshaPari/heliosLite`       | in-place `gh repo rename` (no repo-create) + redirect |
+| `KooshaPari/OmniRoute`        | `KooshaPari/ArgisMonitor`     | in-place `gh repo rename` (no repo-create) + redirect |
+| `Phenotype/`                  | `phenotype.` (lowercase, dot  | preserved style-only            |
+| `KooshaPari`                  | `KooshaPari`                  | author tag preserved            |
+
+### Additive-rename rule (upstream-merge-safety)
+
+For OmniRoute (fork of `diegosouzapw/OmniRoute`, 164 commits ahead), all
+internal identifiers (`omniroute` literals in source, class names, file
+contents, env var names *internally used*) **stay**. Only the **publish
+surface** flips in Gate 1. Same for Forgecode (fork of
+`tailcallhq/forgecode`).
+
+Rationale: a hard rename would make every upstream rebase a multi-day
+resolving exercise and break the 9 active agent worktrees. Hard renames can
+land in a later "v4"-style cutover once the publish-surface is established.
+
+### Deprecation convention
+
+For each old identifier, ship:
+1. Shim that reads new identifier first, falls back to old with a one-time
+   stderr `[deprecated: <old> → use <new>]` message.
+2. `*_ALLOW_LEGACY=1` env var to silence.
+3. README callout under "Upstream merge safety / deprecation policy".
+
+### Domain & infrastructure mapping
+
+| Subdomain                          | Provider / surface                      |
+|------------------------------------|-----------------------------------------|
+| `argismonitor.phenotype.space`      | Vercel + GH Pages (docs/public)          |
+| `argismonitor.pheno.studio`        | Local WSL/HyperV via Caddy envelope      |
+| `helioslite.phenotype.space`        | Vercel + GH Pages                       |
+| `helioslite.pheno.studio`          | Local WSL/HyperV via Caddy envelope      |
+| `argis.phenotype.space`, `helios.phenotype.space`, ... | family federated index landing |
+
+`pheno.studio` is the deployment domain (Vercel + local WSL); Caddy fronts
+each project's subnet under that.
+
+### Registries/publishers per package
+
+| Package surface                    | npm | crates.io | Homebrew | Chocolatey | winget | Docker | VS Code |
+|------------------------------------|-----|-----------|----------|------------|--------|--------|---------|
+| `argismonitor` (OmniRoute core)    | ✓   | —         | ✓        | ✓          | ✓      | ✓      | —       |
+| `@argismonitor/opencode-plugin`    | ✓   | —         | —        | —          | —      | —      | ✓       |
+| `argismonitor-desktop` (Electron)  | ✓   | —         | ✓ (cask) | ✓          | ✓      | —      | —       |
+| `helioslite` (Forgecode core)      | ✓   | ✓         | ✓        | ✓          | ✓      | ✓      | —       |
+| `helioslite-shell` (plugin)        | —   | ✓         | ✓        | ✓          | ✓      | —      | —       |
+
+(Docker extension omitted in MVP — keep on GHCR + OCI artifact workflow.)
+
+### Branch / release / merge strategy (binds gate 3)
+
+- Default branch: `main`. No `develop` long-lived branch.
+- Branch model: trunk-based, feature branches like `feat/<slug>` or
+  `fix/<slug>`. No release branches.
+- Tag format: semver `vMAJOR.MINOR.PATCH[-prerelease]`, signed (`-s`) where
+  the signing key is configured.
+- Branch protection on `main`: required reviews=1 (you later), required
+  status checks = the canonical CI suite + `quality` + `security` + at least
+  one `e2e` lane, no admin bypass on regular branches; admin bypass preserved
+  for hotfix tags.
+- Merge strategy: squash merge for feature branches; fast-forward `main` →
+  release tags only.
+- CHANGELOG driven by `git-cliff` (cliff.toml already exists in both forks).
+- Renovate already configured (Forgecode). OmniRoute will get one in Gate 3.
+
+### Fork notice / AI-DD / HITL-less disclosure placement
+
+- README: short block at the top under `# <New Name>` (≤ 25 lines).
+- `docs/FORK.md`: deep version (full upstream link, fork rationale,
+  maintained-by info, AI-DD/HITL-less disclosure, contributing-from-upstream
+  guide, license).
+- License: keep `LICENSE` with original upstream copyright. Add
+  `NOTICE.md` with the legal chain (upstream → KooshaPari/Phenotype).
+- README badge: `fork-of` + `maintained-by` shields.
+
+### Update strategy (binds gate 5)
+
+- In-app: `update-notifier` (npm pkg, already a dependency) keyed to the new
+  npm name.
+- CLI subcommand `argismonitor upgrade` (and `helioslite upgrade`) — clap
+  flag in Forgecode, commander command in OmniRoute.
+- Nightly CI: build latest main, attach as pre-release tag `v{N}-nightly`,
+  publish to Homebrew tap `--nightly` formula (migrated by user manually or
+  held for review).
+- Restart daemon guidance documented in README.
+
+### Developer CLI contract (binds gate 7)
+
+- **Simple layer**: `Taskfile.yml` (Go Task) for OmniRoute, `Justfile`
+  already in Forgecode. **No Makefile.**
+- **Rich layer**: `commander` (OmniRoute, already in deps) and `clap`
+  (Forgecode, already in deps). Subcommand set:
+  - `dev|test|build|serve|start|deploy|release|upgrade|doctor`
+  - Modes (cross-cutting flags): `--mode local|hybrid|prod`,
+    `--mode hot|cold|dry|fixture`, `--profile minimal|standard|secure`.
+- `doctor`: pre-flight check (registry creds, DNS, domain reachability,
+  Caddy backend).
+- Installed-pkg CLI is the SSOT. `Task` is for developer ergonomics;
+  `argismonitor doctor` is what a new contributor or end-user runs first.
+
+### Per-project Caddy envelope (binds gate 6)
+
+A `Caddyfile` per project at the repo root mapping:
+- `argismonitor.pheno.studio` → local compose/Kubernetes backend on the
+  project subnet
+- `argismonitor.phenotype.space` → Vercel upstream + GH Pages fallback
+- Strip `X-Forwarded-*` we don't trust; re-inject ours from Caddy.
+- Per-subnet TLS terminated at Caddy; backend is HTTP on private subnet.
+
+### Installers (binds gate 4 + gate 5)
+
+- **PowerShell (Windows / Windows+WSL)**: `irm ... | iex` style installer
+  rendering a downloading of the msi/exe from the GH release.
+- **Bash (mac/linux)**: `curl -sSfL ... | sh` style installer — already
+  present in Forgecode; OmniRoute gets the same.
+- Homebrew tap: `KooshaPari/tap`.
+- Chocolatey: `KooshaPari/chocolatey-packages`.
+- winget: PRs against `microsoft/winget-pkgs`.
+- NuGet (when we get to .NET packages): standard `nuget push`.
+
+---
+
+## Gate-by-gate handoff format
+
+Each gate's handoff message:
+
+1. *What changed* (file categories + counts)
+2. *What did NOT change* (and why)
+3. *3-5 representative diffs*
+4. *`git diff <base> --stat` for the relevant scope*
+5. *Risks / collisions*
+6. *Exact next steps gated on your sign-off*
+
+No gate proceeds without sign-off except Gate 0.
+
+---
+
+## Gate execution ledger (this session, 2026-07-05)
+
+| Gate | Subject                                  | Status      | HEAD (local-only) | Notes |
+|------|------------------------------------------|-------------|-------------------|-------|
+| 0    | Baseline + policy doc                    | Done        | n/a               | this file is the durable artifact |
+| 1a   | `OmniRoute` → `ArgisMonitor` publish-surface rename | Done | `eb2778f13` | additive, legacy shim retained |
+| 1b   | `forgecode` → `heliosLite` publish-surface rename   | Done | `3df2307a` | new `[[bin]] helioslite`; legacy `forge-dev` kept |
+| 2a   | ArgisMonitor FORK.md / NOTICE.md / RENAMES-STRATEGY.md | Done | `eb2778f13` | additive, fork attribution locked |
+| 2b   | HeliosLite FORK.md / NOTICE.md / RENAMES-STRATEGY.md  | Done | `3df2307a` | additive |
+| 3    | renovate + cliff + branch-protection (file-only)     | Done | `2f261e80d` (arg) / `a1362073` (helios) | apply with `gh api` when admin scope available |
+| 4    | brew + choco + winget + npm/crates deprecation manifest | Done | same      | publish-half requires fresh tokens |
+| 5    | Update strategy + nightly workflow + CLI upgrade cmd | Done | same      | `update.mjs` patched to PACKAGE_NAME toggle; CLI `update`/`doctor` already wired upstream |
+| 6    | Landing pages + Caddy envelope (file-only)           | Done | same      | Vercel/GH Pages/Caddy deploys require admin token |
+| 7    | Taskfile + clap dev/test/serve/start/doctor contract | Done | same      | No makefile installed; canonical task names match across both forks |
+| 8    | HeliosLite repeat gates 3-7                            | Done | `a1362073` | re-uses the same yarn/Taskfile/clap contracts |
+
+### Pending (require gh admin + paste of secrets, blocked from this chat):
+
+- **gh repo create** for `KooshaPari/ArgisMonitor` and `KooshaPari/heliosLite`.
+- **branch protection apply** via `gh api` (config at `.github/branch-protection.main.json`).
+- **Token paste**, then `gh secret set`:
+  - `NPM_TOKEN` (rotation mandatory: prior token was leaked + expired).
+  - `CARGO_REGISTRY_TOKEN` for crates.io.
+  - `HOMEBREW_TAP_TOKEN`, `CHOCOLATEY_API_KEY`, `WINGET_TOKEN`.
+  - `VERCEL_TOKEN`, `CLOUDFLARE_API_TOKEN` (for `phenotype.space` / `pheno.studio`).
+- **Vercel project create** + **DNS record** (phenotype.space + pheno.studio).
+- **Caddy reload** on the WSL/Hyper-V gateway.
+
+All file artifacts in this session live on local branches
+`renames/argismonitor` (HEAD `2f261e80d`) and `renames/helioslite` (HEAD
+`a1362073`). Neither branch was pushed. Neither registry was written
+to. No DNS records were touched. No Caddy reload. No Vercel deploy.
+
+### Persistent executor scripts (durable, parse-checked)
+
+The remaining "pending" items above are not solvable from a chat without
+admin scope + token paste.  Three PowerShell scripts under
+`forge/scripts/admin/` are the deterministic executors that consume those
+inputs and resolve the pending items in one command each.  They are
+written, parse-checked (PowerShell 7), and ready to run.
+
+| Script                            | Resolves                          | Inputs required                                |
+|-----------------------------------|-----------------------------------|------------------------------------------------|
+| `finish-program.ps1`              | gh repo create + push branches + apply branch protection | `gh auth refresh -s admin:org,delete_repo,repo,workflow,write:packages` |
+| `apply-secrets.ps1`               | wire NPM/VERCEL/CLOUDFLARE/CARGO/HOMEBREW/CHOCO/WINGET as repo secrets | token values pasted via `Read-Host` or `-FromEnvFile` |
+| `cut-and-watch.ps1`               | cut a release tag + monitor the resulting workflow run | the workflow must already exist on the repo (gate 3 created `argismonitor-publish.yml` + `argismonitor-nightly.yml`; gate 4b the HeliosLite equivalents) |
+
+Run order:
+```powershell
+# 1. Wire admin scope (one-time)
+gh auth refresh -s admin:org,repo,workflow
+
+# 2. Preview the boot, then run it (in-place rename + push + PR + branch protection)
+pwsh -NoProfile -File forge/scripts/admin/finish-program.ps1 -DryRun
+pwsh -NoProfile -File forge/scripts/admin/finish-program.ps1
+
+# 3. Wire secrets from ~/.env (ZDR; no rotation)
+pwsh -NoProfile -File forge/scripts/admin/apply-secrets.ps1
+
+# 4. Cut first release tags; the workflow files already exist
+pwsh -NoProfile -File forge/scripts/admin/cut-and-watch.ps1 -Repo ArgisMonitor -Tag v3.9.0
+pwsh -NoProfile -File forge/scripts/admin/cut-and-watch.ps1 -Repo heliosLite   -Tag v0.1.1
+```
+
+All three scripts were last parse-checked 2026-07-05 against
+PowerShell 7 and pass.
+
+> **ZDR note:** `apply-secrets.ps1` reads `~/.env` directly. Tokens are
+> treated as zero-data-retention; nothing in this pipeline rotates
+> them. If you ever want a rotation workflow, that's a separate script.
+
+### Total file surface this session (pre-push, both branches)
+
+| Branch                     | Files changed | Lines     |
+|----------------------------|--------------:|----------:|
+| `renames/argismonitor`     |            31 | +1 580    |
+| `renames/helioslite`       |            24 | +768 / -6 |
+| **Combined (gate-set)**    |        **55** | **+2 348 / -26** |
+
+(Exact `git diff --stat` available; not reproduced here for brevity —
+see commit messages on each branch.)

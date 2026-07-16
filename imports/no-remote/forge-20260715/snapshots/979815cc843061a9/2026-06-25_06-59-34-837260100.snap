@@ -1,0 +1,6 @@
+/**
+ * DAG live status barrel export.
+ */
+export { DagStatusEmitter } from "./emitter.ts";
+export { DagStore, DEFAULT_POLL_MS } from "./store.ts";
+export * from "./types.ts";

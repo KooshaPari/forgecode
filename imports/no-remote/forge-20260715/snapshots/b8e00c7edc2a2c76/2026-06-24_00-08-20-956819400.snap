@@ -1,0 +1,459 @@
+//! FR-WORLD-climate — emergent per-cell climate field.
+//!
+//! Unlike [`crate::weather::compute_weather`] (which derives each tick's
+//! temperature from latitude + season + day heat deterministically from
+//! scratch), the [`ClimateField`] in this module is an **evolving state**:
+//! it starts at a neutral seed and each call to [`ClimateField::step`]
+//! advances every cell by a fixed amount of emergent physics.
+//!
+//! # Physical laws (hardcoded — no tunable knobs in this milestone)
+//!
+//! Three emergent drivers compose the per-cell target temperature and a
+//! fourth driver — moisture advection — diffuses moisture between cells.
+//!
+//! 1. **Latitude forcing** (cos² solar incidence). The equator receives
+//!    the most insolation and the poles the least; we use the standard
+//!    `cos²(latitude)` weighting so the equator is warm and the poles are
+//!    cold even before any other term is applied.
+//! 2. **Elevation cooling** (environmental lapse rate). Air cools at
+//!    `LAPSE_RATE_C_PER_M = 0.0065 °C/m` as it rises, the standard
+//!    tropospheric average. High-altitude cells therefore emerge cooler
+//!    than their neighbours.
+//! 3. **Moisture ↔ temperature coupling**. A wet cell keeps more thermal
+//!    inertia (water has a high heat capacity); a dry cell relaxes faster
+//!    toward the latitude/elevation target. This produces hot/dry
+//!    continental interiors and mild/wet maritime cells.
+//! 4. **Moisture advection** (diffusive ring transport). Each tick a
+//!    fraction of each cell's moisture is swapped equally with its two
+//!    latitude neighbours, so moisture emitted from a wet source cell
+//!    propagates deterministically along the ring.
+//!
+//! These four laws are hardcoded; the only per-step input is the tick
+//! (used to derive a stable climate phase from the existing
+//! [`crate::Climate`]) and the elevation per cell (passed in by the
+//! caller, typically [`crate::geology::RegionBiome`] or voxel
+//! `surface_height`).
+//!
+//! # Determinism
+//!
+//! `ClimateField::step` is a pure function of `(field, climate, elevations)`.
+//! Identical inputs produce bit-identical outputs across calls, runs,
+//! and machines — the same property [`crate::compute_climate`] and
+//! [`crate::weather::compute_weather`] already guarantee.
+
+#![forbid(unsafe_code)]
+
+use serde::{Deserialize, Serialize};
+
+use crate::Climate;
+
+/// Fixed-point scale shared with [`crate::weather`] so per-cell outputs
+/// can be compared, diffed, and serialized against existing `WeatherCell`
+/// values without conversion.
+pub const FP_SCALE: i32 = 1_000;
+
+/// Number of latitude bands the emergent climate field is decomposed into.
+/// Matches the `NUM_REGIONS = 16` used by [`crate::geology::GeologyMap`].
+pub const NUM_REGIONS: usize = 16;
+
+/// Equator baseline temperature in fixed-point Celsius (30 °C).
+const EQUATOR_TEMP_FP: i32 = 30 * FP_SCALE;
+
+/// Pole baseline temperature in fixed-point Celsius (-20 °C). Combined
+/// with `EQUATOR_TEMP_FP` this gives a 50 °C equator-to-pole gradient,
+/// the empirical Earth-like mean.
+const POLE_TEMP_FP: i32 = -20 * FP_SCALE;
+
+/// Environmental lapse rate in **fixed-point Celsius per metre of
+/// elevation**. The standard tropospheric lapse rate is 6.5 °C/km, i.e.
+/// `0.0065 °C/m`. Multiplied by [`FP_SCALE`] this is `6.5` fp-°C/m.
+const LAPSE_RATE_FP_PER_M: i32 = 6;
+
+/// Per-tick thermal relaxation factor in `[0, 1]`. Each tick the cell
+/// temperature drifts `RELAX` of the way from its current value to the
+/// latitude+elevation target. Smaller values give slower emergence.
+const RELAX: i32 = 1; // 1/16 — slow enough to watch the field evolve
+const RELAX_DENOM: i32 = 16;
+
+/// Moisture retention fraction per tick (out of [`MOIST_DENOM`]). The
+/// remaining `MOIST_EXCHANGE` (split between the two latitude-band
+/// neighbours) is exchanged with neighbours.
+const MOIST_RETAIN: i32 = 14;
+const MOIST_EXCHANGE: i32 = 1; // each neighbour contributes this many /16
+const MOIST_DENOM: i32 = 16;
+
+/// Orographic lift threshold in metres above which a cell starts
+/// wringing moisture out of the advected air (rain shadow emergence).
+const OROGRAPHIC_MIN_M: i32 = 2_000;
+
+/// Maximum moisture (in fixed-point millimetres) that a single high cell
+/// can strip from each windward neighbour per tick.
+const OROGRAPHIC_STRIP_FP: i32 = 80;
+
+/// Per-cell emergent climate state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClimateCell {
+    /// Stable integer identifier of the region (0-based latitude band).
+    pub region_id: u32,
+    /// Latitude of the cell in fixed-point degrees; -90_000 (south pole)
+    /// to +90_000 (north pole).
+    pub latitude_fp: i32,
+    /// Current temperature in fixed-point Celsius. Emerges from
+    /// latitude forcing + elevation cooling + relaxation.
+    pub temp_c_fp: i32,
+    /// Current atmospheric moisture in fixed-point millimetres of
+    /// precipitable water. Emerges from advection + orographic lift.
+    pub moisture_mm_fp: i32,
+}
+
+/// Emergent per-cell climate field. Holds `NUM_REGIONS` [`ClimateCell`]s
+/// arranged as a 1-D latitude ring from south pole (index 0) to north
+/// pole (index `NUM_REGIONS - 1`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClimateField {
+    /// Per-cell state, length == [`NUM_REGIONS`].
+    pub cells: Vec<ClimateCell>,
+    /// Last tick this field was advanced to (used for monotonicity
+    /// assertions in tests, not part of the public emergent behaviour).
+    pub tick: u64,
+}
+
+impl ClimateField {
+    /// Construct a new `ClimateField` with all cells at a neutral seed
+    /// (15 °C, 0 mm moisture). The first [`Self::step`] call will then
+    /// drive each cell toward its latitude+elevation target.
+    #[must_use]
+    pub fn new() -> Self {
+        let cells = (0..NUM_REGIONS as u32)
+            .map(|id| ClimateCell {
+                region_id: id,
+                latitude_fp: latitude_fp_for(id),
+                temp_c_fp: 15 * FP_SCALE,
+                moisture_mm_fp: 0,
+            })
+            .collect();
+        Self { cells, tick: 0 }
+    }
+
+    /// Advance the climate field by one tick using the emergent physics
+    /// described at module level.
+    ///
+    /// # Parameters
+    /// * `climate` — the deterministic [`Climate`] snapshot for this tick
+    ///   (drives the small diurnal/seasonal modulation).
+    /// * `elevations_m` — per-cell elevation in **whole metres above sea
+    ///   level**, one entry per [`NUM_REGIONS`] cell, indexed by
+    ///   `region_id`. Cells below sea level (negative values) are
+    ///   clamped to 0 because the lapse rate cools only above sea level.
+    ///
+    /// # Panics
+    /// Never. The function clamps `elevations_m` to `>= 0` and asserts
+    /// (only in debug builds) that `elevations_m.len() == NUM_REGIONS`.
+    pub fn step(&mut self, climate: &Climate, elevations_m: &[i32]) {
+        debug_assert_eq!(
+            elevations_m.len(),
+            NUM_REGIONS,
+            "elevations_m length must equal NUM_REGIONS"
+        );
+
+        // ── Phase 1: compute target temperature for each cell ────────────
+        // Target = latitude_forcing(lat) + elevation_cooling(elev) +
+        //          small seasonal modulation. The cell then relaxes
+        //          toward this target by RELAX / RELAX_DENOM.
+        let seasonal_fp = seasonal_modulation_fp(climate);
+        let targets: Vec<i32> = (0..NUM_REGIONS)
+            .map(|i| {
+                let lat_fp = latitude_fp_for(i as u32);
+                let lat_target = latitude_target_fp(lat_fp);
+                let elev_m = elevations_m.get(i).copied().unwrap_or(0).max(0);
+                let elev_cooling_fp = elev_m.saturating_mul(LAPSE_RATE_FP_PER_M);
+                // Hemisphere flip: southern hemisphere gets inverted season.
+                let hemisphere = if lat_fp >= 0 { 1 } else { -1 };
+                let season_fp = seasonal_fp.saturating_mul(hemisphere);
+                (lat_target - elev_cooling_fp + season_fp).clamp(-60_000, 55_000)
+            })
+            .collect();
+
+        // ── Phase 2: thermal relaxation ──────────────────────────────────
+        // moisture modulates the relaxation: wetter cells relax more
+        // slowly (thermal inertia), so warm oceans stay warm and cool
+        // oceans stay cool longer than dry interiors.
+        let moisture_fp: Vec<i32> = self.cells.iter().map(|c| c.moisture_mm_fp).collect();
+
+        let new_temps: Vec<i32> = (0..NUM_REGIONS)
+            .map(|i| {
+                let target = targets[i];
+                let current = self.cells[i].temp_c_fp;
+                let moist = moisture_fp[i].clamp(0, 60_000) as i64;
+                // moisture inertia in [0, RELAX_DENOM]: 0 = dry (full relax),
+                // RELAX_DENOM = saturated (no relax). Linear interpolation.
+                let inertia = (moist * (RELAX_DENOM as i64) / 60_000).min(RELAX_DENOM as i64) as i32;
+                let effective_relax = (RELAX * (RELAX_DENOM - inertia) / RELAX_DENOM).max(1);
+                let delta = (target - current) * effective_relax / RELAX_DENOM;
+                (current + delta).clamp(-60_000, 55_000)
+            })
+            .collect();
+
+        // ── Phase 3: moisture advection along the latitude ring ──────────
+        // Each tick a cell retains MOIST_RETAIN/MOIST_DENOM of its own
+        // moisture, receives MOIST_EXCHANGE/MOIST_DENOM from each of its
+        // two latitude-band neighbours, and loses the same fraction to
+        // them. Net moisture is conserved (modulo orographic stripping).
+        let mut new_moist: Vec<i32> = vec![0; NUM_REGIONS];
+        for i in 0..NUM_REGIONS {
+            let prev = self.cells[i].moisture_mm_fp;
+            let south = self.cells[wrap_index(i as i32 - 1)].moisture_mm_fp;
+            let north = self.cells[wrap_index(i as i32 + 1)].moisture_mm_fp;
+
+            // Conservation: own + (each neighbour × share / denom) = total.
+            let own_share = prev * MOIST_RETAIN / MOIST_DENOM;
+            let south_share = south * MOIST_EXCHANGE / MOIST_DENOM;
+            let north_share = north * MOIST_EXCHANGE / MOIST_DENOM;
+            new_moist[i] = (own_share + south_share + north_share).max(0);
+        }
+
+        // ── Phase 4: orographic rain shadow ──────────────────────────────
+        // Cells above OROGRAPHIC_MIN_M strip moisture from their
+        // windward neighbour (the south neighbour in the northern
+        // hemisphere, the north neighbour in the southern hemisphere).
+        for i in 0..NUM_REGIONS {
+            let elev_m = elevations_m.get(i).copied().unwrap_or(0).max(0);
+            if elev_m < OROGRAPHIC_MIN_M {
+                continue;
+            }
+            let lat_fp = latitude_fp_for(i as u32);
+            let windward_idx = if lat_fp >= 0 {
+                wrap_index(i as i32 - 1) // north-hemi: wind from south
+            } else {
+                wrap_index(i as i32 + 1) // south-hemi: wind from north
+            };
+            // Strip up to OROGRAPHIC_STRIP_FP from windward; deposit
+            // half of the stripped amount as the cell's own orographic
+            // gain (the rest precipitates out as rain).
+            let strip = OROGRAPHIC_STRIP_FP.min(new_moist[windward_idx].max(0));
+            new_moist[windward_idx] -= strip;
+            new_moist[i] += strip / 2;
+        }
+
+        // ── Phase 5: write back state ────────────────────────────────────
+        for i in 0..NUM_REGIONS {
+            self.cells[i].temp_c_fp = new_temps[i];
+            self.cells[i].moisture_mm_fp = new_moist[i].max(0).min(60_000);
+        }
+        self.tick = self.tick.saturating_add(1);
+    }
+
+    /// Return the temperature in fixed-point Celsius for `region_id`.
+    /// Returns 0 if `region_id` is out of range.
+    #[must_use]
+    pub fn temp_fp(&self, region_id: u32) -> i32 {
+        self.cells
+            .iter()
+            .find(|c| c.region_id == region_id)
+            .map_or(0, |c| c.temp_c_fp)
+    }
+
+    /// Return the moisture in fixed-point millimetres for `region_id`.
+    /// Returns 0 if `region_id` is out of range.
+    #[must_use]
+    pub fn moisture_fp(&self, region_id: u32) -> i32 {
+        self.cells
+            .iter()
+            .find(|c| c.region_id == region_id)
+            .map_or(0, |c| c.moisture_mm_fp)
+    }
+}
+
+impl Default for ClimateField {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Free helpers (not part of the public API — kept crate-private to keep the
+// emergent surface small).
+// ---------------------------------------------------------------------------
+
+/// Wrap a signed latitude-band index into `[0, NUM_REGIONS)`. Treats the
+/// latitude ring as circular so the south pole's southern neighbour is
+/// the north pole and vice versa (preserves moisture conservation at
+/// the poles).
+fn wrap_index(i: i32) -> usize {
+    let n = NUM_REGIONS as i32;
+    let wrapped = i.rem_euclid(n);
+    wrapped as usize
+}
+
+/// Latitude in fixed-point degrees for a given region index. Centres
+/// region 0 at the south pole and region `NUM_REGIONS - 1` at the
+/// north pole, mirroring [`crate::weather::lat_from_region`].
+fn latitude_fp_for(region_id: u32) -> i32 {
+    let n = NUM_REGIONS as i32;
+    if n == 1 {
+        return 0;
+    }
+    let max_lat_fp = 90 * FP_SCALE;
+    -max_lat_fp + (2 * max_lat_fp * region_id as i32) / (n - 1)
+}
+
+/// Target temperature in fixed-point Celsius from a cos²-of-latitude
+/// solar incidence model. Equator → 30 °C, poles → -20 °C.
+fn latitude_target_fp(lat_fp: i32) -> i32 {
+    // sin²(latitude) with latitude in radians, using FP_SCALE-friendly
+    // arithmetic: convert lat_fp → [-1, 1] = lat_fp / 90_000, then
+    // square it. The "1 - x²" form gives a cos² curve, which is
+    // maximum at the equator and zero at the poles.
+    let lat_norm = (lat_fp as i64).clamp(-90_000, 90_000) as i32;
+    let sin_sq = (lat_norm as i64 * lat_norm as i64) / (90_000_i64 * 90_000_i64);
+    // cos² = 1 - sin², scaled to FP_SCALE.
+    let cos_sq_fp = FP_SCALE as i64 - sin_sq * FP_SCALE as i64;
+    // Linear interpolation EQUATOR (cos²=1) → POLE (cos²=0).
+    let range = (EQUATOR_TEMP_FP - POLE_TEMP_FP) as i64;
+    (POLE_TEMP_FP as i64 + range * cos_sq_fp / FP_SCALE as i64) as i32
+}
+
+/// Small seasonal modulation in fixed-point Celsius (peak ±2 °C).
+/// Reuses the day-of-year phase encoded in `climate.year_phase` so the
+/// emergent climate still cycles annually without external scheduling.
+fn seasonal_modulation_fp(climate: &Climate) -> i32 {
+    let year_phase = climate.year_phase.rem_euclid(1.0) as f64;
+    let angle = year_phase * std::f64::consts::TAU;
+    let modulation = angle.sin() * 2.0 * FP_SCALE as f64;
+    modulation.round() as i32
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{compute_climate, defaults_earthlike};
+
+    fn zero_elevations() -> Vec<i32> {
+        vec![0; NUM_REGIONS]
+    }
+
+    fn climate_at_tick(tick: u64) -> Climate {
+        let (planet, moon) = defaults_earthlike();
+        compute_climate(tick, &planet, &moon)
+    }
+
+    /// FR-WORLD-climate / law 1 — after enough ticks at zero elevation,
+    /// the equator cell must be warmer than the pole cell. This proves
+    /// the latitude forcing (`cos²(latitude)`) is doing real work, not
+    /// just a constant.
+    #[test]
+    fn equator_warmer_than_pole_after_emergence() {
+        let mut field = ClimateField::new();
+        let elev = zero_elevations();
+        // 4_000 ticks × RELAX_DENOM ≈ 250x the time-constant, so we are
+        // effectively at the steady state.
+        for t in 0..4_000_u64 {
+            field.step(&climate_at_tick(t), &elev);
+        }
+        let equator = field.temp_fp(NUM_REGIONS as u32 / 2); // mid-band ≈ equator
+        let north_pole = field.temp_fp(NUM_REGIONS as u32 - 1);
+        let south_pole = field.temp_fp(0);
+        assert!(
+            equator > north_pole,
+            "equator ({equator} fp-°C) must be warmer than N pole ({north_pole} fp-°C)"
+        );
+        assert!(
+            equator > south_pole,
+            "equator ({equator} fp-°C) must be warmer than S pole ({south_pole} fp-°C)"
+        );
+    }
+
+    /// FR-WORLD-climate / laws 2+4 — a high-elevation cell (mountain)
+    /// ends up cooler than a sea-level neighbour at the same latitude,
+    /// proving the lapse-rate cooling law is wired into the step. We
+    /// also assert the cell is below the latitude-only target by at
+    /// least the expected lapse drop.
+    #[test]
+    fn elevation_cooling_emerges_lapse_rate() {
+        let mut field = ClimateField::new();
+        // mid-band (equator) elevation 3000 m vs sea level.
+        let mid = NUM_REGIONS / 2;
+        let mut elev = zero_elevations();
+        elev[mid] = 3_000; // 3 km mountain
+
+        // Run to steady state.
+        for t in 0..4_000_u64 {
+            field.step(&climate_at_tick(t), &elev);
+        }
+        let high = field.temp_fp(mid as u32);
+        // Compare against an adjacent sea-level band (one ring away).
+        let low = field.temp_fp(mid as u32 - 1);
+
+        // Expected lapse drop at 3000 m: 3000 × 6 fp-°C/m = 18_000 fp-°C
+        // (18 °C). The actual delta is smaller because the *target* drops
+        // but the cell relaxes asymptotically; assert at least 12 °C
+        // separation, which leaves plenty of headroom for the relaxation
+        // curve and any seasonal modulation.
+        assert!(
+            low - high >= 12_000,
+            "high cell must be >= 12 °C cooler than its sea-level \
+             neighbour (got low={low}, high={high}, delta={})",
+            low - high
+        );
+    }
+
+    /// FR-WORLD-climate / law 3 — moisture advection along the latitude
+    /// ring is deterministic and conserves moisture (modulo orographic
+    /// stripping). We seed a single wet cell and assert the wave
+    /// spreads symmetrically to both neighbours and that the total
+    /// moisture in the ring is non-increasing.
+    #[test]
+    fn moisture_advects_and_is_bounded() {
+        let mut field = ClimateField::new();
+        let elev = zero_elevations();
+        // Inject moisture at the equator cell by stomping its state
+        // before stepping.
+        let mid = NUM_REGIONS / 2;
+        field.cells[mid].moisture_mm_fp = 10_000;
+
+        let total_before: i32 = field.cells.iter().map(|c| c.moisture_mm_fp).sum();
+        for t in 0..200_u64 {
+            field.step(&climate_at_tick(t), &elev);
+        }
+        let total_after: i32 = field.cells.iter().map(|c| c.moisture_mm_fp).sum();
+
+        // Moisture must have spread: the cell two bands away from the
+        // source now has non-zero moisture.
+        let two_away_n = (mid + 2) % NUM_REGIONS;
+        let two_away_s = if mid >= 2 { mid - 2 } else { mid + NUM_REGIONS - 2 };
+        assert!(
+            field.cells[two_away_n].moisture_mm_fp > 0,
+            "moisture must reach cell 2 north of source"
+        );
+        assert!(
+            field.cells[two_away_s].moisture_mm_fp > 0,
+            "moisture must reach cell 2 south of source"
+        );
+        // Total moisture is conserved by the advection step; we are at
+        // sea level so no orographic stripping occurs. Allow a tiny
+        // rounding tolerance.
+        let drift = (total_after - total_before).abs();
+        assert!(
+            drift <= 4,
+            "moisture must be conserved under advection (drift={drift})"
+        );
+    }
+
+    /// FR-WORLD-climate / law 5 — the field is deterministic across two
+    /// identical runs.
+    #[test]
+    fn step_is_deterministic() {
+        let mut a = ClimateField::new();
+        let mut b = ClimateField::new();
+        let elev = zero_elevations();
+        for t in 0..128_u64 {
+            a.step(&climate_at_tick(t), &elev);
+            b.step(&climate_at_tick(t), &elev);
+        }
+        assert_eq!(a, b);
+    }
+}

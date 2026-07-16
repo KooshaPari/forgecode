@@ -1,0 +1,10 @@
+[package]
+name = "nanovms-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Phenotype extraction target: VM isolation primitives extracted from nanovms (ADR-049)."
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,48 @@
+"""Copy agent-platform (TS) -> Agentora/adapters/web/agent-platform/ and
+KlipDot (Rust) -> rich-cli-kit/crates/klipdot/.
+
+Skip .git, .hive-mind binaries, target/, node_modules/ to keep move light.
+"""
+import os, shutil, sys
+
+BASE = r"C:\Users\koosh\forge_tmp"
+
+JOBS = [
+    # (source, dest, skip_names, skip_dirs)
+    (os.path.join(BASE, "agent-platform"),
+     os.path.join(BASE, "Agentora", "adapters", "web", "agent-platform"),
+     {".git"},
+     {".git", "node_modules", "dist", "build", ".cache", ".next", ".turbo", "target"}),
+
+    (os.path.join(BASE, "KlipDot"),
+     os.path.join(BASE, "rich-cli-kit", "crates", "klipdot"),
+     {".git"},
+     {".git", "target", "node_modules", "dist", "build", ".hive-mind"}),
+]
+
+def ignore(directory, files, skip_dirs):
+    # drop .git always; drop target/ etc. only at any depth
+    skip = set()
+    for f in files:
+        if f in skip_dirs:
+            skip.add(f)
+    if os.path.basename(directory) == ".git":
+        return [".git"] if ".git" in files else []
+    return [s for s in skip if s in files]
+
+for src, dst, skip_names, skip_dirs in JOBS:
+    if not os.path.isdir(src):
+        print(f"SKIP missing src: {src}")
+        continue
+    if os.path.exists(dst):
+        print(f"REMOVE existing dst: {dst}")
+        shutil.rmtree(dst, ignore_errors=True)
+    os.makedirs(dst, exist_ok=True)
+    # Use dirs_exist_ok + custom ignore
+    def _ignore(dirpath, contents):
+        return [c for c in contents if c in skip_dirs]
+    shutil.copytree(src, dst, ignore=_ignore, dirs_exist_ok=True)
+    # print summary
+    n_files = sum(1 for _ in _, _, fs in os.walk(dst) for _ in fs)
+    size = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(dst) for f in fs)
+    print(f"OK: {src}  ->  {dst}  ({n_files} files, {size//1024} KB)")

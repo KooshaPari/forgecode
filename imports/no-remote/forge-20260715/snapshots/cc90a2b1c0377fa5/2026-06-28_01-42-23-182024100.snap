@@ -1,0 +1,13 @@
+import os
+clean = r'C:\Users\koosh\OmniRoute-clean\open-sse\executors\codex.ts'
+
+with open(clean, 'r', encoding='utf8', errors='replace') as fh:
+    c = fh.read()
+
+# Find normalizeCodexTools and surrounding
+for needle in ['normalizeCodexTools', 'CODEX_HOSTED_TOOL_TYPES', 'repairMissingCodexFunctionCallOutputs']:
+    idx = c.find(needle)
+    print(f'\n=== {needle} (idx={idx}) ===')
+    if idx >= 0:
+        print(c[max(0, idx-100):min(len(c), idx+800)])
+        print('---')

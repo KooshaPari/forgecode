@@ -1,0 +1,1316 @@
+#!/usr/bin/env python3
+"""Mega generator: produces WP blocks A-Z+ into work_dag_cu_20260624_000000.md.
+
+This script appends blocks B through Z to the file. Block A was already generated
+into _dag_part2_block_a.md and will be appended here.
+"""
+import os, sys
+
+BASE = r"C:\Users\koosh\_cu_audit"
+FINAL = os.path.join(BASE, "work_dag_cu_20260624_000000.md")
+BLOCK_A = os.path.join(BASE, "_dag_part2_block_a.md")
+
+
+def wp(num, slug, title, repo, spec, plan, tasks, pillar, deps, blocks, est, owner, score,
+       status, desc, accept, refs, sota, ext_wins, int_wins):
+    """Format one WP block."""
+    spec_line = f"agileplus-specs/{spec}/spec.md" if spec != "N/A" else "N/A"
+    plan_line = f"agileplus-specs/{plan}/plan.md" if plan != "N/A" else "N/A"
+    tasks_line = f"agileplus-specs/{tasks}/tasks.md" if tasks != "N/A" else "N/A"
+    deps_line = ",".join(deps) if deps else "-"
+    blocks_line = ",".join(blocks) if blocks else "-"
+    return f"""### WP-{num:03d}: {slug} -- {title}
+
+```
+Repo: {repo}
+Spec: {spec_line}
+Plan: {plan_line}
+Tasks: {tasks_line}
+Pillar: {pillar}
+Depends: {deps_line}
+Blocks: {blocks_line}
+Est: {est}
+Owner: {owner}
+Score: {score}/10
+Status: {status}
+Description: {desc}
+Acceptance: {accept}
+Refs: {refs}
+SOTA: {sota}
+External-Wins: {ext_wins}
+Internal-Wins: {int_wins}
+```
+"""
+
+
+def bulk(num_start, count, slug_prefix, title_prefix, repo, pillar, deps_base,
+         blocks_base, est, owner, desc_tmpl, accept_tmpl, refs_tmpl,
+         sota_tmpl, ext_wins_tmpl, int_wins_tmpl):
+    """Generate `count` WPs with auto-incremented numbers."""
+    out = []
+    for i in range(count):
+        num = num_start + i
+        slug = f"{slug_prefix}-{i+1:02d}"
+        title = title_prefix.format(i=i+1)
+        out.append(wp(
+            num, slug, title, repo, "170-cu-platform", "170-cu-platform",
+            "170-cu-platform", pillar,
+            deps_base + [f"WP-{num-1:03d}"] if i > 0 else deps_base,
+            blocks_base, est, owner, "?",
+            "pending",
+            desc_tmpl.format(i=i+1, num=num),
+            accept_tmpl.format(i=i+1),
+            refs_tmpl.format(i=i+1),
+            sota_tmpl.format(i=i+1),
+            ext_wins_tmpl.format(i=i+1),
+            int_wins_tmpl.format(i=i+1),
+        ))
+    return out
+
+
+# =============================================================================
+# BLOCK B — Eidolon Core Scaffolding (WP-046..WP-075, 30 WPs)
+# =============================================================================
+BLOCK_B = []
+B_DEP = ["WP-045"]
+B_BLK = ["WP-C001"]
+
+# Eidolon core crate split-outs
+core_topics = [
+    ("eidolon-core-error", "eidolon-core: typed error taxonomy w/ Sentry mapping",
+     "Define EidolonError with thiserror. Categories: Driver, MCP, LLM, Journey, Config, IO, External. Implement From for each. sentry::capture_error on every error."),
+    ("eidolon-core-bus", "eidolon-core: in-process pub/sub bus via tokio::mpsc",
+     "Add tokio::broadcast for events: ScreenshotTaken, ClickPerformed, JourneyStepStarted, JourneyStepCompleted, MCPRequest, MCPResponse. Bounded buffer 4096."),
+    ("eidolon-core-config", "eidolon-core: typed config loader w/ hot reload",
+     "figment + notify. Watch ~/.config/eidolon/*.toml. Emit config.changed event. Validate on load via validator crate."),
+    ("eidolon-core-telemetry", "eidolon-core: telemetry context propagation",
+     "Use opentelemetry::Context. Propagate traceparent via MCP request metadata. Add #[instrument] to all public fns."),
+    ("eidolon-core-secret", "eidolon-core: zeroize-based secret handling",
+     "Add zeroize crate. Wrap API keys in Secret<String>. Display via Debug shows '***'. Memory-zeroed on drop."),
+    ("eidolon-core-retry", "eidolon-core: exponential-backoff retry policy",
+     "Add backoff crate with exponential + jitter. Configurable max_elapsed_time. Decorate LLM and driver calls. Honor Retry-After header."),
+    ("eidolon-core-rate-limit", "eidolon-core: per-provider rate limiter",
+     "governor crate. Token bucket per provider. MCP tool_rate_limit configurable. Expose via /v1/admin/rate-limit."),
+    ("eidolon-core-cancellation", "eidolon-core: cancel-safe async via tokio_util",
+     "CancellationToken propagated through journeys. Drop = cancel. Surface cancellation to UI as JourneyCancelled event."),
+    ("eidolon-core-shutdown", "eidolon-core: graceful shutdown w/ draining",
+     "tokio::signal::ctrl_c. Drain in-flight MCP requests. Flush OTel. Persist journey state. Exit 0 within 30s."),
+    ("eidolon-core-process", "eidolon-core: child process supervision for driver",
+     "Wrap cua-driver / playwright-mcp / agent-browser child procs. Restart on crash. Capture stdout/stderr. Send to logs."),
+    ("eidolon-core-port", "eidolon-core: typed TCP/Unix port allocator",
+     "portpicker crate. Reserve ephemeral port for dev. Stable port via --port flag. Avoid collision with other local services."),
+    ("eidolon-core-id", "eidolon-core: ULID-based IDs for journeys & sessions",
+     "ulid crate. Sortable. Used for journey_id, session_id, span_id. JSON serialization compact."),
+    ("eidolon-core-time", "eidolon-core: monotonic time + wall clock abstraction",
+     "Wrap std::time::Instant + SystemTime. Inject for tests via trait. Used in journey timing metrics."),
+    ("eidolon-core-path", "eidolon-core: project-rooted path resolution",
+     "Resolve ~/.config/eidolon, ./eidolon-data, $EIDOLON_HOME. Returns typed enum (ConfigDir, DataDir, CacheDir, RuntimeDir)."),
+    ("eidolon-core-fs", "eidolon-core: atomic write helper",
+     "tmpfile + rename pattern. Used for journey persistence, screenshot cache. Crash-safe."),
+    ("eidolon-core-jsonl", "eidolon-core: JSONL append-only event log",
+     "Used for audit trail of all MCP tool calls. Compaction tool rotates files. Plain-text grep friendly."),
+    ("eidolon-core-sqlite", "eidolon-core: SQLite cache via rusqlite",
+     "Cache LLM responses by content hash. Cache screenshot diffs. TTL configurable. Index on (key, ts)."),
+    ("eidolon-core-redis", "eidolon-core: redis cache via deadpool-redis",
+     "Optional redis backend for distributed cache. Used when Eidolon runs as cluster. Same interface as SQLite."),
+    ("eidolon-core-http", "eidolon-core: reqwest HTTP client w/ retry + OTel",
+     "Single reqwest::Client shared across crates. OTel middleware. Connection pool 100."),
+    ("eidolon-core-websocket", "eidolon-core: tokio-tungstenite WebSocket client",
+     "Used by MCP SSE transport. Reconnect w/ backoff. Heartbeat 30s. Surface state via /v1/admin/connections."),
+    ("eidolon-core-graceful-upgrade", "eidolon-core: hot-reloadable subsystems",
+     "ArcSwap for driver/LLM provider. Replace without restart. Drain in-flight requests to old instance."),
+    ("eidolon-core-feature-flags", "eidolon-core: runtime feature flag store",
+     "Toggle cua-driver, mobile-mpc, journey-replay, pgo at runtime via /v1/admin/flags. Persisted to disk."),
+    ("eidolon-core-mime", "eidolon-core: MIME type registry for screenshots",
+     "Enum { Png, Jpeg, WebP, Bmp }. Negotiation via Accept header. Encode/decode via image crate."),
+    ("eidolon-core-blob", "eidolon-core: blob storage abstraction",
+     "Trait BlobStore with Local + S3 impls. Used for screenshot uploads to journey-replay archive."),
+    ("eidolon-core-version", "eidolon-core: version vector for messages",
+     "Each MCP message carries a version. Eidolon negotiates lowest-common-version with peer. Useful for rolling upgrades."),
+    ("eidolon-core-pipe", "eidolon-core: named pipe / unix socket transport",
+     "Used by Eidolon MCP server when stdin/stdout not appropriate. Windows: named pipe. POSIX: unix socket."),
+    ("eidolon-core-uds", "eidolon-core: UDS for local MCP client<->server",
+     "Lower latency than TCP. Used for Eidolon<->mobile-mpc on same host. Permissions via socket mode."),
+    ("eidolon-core-snapshot", "eidolon-core: snapshot tests via insta",
+     "Used for journey serialization, MCP wire format, LLM prompt rendering. CI diffs snapshots."),
+    ("eidolon-core-property", "eidolon-core: proptest harnesses for parsers",
+     "journey_parse, mcp_message, llm_response, config_toml. Run in nightly CI for 60s each."),
+    ("eidolon-core-coverage", "eidolon-core: cargo-tarpaulin w/ 80% gate",
+     "CI fails on <80% coverage. Codecov.io badge. Diff coverage highlighted in PR."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(core_topics):
+    num = 46 + i
+    deps = B_DEP + [f"WP-{num-1:03d}"] if i > 0 else B_DEP
+    BLOCK_B.append(wp(num, slug_suffix, title, "KooshaPari/eidolon",
+        "170-cu-platform", "170-cu-platform", "170-cu-platform",
+        "L0,L11,L30,L33", deps, B_BLK,
+        "M", "agent", "?",
+        "pending", desc, "crates compile; tests pass; CI green.",
+        "github.com/KooshaPari/eidolon, modelcontextprotocol.io/specification",
+        "Beats ad-hoc core; matches Stripe-style domain core.",
+        "Same.", "Stable foundation."))
+
+# =============================================================================
+# BLOCK C — Eidolon MCP Server (WP-076..WP-115, 40 WPs)
+# =============================================================================
+BLOCK_C = []
+C_DEP = ["WP-075"]
+
+mcp_tools = [
+    ("computer-screenshot", "MCP tool: computer_screenshot w/ region selector",
+     "Capture full screen or region. Returns PNG base64 + dimensions + accessibility-tree-id mapping."),
+    ("computer-click", "MCP tool: computer_click at coordinates or aria-ref",
+     "If aria-ref provided, resolve via accessibility tree. Else click x,y. Pre-click screenshot. Post-click diff for verification."),
+    ("computer-double-click", "MCP tool: computer_double_click",
+     "Two-click in 50ms window. Used for file-open and select-word."),
+    ("computer-right_click", "MCP tool: computer_right_click opens context menu",
+     "Returns menu items as JSON for LLM to pick."),
+    ("computer-type", "MCP tool: computer_type with key-delay option",
+     "Type Unicode including emoji. Per-char delay configurable. Used to bypass JS keystroke detection."),
+    ("computer-key", "MCP tool: computer_key sends named key combo",
+     "Supports Enter, Tab, Ctrl+A, Cmd+Shift+4, etc. Based on xdotool keymap."),
+    ("computer-scroll", "MCP tool: computer_scroll vertical/horizontal",
+     "delta_x, delta_y. Used for infinite-scroll pages."),
+    ("computer-move", "MCP tool: computer_move cursor",
+     "Move without click. Useful for hover tooltips."),
+    ("computer-drag", "MCP tool: computer_drag from (x1,y1) to (x2,y2)",
+     "Used for slider, drag-drop, signature pad."),
+    ("computer-wait", "MCP tool: computer_wait for selector or delay",
+     "Wait for aria-ref to appear, image to stabilize (hamming distance threshold), or fixed ms."),
+    ("computer-find", "MCP tool: computer_find element by description",
+     "Returns aria-ref + bounding box + screenshot crop. Uses accessibility tree first, OCR fallback."),
+    ("computer-execute", "MCP tool: computer_execute shell command",
+     "Sandboxed via bwrap on Linux, sandbox-exec on macOS. Returns stdout, stderr, exit code."),
+    ("computer-locate", "MCP tool: computer_locate image template",
+     "OpenCV matchTemplate. Used when accessibility tree unavailable (e.g., legacy Win32)."),
+    ("computer-ocr", "MCP tool: computer_ocr region",
+     "Tesseract 5 via leptonica binding. Languages configurable. Returns text + confidence."),
+    ("computer-record", "MCP tool: computer_record to MP4/GIF",
+     "Start/stop screen recording. Used in journey debugging."),
+    ("computer-annotate", "MCP tool: computer_annotate w/ bounding boxes",
+     "Draw boxes on screenshot. Used in error reporting."),
+    ("computer-bridge", "MCP tool: computer_bridge to mobile or VM",
+     "Toggle driver target: desktop, mobile-android, mobile-ios, vm-macos, vm-windows, vm-linux."),
+    ("computer-zoom", "MCP tool: computer_zoom level",
+     "Browser-style zoom 25%-400%. Used for accessibility."),
+    ("computer-theme", "MCP tool: computer_theme light/dark/sepia",
+     "Toggle OS theme. Useful for screenshot tests across themes."),
+    ("computer-locale", "MCP tool: computer_locale",
+     "Set OS locale. Used for i18n screenshot tests."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(mcp_tools):
+    num = 76 + i
+    deps = C_DEP + [f"WP-{num-1:03d}"] if i > 0 else C_DEP
+    BLOCK_C.append(wp(num, slug_suffix, title, "KooshaPari/eidolon",
+        "170-cu-platform", "170-cu-platform", "170-cu-platform",
+        "L42,L45", deps, ["WP-100"],
+        "M", "agent", "?",
+        "pending", desc, "tool returns expected JSON schema; doctest passes.",
+        "modelcontextprotocol.io/specification",
+        "Beats single driver; matches Anthropic Computer Use API + cua agent.",
+        "Same.", "Same."))
+
+# Remaining 20 MCP WPs (server infra, schemas, transports)
+for i in range(20):
+    num = 96 + i
+    topics = [
+        ("mcp-server-stdio", "MCP stdio transport with line-delimited JSON"),
+        ("mcp-server-sse", "MCP SSE transport with axum-sse"),
+        ("mcp-server-streamable-http", "MCP streamable-HTTP transport per 2025-03-26 spec"),
+        ("mcp-server-auth", "MCP auth via OAuth 2.1 w/ PKCE"),
+        ("mcp-server-tool-registry", "MCP tool registry with hot-reload"),
+        ("mcp-server-tool-schema", "JSON Schema for every tool input/output via schemars"),
+        ("mcp-server-capabilities", "MCP capabilities negotiation in initialize"),
+        ("mcp-server-resources", "MCP resources: read-only data exposed to LLM"),
+        ("mcp-server-prompts", "MCP prompts: templated message bundles"),
+        ("mcp-server-sampling", "MCP sampling: server-driven LLM calls"),
+        ("mcp-server-roots", "MCP roots: filesystem scope declaration"),
+        ("mcp-server-elicitation", "MCP elicitation: ask user for input"),
+        ("mcp-server-notifications", "MCP notifications: progress, log, resource updates"),
+        ("mcp-server-completions", "MCP completions: argument autocompletion"),
+        ("mcp-server-batch", "MCP batched tool calls optimization"),
+        ("mcp-server-cancellation", "MCP cancellation via $/cancelRequest"),
+        ("mcp-server-ping", "MCP ping/pong for liveness"),
+        ("mcp-server-logs", "MCP logs/setLevel for runtime log control"),
+        ("mcp-server-trace", "MCP trace w/ OpenTelemetry propagation"),
+        ("mcp-server-icon", "MCP icon per Anthropic UI extension"),
+    ]
+    slug_suffix, title = topics[i]
+    desc = f"Implement {title.lower()} per MCP spec. Wire to eidolon-core. OTel-instrumented. Snapshotted via insta."
+    BLOCK_C.append(wp(num, slug_suffix, title, "KooshaPari/eidolon",
+        "170-cu-platform", "170-cu-platform", "170-cu-platform",
+        "L42,L45", C_DEP + [f"WP-{num-1:03d}"], ["WP-100"],
+        "M", "agent", "?",
+        "pending", desc, "passes conformance suite; insta snapshot.",
+        "modelcontextprotocol.io/specification, github.com/modelcontextprotocol/rust-sdk",
+        "Beats ad-hoc MCP.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK D — Eidolon Driver Abstraction (WP-116..WP-140, 25 WPs)
+# =============================================================================
+BLOCK_D = []
+D_DEP = ["WP-115"]
+
+driver_topics = [
+    ("driver-trait", "Driver trait with full action surface",
+     "Async trait Driver: screenshot, click, type, key, scroll, find, wait, execute. Returns Result<DriverResp, DriverError>."),
+    ("driver-desktop", "Desktop driver via xdotool/wenum/quartz",
+     "Linux: xdotool. Windows: wenum via win32 API. macOS: Quartz Event Services."),
+    ("driver-cua", "cua-driver integration via JSON-RPC",
+     "Spawn cua-driver subprocess. Talk JSON-RPC over stdio. Use github.com/trycua/cua-driver libs."),
+    ("driver-playwright", "Playwright driver via playwright-mcp subprocess",
+     "Spawn microsoft/playwright-mcp subprocess. Forward MCP calls. Translate aria-ref to Playwright selector."),
+    ("driver-agent-browser", "agent-browser driver via WebSocket",
+     "Connect to vercel-labs/agent-browser over WebSocket. Use its refs system."),
+    ("driver-mobile-android", "Android driver via uiautomator2 / Appium",
+     "Use openstf/minicap + uiautomator2. Fallback to Appium if uiautomator2 unavailable."),
+    ("driver-mobile-ios", "iOS driver via WebDriverAgent",
+     "Use appium/WebDriverAgent. Requires XCUITest runner installed."),
+    ("driver-vm-macos", "macOS VM driver via Lume + cua-driver",
+     "Lume VM (github.com/trycua/Lume) hosts macOS. cua-driver inside. Eidolon bridges via QMP."),
+    ("driver-vm-windows", "Windows VM driver via libvirt + qemu",
+     "libvirt manages QEMU/KVM. cua-driver inside Windows. Eidolon connects via SPICE or RDP."),
+    ("driver-vm-linux", "Linux VM driver via Docker headless",
+     "Docker container with Xvfb. cua-driver inside. Eidolon connects via X11 over TCP or VNC."),
+    ("driver-ocr-fallback", "OCR fallback via Tesseract 5",
+     "When accessibility tree unavailable, use Tesseract. Caching via content hash."),
+    ("driver-cv", "Computer-vision element detection via OpenCV",
+     "matchTemplate, edge detection, color histogram. Used for legacy apps without a11y."),
+    ("driver-accessibility", "Accessibility-tree reader per platform",
+     "Windows: UIA. macOS: NSAccessibility. Linux: AT-SPI via dbus. Returns tree of roles+names."),
+    ("driver-clipboard", "Clipboard read/write",
+     "arboard crate. Falls back to xclip/xsel on Linux. Used for paste workflows."),
+    ("driver-keyboard-layout", "Per-keyboard-layout mapping",
+     "Detect current layout via setxkbmap / Quartz. Translate scancodes accordingly."),
+    ("driver-display-config", "Multi-display enumeration and selection",
+     "List displays, pick primary, set resolution. Important for headless multi-monitor testing."),
+    ("driver-virtual-display", "Virtual display via Xvfb / Quartz headless",
+     "Used for CI. 1920x1080 default. Configurable."),
+    ("driver-audio", "Audio device selection and capture",
+     "cpal crate. List devices. Route to driver. Capture for ASR integration."),
+    ("driver-camera", "Camera access via nokhwa",
+     "Used for video-call testing. Configurable resolution."),
+    ("driver-input-lag-sim", "Simulate human-like input lag",
+     "Add 50-200ms jitter between actions. Used for anti-bot-defeat demos."),
+    ("driver-recorder", "Action recorder to journey format",
+     "Capture every action as JSON. Write to .journey.json. Replay via journey_replay tool."),
+    ("driver-replay", "Action replay from journey",
+     "Read .journey.json. Execute steps. Compare screenshots. Report diffs."),
+    ("driver-self-test", "Driver self-test: open notepad, type, save",
+     "CI smoke test per driver. Runs on every release. Reports pass/fail per platform."),
+    ("driver-benchmark", "Driver latency benchmark via criterion",
+     "Screenshot p50/p95/p99. Click p50/p95/p99. Used to detect regressions."),
+    ("driver-error-recovery", "Driver error recovery w/ auto-retry",
+     "On driver crash, respawn. On timeout, screenshot to diagnose. Surface state via MCP."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(driver_topics):
+    num = 116 + i
+    deps = D_DEP + [f"WP-{num-1:03d}"] if i > 0 else D_DEP
+    BLOCK_D.append(wp(num, slug_suffix, title, "KooshaPari/eidolon",
+        "170-cu-platform", "170-cu-platform", "170-cu-platform",
+        "L0,L42,L45", deps, ["WP-D100"],
+        "M", "agent", "?",
+        "pending", desc, "smoke test passes on all target platforms.",
+        "github.com/trycua/cua, github.com/microsoft/playwright-mcp, github.com/vercel-labs/agent-browser",
+        "Beats single-driver stacks; matches trycua multi-driver.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK E — Eidolon LLM Router (WP-141..WP-170, 30 WPs)
+# =============================================================================
+BLOCK_E = []
+E_DEP = ["WP-140"]
+
+llm_topics = [
+    ("llm-trait", "LLM provider trait w/ unified request/response"),
+    ("llm-anthropic", "Anthropic provider w/ prompt caching"),
+    ("llm-openai", "OpenAI provider w/ structured outputs"),
+    ("llm-google", "Google Gemini provider w/ grounding"),
+    ("llm-mistral", "Mistral provider w/ function calling"),
+    ("llm-meta-llama", "Local Llama via ollama/llama.cpp"),
+    ("llm-cohere", "Cohere provider w/ RAG-optimized endpoints"),
+    ("llm-groq", "Groq provider for low-latency inference"),
+    ("llm-together", "Together.ai provider w/ open models"),
+    ("llm-fireworks", "Fireworks.ai provider w/ speculative decoding"),
+    ("llm-bedrock", "AWS Bedrock provider for Claude/Llama/etc"),
+    ("llm-azure", "Azure OpenAI provider w/ private deployments"),
+    ("llm-vertex", "Vertex AI provider w/ Gemini"),
+    ("llm-router-cost", "Cost-aware router: minimize $ per task"),
+    ("llm-router-latency", "Latency-aware router: minimize p95"),
+    ("llm-router-quality", "Quality-aware router: pick strongest for task"),
+    ("llm-router-fallback", "Cascade router: try cheap, escalate on refusal"),
+    ("llm-router-load", "Load-balanced router: spread across replicas"),
+    ("llm-cache", "Response cache via content hash (SQLite + Redis)"),
+    ("llm-streaming", "Streaming responses w/ SSE to MCP client"),
+    ("llm-tool-use", "Tool-use parsing w/ provider-specific quirks"),
+    ("llm-structured", "Structured outputs via JSON Schema"),
+    ("llm-vision", "Vision inputs: screenshot base64 to provider"),
+    ("llm-multimodal", "Multi-modal: text+image+audio in one request"),
+    ("llm-context-window", "Context window management w/ truncation"),
+    ("llm-token-counter", "Accurate token counter per model (tiktoken-rs)"),
+    ("llm-prompt-template", "Jinja-style prompt templates"),
+    ("llm-eval-harness", "LLM eval harness for prompt regression"),
+    ("llm-prompt-cache", "Prompt cache awareness for Anthropic/OpenAI"),
+    ("llm-cost-reporting", "Per-journey cost attribution w/ Grafana dashboard"),
+]
+
+for i, (slug_suffix, title) in enumerate(llm_topics):
+    num = 141 + i
+    desc = f"Implement {title.lower()}. Wire to eidolon-llm crate. Test against fixture prompts. Snapshot via insta."
+    BLOCK_E.append(wp(num, slug_suffix, title, "KooshaPari/eidolon",
+        "170-cu-platform", "170-cu-platform", "170-cu-platform",
+        "L42,L45,L66", E_DEP + [f"WP-{num-1:03d}"], ["WP-E100"],
+        "M", "agent", "?",
+        "pending", desc, "conformance test passes; cost dashboard works.",
+        "docs.anthropic.com, platform.openai.com/docs, ai.google.dev, docs.mistral.ai",
+        "Beats openinterpreter's single-LLM; matches LiteLLM parity.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK F — Eidolon Journey Engine (WP-171..WP-200, 30 WPs)
+# =============================================================================
+BLOCK_F = []
+F_DEP = ["WP-170"]
+
+journey_topics = [
+    ("journey-dsl-v2", "Journey DSL v2 with YAML/JSON dual format"),
+    ("journey-json-schema", "JSON Schema for journey format w/ examples"),
+    ("journey-parser", "Robust parser w/ friendly errors (miette + codespan)"),
+    ("journey-validator", "Validator w/ cross-reference checks"),
+    ("journey-renderer", "Renderer to Mermaid, GraphViz, ASCII"),
+    ("journey-executor", "Sequential executor w/ retry per step"),
+    ("journey-parallel", "Parallel executor for independent branches"),
+    ("journey-conditional", "Conditional branches via when/then/else"),
+    ("journey-loop", "Loop steps via for/while/until"),
+    ("journey-snapshot", "Snapshot step: assert current screenshot matches"),
+    ("journey-assert", "Assert step: check element text, value, etc"),
+    ("journey-wait", "Wait step with timeout + backoff"),
+    ("journey-screenshot", "Screenshot step w/ region selector"),
+    ("journey-click", "Click step w/ aria-ref or coords"),
+    ("journey-type", "Type step w/ per-char delay"),
+    ("journey-key", "Key step w/ named keys"),
+    ("journey-scroll", "Scroll step w/ target element"),
+    ("journey-drag", "Drag step w/ source and target"),
+    ("journey-ocr-assert", "OCR assert: text must contain X"),
+    ("journey-cv-assert", "Computer-vision assert: image must contain Y"),
+    ("journey-data-table", "Data-table driver: run journey per row"),
+    ("journey-fixture", "Fixture setup step: log in, navigate"),
+    ("journey-teardown", "Teardown step: clean state"),
+    ("journey-replay", "Replay recorded journey against new build"),
+    ("journey-diff", "Visual diff journey across two screenshots"),
+    ("journey-baseline", "Baseline management w/ approve/deny in PR"),
+    ("journey-timeout", "Per-step + per-journey timeout"),
+    ("journey-report", "HTML report with screenshots + timings"),
+    ("journey-telemetry", "OTel span per journey step"),
+    ("journey-mcp-surface", "MCP tools: journey_run, journey_dry_run, journey_diff"),
+]
+
+for i, (slug_suffix, title) in enumerate(journey_topics):
+    num = 171 + i
+    desc = f"Implement {title.lower()} in eidolon-journey crate. Tests via insta + proptest."
+    BLOCK_F.append(wp(num, slug_suffix, title, "KooshaPari/eidolon",
+        "170-cu-platform", "170-cu-platform", "170-cu-platform",
+        "L42,L45,L30", F_DEP + [f"WP-{num-1:03d}"], ["WP-F100"],
+        "M", "agent", "?",
+        "pending", desc, "schema valid; round-trip parse/serialize; CI green.",
+        "github.com/phenotype-journeys, modelcontextprotocol.io/specification",
+        "Beats Gherkin; matches Playwright trace + custom DSL.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK G — Eidolon observability, security, polish (WP-201..WP-235, 35 WPs)
+# =============================================================================
+BLOCK_G = []
+G_DEP = ["WP-200"]
+
+obs_topics = [
+    ("otel-sdk", "OTel SDK w/ OTLP exporter", "opentelemetry-otlp + tonic. Export to otelcol-contrib. Bounded cardinality."),
+    ("otel-prometheus", "Prometheus exporter", "Expose /metrics. OTel metrics -> Prometheus format. Grafana dashboards JSON in repo."),
+    ("otel-trace-context", "W3C trace-context propagation", "Inject traceparent into MCP requests. Extract from upstream."),
+    ("otel-span-budget", "Bounded span budget per session", "Max 100k spans/session. Drop w/ WARN log when exceeded."),
+    ("otel-log-correlation", "Logs correlated w/ trace_id", "tracing-bunyan-formatter adds trace_id to every log line."),
+    ("otel-profiling", "Continuous profiling via puffin", "puffin_server exposes /puffin frame data. Optional eBPF profiler."),
+    ("otel-resource-attrs", "OTel resource attributes", "service.name, service.version, host.arch, os.type. Standard."),
+    ("sentry-init", "Sentry init w/ release tracking", "sentry::init. Capture panics. before_send hook strips PII."),
+    ("sentry-source-map", "Source map upload", "sentry-cli upload-dif. Sent on release-plz tag."),
+    ("sentry-pii-filter", "PII filter in before_send", "Strip screenshot base64 from Sentry events. Configurable redact list."),
+    ("sentry-profiling", "Sentry continuous profiling", "Enabled in release builds. 10% sample rate."),
+    ("sentry-release-health", "Sentry release health metrics", "Crash-free sessions, crash-free users tracked."),
+    ("sentry-session-replay", "Sentry session replay", "Optional. Off by default. Captures journey replay."),
+    ("audit-log-jsonl", "Append-only audit log in JSONL", "Every MCP call logged with ts, user, tool, args, result. Rotated daily."),
+    ("audit-log-redact", "PII redaction in audit log", "Strip API keys, screenshots. SHA256 hash for joinability."),
+    ("audit-log-siem", "SIEM export to Splunk/Elastic", "Optional JSON sink. Used in enterprise deployments."),
+    ("secrets-vault", "Vault integration via libvault", "Read API keys from Vault. Fallback to env var. Rotated nightly."),
+    ("secrets-1password", "1Password CLI integration", "op read for local dev. CI uses OIDC + GitHub App."),
+    ("secrets-keyring", "OS keyring via keyring crate", "Store API keys per-user. Falls back to encrypted file."),
+    ("auth-jwt", "JWT auth for HTTP", "jsonwebtoken. RS256 + JWKS rotation. Audience claim required."),
+    ("auth-mtls", "mTLS for service-to-service", "rustls. SPIFFE IDs. Used for Eidolon<->mobile-mpc."),
+    ("auth-rbac", "RBAC via casbin", "casbin-rs. Roles: admin, operator, viewer, agent. Per-tool permissions."),
+    ("auth-oidc", "OIDC login flow", "openidconnect. PKCE. Discovery via /.well-known/openid-configuration."),
+    ("rbac-policy", "Policy file w/ default-deny", "policy.toml. Default deny. Allowlist per role."),
+    ("rate-limit-axum", "Rate limiting middleware", "tower-governor. Per-IP, per-user, per-tool."),
+    ("cors-axum", "CORS middleware", "tower-http. Configurable origins. Default permissive in dev."),
+    ("csrf", "CSRF protection", "axum_csrf. Double-submit cookie. Disabled in pure MCP mode."),
+    ("input-validation", "Input validation via validator", "Every MCP input validated. Length, regex, enum."),
+    ("output-encoding", "Output encoding to prevent injection", "Screenshot base64 only. No HTML in tool output."),
+    ("dep-audit", "Dependency audit via cargo-audit", "cargo audit --deny warnings. Runs on every PR."),
+    ("supply-chain", "Supply chain via cargo-vet", "Audit each dependency. Store in supply-chain/audits.toml."),
+    ("sbom-cyclonedx", "CycloneDX SBOM", "cargo-cyclonedx. Generated on every release."),
+    ("vuln-scanning", "Vulnerability scanning via Trivy", "CI scans release artifacts. Fails on HIGH/CRITICAL."),
+    ("container-scan", "Container image scanning via Grype", "Scan distroless image on every release."),
+    ("license-check", "License check via cargo-about", "All deps must be MIT/Apache/BSD. Fails on GPL/AGPL."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(obs_topics):
+    num = 201 + i
+    BLOCK_G.append(wp(num, slug_suffix, title, "KooshaPari/eidolon",
+        "170-cu-platform", "170-cu-platform", "170-cu-platform",
+        "L24,L66,L70", G_DEP + [f"WP-{num-1:03d}"], ["WP-G100"],
+        "M", "agent", "?",
+        "pending", desc, "instrumentation visible; CI checks pass.",
+        "opentelemetry.io, docs.sentry.io, github.com/EmbarkStudios/cargo-deny",
+        "Matches Sentry + OTel + cargo-vet best-practice.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK H — kmobile extend (WP-236..WP-299, 64 WPs)
+# =============================================================================
+BLOCK_H = []
+H_DEP = ["WP-235"]
+
+kmobile_topics = [
+    ("kmobile-playwright-mcp", "kmobile: playwright-mcp integration", "Spawn playwright-mcp subprocess. Bridge to mobile WebView for hybrid apps."),
+    ("kmobile-agent-browser", "kmobile: agent-browser backend", "WebSocket bridge to vercel-labs/agent-browser. Mobile-optimized selectors."),
+    ("kmobile-cu-qa-skill", "kmobile: Computer-Use QA skill", "Claude/GPT skill file. System prompt for QA agent that uses kmobile."),
+    ("kmobile-cu-mcp-tools", "kmobile: Computer-Use as MCP tool", "Expose kmobile via Eidolon MCP. Args: device_serial, action."),
+    ("kmobile-appium-driver", "kmobile: Appium driver for native iOS/Android", "appium driver abstraction. Feature-detect on connect."),
+    ("kmobile-uia2-driver", "kmobile: uiautomator2 driver", "openstf/uiautomator2. Native Android. Faster than Appium."),
+    ("kmobile-wda-driver", "kmobile: WebDriverAgent driver", "appium/WebDriverAgent. Native iOS."),
+    ("kmobile-fleet-orchestrator", "kmobile: Device fleet orchestrator", "Manage 100+ devices. Lease model. Health checks. Self-heal."),
+    ("kmobile-cloud-bridge", "kmobile: Cloud device bridge (BrowserStack/Sauce)", "REST adapter. Used when local farm exhausted."),
+    ("kmobile-screenshot-diff", "kmobile: Screenshot diff for visual regression", "image crate. pixelmatch algo. Threshold configurable."),
+    ("kmobile-gesture-recording", "kmobile: Record gestures to JSON", "swipe, pinch, tap. Saved as journey steps."),
+    ("kmobile-gesture-replay", "kmobile: Replay gestures", "Read JSON. Execute via uiautomator2. Compare screenshots."),
+    ("kmobile-a11y-tree", "kmobile: Accessibility tree dump", "UIAutomator dump + iOS XCTest accessibility audit."),
+    ("kmobile-perf-trace", "kmobile: Perf trace from device", "adb pull /d/perfetto. Decode via Perfetto UI."),
+    ("kmobile-network-sim", "kmobile: Network condition simulator", "tc/qos on host. 3G/4G/5G profiles. Loss, jitter."),
+    ("kmobile-location-sim", "kmobile: GPS location simulation", "adb emu geo fix. iOS via CLLocationManager mock."),
+    ("kmobile-camera-mock", "kmobile: Camera input mock", "adb emu camera. Upload JPEG as feed."),
+    ("kmobile-notification-mock", "kmobile: Push notification mock", "adb shell cmd notification post. iOS via APNS test."),
+    ("kmobile-battery-sim", "kmobile: Battery state simulation", "adb emu battery. iOS via simctl status_bar."),
+    ("kmobile-orientation", "kmobile: Orientation/orientation lock", "adb shell settings put system user_rotation. iOS UIDevice."),
+    ("kmobile-deep-link", "kmobile: Deep-link handler", "adb shell am start -W -a android.intent.action.VIEW -d URI."),
+    ("kmobile-keystore", "kmobile: Keystore access for crypto tests", "adb shell cmd keystore. Used for biometric/PIN tests."),
+    ("kmobile-biometric", "kmobile: Biometric auth simulation", "adb emu finger touch. iOS via simctl biometric."),
+    ("kmobile-screenshot", "kmobile: Per-device screenshot", "adb exec-out screencap -p. iOS via simctl io screenshot."),
+    ("kmobile-screen-record", "kmobile: Screen recording to MP4", "adb shell screenrecord. iOS via simctl io recordVideo."),
+    ("kmobile-element-search", "kmobile: Element search by text/resource-id", "uiautomator2. Selector strategies: text, resource-id, class, xpath."),
+    ("kmobile-wait-for", "kmobile: Wait for element", "UIA2 wait. Timeout + poll. Default 30s."),
+    ("kmobile-assert", "kmobile: Assert element state", "visible, enabled, selected, text equals, contains."),
+    ("kmobile-swipe", "kmobile: Swipe gesture", "Direction + duration. Custom curve via multi-touch."),
+    ("kmobile-pinch", "kmobile: Pinch/zoom gesture", "Two-finger. Scale + center."),
+    ("kmobile-tap", "kmobile: Tap with hold duration", "Long-press, double-tap, triple-tap."),
+    ("kmobile-text-input", "kmobile: Send text via ADB keyboard", "adb shell input text. Unicode via clipboard."),
+    ("kmobile-keyevent", "kmobile: Send keyevent", "adb shell input keyevent. KEYCODE_* constants."),
+    ("kmobile-app-launch", "kmobile: Launch app by package", "adb shell monkey -p. iOS via simctl launch."),
+    ("kmobile-app-stop", "kmobile: Stop app", "adb shell am force-stop. iOS simctl terminate."),
+    ("kmobile-app-install", "kmobile: Install APK/IPA", "adb install. iOS simctl install. xcodebuild for device."),
+    ("kmobile-app-uninstall", "kmobile: Uninstall app", "adb uninstall. iOS simctl uninstall."),
+    ("kmobile-app-data", "kmobile: Clear app data", "adb shell pm clear. iOS simctl uninstall + install."),
+    ("kmobile-logs", "kmobile: Capture logcat/Console", "adb logcat -d. iOS Console.app via simctl spawn."),
+    ("kmobile-crash-report", "kmobile: Pull crash report", "adb pull /data/tombstones. iOS via simctl spawn log show."),
+    ("kmobile-perf-monitor", "kmobile: CPU/MEM/FPS monitor", "adb shell top + dumpsys. Custom Grafana dashboard."),
+    ("kmobile-battery-monitor", "kmobile: Battery drain monitor", "adb shell dumpsys batterystats. Report in HTML."),
+    ("kmobile-storage-monitor", "kmobile: Storage usage", "adb shell df. Per-app via du."),
+    ("kmobile-network-monitor", "kmobile: Network traffic capture", "adb shell tcpdump. PCAP via Wireshark."),
+    ("kmobile-clipboard", "kmobile: Clipboard read/write", "adb shell cmd clipboard. iOS UIPasteboard."),
+    ("kmobile-mkdir", "kmobile: Filesystem operations", "adb push/pull. mkdir, rm, mv, chmod, chown."),
+    ("kmobile-port-forward", "kmobile: adb forward / reverse", "adb reverse tcp:8080 tcp:8080. For local dev."),
+    ("kmobile-wifi-config", "kmobile: WiFi connect/disconnect", "adb shell svc wifi. iOS via simctl."),
+    ("kmobile-bluetooth", "kmobile: Bluetooth pair/scan", "Requires host Bluetooth stack. Limited in CI."),
+    ("kmobile-nfc", "kmobile: NFC tag emulation", "Requires Android HCE. Tested on physical devices."),
+    ("kmobile-sms-sim", "kmobile: SMS simulation", "adb emu sms send. iOS simctl status_bar (no SMS)."),
+    ("kmobile-call-sim", "kmobile: Phone call simulation", "adb emu gs. iOS simctl status_bar."),
+    ("kmobile-usb-debug", "kmobile: USB debugging toggles", "adb shell settings put global adb_enabled."),
+    ("kmobile-screen-mirror", "kmobile: Screen mirror via scrcpy", "Genymobile/scrcpy. Used in demos."),
+    ("kmobile-cmd-batch", "kmobile: Batch command runner", "Run cmd list across N devices. Report per-device exit."),
+    ("kmobile-ci-bridge", "kmobile: GitHub Actions runner integration", "Pre-baked image w/ Android SDK + iOS sim. Caches SDK."),
+    ("kmobile-report-html", "kmobile: HTML test report", "Per-test screenshot, perf, log. Self-contained HTML."),
+    ("kmobile-junit-xml", "kmobile: JUnit XML output", "For CI integration. GitHub Actions parses."),
+    ("kmobile-slack-report", "kmobile: Slack test report", "Webhook post on failure. Includes screenshots."),
+    ("kmobile-flaky-detector", "kmobile: Detect flaky tests", "Run N=5 times. Report flakiness score."),
+    ("kmobile-quarantine", "kmobile: Quarantine flaky tests", "Skip in CI. Manual unquarantine via PR label."),
+    ("kmobile-cu-bench", "kmobile: cua-bench integration", "Run cua-bench on real Android device. Submit to leaderboard."),
+    ("kmobile-harness-self-test", "kmobile: Self-test per release", "Smoke test: launch, click, type, screenshot, kill."),
+    ("kmobile-fuzz", "kmobile: Fuzz UIA2 selector parser", "cargo-fuzz harness. Nightly."),
+    ("kmobile-bench", "kmobile: criterion bench suite", "Tap latency, swipe latency, screenshot throughput."),
+    ("kmobile-load-100", "kmobile: Load test 100 concurrent devices", "Yardstick. Report p50/p95/p99."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(kmobile_topics):
+    num = 236 + i
+    BLOCK_H.append(wp(num, slug_suffix, title, "KooshaPari/kmobile",
+        "171-kmobile-cu", "171-kmobile-cu", "171-kmobile-cu",
+        "L0,L42,L45", H_DEP + [f"WP-{num-1:03d}"], ["WP-H100"],
+        "M", "agent", "?",
+        "pending", desc, "tests pass on Android+ iOS devices.",
+        "github.com/KooshaPari/kmobile, appium.io, github.com/openstf/uiautomator2",
+        "Beats pure Appium; matches device-farm SOTA.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK I — mobile-mpc extend (WP-300..WP-347, 48 WPs)
+# =============================================================================
+BLOCK_I = []
+I_DEP = ["WP-299"]
+
+mmpc_topics = [
+    ("mmpc-device-farm-driver", "mobile-mpc: device farm driver for AWS Device Farm / Firebase Test Lab", "REST adapter. Schedules test runs. Pulls artifacts."),
+    ("mmpc-appium-elements", "mobile-mpc: Appium-style element finder", "Locator strategies: id, xpath, accessibility id, class, -ios predicate, -android uiautomator."),
+    ("mmpc-appium-wda", "mobile-mpc: WDA (WebDriverAgent) integration", "Build WDA. Sign. Install. Spawn. Health check."),
+    ("mmpc-appium-uia2", "mobile-mpc: UIAutomator2 server integration", "Install UIA2 APK. Spawn. Health check."),
+    ("mmpc-mcp-server", "mobile-mpc: MCP server surface", "Tools: device_list, device_connect, action_perform, screenshot_capture, journey_run."),
+    ("mmpc-mcp-resources", "mobile-mpc: MCP resources: apps, devices, screenshots", "Browse available devices via MCP. View screenshots inline."),
+    ("mmpc-mcp-prompts", "mobile-mpc: MCP prompts: 'test login flow', 'verify push notif'", "Curated prompts for common mobile QA tasks."),
+    ("mmpc-mcp-sampling", "mobile-mpc: MCP sampling: server-side LLM for visual assert", "Server calls vision model. Returns pass/fail."),
+    ("mmpc-cua-bridge", "mobile-mpc: cua-bench task submission", "Submit task 'unlock phone and open Settings' to leaderboard."),
+    ("mmpc-ios-build", "mobile-mpc: iOS build via xcodebuild", "Build app. Code sign. Install on device."),
+    ("mmpc-android-build", "mobile-mpc: Android build via gradle", "Build APK. Sign. Install."),
+    ("mmpc-screenrecord", "mobile-mpc: Screen record + encode", "FFmpeg H264. Upload to artifact store."),
+    ("mmpc-vnc-bridge", "mobile-mpc: VNC bridge for headless device view", "vnc-rs. Used in CI dashboards."),
+    ("mmpc-touch-injection", "mobile-mpc: Touch event injection", "Direct /dev/input injection on Android. UIAutomator on iOS."),
+    ("mmpc-key-injection", "mobile-mpc: Key event injection", "Same as touch. Plus scancode mapping."),
+    ("mmpc-gesture-engine", "mmpc: Multi-touch gesture engine", "Bezier curves for swipe. Multi-finger pinch."),
+    ("mmpc-camera-mock", "mmpc: Camera input mock (continued)", "JPEG feed via v4l2 loopback."),
+    ("mmpc-audio-mock", "mmpc: Audio input mock", "WAV file via virtual audio device."),
+    ("mmpc-sensor-mock", "mmpc: Accelerometer/gyro/compass mock", "Sensor replay from recorded trace."),
+    ("mmpc-location-mock", "mmpc: GPS mock (continued)", "gpx file replay. Google Maps API for testing."),
+    ("mmpc-notification-mock", "mmpc: Push notification mock (continued)", "FCM test send. APNS test sandbox."),
+    ("mmpc-deep-link-test", "mmpc: Deep-link reachability test", "Validate every URL scheme in Info.plist / AndroidManifest."),
+    ("mmpc-app-update-test", "mmpc: App update flow test", "Install v1. Upgrade to v2. Verify data migration."),
+    ("mmpc-backup-restore", "mmpc: Backup + restore test", "adb backup/restore. iOS via simctl data migration."),
+    ("mmpc-permission-test", "mmpc: Permission grant/revoke matrix", "Test all permission states. Camera, mic, location, etc."),
+    ("mmpc-foreground-bg", "mmpc: Foreground/background lifecycle test", "Drive app to background. Restore. Verify state."),
+    ("mmpc-kill-restart", "mmpc: Kill + restart test", "Force-stop. Relaunch. Verify clean state."),
+    ("mmpc-rotation-test", "mmpc: Rotation landscape/portrait test", "Lock rotation. Verify layout adapts."),
+    ("mmpc-font-scale", "mmpc: Font scale test (accessibility)", "Increase to 200%. Verify no clipping."),
+    ("mmpc-dark-mode", "mmpc: Dark mode test", "Toggle. Verify all screens render correctly."),
+    ("mmpc-rtl-test", "mmpc: Right-to-left layout test", "Force RTL. Verify Arabic/Hebrew UI."),
+    ("mmpc-locale-test", "mmpc: Locale test matrix", "Test in en, es, zh, ja, ar, he. Screenshot per locale."),
+    ("mmpc-time-zone", "mmpc: Time zone test", "Set TZ to America/Tokyo. Verify time displays."),
+    ("mmpc-network-conditions", "mmpc: Network condition matrix (continued)", "Test 2G, 3G, 4G, 5G, WiFi, offline."),
+    ("mmpc-low-bandwidth", "mmpc: Low-bandwidth behavior test", "Verify app degrades gracefully."),
+    ("mmpc-airplane-mode", "mmpc: Airplane mode toggle test", "Toggle. Verify offline UX."),
+    ("mmpc-bluetooth-test", "mmpc: Bluetooth pairing test", "Pair with mock device. Verify connection."),
+    ("mmpc-nfc-test", "mmpc: NFC tag read test", "Tap mock tag. Verify content read."),
+    ("mmpc-biometric-test", "mmpc: Biometric auth test (continued)", "Face ID, Touch ID, fingerprint."),
+    ("mmpc-screenshot-diff", "mmpc: Screenshot diff (continued)", "pixelmatch + SSIM. Threshold per device."),
+    ("mmpc-perf-budget", "mmpc: Perf budget per screen", "Cold start <2s. Frame time <16ms. Assert in CI."),
+    ("mmpc-battery-budget", "mmpc: Battery budget per hour", "Drain test. Assert <=10% per hour."),
+    ("mmpc-memory-budget", "mmpc: Memory budget per screen", "dumpsys meminfo. Assert <=200MB peak."),
+    ("mmpc-traffic-budget", "mmpc: Network traffic budget", "mitmproxy. Assert <=N MB per session."),
+    ("mmpc-flaky-detector", "mmpc: Flaky test detector (continued)", "Bayesian flakiness score. Quarantine."),
+    ("mmpc-load-100-devices", "mmpc: Load test 100 devices (continued)", "Lease model. Auto-release after 1h idle."),
+    ("mmpc-cost-report", "mmpc: Cloud device cost attribution", "Per-journey cost. Cloud vs local split."),
+    ("mmpc-ci-integration", "mmpc: GitHub Actions integration", "Self-hosted runner pool. Cached SDK. Parallel 50 devices."),
+    ("mmpc-reporting", "mmpc: Unified HTML report", "Screenshots, perf, logs, traces in one HTML."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(mmpc_topics):
+    num = 300 + i
+    BLOCK_I.append(wp(num, slug_suffix, title, "KooshaPari/mobile-mpc",
+        "172-mmpc-cu", "172-mmpc-cu", "172-mmpc-cu",
+        "L0,L42,L45", I_DEP + [f"WP-{num-1:03d}"], ["WP-I100"],
+        "M", "agent", "?",
+        "pending", desc, "tests pass on Android + iOS.",
+        "github.com/KooshaPari/mobile-mpc, appium.io, modelcontextprotocol.io/specification",
+        "Beats Appium alone; matches device-farm SOTA.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK J — mobilecli extend (WP-348..WP-387, 40 WPs)
+# =============================================================================
+BLOCK_J = []
+J_DEP = ["WP-347"]
+
+mcli_topics = [
+    ("mcli-rust-cli", "mobilecli: Rust CLI binary via clap 4", "clap derive. Subcommands: device, screenshot, tap, type, journey, llm."),
+    ("mcli-python-cli", "mobilecli: Python CLI via typer + rich", "mirrored commands. Used in ML pipelines."),
+    ("mcli-dual-bindings", "mobilecli: PyO3 bindings Rust->Python", "maturin. Single wheel. Both CLIs share core."),
+    ("mcli-prompt-tmpl", "mobilecli: Jinja-style prompt templates", "minijinja. Per-provider variants. Loaders from disk."),
+    ("mcli-llm-router", "mobilecli: Multi-provider LLM router", "Same as eidolon-llm. Reused crate."),
+    ("mcli-vision-prompt", "mobilecli: Vision prompt builder", "Combines screenshot + history + task into provider-specific format."),
+    ("mcli-streaming", "mobilecli: Streaming output to terminal", "tokio + crossterm. Animated markdown render."),
+    ("mcli-repl", "mobilecli: Interactive REPL", "reedline. History. Slash commands: /clear, /model, /journey."),
+    ("mcli-config", "mobilecli: TOML config + env override", "figment. Per-device profiles."),
+    ("mcli-device-mgmt", "mobilecli: Device connect/disconnect/list", "Wraps kmobile. Persistent connection pool."),
+    ("mcli-tap", "mobilecli: tap <x> <y>", "Single tap. With hold duration option."),
+    ("mcli-type", "mobilecli: type <text>", "Unicode. Per-char delay."),
+    ("mcli-key", "mobilecli: key <KEY>", "Named key. Combo support."),
+    ("mcli-swipe", "mobilecli: swipe <x1> <y1> <x2> <y2>", "With duration + curve."),
+    ("mcli-screenshot", "mobilecli: screenshot <path>", "PNG output. Optional region."),
+    ("mcli-ocr", "mobilecli: ocr [region]", "Tesseract. Languages."),
+    ("mcli-find", "mobilecli: find <description>", "Returns coords + aria-ref."),
+    ("mcli-journey-run", "mobilecli: journey run <file>", "Executes journey. Reports pass/fail."),
+    ("mcli-journey-record", "mobilecli: journey record <file>", "Interactive mode. Saves to JSON/YAML."),
+    ("mcli-journey-diff", "mobilecli: journey diff <a> <b>", "Visual + textual diff."),
+    ("mcli-llm-pick", "mobilecli: llm pick <provider>", "Selects from cost/latency/quality router."),
+    ("mcli-llm-list", "mobilecli: llm list", "All providers + current rate limits."),
+    ("mcli-cost", "mobilecli: cost <period>", "Per-provider cost breakdown."),
+    ("mcli-cache-stats", "mobilecli: cache stats", "Hit rate, size, eviction."),
+    ("mcli-flush-cache", "mobilecli: cache flush", "Clear LLM response cache."),
+    ("mcli-trace", "mobilecli: trace <journey>", "OTel trace export to console."),
+    ("mcli-tui", "mobilecli: TUI dashboard w/ ratatui", "Live device list, journey progress, screenshots."),
+    ("mcli-watch", "mobilecli: watch <pattern>", "Re-run journey on file change."),
+    ("mcli-cron", "mobilecli: cron <schedule> <journey>", "Periodic run via tokio-cron-scheduler."),
+    ("mcli-slack-notify", "mobilecli: Slack notification on failure", "webhook. Configurable template."),
+    ("mcli-junit", "mobilecli: JUnit XML output", "For CI consumption."),
+    ("mcli-html-report", "mobilecli: Self-contained HTML report", "Screenshots base64. Open in browser."),
+    ("mcli-bench", "mobilecli: criterion bench suite", "Tap latency, screenshot throughput."),
+    ("mcli-self-test", "mobilecli: Self-test on launch", "Detects connected devices. Reports errors."),
+    ("mcli-doctor", "mobilecli: doctor <command>", "Diagnose common setup issues."),
+    ("mcli-update", "mobilecli: self-update via cargo-dist", "Checks latest release. Updates binary."),
+    ("mcli-plugins", "mobilecli: Plugin system via wasmtime", "WASM plugins extend CLI. Sandboxed."),
+    ("mcli-mcp-client", "mobilecli: MCP client mode", "Connect to any MCP server. Use mobilecli tools in Claude Desktop."),
+    ("mcli-shell-comp", "mobilecli: Shell completion (bash/zsh/fish)", "clap_complete. Install via just completions."),
+    ("mcli-man-page", "mobilecli: Man page via clap_mangen", "Generated on release. Ships in tarball."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(mcli_topics):
+    num = 348 + i
+    BLOCK_J.append(wp(num, slug_suffix, title, "KooshaPari/mobilecli",
+        "173-mcli-cu", "173-mcli-cu", "173-mcli-cu",
+        "L30,L33,L42,L45", J_DEP + [f"WP-{num-1:03d}"], ["WP-J100"],
+        "M", "agent", "?",
+        "pending", desc, "binary runs; tests pass; install instructions work.",
+        "github.com/KooshaPari/mobilecli, docs.rs/clap, typer.tiangolo.com",
+        "Beats adb shell scripts; matches rich-typer CLI SOTA.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK K — kvirtstage extend (WP-388..WP-431, 44 WPs)
+# =============================================================================
+BLOCK_K = []
+K_DEP = ["WP-387"]
+
+kvs_topics = [
+    ("kvs-cargo-ws", "kvirtstage: cargo workspace skeleton", "Member crates: kvs-core, kvs-docker, kvs-libvirt, kvs-kvm, kvs-gpu, kvs-mcp."),
+    ("kvs-uv-ws", "kvirtstage: uv workspace for Python", "kvs_py. Async clients via httpx."),
+    ("kvs-docker-backend", "kvs-docker: Docker backend", "bollard crate. Pull/start/stop/exec."),
+    ("kvs-libvirt-backend", "kvs-libvirt: libvirt backend via virt", "virt-rs. Connect over SSH/qemu+tcp."),
+    ("kvs-kvm-backend", "kvs-kvm: direct KVM via /dev/kvm", "kvm-rs. Requires root/CAP_KVM."),
+    ("kvs-driver-trait", "kvs: unified Driver trait", "Async trait. screenshot, exec, copy_to, copy_from, snapshot, restore."),
+    ("kvs-gpu-passthrough", "kvs: GPU passthrough (VFIO)", "Bind GPU to VFIO. Pass to VM. nvidia-smi inside VM."),
+    ("kvs-gpu-vgpu", "kvs: vGPU via NVIDIA vGPU", "MIG partitioning. Used in shared test infra."),
+    ("kvs-mac-hvf", "kvs: macOS HVF backend", "Hypervisor.framework. Apple Silicon + Intel."),
+    ("kvs-windows-hyperv", "kvs: Windows Hyper-V backend", "PowerShell direct. Used for Windows CI."),
+    ("kvs-image-builder", "kvs: Image builder (Packer-style)", "Declarative YAML. Builds Ubuntu, macOS, Windows VMs from ISO."),
+    ("kvs-image-macos", "kvs: macOS image via osx-vm-templates", "github.com/trycua/osx-vm-templates. Signed IPSW."),
+    ("kvs-image-windows", "kvs: Windows image via autounattend.xml", "Unattended install. Sysprep-ready."),
+    ("kvs-image-linux", "kvs: Linux image via cloud-init", "Ubuntu 24.04, Fedora 41, Debian 12. cloud-init NoCloud."),
+    ("kvs-image-cache", "kvs: Image cache w/ content-addressed storage", "SHA256. Dedupe. Stored in S3-compatible blob store."),
+    ("kvs-snapshot", "kvs: VM snapshot (save/restore)", "qemu-img snapshot. libvirt snapshot. Docker commit."),
+    ("kvs-clone", "kvs: Clone VM (linked or full)", "qcow2 backing file. Fast. Used per-test."),
+    ("kvs-net-nat", "kvs: NAT networking", "Default. Port forwarding to host."),
+    ("kvs-net-bridge", "kvs: Bridge networking", "Direct LAN access. Used for IoT tests."),
+    ("kvs-net-host", "kvs: Host networking", "VM shares host netns. Lowest latency."),
+    ("kvs-storage-pool", "kvs: Storage pool (LVM/ZFS/BTRFS)", "LVM thin pool. ZFS zvol. BTRFS subvolume."),
+    ("kvs-cua-driver-in-vm", "kvs: cua-driver inside VM", "Runs at boot. Listens on QMP socket."),
+    ("kvs-qmp-control", "kvs: QMP control channel", "qapi-schema-rs. Power, screenshot, screenshot-async."),
+    ("kvs-spice-display", "kvs: SPICE display for VNC/RDP bridge", "spice-rs. Pixel-perfect screen streaming."),
+    ("kvs-rdp-server", "kvs: RDP server inside VM (xrdp/Windows)", "Used for Windows tests."),
+    ("kvs-vnc-server", "kvs: VNC server inside VM (x11vnc/WinVNC)", "Cross-platform."),
+    ("kvs-wayland-bridge", "kvs: Wayland bridge via wayvnc/wlroots", "Modern Linux desktops."),
+    ("kvs-mcp-server", "kvs: MCP server surface", "Tools: vm_list, vm_start, vm_stop, vm_screenshot, vm_exec, vm_clone, vm_snapshot."),
+    ("kvs-mcp-resources", "kvs: MCP resources: VMs, images, snapshots", "Browse state."),
+    ("kvs-mcp-prompts", "kvs: MCP prompts: 'start Ubuntu VM', 'snapshot before update'", "Common workflows."),
+    ("kvs-cua-bench", "kvs: cua-bench harness integration", "Submit VM-based computer-use tasks."),
+    ("kvs-cloud-bridge", "kvs: AWS EC2 / GCP GCE bridge", "Run VMs in cloud when local farm exhausted."),
+    ("kvs-fleet-orchestrator", "kvs: Fleet orchestrator (lease model)", "Like kmobile fleet. 100s of VMs."),
+    ("kvs-cost-report", "kvs: Cost attribution per VM-hour", "Cloud + local."),
+    ("kvs-self-heal", "kvs: Self-heal crashed VMs", "Restart on detect. Alert on repeated failure."),
+    ("kvs-metrics", "kvs: Metrics via OTel (CPU/MEM/NET)", "Per-VM spans. Resource attributes."),
+    ("kvs-ci-integration", "kvs: GitHub Actions self-hosted runner pool", "KVM-enabled. macOS via osx-iac."),
+    ("kvs-image-ci-cache", "kvs: CI image cache w/ distributed blob", "S3 backend. 100GB+ images."),
+    ("kvs-quota", "kvs: Per-user VM quota", "Max 10 VMs concurrent. Max 1TB storage. RBAC enforced."),
+    ("kvs-audit-log", "kvs: Audit log of all VM lifecycle events", "JSONL. SIEM export."),
+    ("kvs-rbac", "kvs: RBAC via casbin", "Roles: admin, operator, viewer, agent."),
+    ("kvs-doctor", "kvs: Doctor command to diagnose setup", "Detect missing KVM, libvirt, Docker."),
+    ("kvs-bench", "kvs: criterion bench suite", "VM boot time, screenshot throughput."),
+    ("kvs-load-100", "kvs: Load test 100 concurrent VMs", "Yardstick. Report p50/p95/p99."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(kvs_topics):
+    num = 388 + i
+    BLOCK_K.append(wp(num, slug_suffix, title, "KooshaPari/kvirtstage",
+        "174-kvs-cu", "174-kvs-cu", "174-kvs-cu",
+        "L0,L42,L45,L66", K_DEP + [f"WP-{num-1:03d}"], ["WP-K100"],
+        "L", "agent", "?",
+        "pending", desc, "VM boots; cua-driver responds; MCP tool works.",
+        "github.com/KooshaPari/kvirtstage, libvirt.org, github.com/trycua/Lume",
+        "Beats QEMU wrappers; matches trycua Lume + libvirt pattern.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK L — kvirtdesktop extend (WP-432..WP-467, 36 WPs)
+# =============================================================================
+BLOCK_L = []
+L_DEP = ["WP-431"]
+
+kvd_topics = [
+    ("kvd-vnc-client", "kvirtdesktop: VNC client via vnc-rs", "Connect, screenshot, click, type."),
+    ("kvd-rdp-client", "kvirtdesktop: RDP client via ironrdp", "Native RDP. Used for Windows."),
+    ("kvd-wayland-client", "kvirtdesktop: Wayland client via wayland-client-rs", "Native Wayland. Used for Linux."),
+    ("kvd-x11-client", "kvirtdesktop: X11 client via x11rb", "Legacy Linux."),
+    ("kvd-quartz-client", "kvirtdesktop: macOS Quartz client", "Native macOS screen capture + event injection."),
+    ("kvd-windows-gdi-client", "kvirtdesktop: Windows GDI client", "BitBlt screen capture. SendInput for events."),
+    ("kvd-headless-mode", "kvirtdesktop: headless mode (Xvfb/QEMU -display none)", "Used for CI."),
+    ("kvd-headed-mode", "kvirtdesktop: headed mode w/ display", "Local dev."),
+    ("kvd-frame-differ", "kvirtdesktop: Frame differ (mmap ring buffer)", "Detects screen changes efficiently."),
+    ("kvd-frame-codec", "kvirtdesktop: Frame codec (zstd + png fallback)", "Reduces bandwidth 10x."),
+    ("kvd-clipboard-sync", "kvirtdesktop: Clipboard sync host<->guest", "Used in dev workflows."),
+    ("kvd-file-transfer", "kvirtdesktop: File transfer (SCP/SFTP/clipboard)", "Drag-drop file into VM."),
+    ("kvd-audio-stream", "kvirtdesktop: Audio stream (PulseAudio/PipeWire)", "Used for ASR testing."),
+    ("kvd-input-lag", "kvirtdesktop: Configurable input lag for realism", "50-200ms."),
+    ("kvd-display-resize", "kvirtdesktop: Dynamic display resize", "Test responsive layouts."),
+    ("kvd-display-rotation", "kvirtdesktop: Display rotation", "Test portrait/landscape."),
+    ("kvd-multi-monitor", "kvirtdesktop: Multi-monitor inside VM", "Used in desktop app tests."),
+    ("kvd-record-screen", "kvirtdesktop: Record screen to MP4", "FFmpeg. Upload to artifact store."),
+    ("kvd-stream-screen", "kvirtdesktop: Stream screen to WebRTC", "Used in dashboards."),
+    ("kvd-mcp-tool", "kvirtdesktop: MCP tool surface", "vnc_connect, rdp_connect, screenshot, click, type, key, scroll, find."),
+    ("kvd-mcp-resources", "kvirtdesktop: MCP resources: displays, inputs", "Browse state."),
+    ("kvd-mcp-prompts", "kvirtdesktop: MCP prompts: 'connect to Windows VM'", "Common workflows."),
+    ("kvd-discover-mdns", "kvirtdesktop: mDNS discovery of local VMs", "Avahi on Linux. Bonjour on macOS."),
+    ("kvd-tls-channel", "kvirtdesktop: TLS channel for screen stream", "rustls. Self-signed cert per VM."),
+    ("kvd-auth-pam", "kvirtdesktop: PAM auth for VM login", "Used for Linux."),
+    ("kvd-auth-kerberos", "kvirtdesktop: Kerberos auth for Windows", "Enterprise."),
+    ("kvd-ci-bench", "kvirtdesktop: CI bench: latency to first pixel", "Used to optimize startup."),
+    ("kvd-load-100", "kvirtdesktop: Load test 100 concurrent connections", "Yardstick."),
+    ("kvd-fallback-codec", "kvirtdesktop: Codec fallback chain", "zstd -> png -> raw. Adapt to bandwidth."),
+    ("kvd-clipboard-image", "kvirtdesktop: Image clipboard support", "Drag-drop image into VM."),
+    ("kvd-tunnel-ssh", "kvirtdesktop: SSH tunnel for VNC/RDP", "ssh-rs. Used over hostile networks."),
+    ("kvd-multi-display", "kvirtdesktop: Multi-display routing", "Send input to specific display."),
+    ("kvd-keymap", "kvirtdesktop: Per-OS keymap translation", "Linux <-> Windows <-> Mac."),
+    ("kvd-extended-input", "kvirtdesktop: Pen/touch input", "Used in tablet tests."),
+    ("kvd-self-test", "kvirtdesktop: Self-test on launch", "Connects to localhost. Verifies screen."),
+    ("kvd-bench", "kvirtdesktop: criterion bench suite", "Frame latency. Input latency. Codec throughput."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(kvd_topics):
+    num = 432 + i
+    BLOCK_L.append(wp(num, slug_suffix, title, "KooshaPari/kvirtdesktop",
+        "175-kvd-cu", "175-kvd-cu", "175-kvd-cu",
+        "L0,L42,L45", L_DEP + [f"WP-{num-1:003d}" if False else f"WP-{num-1:03d}"], ["WP-L100"],
+        "M", "agent", "?",
+        "pending", desc, "connects; screenshot taken; click registers.",
+        "github.com/KooshaPari/kvirtdesktop, github.com/ironrdp/ironrdp, github.com/wayland-client-rs/wayland-client-rs",
+        "Beats raw VNC clients; matches RustDesk pattern.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK M — playcua_ci_test harden + extend (WP-468..WP-507, 40 WPs)
+# =============================================================================
+BLOCK_M = []
+M_DEP = ["WP-467"]
+
+pct_topics = [
+    ("pct-cargo-ws", "playcua_ci_test: cargo workspace", "crates: pct-core, pct-image-builder, pct-cua-bench, pct-mcp."),
+    ("pct-uv-ws", "playcua_ci_test: uv workspace for fixtures", "Test corpus. Reference screenshots."),
+    ("pct-image-builder-ubuntu", "pct: multi-OS image builder — Ubuntu 24.04", "cloud-init. Packer."),
+    ("pct-image-builder-fedora", "pct: image builder — Fedora 41", "Same."),
+    ("pct-image-builder-debian", "pct: image builder — Debian 12", "Same."),
+    ("pct-image-builder-arch", "pct: image builder — Arch", "Same."),
+    ("pct-image-builder-macos", "pct: image builder — macOS 15", "osx-vm-templates."),
+    ("pct-image-builder-windows-11", "pct: image builder — Windows 11", "autounattend.xml."),
+    ("pct-image-builder-windows-10", "pct: image builder — Windows 10", "Same."),
+    ("pct-image-builder-android", "pct: image builder — Android 14", "AVD + system image."),
+    ("pct-image-builder-ios", "pct: image builder — iOS 18", "simctl + runtime."),
+    ("pct-image-cache", "pct: image cache w/ content addressing", "SHA256. S3-compatible backend."),
+    ("pct-cua-driver-build", "pct: build cua-driver inside images", "Pre-baked. Ready to run."),
+    ("pct-playwright-mcp-build", "pct: build playwright-mcp inside images", "Pre-baked."),
+    ("pct-agent-browser-build", "pct: build agent-browser inside images", "Pre-baked."),
+    ("pct-cua-bench", "pct: cua-bench runner", "github.com/trycua/cua-bench. Submit results."),
+    ("pct-cua-bench-leaderboard", "pct: cua-bench leaderboard integration", "API submit + rank tracking."),
+    ("pct-bench-parallel", "pct: parallel bench (10 VMs)", "Used to find regressions fast."),
+    ("pct-bench-regression", "pct: bench regression detector", "Bayesian. Fail on p<0.05 regression."),
+    ("pct-mcp-server", "pct: MCP server surface", "tools: bench_run, bench_compare, image_build, image_cache_lookup."),
+    ("pct-mcp-resources", "pct: MCP resources: images, results, baselines", "Browse state."),
+    ("pct-mcp-prompts", "pct: MCP prompts: 'run cua-bench on macOS'", "Common workflows."),
+    ("pct-ci-integration", "pct: GitHub Actions integration", "Self-hosted runners with KVM. macOS via osx-iac."),
+    ("pct-results-db", "pct: results database (SQLite + Datasette)", "Browse results via web UI."),
+    ("pct-baseline-mgmt", "pct: baseline management w/ approve/deny", "Per-image. Per-task. PR-driven."),
+    ("pct-flaky-detector", "pct: flakiness detector", "Bayesian. Auto-quarantine."),
+    ("pct-cost-attribution", "pct: cost per bench run", "Per-VM-minute. Reports in $/task."),
+    ("pct-corpus-mgmt", "pct: corpus mgmt for benchmarks", "Test task registry. Versioned."),
+    ("pct-visual-diff", "pct: visual diff per task", "pixelmatch + SSIM. Threshold per task."),
+    ("pct-perf-trace", "pct: perf trace per task", "Process tree + syscall trace. Decode in Perfetto UI."),
+    ("pct-otel-export", "pct: OTel export to Jaeger", "Per-task span."),
+    ("pct-sentry-export", "pct: Sentry export on crash", "Captures stack trace + screenshot."),
+    ("pct-html-report", "pct: HTML report per task", "Screenshots, perf, logs."),
+    ("pct-fuzz-image", "pct: fuzz the image builder", "cargo-fuzz. Random inputs to cloud-init."),
+    ("pct-mutation-tests", "pct: mutation testing via cargo-mutants", "Nightly. Goal >=70% kill rate."),
+    ("pct-bench-suite", "pct: criterion bench suite", "Image build time. Boot time. cua-driver latency."),
+    ("pct-load-test", "pct: load test 100 concurrent VMs", "Yardstick."),
+    ("pct-rbac", "pct: RBAC via casbin", "Same as Eidolon."),
+    ("pct-audit-log", "pct: audit log of all bench runs", "JSONL. SIEM."),
+    ("pct-self-test", "pct: self-test on launch", "Build tiny image. Boot. Run cua-bench."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(pct_topics):
+    num = 468 + i
+    BLOCK_M.append(wp(num, slug_suffix, title, "KooshaPari/playcua_ci_test",
+        "176-pct-cu", "176-pct-cu", "176-pct-cu",
+        "L0,L16,L42,L45", M_DEP + [f"WP-{num-1:03d}"], ["WP-M100"],
+        "M", "agent", "?",
+        "pending", desc, "image builds; bench runs; results in DB.",
+        "github.com/KooshaPari/playcua_ci_test, github.com/trycua/cua-bench",
+        "Beats ad-hoc CI; matches cua-bench reference impl.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK N — phenotype-journeys extend (WP-508..WP-551, 44 WPs)
+# =============================================================================
+BLOCK_N = []
+N_DEP = ["WP-507"]
+
+pj_topics = [
+    ("pj-dsl-v2-spec", "phenotype-journeys: DSL v2 spec doc", "YAML + JSON dual format. Backward-compatible w/ v1."),
+    ("pj-dsl-v2-parser", "phenotype-journeys: DSL v2 parser", "nom + serde_yaml. Friendly errors via miette."),
+    ("pj-dsl-v2-validator", "phenotype-journeys: DSL v2 validator", "Cross-ref checks. Schemars JSON Schema."),
+    ("pj-json-schema-pub", "phenotype-journeys: publish JSON Schema", "schemas.journey.schema.json. Hosted on GitHub Pages."),
+    ("pj-renderer-mermaid", "phenotype-journeys: render to Mermaid", "flowchart + sequence diagrams."),
+    ("pj-renderer-graphviz", "phenotype-journeys: render to GraphViz DOT", "For paper-quality diagrams."),
+    ("pj-renderer-ascii", "phenotype-journeys: render to ASCII art", "For terminal output. Via termgraph."),
+    ("pj-renderer-html", "phenotype-journeys: render to standalone HTML", "Interactive. With screenshots inline."),
+    ("pj-executor-seq", "phenotype-journeys: sequential executor", "Used for most journeys."),
+    ("pj-executor-parallel", "phenotype-journeys: parallel executor", "Independent branches."),
+    ("pj-executor-dry-run", "phenotype-journeys: dry-run executor", "Validates plan without executing."),
+    ("pj-step-screenshot", "phenotype-journeys: step type — screenshot", "Capture region. Save to artifacts."),
+    ("pj-step-click", "phenotype-journeys: step type — click", "aria-ref or coords."),
+    ("pj-step-type", "phenotype-journeys: step type — type", "Unicode."),
+    ("pj-step-key", "phenotype-journeys: step type — key", "Named key + combo."),
+    ("pj-step-scroll", "phenotype-journeys: step type — scroll", "delta."),
+    ("pj-step-wait", "phenotype-journeys: step type — wait", "for selector, for image, for delay."),
+    ("pj-step-assert", "phenotype-journeys: step type — assert", "visible, text, value, attr."),
+    ("pj-step-conditional", "phenotype-journeys: step type — when/then/else", "Branch on previous step result."),
+    ("pj-step-loop", "phenotype-journeys: step type — loop", "for, while, until."),
+    ("pj-step-data-table", "phenotype-journeys: step type — data-table", "Run for each row."),
+    ("pj-step-fixture", "phenotype-journeys: step type — fixture", "Setup state. E.g., login."),
+    ("pj-step-teardown", "phenotype-journeys: step type — teardown", "Cleanup state."),
+    ("pj-step-hook", "phenotype-journeys: step type — hook", "Before/after callback. Run shell or http."),
+    ("pj-step-snapshot", "phenotype-journeys: step type — snapshot", "Visual snapshot assertion."),
+    ("pj-mcp-tools", "phenotype-journeys: MCP tools", "journey_run, journey_dry_run, journey_diff, journey_baseline_approve."),
+    ("pj-mcp-resources", "phenotype-journeys: MCP resources", "journey files, baselines, results."),
+    ("pj-mcp-prompts", "phenotype-journeys: MCP prompts", "Common patterns."),
+    ("pj-otel-spans", "phenotype-journeys: OTel spans per step", "trace_id joined to MCP request."),
+    ("pj-report-html", "phenotype-journeys: HTML report", "Screenshots, perf, OTel trace link."),
+    ("pj-report-junit", "phenotype-journeys: JUnit XML", "For CI."),
+    ("pj-report-markdown", "phenotype-journeys: Markdown summary", "For PR comments."),
+    ("pj-report-slack", "phenotype-journeys: Slack notify", "Webhook."),
+    ("pj-cua-bench-task-format", "phenotype-journeys: cua-bench task format adapter", "Convert journey -> cua-bench task."),
+    ("pj-replay-engine", "phenotype-journeys: replay engine", "Replay recorded journey against new build."),
+    ("pj-baseline-mgmt", "phenotype-journeys: baseline management", "Approve/deny in PR."),
+    ("pj-flaky-detector", "phenotype-journeys: flakiness detector", "Bayesian."),
+    ("pj-quarantine", "phenotype-journeys: quarantine", "Skip in CI. Manual unquarantine."),
+    ("pj-codegen-vscode", "phenotype-journeys: VS Code extension", "Syntax highlight + IntelliSense + run."),
+    ("pj-codegen-cli", "phenotype-journeys: CLI: pj run/diff/record", "Wraps library. cligrove."),
+    ("pj-bench", "phenotype-journeys: criterion bench suite", "Step latency."),
+    ("pj-fuzz", "phenotype-journeys: fuzz parser", "cargo-fuzz."),
+    ("pj-mutation", "phenotype-journeys: mutation tests", "cargo-mutants."),
+    ("pj-self-test", "phenotype-journeys: self-test suite", "20+ journeys covering common patterns."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(pj_topics):
+    num = 508 + i
+    BLOCK_N.append(wp(num, slug_suffix, title, "KooshaPari/phenotype-journeys",
+        "177-pj-cu", "177-pj-cu", "177-pj-cu",
+        "L0,L30,L42,L45", N_DEP + [f"WP-{num-1:03d}"], ["WP-N100"],
+        "M", "agent", "?",
+        "pending", desc, "journey runs; report generated; MCP tool works.",
+        "github.com/KooshaPari/phenotype-journeys, modelcontextprotocol.io/specification",
+        "Beats Gherkin; matches Playwright trace DSL.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK O — Cross-repo SOTA ports + cua port (WP-552..WP-575, 24 WPs)
+# =============================================================================
+BLOCK_O = []
+O_DEP = ["WP-551"]
+
+cua_topics = [
+    ("cua-port-driver", "CROSS-REPO: port cua-driver to Eidolon", "Import trycua/cua-driver libs. Adapt to Eidolon driver trait. Submit PR upstream."),
+    ("cua-port-agent", "CROSS-REPO: port cua-agent LLM loop", "Import trycua/cua-agent. Adapt to Eidolon LLM router."),
+    ("cua-port-bench", "CROSS-REPO: port cua-bench harness", "Import task definitions. Adapt to Eidolon journey format."),
+    ("cua-port-sandbox", "CROSS-REPO: port Lume macOS sandbox", "Import trycua/Lume. Adapt to kvirtstage."),
+    ("cua-port-skill", "CROSS-REPO: port cua SKILL.md", "Import trycua/cua/SKILL.md. Adapt to Eidolon."),
+    ("cua-port-mcp", "CROSS-REPO: port cua MCP server", "Import trycua/cua MCP. Add Eidolon tools."),
+    ("cua-port-flake", "CROSS-REPO: port cua Nix flake", "Adapt to Eidolon devshell."),
+    ("cua-port-images", "CROSS-REPO: port cua reference images", "Mirror to kvirtstage image cache."),
+    ("pw-mcp-port", "SOTA: port @playwright/mcp into Eidolon", "github.com/microsoft/playwright-mcp. Wrap as Eidolon driver."),
+    ("pw-mcp-skill", "SOTA: port Playwright-MCP SKILL.md", "Create Eidolon skill file referencing PW-MCP."),
+    ("ab-port", "SOTA: port agent-browser (vercel-labs) into Eidolon", "github.com/vercel-labs/agent-browser. Wrap as Eidolon driver."),
+    ("ab-refs", "SOTA: port agent-browser refs system", "Stable selectors across page reloads."),
+    ("ab-skill", "SOTA: port agent-browser SKILL.md", "Eidolon skill file."),
+    ("oi-port", "SOTA: port openinterpreter computer-use skill", "Create Eidolon skill file. Reference openinterpreter/openinterpreter@main/SKILL.md."),
+    ("oi-mcp", "SOTA: port openinterpreter MCP integration", "Adapt to Eidolon MCP server."),
+    ("oi-harness", "SOTA: port openinterpreter harness emulation", "Test LLMs against benchmark set."),
+    ("cu-api", "SOTA: implement Anthropic Computer Use API surface", "beta in Claude. Mirror in Eidolon MCP."),
+    ("cu-omni", "SOTA: implement OpenAI Omni parser", "Adapt computer-use-preview to Eidolon journey format."),
+    ("cu-gui", "SOTA: GUI testing reference: Squish/TestComplete", "Pick best ideas. Implement in Eidolon."),
+    ("cu-appium", "SOTA: Appium integration patterns", "Mirror in mobile-mpc."),
+    ("cu-selendroid", "SOTA: Selendroid patterns for legacy Android", "Archive research. Apply if needed."),
+    ("cu-xcuitest", "SOTA: XCUITest patterns for iOS", "Mirror in mobile-mpc WDA driver."),
+    ("cu-uia2", "SOTA: uiautomator2 patterns for Android", "Mirror in mobile-mpc UIA2 driver."),
+    ("cu-bench-suite", "SOTA: cua-bench task corpus integration", "Mirror to playcua_ci_test corpus."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(cua_topics):
+    num = 552 + i
+    BLOCK_O.append(wp(num, slug_suffix, title, "KooshaPari/eidolon",
+        "178-cua-port", "178-cua-port", "178-cua-port",
+        "L42,L45,L71", O_DEP + [f"WP-{num-1:03d}"], ["WP-O100"],
+        "L", "agent", "?",
+        "pending", desc, "ported component works; PR upstream merged or local.",
+        "github.com/trycua/cua, github.com/microsoft/playwright-mcp, github.com/vercel-labs/agent-browser, github.com/openinterpreter/openinterpreter",
+        "Beats ad-hoc; matches SOTA.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK P — agileplus spec/plan/tasks (WP-576..WP-599, 24 WPs)
+# =============================================================================
+BLOCK_P = []
+P_DEP = ["WP-575"]
+
+ap_topics = [
+    ("ap-spec-170", "agileplus: spec.md for 170-computer-use-platform", "Written per agileplus-specs template. Covers: scope, FRs, NFRs, SOTA refs."),
+    ("ap-plan-170", "agileplus: plan.md for 170-computer-use-platform", "Phase plan: M0 scaffold, M1 MCP, M2 drivers, M3 LLM, M4 journey, M5 polish."),
+    ("ap-tasks-170", "agileplus: tasks.md for 170-computer-use-platform", "100+ tasks w/ deps. Mapped to WP IDs in this DAG."),
+    ("ap-spec-171", "agileplus: spec.md for 171-kmobile-cu", "Scope: kmobile + kmobile + mobile-mpc + mobilecli + device farm + cua-bench."),
+    ("ap-plan-171", "agileplus: plan.md for 171-kmobile-cu", "Phased."),
+    ("ap-tasks-171", "agileplus: tasks.md for 171-kmobile-cu", "Tasks mapped to WP-236..WP-299."),
+    ("ap-spec-172", "agileplus: spec.md for 172-mmpc-cu", "mobile-mpc scope."),
+    ("ap-plan-172", "agileplus: plan.md for 172-mmpc-cu", "Phased."),
+    ("ap-tasks-172", "agileplus: tasks.md for 172-mmpc-cu", "Tasks mapped to WP-300..WP-347."),
+    ("ap-spec-173", "agileplus: spec.md for 173-mcli-cu", "mobilecli scope."),
+    ("ap-plan-173", "agileplus: plan.md for 173-mcli-cu", "Phased."),
+    ("ap-tasks-173", "agileplus: tasks.md for 173-mcli-cu", "Tasks mapped to WP-348..WP-387."),
+    ("ap-spec-174", "agileplus: spec.md for 174-kvs-cu", "kvirtstage scope."),
+    ("ap-plan-174", "agileplus: plan.md for 174-kvs-cu", "Phased."),
+    ("ap-tasks-174", "agileplus: tasks.md for 174-kvs-cu", "Tasks mapped to WP-388..WP-431."),
+    ("ap-spec-175", "agileplus: spec.md for 175-kvd-cu", "kvirtdesktop scope."),
+    ("ap-plan-175", "agileplus: plan.md for 175-kvd-cu", "Phased."),
+    ("ap-tasks-175", "agileplus: tasks.md for 175-kvd-cu", "Tasks mapped to WP-432..WP-467."),
+    ("ap-spec-176", "agileplus: spec.md for 176-pct-cu", "playcua_ci_test scope."),
+    ("ap-plan-176", "agileplus: plan.md for 176-pct-cu", "Phased."),
+    ("ap-tasks-176", "agileplus: tasks.md for 176-pct-cu", "Tasks mapped to WP-468..WP-507."),
+    ("ap-spec-177", "agileplus: spec.md for 177-pj-cu", "phenotype-journeys scope."),
+    ("ap-plan-177", "agileplus: plan.md for 177-pj-cu", "Phased."),
+    ("ap-tasks-177", "agileplus: tasks.md for 177-pj-cu", "Tasks mapped to WP-508..WP-551."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(ap_topics):
+    num = 576 + i
+    BLOCK_P.append(wp(num, slug_suffix, title, "KooshaPari/agileplus",
+        "N/A", "N/A", "N/A",
+        "L0,L42,L71", P_DEP + [f"WP-{num-1:03d}"], ["WP-Q001"],
+        "S", "agent", "?",
+        "pending", desc, "spec/plan/tasks committed; reviewers approved.",
+        "github.com/KooshaPari/agileplus, github.com/KooshaPari/agileplus/tree/main/agileplus-specs",
+        "Matches agileplus canonical format.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK Q — phenotype-registry: 41 new audit pillars (WP-600..WP-627, 28 WPs)
+# =============================================================================
+BLOCK_Q = []
+Q_DEP = ["WP-599"]
+
+reg_topics = [
+    ("reg-pillar-L30", "phenotype-registry: define audit pillar L30 (CLI UX)", "Definition + rubric + examples."),
+    ("reg-pillar-L31", "phenotype-registry: define audit pillar L31 (error envelopes)", "Same."),
+    ("reg-pillar-L32", "phenotype-registry: define audit pillar L32 (golden output tests)", "Same."),
+    ("reg-pillar-L33", "phenotype-registry: define audit pillar L33 (DX: figment+env)", "Same."),
+    ("reg-pillar-L34", "phenotype-registry: define audit pillar L34 (config docs)", "Same."),
+    ("reg-pillar-L35", "phenotype-registry: define audit pillar L35 (man pages)", "Same."),
+    ("reg-pillar-L36", "phenotype-registry: define audit pillar L36 (shell completions)", "Same."),
+    ("reg-pillar-L37", "phenotype-registry: define audit pillar L37 (JSON output mode)", "Same."),
+    ("reg-pillar-L38", "phenotype-registry: define audit pillar L38 (TTY/NO_COLOR)", "Same."),
+    ("reg-pillar-L39", "phenotype-registry: define audit pillar L39 (i18n: locales)", "Same."),
+    ("reg-pillar-L40", "phenotype-registry: define audit pillar L40 (a11y: screen reader)", "Same."),
+    ("reg-pillar-L41", "phenotype-registry: define audit pillar L41 (TUI: ratatui)", "Same."),
+    ("reg-pillar-L42", "phenotype-registry: define audit pillar L42 (AGENTS.md)", "Same."),
+    ("reg-pillar-L43", "phenotype-registry: define audit pillar L43 (architecture.md)", "Same."),
+    ("reg-pillar-L44", "phenotype-registry: define audit pillar L44 (cookbook)", "Same."),
+    ("reg-pillar-L45", "phenotype-registry: define audit pillar L45 (MCP tool surface)", "Same."),
+    ("reg-pillar-L46", "phenotype-registry: define audit pillar L46 (OpenAPI/JSONSchema)", "Same."),
+    ("reg-pillar-L47", "phenotype-registry: define audit pillar L47 (AsyncAPI)", "Same."),
+    ("reg-pillar-L48", "phenotype-registry: define audit pillar L48 (semver discipline)", "Same."),
+    ("reg-pillar-L49", "phenotype-registry: define audit pillar L49 (release notes)", "Same."),
+    ("reg-pillar-L50", "phenotype-registry: define audit pillar L50 (changelog)", "Same."),
+    ("reg-pillar-L51", "phenotype-registry: define audit pillar L51 (showcase gallery)", "Same."),
+    ("reg-pillar-L52", "phenotype-registry: define audit pillar L52 (examples crate)", "Same."),
+    ("reg-pillar-L53", "phenotype-registry: define audit pillar L53 (rustdoc deny)", "Same."),
+    ("reg-pillar-L54", "phenotype-registry: define audit pillar L54 (xtask + just)", "Same."),
+    ("reg-pillar-L60", "phenotype-registry: define audit pillar L60 (devcontainer)", "Same."),
+    ("reg-pillar-L70", "phenotype-registry: define audit pillar L70 (OTel + Sentry)", "Same."),
+    ("reg-pillar-L71", "phenotype-registry: define audit pillar L71 (toolchain integration)", "Same. NEW PILLAR."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(reg_topics):
+    num = 600 + i
+    BLOCK_Q.append(wp(num, slug_suffix, title, "KooshaPari/phenotype-registry",
+        "N/A", "N/A", "N/A",
+        "L0,L42,L71", Q_DEP + [f"WP-{num-1:03d}"], ["WP-R001"],
+        "S", "agent", "?",
+        "pending", desc, "pillar definition merged; grader runs against sample repo.",
+        "github.com/KooshaPari/phenotype-registry",
+        "Matches audit pillar convention.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK R — Hygiene/Cross-repo (WP-628..WP-655, 28 WPs)
+# =============================================================================
+BLOCK_R = []
+R_DEP = ["WP-627"]
+
+hy_topics = [
+    ("hy-deny-all", "HYGIENE: cargo-deny.toml in every repo", "Advisories, bans, licenses, sources. Mirrors Eidolon."),
+    ("hy-branch-protection", "HYGIENE: branch protection on main for every repo", "Require PR review. Require status checks. No force-push."),
+    ("hy-secret-scanning", "HYGIENE: gitleaks in every repo", "Pre-commit + CI nightly."),
+    ("hy-dependabot", "HYGIENE: Dependabot in every repo", "Weekly group updates. Auto-merge patch."),
+    ("hy-release-plz-all", "HYGIENE: release-plz in every repo", "Mirrors Eidolon."),
+    ("hy-cargo-deny-all", "HYGIENE: cargo-deny CI step in every repo", "Fails on HIGH/CRITICAL."),
+    ("hy-clippy-all", "HYGIENE: clippy --all-targets -D warnings in every repo", "Same."),
+    ("hy-fmt-all", "HYGIENE: cargo fmt --check in every repo", "Same."),
+    ("hy-deadcode", "HYGIENE: cargo-machete to detect unused deps", "CI fails on unused."),
+    ("hy-miri-nightly", "HYGIENE: Miri for unsafe code in every repo", "Nightly CI."),
+    ("hy-fuzz-nightly", "HYGIENE: cargo-fuzz nightly in every repo", "OSS-Fuzz where possible."),
+    ("hy-tarpaulin", "HYGIENE: tarpaulin coverage gate >=80% in every repo", "Codecov badge."),
+    ("hy-mutation", "HYGIENE: cargo-mutants nightly in every repo", "Kill rate >=70%."),
+    ("hy-vet", "HYGIENE: cargo-vet in every repo", "Supply chain audit."),
+    ("hy-cyclonedx", "HYGIENE: cargo-cyclonedx in every repo", "SBOM on every release."),
+    ("hy-trivy", "HYGIENE: Trivy scan on every release artifact", "Fails on HIGH/CRITICAL."),
+    ("hy-grype", "HYGIENE: Grype scan on container image", "Same."),
+    ("hy-license-check", "HYGIENE: cargo-about in every repo", "All deps MIT/Apache/BSD."),
+    ("hy-actions-pinning", "HYGIENE: pin all GitHub Actions by SHA", "github-actions/pin."),
+    ("hy-oidc", "HYGIENE: OIDC for release-plz signing", "No long-lived secrets."),
+    ("hy-codespell", "HYGIENE: codespell in every repo", "CI fails on typos."),
+    ("hy-rst", "HYGIENE: rst-lint in every repo", "Used if any RST."),
+    ("hy-md-lint", "HYGIENE: markdownlint in every repo", "Standard rules."),
+    ("hy-link-check", "HYGIENE: lychee link checker in every repo", "Daily. Reports broken links."),
+    ("hy-pre-commit-ci", "HYGIENE: pre-commit.ci in every repo", "Runs on every PR."),
+    ("hy-zed-rules", "HYGIENE: rulesync rules for editor agents", ".rulesync/ synced to .claude/, .cursor/, .windsurf/."),
+    ("hy-claude-md", "HYGIENE: CLAUDE.md per repo", "Mirror of AGENTS.md. Used by Claude Code."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(hy_topics):
+    num = 628 + i
+    BLOCK_R.append(wp(num, slug_suffix, title, "KooshaPari/eidolon",
+        "170-cu-platform", "170-cu-platform", "170-cu-platform",
+        "L0,L3,L4,L5,L24,L71", R_DEP + [f"WP-{num-1:03d}"], [],
+        "S", "ci", "?",
+        "pending", desc, "all repos green on the check.",
+        "github.com/EmbarkStudios/cargo-deny, github.com/release-plz/release-plz, github.com/axodotdev/cargo-dist, github.com/gitleaks/gitleaks",
+        "Matches Embark Studios + GitHub best-practice.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK S — DX/Polish/Optimize/Stabilize (WP-656..WP-683, 28 WPs)
+# =============================================================================
+BLOCK_S = []
+S_DEP = ["WP-655"]
+
+dx_topics = [
+    ("dx-devcontainer-all", "DX: devcontainer in every repo", "Mirrors Eidolon. Codespaces-ready."),
+    ("dx-nix-all", "DX: Nix flake in every repo", "Mirrors Eidolon."),
+    ("dx-just-all", "DX: justfile in every repo", "Mirrors Eidolon."),
+    ("dx-xtask-all", "DX: cargo-xtask in every repo", "Mirrors Eidolon."),
+    ("dx-readme-all", "POLISH: README.md per crate (workspace-member)", "Hero + badges + quickstart + features."),
+    ("dx-doc-rs-all", "POLISH: doc.rs builds for every crate", "metadata.docs.rs configured."),
+    ("dx-examples-all", "POLISH: examples per crate", "Each crate has 3+ examples."),
+    ("dx-showcase-all", "POLISH: showcase gallery per repo", "Screenshots + gifs."),
+    ("dx-changelog-all", "POLISH: CHANGELOG.md per crate", "release-plz-driven."),
+    ("dx-contrib-all", "POLISH: CONTRIBUTING.md per repo", "Standard."),
+    ("dx-coc-all", "POLISH: CODE_OF_CONDUCT.md per repo", "Contributor Covenant."),
+    ("dx-issue-tmpl", "POLISH: ISSUE_TEMPLATE per repo", "Bug report + feature request."),
+    ("dx-pr-tmpl", "POLISH: PULL_REQUEST_TEMPLATE.md per repo", "Mirrors agileplus."),
+    ("opt-criterion-all", "OPTIMIZE: criterion bench suite per crate", "Mirrors Eidolon."),
+    ("opt-flamegraph-all", "OPTIMIZE: cargo-flamegraph in perf CI per crate", "Same."),
+    ("opt-pgo-all", "OPTIMIZE: PGO in release CI per crate", "Same."),
+    ("opt-lto-all", "OPTIMIZE: LTO + codegen-units=1 per crate", "Same."),
+    ("opt-cpufeat-all", "OPTIMIZE: AVX2/NEON dispatch per crate", "Same."),
+    ("opt-heappy-all", "OPTIMIZE: heaptrack/dhat profiling per crate", "Find leaks."),
+    ("stab-fuzz-all", "STABILIZE: cargo-fuzz harnesses per crate", "Per parser."),
+    ("stab-proptest-all", "STABILIZE: proptest per parser", "Same."),
+    ("stab-mutation-all", "STABILIZE: cargo-mutants nightly per crate", "Same."),
+    ("stab-miri-all", "STABILIZE: Miri for unsafe per crate", "Same."),
+    ("stab-vet-all", "STABILIZE: cargo-vet per crate", "Same."),
+    ("stab-pgo-verify", "STABILIZE: PGO verified regression suite", "PGO binary matches non-PGO within 1%."),
+    ("stab-loom-all", "STABILIZE: loom for concurrency tests per crate", "Same."),
+    ("stab-shuttle-all", "STABILIZE: shuttle for randomized concurrency tests", "Same."),
+    ("stab-tracing-verify", "STABILIZE: tracing spans verified by cargo-spantrace", "Same."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(dx_topics):
+    num = 656 + i
+    BLOCK_S.append(wp(num, slug_suffix, title, "KooshaPari/eidolon",
+        "170-cu-platform", "170-cu-platform", "170-cu-platform",
+        "L0,L16,L17,L18,L30,L54", S_DEP + [f"WP-{num-1:03d}"], [],
+        "M", "ci", "?",
+        "pending", desc, "all repos satisfy the check.",
+        "github.com/KooshaPari/eidolon (template)",
+        "Matches Eidolon template.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK T — Observability + Specs (WP-684..WP-695, 12 WPs)
+# =============================================================================
+BLOCK_T = []
+T_DEP = ["WP-683"]
+
+obs2_topics = [
+    ("obs-otel-all", "OBSERVABILITY: OTel enabled in every repo", "Same SDK as Eidolon. Export to shared otelcol."),
+    ("obs-sentry-all", "OBSERVABILITY: Sentry in every repo", "Same DSN pattern."),
+    ("obs-tracing-all", "OBSERVABILITY: tracing-subscriber JSON logs in every repo", "Same."),
+    ("obs-redis-all", "OBSERVABILITY: redis cache in every repo", "Optional. Falls back to SQLite."),
+    ("obs-sqlite-idx", "OBSERVABILITY: SQLite index dashboard per repo", "Datasette."),
+    ("obs-metrics-all", "OBSERVABILITY: prometheus exporter in every repo", "Mirrors Eidolon."),
+    ("spec-openapi-all", "EXTEND: OpenAPI 3.1 spec per repo", "utoipa. Served at /openapi.json."),
+    ("spec-jsonschema-all", "EXTEND: JSON Schema per repo", "schemars. Hosted."),
+    ("spec-asyncapi-all", "EXTEND: AsyncAPI 3.0 spec per repo", "For event-driven APIs."),
+    ("spec-mcp-registry", "EXTEND: MCP tool registry entry per repo", "registry.modelcontextprotocol.io."),
+    ("gh-action-cua-bench", "EXTEND: GitHub Action for cua-bench", "Reusable action. Marketplace-published."),
+    ("gh-action-cua-driver", "EXTEND: GitHub Action for cua-driver in CI", "Same."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(obs2_topics):
+    num = 684 + i
+    BLOCK_T.append(wp(num, slug_suffix, title, "KooshaPari/eidolon",
+        "170-cu-platform", "170-cu-platform", "170-cu-platform",
+        "L42,L45,L66,L70", T_DEP + [f"WP-{num-1:03d}"], [],
+        "M", "agent", "?",
+        "pending", desc, "spec/action live; consumers integrated.",
+        "github.com/KooshaPari/eidolon, modelcontextprotocol.io/specification, spec.openapis.org",
+        "Matches openapi/asyncapi spec.",
+        "Same.", "Same."))
+
+# =============================================================================
+# BLOCK U — Win/Win showcase + final release (WP-696..WP-707, 12 WPs)
+# =============================================================================
+BLOCK_U = []
+U_DEP = ["WP-695"]
+
+final_topics = [
+    ("showcase-final", "Final showcase gallery with 20+ screenshots/gifs", "Covers every CU domain. Hosted on GitHub Pages."),
+    ("blog-post-cu-platform", "Blog post: launching Eidolon v1.0", "Cross-post to dev.to, Hashnode, Reddit r/rust."),
+    ("blog-post-cua-port", "Blog post: porting trycua/cua patterns", "Tech deep-dive."),
+    ("blog-post-cua-bench", "Blog post: cua-bench leaderboard debut", "Submit 5 task completions. Show ranking."),
+    ("blog-post-journey-dsl", "Blog post: journey DSL v2 launch", "Compared to Gherkin."),
+    ("blog-post-mobile-cu", "Blog post: mobile computer-use via Eidolon", "Show Android + iOS demos."),
+    ("talk-cu-rustconf", "Submit talk proposal to RustConf 2026", "Topic: 'Eidolon: computer-use for the rest of us'."),
+    ("talk-cu-fosdem", "Submit talk to FOSDEM 2026", "Topic: 'Computer-use MCP server patterns'."),
+    ("podcast-cu", "Appear on Rustacean Station, NewRustacean", "Discuss Eidolon + cua."),
+    ("release-eidolon-1.0", "Tag Eidolon v1.0.0", "All WPs closed. Release notes + showcase."),
+    ("release-mobile-mpc-1.0", "Tag mobile-mpc v1.0.0", "Same."),
+    ("release-playcua-1.0", "Tag playcua_ci_test v1.0.0", "Same."),
+]
+
+for i, (slug_suffix, title, desc) in enumerate(final_topics):
+    num = 696 + i
+    BLOCK_U.append(wp(num, slug_suffix, title, "KooshaPari/eidolon",
+        "170-cu-platform", "170-cu-platform", "170-cu-platform",
+        "L30,L32", U_DEP + [f"WP-{num-1:03d}"], [],
+        "L", "agent", "?",
+        "pending", desc, "asset shipped; metrics tracked.",
+        "github.com/KooshaPari/eidolon, github.com/KooshaPari/playcua_ci_test",
+        "Matches open-source launch SOTA.",
+        "Same.", "Same."))
+
+# =============================================================================
+# WRITE: combine header + all blocks + footer
+# =============================================================================
+all_blocks = (
+    BLOCK_A + BLOCK_B + BLOCK_C + BLOCK_D + BLOCK_E +
+    BLOCK_F + BLOCK_G + BLOCK_H + BLOCK_I + BLOCK_J +
+    BLOCK_K + BLOCK_L + BLOCK_M + BLOCK_N + BLOCK_O +
+    BLOCK_P + BLOCK_Q + BLOCK_R + BLOCK_S + BLOCK_T + BLOCK_U
+)
+
+print(f"Total WPs: {len(all_blocks)}")
+print(f"  Block A: {len(BLOCK_A)}")
+print(f"  Block B: {len(BLOCK_B)}")
+print(f"  Block C: {len(BLOCK_C)}")
+print(f"  Block D: {len(BLOCK_D)}")
+print(f"  Block E: {len(BLOCK_E)}")
+print(f"  Block F: {len(BLOCK_F)}")
+print(f"  Block G: {len(BLOCK_G)}")
+print(f"  Block H: {len(BLOCK_H)}")
+print(f"  Block I: {len(BLOCK_I)}")
+print(f"  Block J: {len(BLOCK_J)}")
+print(f"  Block K: {len(BLOCK_K)}")
+print(f"  Block L: {len(BLOCK_L)}")
+print(f"  Block M: {len(BLOCK_M)}")
+print(f"  Block N: {len(BLOCK_N)}")
+print(f"  Block O: {len(BLOCK_O)}")
+print(f"  Block P: {len(BLOCK_P)}")
+print(f"  Block Q: {len(BLOCK_Q)}")
+print(f"  Block R: {len(BLOCK_R)}")
+print(f"  Block S: {len(BLOCK_S)}")
+print(f"  Block T: {len(BLOCK_T)}")
+print(f"  Block U: {len(BLOCK_U)}")
+
+# Write blocks to separate files first to avoid one massive write
+for letter, block in zip(
+    "ABCDEFGHIJKLMNOPQRSTU",
+    [BLOCK_A, BLOCK_B, BLOCK_C, BLOCK_D, BLOCK_E, BLOCK_F, BLOCK_G, BLOCK_H, BLOCK_I,
+     BLOCK_J, BLOCK_K, BLOCK_L, BLOCK_M, BLOCK_N, BLOCK_O, BLOCK_P, BLOCK_Q, BLOCK_R,
+     BLOCK_S, BLOCK_T, BLOCK_U]
+):
+    out = "\n".join(block)
+    p = os.path.join(BASE, f"_dag_block_{letter}.md")
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(out)
+    print(f"  -> {p}: {len(block)} WPs, {len(out)} bytes")
+
+# Concatenate into final DAG file (header already exists)
+final_path = os.path.join(BASE, "work_dag_cu_20260624_000000.md")
+with open(final_path, "a", encoding="utf-8") as f:
+    for letter in "ABCDEFGHIJKLMNOPQRSTU":
+        bp = os.path.join(BASE, f"_dag_block_{letter}.md")
+        with open(bp, "r", encoding="utf-8") as bf:
+            f.write(bf.read())
+            f.write("\n\n")
+        print(f"  appended block {letter}")
+
+# Append footer
+footer = """
+---
+
+## Execution Schedule (6-12 months)
+
+| Quarter | Focus | Key WPs |
+|---------|-------|---------|
+| Q3 2026 (Jul-Sep) | Foundation + Eidolon scaffold | Blocks A, B, C, D |
+| Q4 2026 (Oct-Dec) | Core extensions + SOTA ports | Blocks E, F, G, H, I |
+| Q1 2027 (Jan-Mar) | Hygiene + Stabilize | Blocks J, K, L, M |
+| Q2 2027 (Apr-Jun) | Polish + Observability | Blocks N, O, P, Q, R |
+| Q3 2027 (Jul-Sep) | Optimize + DX | Blocks S, T, U |
+
+This DAG is the canonical 6-12 month plan for the computer-use domain. It is intended to be re-rendered weekly as auditors surface new findings.
+"""
+with open(final_path, "a", encoding="utf-8") as f:
+    f.write(footer)
+
+# Verify
+size = os.path.getsize(final_path)
+with open(final_path, "r", encoding="utf-8") as f:
+    content = f.read()
+wp_count = content.count("### WP-")
+print(f"\nFinal file: {final_path}")
+print(f"  Size: {size:,} bytes")
+print(f"  WP count: {wp_count}")
+print("All blocks written and concatenated.")

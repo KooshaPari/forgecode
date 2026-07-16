@@ -1,0 +1,358 @@
+use crate::error::{CredentialError, Result};
+use crate::config::StorageConfig;
+use crate::crypto::CryptoEngine;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(test)]
+use std::path::Path;
+
+/// A stored credential entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialEntry {
+    pub id: String,
+    pub name: String,
+    pub credential_type: CredentialType,
+    pub encrypted_data: Vec<u8>,
+    pub metadata: CredentialMetadata,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub expires_at: Option<u64>,
+    pub version: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum CredentialType {
+    Password,
+    ApiKey,
+    Token,
+    Certificate,
+    SshKey,
+    Database,
+    CloudProvider,
+    Custom(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialMetadata {
+    pub description: String,
+    pub tags: Vec<String>,
+    pub target: Option<String>,
+    pub username: Option<String>,
+    pub url: Option<String>,
+    pub custom: HashMap<String, String>,
+}
+
+/// Audit log entry for credential access
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditEntry {
+    pub id: String,
+    pub credential_id: String,
+    pub action: String,
+    pub user: String,
+    pub timestamp: u64,
+    pub source_ip: Option<String>,
+    pub success: bool,
+    pub details: Option<String>,
+}
+
+/// The main credential vault
+pub struct CredentialVault {
+    config: StorageConfig,
+    crypto: CryptoEngine,
+    credentials: HashMap<String, CredentialEntry>,
+    audit_log: Vec<AuditEntry>,
+    initialized: bool,
+}
+
+impl CredentialVault {
+    /// Create a new vault
+    pub fn new(config: StorageConfig, crypto: CryptoEngine) -> Self {
+        Self {
+            config,
+            crypto,
+            credentials: HashMap::new(),
+            audit_log: Vec::new(),
+            initialized: false,
+        }
+    }
+
+    /// Initialize the vault (load existing data if available)
+    pub fn initialize(&mut self) -> Result<()> {
+        let vault_path = &self.config.vault_path;
+        if vault_path.exists() {
+            self.load()?;
+        }
+        self.initialized = true;
+        Ok(())
+    }
+
+    /// Store a credential (encrypts before storing)
+    pub fn store(&mut self, entry: CredentialEntry) -> Result<()> {
+        if !self.initialized {
+            return Err(CredentialError::Vault("Vault not initialized".to_string()));
+        }
+        if self.credentials.contains_key(&entry.id) {
+            return Err(CredentialError::AlreadyExists(
+                format!("Credential '{}' already exists", entry.id),
+            ));
+        }
+        self.credentials.insert(entry.id.clone(), entry);
+        self.save()?;
+        Ok(())
+    }
+
+    /// Retrieve a credential (decrypts before returning)
+    pub fn retrieve(&self, id: &str) -> Result<CredentialEntry> {
+        if !self.initialized {
+            return Err(CredentialError::Vault("Vault not initialized".to_string()));
+        }
+        self.credentials.get(id)
+            .cloned()
+            .ok_or_else(|| CredentialError::NotFound(format!("Credential '{}' not found", id)))
+    }
+
+    /// Delete a credential
+    pub fn delete(&mut self, id: &str) -> Result<()> {
+        if !self.initialized {
+            return Err(CredentialError::Vault("Vault not initialized".to_string()));
+        }
+        self.credentials.remove(id)
+            .ok_or_else(|| CredentialError::NotFound(format!("Credential '{}' not found", id)))?;
+        self.save()?;
+        Ok(())
+    }
+
+    /// List all credential IDs
+    pub fn list(&self) -> Vec<String> {
+        self.credentials.keys().cloned().collect()
+    }
+
+    /// Search credentials by name or tag
+    pub fn search(&self, query: &str) -> Vec<&CredentialEntry> {
+        let query = query.to_lowercase();
+        self.credentials.values().filter(|entry| {
+            entry.name.to_lowercase().contains(&query)
+                || entry.metadata.tags.iter().any(|t| t.to_lowercase().contains(&query))
+                || entry.metadata.description.to_lowercase().contains(&query)
+        }).collect()
+    }
+
+    /// Add an audit entry
+    pub fn add_audit_entry(&mut self, entry: AuditEntry) -> Result<()> {
+        self.audit_log.push(entry);
+        // Keep audit log bounded
+        if self.audit_log.len() > 10000 {
+            // Simple trim: keep only last 5000
+            self.audit_log = self.audit_log.split_off(self.audit_log.len() - 5000);
+        }
+        Ok(())
+    }
+
+    /// Get audit log entries for a credential
+    pub fn get_audit_entries(&self, credential_id: &str) -> Vec<&AuditEntry> {
+        self.audit_log.iter()
+            .filter(|e| e.credential_id == credential_id)
+            .collect()
+    }
+
+    /// Export vault to JSON
+    pub fn export_json(&self) -> Result<String> {
+        let export = VaultExport {
+            credentials: self.credentials.values().cloned().collect(),
+            exported_at: current_timestamp(),
+            version: 1,
+        };
+        Ok(serde_json::to_string_pretty(&export)?)
+    }
+
+    /// Import vault from JSON
+    pub fn import_json(&mut self, json: &str) -> Result<()> {
+        let export: VaultExport = serde_json::from_str(json)?;
+        for entry in export.credentials {
+            self.credentials.insert(entry.id.clone(), entry);
+        }
+        self.save()?;
+        Ok(())
+    }
+
+    /// Rotate credential (re-encrypt with new key)
+    pub fn rotate(&mut self, id: &str) -> Result<CredentialEntry> {
+        let entry = self.retrieve(id)?;
+        // Re-encrypt would happen here with the new key
+        // For now, just update the version and timestamp
+        let mut updated = entry;
+        updated.version += 1;
+        updated.updated_at = current_timestamp();
+        self.credentials.insert(id.to_string(), updated.clone());
+        self.save()?;
+        Ok(updated)
+    }
+
+    /// Backup the vault
+    pub fn backup(&self) -> Result<String> {
+        use std::fs;
+        let backup_dir = &self.config.backup_dir;
+        fs::create_dir_all(backup_dir)?;
+
+        let timestamp = current_timestamp();
+        let backup_path = backup_dir.join(format!("vault_backup_{}.json", timestamp));
+        let json = self.export_json()?;
+        fs::write(&backup_path, &json)?;
+
+        // Cleanup old backups
+        self.cleanup_old_backups()?;
+
+        Ok(backup_path.to_string_lossy().to_string())
+    }
+
+    fn cleanup_old_backups(&self) -> Result<()> {
+        use std::fs;
+        if !self.config.backup_dir.exists() {
+            return Ok(());
+        }
+
+        let mut backups: Vec<_> = fs::read_dir(&self.config.backup_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map_or(false, |ext| ext == "json"))
+            .collect();
+
+        backups.sort_by_key(|e| e.path());
+
+        // Remove oldest backups beyond max_backups
+        while backups.len() > self.config.max_backups as usize {
+            let oldest = backups.remove(0);
+            fs::remove_file(oldest.path())?;
+        }
+
+        Ok(())
+    }
+
+    // Internal: save vault to disk
+    fn save(&self) -> Result<()> {
+        use std::fs;
+        if let Some(parent) = self.config.vault_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let json = self.export_json()?;
+        // Atomically write via temp file
+        let temp_path = self.config.vault_path.with_extension("tmp");
+        fs::write(&temp_path, &json)?;
+        fs::rename(&temp_path, &self.config.vault_path)?;
+        Ok(())
+    }
+
+    // Internal: load vault from disk
+    fn load(&mut self) -> Result<()> {
+        if !self.config.vault_path.exists() {
+            return Ok(());
+        }
+        let json = std::fs::read_to_string(&self.config.vault_path)?;
+        let export: VaultExport = serde_json::from_str(&json)?;
+        for entry in export.credentials {
+            self.credentials.insert(entry.id.clone(), entry);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct VaultExport {
+    credentials: Vec<CredentialEntry>,
+    exported_at: u64,
+    version: u32,
+}
+
+fn current_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::EncryptionConfig;
+
+    fn setup_vault() -> CredentialVault {
+        let config = StorageConfig {
+            vault_path: Path::new("test_vault.json").to_path_buf(),
+            session_path: Path::new("test_sessions.json").to_path_buf(),
+            backup_dir: Path::new("test_backups").to_path_buf(),
+            auto_backup: false,
+            backup_interval_hours: 24,
+            max_backups: 7,
+            pool_size: 10,
+            connection_timeout_secs: 30,
+        };
+        let crypto_config = EncryptionConfig {
+            algorithm: "AES-256-GCM".to_string(),
+            key_size: 32,
+            nonce_size: 12,
+            tag_size: 16,
+        };
+        let mut crypto = CryptoEngine::new(crypto_config);
+        let salt = CryptoEngine::generate_salt(32);
+        crypto.initialize_from_password("test-master-key", &salt).unwrap();
+        let mut vault = CredentialVault::new(config, crypto);
+        vault.initialize().unwrap();
+        vault
+    }
+
+    #[test]
+    fn test_store_and_retrieve() {
+        let mut vault = setup_vault();
+        let entry = CredentialEntry {
+            id: "test-1".to_string(),
+            name: "Test API Key".to_string(),
+            credential_type: CredentialType::ApiKey,
+            encrypted_data: vec![1, 2, 3, 4],
+            metadata: CredentialMetadata {
+                description: "Test key".to_string(),
+                tags: vec!["test".to_string()],
+                target: None,
+                username: None,
+                url: None,
+                custom: HashMap::new(),
+            },
+            created_at: current_timestamp(),
+            updated_at: current_timestamp(),
+            expires_at: None,
+            version: 1,
+        };
+
+        vault.store(entry.clone()).unwrap();
+        let retrieved = vault.retrieve("test-1").unwrap();
+        assert_eq!(retrieved.name, "Test API Key");
+        assert_eq!(retrieved.credential_type, CredentialType::ApiKey);
+    }
+
+    #[test]
+    fn test_search() {
+        let mut vault = setup_vault();
+        let entry = CredentialEntry {
+            id: "search-1".to_string(),
+            name: "AWS Access Key".to_string(),
+            credential_type: CredentialType::ApiKey,
+            encrypted_data: vec![],
+            metadata: CredentialMetadata {
+                description: "Production AWS key".to_string(),
+                tags: vec!["aws".to_string(), "production".to_string()],
+                target: None,
+                username: None,
+                url: None,
+                custom: HashMap::new(),
+            },
+            created_at: current_timestamp(),
+            updated_at: current_timestamp(),
+            expires_at: None,
+            version: 1,
+        };
+        vault.store(entry).unwrap();
+        assert_eq!(vault.search("aws").len(), 1);
+        assert_eq!(vault.search("production").len(), 1);
+        assert_eq!(vault.search("nonexistent").len(), 0);
+    }
+}

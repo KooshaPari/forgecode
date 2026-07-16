@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+"""
+optimize.py — produces optimization_opportunities.csv
+
+For every trace in traces_full.csv / traces_lite.csv, estimate:
+  - estimated_min_required_tokens   (lower bound on tokens actually needed)
+  - estimated_cache_savings         (savings from prompt-cache reuse)
+  - estimated_retrieval_savings     (savings from index-based retrieval instead of full-context)
+  - estimated_handle_savings        (savings from short-handle writes instead of repeated file/output passes)
+  - estimated_summary_savings       (savings from rolling-summary eviction at depth N)
+  - estimated_context_split_savings (savings from splitting monolithic prompts)
+  - estimated_total_reduction        (combined est reduction tokens)
+  - recommended_execution_lane       (SLM / medium / large)
+  - confidence                       (low / medium / high based on data richness)
+
+Heuristics — described in code comments. They are deliberately conservative:
+each estimate is the *floor* of what's likely achievable, not the ceiling.
+Lower bound ≈ minimum tokens needed for the trace to complete without loss of
+quality, derived from:
+  - SYSTEM_OVERHEAD (fixed)
+  - per-turn base cost (varies by turn_count)
+  - tool-output deduplication (varies by tool_use)
+  - first user message length (one-shot, irreducible)
+
+The savings estimators attribute the gap (sent - min_required) to whichever
+mechanism most plausibly recovers it, using:
+  - cache_read presence as evidence of cache-reuse opportunity
+  - repeated artifact paths as evidence of retrieval opportunity
+  - high tool_use count as evidence of handle opportunity
+  - high turn_count as evidence of summary opportunity
+  - long seed_prefix_200 (>1k chars) as evidence of context-split opportunity
+
+Lane classifier rules (kept simple and reviewable):
+  - SLM :   min_required < 4k tokens AND turn_count < 12 AND tool_use < 5
+  - LARGE: min_required > 80k tokens OR turn_count > 200 OR has tool-result repeats
+  - otherwise: medium
+
+Confidence:
+  - high:   full token-count telemetry (input+cache_creation+cache_read+output) AND has user content AND non-zero tool count
+  - medium: token telemetry present OR substantial text but missing some inputs
+  - low:    no token telemetry OR no content (Codex with zero token_count, Forge artifacts, etc.)
+"""
+import argparse
+import csv
+import json
+import math
+import os
+import sys
+import time
+from collections import Counter
+from pathlib import Path
+
+# ---- Heuristic constants (tokens) ----
+SYSTEM_OVERHEAD = 800
+PER_TURN_BASE = 350
+UNIQUE_TOOL_OUTPUT = 600
+PROMPT_OVERHEAD = 150
+
+# Cache-reuse threshold: trace likely benefits from cache if cache_read_input_tokens is non-zero
+# OR if the first user prompt is very large (long system-style prefix reused every turn)
+LONG_PREFIX_CHARS = 1500
+
+# Lane thresholds
+SLM_MAX_MIN = 4000
+SLM_MAX_TURNS = 12
+SLM_MAX_TOOLS = 5
+LARGE_MIN = 80000
+LARGE_MIN_TURNS = 200
+LARGE_TOOL_REPEAT_MIN = 8
+
+
+def estimate_min_required(row):
+    """Estimated minimum tokens needed for the trace to complete (lower bound)."""
+    turns = int(row.get('turn_count') or 0)
+    tools = int(row.get('tool_use') or 0)
+    seed_len = int(row.get('seed_prompt_length') or 0)
+    # base = system + per-turn (capped at 50 turns; longer sessions use summaries)
+    cap_turns = min(turns, 50)
+    base = SYSTEM_OVERHEAD + (PER_TURN_BASE * cap_turns)
+    # tool outputs: dedupe by unique artifacts, cap at 30
+    uniq_artifacts = int(row.get('unique_artifact_paths') or 0)
+    base += min(uniq_artifacts, 30) * UNIQUE_TOOL_OUTPUT
+    # seed prompt: most traces need at least the seed once
+    base += max(seed_len // 4, PROMPT_OVERHEAD)
+    # driver bonus: agent_spawned traces typically have parent context already loaded
+    if row.get('driver_type') == 'agent_spawned':
+        base = int(base * 0.6)
+    return max(base, 200)
+
+
+def estimate_cache_savings(row, min_required, sent):
+    if sent <= min_required:
+        return 0
+    gap = sent - min_required
+    cache_read = int(row.get('cache_read_input_tokens') or 0)
+    input_t = int(row.get('input_tokens') or 0)
+    cache_creation = int(row.get('cache_creation_input_tokens') or 0)
+    # If cache was already used, the remaining gap is mostly because cache was undersized
+    # or not extended across all turns. Estimator: 30% of gap is recoverable via broader caching
+    if cache_read > 0 or input_t > 0:
+        return int(gap * 0.30)
+    # No cache telemetry but seed prompt is huge and repeated likely: assume 20% of gap
+    seed_len = int(row.get('seed_prompt_length') or 0)
+    if seed_len > LONG_PREFIX_CHARS:
+        return int(gap * 0.20)
+    return int(gap * 0.10)
+
+
+def estimate_retrieval_savings(row, min_required, sent):
+    if sent <= min_required:
+        return 0
+    gap = sent - min_required
+    # Repetition signals: more repeated paths = more retrieval opportunity
+    repeated = int(row.get('file_path_repeated_count') or 0)
+    specs = int(row.get('specs_repeated') or 0)
+    adrs = int(row.get('adrs_repeated') or 0)
+    unique = int(row.get('unique_artifact_paths') or 0)
+    base = 0.10
+    if repeated > 5:
+        base = 0.40
+    elif repeated > 2:
+        base = 0.25
+    elif unique > 50:
+        base = 0.20
+    if specs + adrs > 2:
+        base += 0.10
+    return int(gap * min(base, 0.5))
+
+
+def estimate_handle_savings(row, min_required, sent):
+    if sent <= min_required:
+        return 0
+    gap = sent - min_required
+    tool_use = int(row.get('tool_use') or 0)
+    tool_result = int(row.get('tool_result') or 0)
+    tool_repeat = int(row.get('tool_output_repeated_count') or 0)
+    # Handle savings kick in when many tool calls / outputs repeat or tool-count is huge
+    if tool_repeat >= 5:
+        return int(gap * 0.20)
+    if tool_use > 30:
+        return int(gap * 0.10)
+    if tool_use > 10:
+        return int(gap * 0.05)
+    return 0
+
+
+def estimate_summary_savings(row, min_required, sent):
+    if sent <= min_required:
+        return 0
+    gap = sent - min_required
+    turns = int(row.get('turn_count') or 0)
+    # Long sessions benefit from summary eviction beyond 30 turns
+    if turns > 100:
+        return int(gap * 0.30)
+    if turns > 50:
+        return int(gap * 0.20)
+    if turns > 20:
+        return int(gap * 0.10)
+    return int(gap * 0.05)
+
+
+def estimate_context_split_savings(row, min_required, sent):
+    if sent <= min_required:
+        return 0
+    gap = sent - min_required
+    seed_len = int(row.get('seed_prompt_length') or 0)
+    prefix = row.get('seed_prefix_200') or ''
+    suffix = row.get('seed_suffix_200') or ''
+    # Big monolithic seed prompts benefit most from splitting
+    if seed_len > 5000:
+        return int(gap * 0.30)
+    if seed_len > 2500:
+        return int(gap * 0.20)
+    if seed_len > LONG_PREFIX_CHARS:
+        return int(gap * 0.10)
+    return 0
+
+
+def lane_classifier(min_req, turns, tool_use, tool_repeat):
+    if min_req < SLM_MAX_MIN and turns < SLM_MAX_TURNS and tool_use < SLM_MAX_TOOLS:
+        return 'SLM'
+    if min_req > LARGE_MIN or turns > LARGE_MIN_TURNS or tool_repeat >= LARGE_TOOL_REPEAT_MIN:
+        return 'large'
+    return 'medium'
+
+
+def confidence(row, input_t, cache_read, cache_creation, has_content):
+    has_token_telemetry = (input_t + cache_read + cache_creation) > 0
+    seed_len = int(row.get('seed_prompt_length') or 0)
+    tool_use = int(row.get('tool_use') or 0)
+    if has_token_telemetry and has_content and seed_len > 0:
+        return 'high'
+    if has_token_telemetry or (seed_len > 200 and tool_use > 0):
+        return 'medium'
+    return 'low'
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--full-csv', default=r'C:\Users\koosh\AppData\Local\Temp\derived\traces_full.csv')
+    ap.add_argument('--lite-csv', default=r'C:\Users\koosh\AppData\Local\Temp\derived\traces_lite.csv')
+    ap.add_argument('--out-dir', default=r'C:\Users\koosh\AppData\Local\Temp\derived')
+    args = ap.parse_args()
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    out_path = out_dir / 'optimization_opportunities.csv'
+    bak_path = out_path.with_suffix('.csv.bak')
+    if out_path.exists():
+        if bak_path.exists():
+            bak_path.unlink()
+        try:
+            out_path.rename(bak_path)
+        except Exception:
+            pass
+
+    rows = []
+    for src_path, kind in [(args.full_csv, 'full'), (args.lite_csv, 'lite')]:
+        with open(src_path, 'r', encoding='utf-8-sig', newline='') as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                r['_kind'] = kind
+                rows.append(r)
+
+    out = []
+    for r in rows:
+        sent = int(r.get('sent_tokens') or 0)
+        input_t = int(r.get('input_tokens') or 0)
+        cache_read = int(r.get('cache_read_input_tokens') or 0)
+        cache_creation = int(r.get('cache_creation_input_tokens') or 0)
+        output_t = int(r.get('output_tokens') or 0)
+        min_req = estimate_min_required(r)
+        cache_s = estimate_cache_savings(r, min_req, sent)
+        retr_s = estimate_retrieval_savings(r, min_req, sent)
+        handle_s = estimate_handle_savings(r, min_req, sent)
+        summary_s = estimate_summary_savings(r, min_req, sent)
+        csplit_s = estimate_context_split_savings(r, min_req, sent)
+        total_s = cache_s + retr_s + handle_s + summary_s + csplit_s
+        # Don't let total_s exceed the actual gap
+        gap = max(0, sent - min_req)
+        total_s = min(total_s, gap)
+        # Lane + confidence
+        tool_repeat = int(r.get('tool_output_repeated_count') or 0)
+        lane = lane_classifier(min_req, int(r.get('turn_count') or 0), int(r.get('tool_use') or 0), tool_repeat)
+        conf = confidence(r, input_t, cache_read, cache_creation, has_content=(r.get('seed_prompt_length') or '0') != '0')
+        out.append({
+            'trace_id': r.get('trace_id', ''),
+            'dataset': r.get('_kind', ''),
+            'source': r.get('source', ''),
+            'driver_type': r.get('driver_type', ''),
+            'bucket': r.get('bucket', ''),
+            'sent_tokens': sent,
+            'input_tokens': input_t,
+            'cache_creation_input_tokens': cache_creation,
+            'cache_read_input_tokens': cache_read,
+            'output_tokens': output_t,
+            'turn_count': int(r.get('turn_count') or 0),
+            'tool_use': int(r.get('tool_use') or 0),
+            'tool_output_repeated_count': tool_repeat,
+            'unique_artifact_paths': int(r.get('unique_artifact_paths') or 0),
+            'seed_prompt_length': int(r.get('seed_prompt_length') or 0),
+            'estimated_min_required_tokens': min_req,
+            'compression_potential_ratio': float(r.get('compression_potential_ratio') or 0),
+            'compression_potential_band': r.get('compression_potential_band', ''),
+            'estimated_cache_savings': cache_s,
+            'estimated_retrieval_savings': retr_s,
+            'estimated_handle_savings': handle_s,
+            'estimated_summary_savings': summary_s,
+            'estimated_context_split_savings': csplit_s,
+            'estimated_total_reduction': total_s,
+            'reduction_pct_of_sent': round((total_s / sent * 100) if sent > 0 else 0, 1),
+            'recommended_execution_lane': lane,
+            'confidence': conf,
+            'sampling_notes': r.get('sampling_notes', ''),
+        })
+
+    cols = list(out[0].keys()) if out else []
+    with open(out_path, 'w', encoding='utf-8-sig', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=cols, lineterminator='\r\n')
+        w.writeheader()
+        w.writerows(out)
+
+    # ---- Distribution report (stderr) ----
+    print(f'Wrote {len(out)} rows -> {out_path} ({out_path.stat().st_size:,} bytes)', file=sys.stderr)
+    print('', file=sys.stderr)
+    by_lane = Counter(r['recommended_execution_lane'] for r in out)
+    by_conf = Counter(r['confidence'] for r in out)
+    by_band = Counter(r['compression_potential_band'] for r in out)
+    print(f'  Lane distribution:', file=sys.stderr)
+    for k, v in by_lane.most_common():
+        print(f'    {k}: {v}', file=sys.stderr)
+    print(f'  Confidence distribution:', file=sys.stderr)
+    for k, v in by_conf.most_common():
+        print(f'    {k}: {v}', file=sys.stderr)
+    print(f'  Compression band distribution:', file=sys.stderr)
+    for k, v in by_band.most_common():
+        print(f'    {k}: {v}', file=sys.stderr)
+
+    # Token totals
+    total_sent = sum(r['sent_tokens'] for r in out)
+    total_min = sum(r['estimated_min_required_tokens'] for r in out)
+    total_red = sum(r['estimated_total_reduction'] for r in out)
+    print('', file=sys.stderr)
+    print(f'  Total sent_tokens               : {total_sent:>14,}', file=sys.stderr)
+    print(f'  Total est_min_required_tokens   : {total_min:>14,}', file=sys.stderr)
+    print(f'  Total est_reduction             : {total_red:>14,}', file=sys.stderr)
+    print(f'  Sum of cache_savings            : {sum(r["estimated_cache_savings"] for r in out):>14,}', file=sys.stderr)
+    print(f'  Sum of retrieval_savings        : {sum(r["estimated_retrieval_savings"] for r in out):>14,}', file=sys.stderr)
+    print(f'  Sum of handle_savings           : {sum(r["estimated_handle_savings"] for r in out):>14,}', file=sys.stderr)
+    print(f'  Sum of summary_savings          : {sum(r["estimated_summary_savings"] for r in out):>14,}', file=sys.stderr)
+    print(f'  Sum of context_split_savings    : {sum(r["estimated_context_split_savings"] for r in out):>14,}', file=sys.stderr)
+
+    # Top 5 highest-reduction
+    print('', file=sys.stderr)
+    print('  Top 5 highest-reduction traces:', file=sys.stderr)
+    top5 = sorted(out, key=lambda r: r['estimated_total_reduction'], reverse=True)[:5]
+    for r in top5:
+        print(f'    {r["trace_id"]:8s}  sent={r["sent_tokens"]:>10,}  min={r["estimated_min_required_tokens"]:>10,}  reduction={r["estimated_total_reduction"]:>10,}  lane={r["recommended_execution_lane"]:6s}  conf={r["confidence"]}', file=sys.stderr)
+
+
+if __name__ == '__main__':
+    main()

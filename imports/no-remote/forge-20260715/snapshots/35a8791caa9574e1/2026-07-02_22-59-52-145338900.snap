@@ -1,0 +1,23 @@
+$ErrorActionPreference = 'SilentlyContinue'
+# Use the latest build log
+$log = 'C:\Users\koosh\_wsm3d_audit\ws3d_build_latest.txt'
+if (-not (Test-Path $log)) {
+    $log = 'C:\Users\koosh\_wsm3d_audit\ws3d_build_now.txt'
+}
+if (-not (Test-Path $log)) {
+    Write-Host 'NO_BUILD_LOG'
+    exit
+}
+Write-Host ('LOG: ' + $log)
+$content = Get-Content $log -Raw
+$matches = [regex]::Matches($content, 'E:\\Dev\\WorldSphereMod\\([^()]+?)\(\d+,\d+:')
+$groups = $matches | ForEach-Object { $_.Groups[1].Value } | Group-Object
+Write-Host ('TOTAL ERRORS: ' + $groups.Count)
+$groups | Sort-Object Count -Descending | Format-Table Count, Name -AutoSize | Out-String | Write-Host
+
+# Also break down by error code
+$errMatches = [regex]::Matches($content, 'error CS\d+')
+$errGroups = $errMatches | ForEach-Object { $_.Value } | Group-Object
+Write-Host ''
+Write-Host '=== ERROR CODES ==='
+$errGroups | Sort-Object Count -Descending | Format-Table Count, Name -AutoSize | Out-String | Write-Host

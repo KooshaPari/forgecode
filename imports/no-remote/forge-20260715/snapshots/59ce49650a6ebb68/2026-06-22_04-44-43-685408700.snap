@@ -1,0 +1,20 @@
+[package]
+name = "pheno-tracing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Span port, sampling, and tracing-0.2 compatibility shim"
+
+[features]
+default = []
+# Enables the runtime dependencies needed to bridge the `tracing` 0.2
+# macro API into the `SpanSink` port. The shim itself does not depend on
+# `tracing` directly.
+tracing-0-2-compat = ["dep:tracing", "dep:async-trait", "dep:tokio"]
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }

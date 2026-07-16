@@ -1,0 +1,100 @@
+# Compute/Infra — Continuation Plan
+
+**Generated:** 2026-06-25
+**Based on:** `_compute_infra_audit/` (349-unit DAG) + live git audit of 4 in-scope repos
+
+---
+
+## Domain Overview
+
+| Repo | Owner | Branches | Worktrees | Stashes | Status |
+|---|---|---|---|---|---|
+| **phenotype-infra** | KooshaPari | 35 | 8 (wt-pi-d-*) | 0 | Active multi-worktree dev |
+| **BytePort** | kooshapari | 92 | 0 | 18 | Heavy orphaned state |
+| **PhenoCompose** | kooshapari | 79 | 0 | 0 | Clean, on `tier-enforcement-gate` |
+| **nanovms** | kooshapari | 31 | 0 | 0 | Clean, on main |
+
+## Critical Issues Found
+
+### 1. BytePort — 18 orphaned stashes, 92 branches, 1 dirty tree
+The stashes contain recent WIP (all within 2026-06-24..2026-06-25, many tagged `feat/byte-ui-v2` or `experiment/journey-0217-e`). **These need to be branched before they're accidentally dropped.**
+
+### 2. phenotype-infra — 8 worktrees, 35 branches, leftover audit artifacts
+The `wt-pi-d-*` series (8 worktrees) represent active development. The root has numerous leftover artifacts (`_pi_*`, `_audit_*`, `_meta_*`, `_test_*`) that should be gitignored or cleaned.
+
+### 3. PhenoCompose — 79 branches, all old/merged
+Most branches are stale `dependabot/`, `renovate/*`, or old `wip/*`. Needs a clean-up pass.
+
+### 4. nanovms — clean but dormant
+31 branches, most stale. No active work. Could use hygiene governance.
+
+## DAG Execution Priority (from 349-unit plan)
+
+### Phase 1a — Immediate (branch recovery + governance, ~2-3 turns)
+
+| DAG ID | Action | Scope |
+|---|---|---|
+| A-04 | Close/rebase stale wip/* >21d | phenotype-infra, PhenoCompose |
+| A-05 | Close stale BytePort wip/* >14d | BytePort |
+| A-06 | Rebase or close BytePort old feature branches | BytePort |
+| — | **Stash→branch recovery** (18 stashes) | BytePort (blocking item) |
+| A-11 | Add shared .editorconfig | All 4 repos |
+| A-12 | Add shared .gitignore | All 4 repos |
+| A-13 | Add shared .gitattributes | All 4 repos |
+| A-14 | Add LICENSE | All 4 repos |
+| A-15 | Add CODEOWNERS | All 4 repos |
+| A-16 | Add SECURITY.md | All 4 repos |
+| A-17 | Add AGENTS.md + CLAUDE.md | All 4 repos |
+| A-18 | Add work-state header pattern | All 4 repos |
+| — | Clean phenotype-infra root artifacts | phenotype-infra |
+
+### Phase 1b — Named (runs BLAKE-01..BLAKE-10 in DAG, ~3-4 turns)
+
+| DAG ID | Action | Epic |
+|---|---|---|
+| BLAKE-04 | Add `benches/` fn new benchmarks | B: Cross-repo governance |
+| BLAKE-05 | Wire cargo-criterion CI | B |
+| BLAKE-07 | Containerized test runs + multi-arch CI | B |
+| BLAKE-08 | Kubernetes e2e conformance matrix | B |
+| BLAKE-09 | Cross-repo cargo-deny audit strategy | B |
+| BLAKE-10 | Cross-repo feature gating | B |
+
+### Phase 2+ — Deeper work (~5+ turns)
+
+See Epics C (IaC/infra), D (NVMS/Mojo/Zig), E (BytePort TUI/OTel), F (DAG engine), G (SOTA), H (External docs) in the existing `_compute_infra_audit/compute_infra_dag.md`.
+
+## Execution Order (recommended)
+
+### Turn 1: Branch recovery + hygiene files
+1. BytePort stash → branch recovery (18 stashes → `stash/byteport-*` branches)
+2. Clean phenotype-infra root artifacts
+3. Add AGENTS.md + CLAUDE.md + work-state headers to all 4 repos (A-17/A-18)
+4. Write per-repo governance files (A-11..A-16)
+
+### Turn 2: Branch cleanup + governance rollout
+1. Close/rebase stale `wip/*` branches across all 4 repos (A-04..A-06)
+2. Add `cargo-deny.yml` CI workflow (mirror CU lane pattern)
+3. Add `lefthook.yml` to repos that lack it (BLAKE-07)
+4. Add `rust-toolchain.toml` + `rustfmt.toml` to repos that lack it
+
+### Turn 3: Benchmarks + CI gates
+1. Add `benches/` fn new benchmarks (BLAKE-04)
+2. Wire cargo-criterion CI (BLAKE-05)
+3. Containerized test runs (BLAKE-07)
+4. cargo-deny audit strategy (BLAKE-09)
+
+## Blockers
+
+- **None** — all work is filesystem-local and does not require admin elevation or upstream repo fixes (unlike the CU lane's 2 hard-blocks).
+
+## Successful Handoff
+
+When continuing, run:
+```bash
+# Start with branch inventory + stash recovery
+powershell -File _cu_audit/compute_infra/scripts/recover_byteport_stashes.ps1
+powershell -File _cu_audit/compute_infra/scripts/clean_phenotype_infra_artifacts.ps1
+
+# Then per-repo governance
+# Use _cu_audit/templates/ as source
+```

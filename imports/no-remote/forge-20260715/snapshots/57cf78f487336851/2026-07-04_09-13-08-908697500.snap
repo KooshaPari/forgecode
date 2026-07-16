@@ -1,0 +1,321 @@
+"""Round-4 locked-pick scraper.
+
+Cloud baselines (10 — scrape OpenRouter page + OR API + HF for each):
+  1. inclusionai/ling-2.6-flash
+  2. ibm-granite/granite-4.0-h-micro
+  3. liquid/lfm-2-24b-a2b
+  4. arcee-ai/trinity-mini
+  5. ibm-granite/granite-4.1-8b
+  6. poolside/laguna-xs-2.1
+  7. tencent/hy3-preview
+  8. qwen/qwen3.5-flash-02-23
+
+Self-hosted (3 — locked, scrape HF for each):
+  9. Qwen/Qwen3.5-0.8B
+ 10. LiquidAI/LFM2.5-8B-A1B
+ 11. (Ornith 8B — repo id pending probe)
+
+Recency cutoff: model last_modified >= 2026-03-01. Anything older is flagged
+'PRE_MARCH_2026' and excluded from the default shortlist unless deep justification.
+
+Token: HF_TOKEN read from env, never logged. Output dir 2026-07-04/.
+"""
+import json, os, sys, time, re
+import urllib.request, urllib.error
+from datetime import datetime, timezone
+
+OUT_DIR = r"C:\Users\koosh\pheno-harness\state\hf_scrape\2026-07-04"
+RECENCY_CUTOFF = datetime(2026, 3, 1, tzinfo=timezone.utc)
+USER_AGENT = "pheno-harness-scraper/1.0 (+local research)"
+
+CLOUD_MODELS = [
+    # (provider/owner for OR routing, hf repo id where known)
+    {"slot": "cloud", "label": "ling-2.6-flash",          "hf_repo": "inclusionAI/Ling-2.6-Flash",          "or_slug": "inclusionai/ling-2.6-flash"},
+    {"slot": "cloud", "label": "granite-4.0-h-micro",     "hf_repo": "ibm-granite/granite-4.0-h-micro",     "or_slug": "ibm-granite/granite-4.0-h-micro"},
+    {"slot": "cloud", "label": "lfm-2-24b-a2b",           "hf_repo": "Liquid-AI/LFM2-24B-A2B",             "or_slug": "liquid/lfm-2-24b-a2b"},
+    {"slot": "cloud", "label": "trinity-mini",             "hf_repo": "arcee-ai/Trinity-Mini",               "or_slug": "arcee-ai/trinity-mini"},
+    {"slot": "cloud", "label": "granite-4.1-8b",           "hf_repo": "ibm-granite/granite-4.1-8b",          "or_slug": "ibm-granite/granite-4.1-8b"},
+    {"slot": "cloud", "label": "laguna-xs-2.1",            "hf_repo": "poolside/laguna-xs-2.1",              "or_slug": "poolside/laguna-xs-2.1"},
+    {"slot": "cloud", "label": "hy3-preview",              "hf_repo": "tencent/HY3-Preview",                 "or_slug": "tencent/hy3-preview"},
+    {"slot": "cloud", "label": "qwen3.5-flash-02-23",      "hf_repo": "Qwen/Qwen3.5-Flash-02-23",            "or_slug": "qwen/qwen3.5-flash-02-23"},
+]
+
+LOCAL_MODELS = [
+    {"slot": "local", "label": "qwen3.5-0.8b",   "hf_repo": "Qwen/Qwen3.5-0.8B",         "or_slug": None},
+    {"slot": "local", "label": "lfm-2.5-8b-a1b", "hf_repo": "LiquidAI/LFM2.5-8B-A1B",    "or_slug": None},
+    {"slot": "local", "label": "ornith-8b",      "hf_repo": None,                          "or_slug": None},  # repo id pending probe
+]
+
+ORNITH_SEARCH_TERMS = ["ornith-8b", "ornith-1.0-8b", "ornith 8b"]
+
+
+def hf_token():
+    tok = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    return tok or None
+
+
+def log_line(log_fp, msg):
+    log_fp.write(msg + "\n")
+    log_fp.flush()
+
+
+def fetch_hf(repo_id, log_fp):
+    """Use HfApi.model_info with safetensors expansion. Reads HF_TOKEN from env."""
+    from huggingface_hub import HfApi
+    api = HfApi()
+    try:
+        info = api.model_info(repo_id, expand=["safetensors"])
+    except Exception as e:
+        log_line(log_fp, f"HF  ERR  {repo_id}: {type(e).__name__}: {e}")
+        return {"hf_repo": repo_id, "err": f"{type(e).__name__}: {str(e)[:200]}"}
+
+    st = getattr(info, "safetensors", None) or {}
+    params = st.get("parameters") if isinstance(st, dict) else None
+    params_b = round(sum(params.values()) / 1e9, 4) if isinstance(params, dict) and params else None
+    lm = getattr(info, "last_modified", None)
+    lm_str = str(lm) if lm else None
+    if lm and not isinstance(lm, str):
+        lm_str = lm.isoformat()
+    rec = {
+        "hf_repo": repo_id,
+        "last_modified": lm_str,
+        "downloads": getattr(info, "downloads", None),
+        "likes": getattr(info, "likes", None),
+        "gated": getattr(info, "gated", None),
+        "disabled": getattr(info, "disabled", None),
+        "private": getattr(info, "private", None),
+        "safetensors_parameters_dtype_breakdown": params,
+        "params_b": params_b,
+        "pipeline_tag": getattr(info, "pipeline_tag", None),
+        "tags": getattr(info, "tags", None) or [],
+    }
+    log_line(log_fp, f"HF  OK   {repo_id}  params_b={params_b}  lm={lm_str}")
+    return rec
+
+
+def fetch_or_page(slug, log_fp):
+    """Fetch OpenRouter HTML page for one model slug."""
+    url = f"https://openrouter.ai/{slug}"
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/html"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        log_line(log_fp, f"OR-PAGE  HTTP {e.code}  {slug}")
+        return {"or_slug": slug, "err": f"HTTP {e.code}"}
+    except Exception as e:
+        log_line(log_fp, f"OR-PAGE  ERR  {slug}: {type(e).__name__}")
+        return {"or_slug": slug, "err": f"{type(e).__name__}: {str(e)[:200]}"}
+
+    title_m = re.search(r"<title[^>]*>([^<]+)</title>", body)
+    desc_m = re.search(r'<meta[^>]+name="description"[^>]+content="([^"]+)"', body)
+    canon_m = re.search(r'<link[^>]+rel="canonical"[^>]+href="([^"]+)"', body)
+
+    # crude price scrape: "$X / $Y per 1M tokens" or similar
+    price_m = re.search(r"\$\s*([0-9.]+)\s*(?:input|/M input|per 1M input)", body, re.IGNORECASE)
+    price2_m = re.search(r"\$\s*([0-9.]+)\s*(?:output|/M output|per 1M output)", body, re.IGNORECASE)
+    ctx_m = re.search(r"([0-9]+(?:K|M)?)\s*(?:token\s*)?context", body, re.IGNORECASE)
+
+    rec = {
+        "or_slug": slug,
+        "title": title_m.group(1).strip() if title_m else None,
+        "description": desc_m.group(1).strip() if desc_m else None,
+        "canonical_url": canon_m.group(1) if canon_m else None,
+        "input_price_hint_usd_per_m": price_m.group(1) if price_m else None,
+        "output_price_hint_usd_per_m": price2_m.group(1) if price2_m else None,
+        "context_hint": ctx_m.group(1) if ctx_m else None,
+        "body_len": len(body),
+    }
+    log_line(log_fp, f"OR-PAGE  OK   {slug}  title={rec['title']!r}  ctx={rec['context_hint']}  in=${rec['input_price_hint_usd_per_m']}  out=${rec['output_price_hint_usd_per_m']}")
+    return rec
+
+
+def fetch_or_api(slug, log_fp):
+    """OpenRouter /api/v1/models/:slug endpoint, returns parsed JSON (pricing, ctx, id, name, description, top_provider, architecture, per_request_limits, etc.)."""
+    url = f"https://openrouter.ai/api/v1/models/{slug}"
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        log_line(log_fp, f"OR-API   HTTP {e.code}  {slug}")
+        return {"or_slug": slug, "err": f"HTTP {e.code}"}
+    except Exception as e:
+        log_line(log_fp, f"OR-API   ERR  {slug}: {type(e).__name__}")
+        return {"or_slug": slug, "err": f"{type(e).__name__}: {str(e)[:200]}"}
+
+    pricing = data.get("pricing") or {}
+    arch = data.get("architecture") or {}
+    tprov = data.get("top_provider") or {}
+    rec = {
+        "or_slug": slug,
+        "id": data.get("id"),
+        "name": data.get("name"),
+        "description": data.get("description"),
+        "context_length": data.get("context_length"),
+        "created": data.get("created"),
+        "pricing": {
+            "prompt": pricing.get("prompt"),            # USD per token (string)
+            "completion": pricing.get("completion"),
+            "request": pricing.get("request"),
+            "image": pricing.get("image"),
+            "input_blend_amt": pricing.get("input_cost_cache_read"),  # exists on OR
+        },
+        "architecture": {
+            "input_modalities": arch.get("input_modalities"),
+            "output_modalities": arch.get("output_modalities"),
+            "instruct_type": arch.get("instruct_type"),
+            "tokenizer": arch.get("tokenizer"),
+        },
+        "top_provider": {
+            "max_completion_tokens": tprov.get("max_completion_tokens"),
+            "is_moderated": tprov.get("is_moderated"),
+        },
+        "canonical_slug": data.get("canonical_slug"),
+        "hugging_face_id": data.get("hugging_face_id"),
+        "raw_keys": sorted(data.keys()),
+    }
+    log_line(log_fp, f"OR-API   OK   {slug}  ctx={rec['context_length']}  in=${rec['pricing']['prompt']}  out=${rec['pricing']['completion']}  hf_id={rec['hugging_face_id']}")
+    return rec
+
+
+def probe_ornith_repo(log_fp):
+    """Search HF for Ornith 8B repo id since user named it as 'ornith 8b'."""
+    from huggingface_hub import HfApi
+    api = HfApi()
+    for term in ORNITH_SEARCH_TERMS:
+        try:
+            it = api.list_models(search=term, limit=10, sort="last_modified")
+            hits = []
+            for m in it:
+                mid = m.id.lower()
+                if "ornith" in mid and "8b" in mid:
+                    lm = str(m.last_modified) if m.last_modified else None
+                    hits.append({"id": m.id, "last_modified": lm, "downloads": m.downloads})
+            if hits:
+                log_line(log_fp, f"ORNITH  search={term!r}  hits={[h['id'] for h in hits]}")
+                return hits
+        except Exception as e:
+            log_line(log_fp, f"ORNITH  ERR  search={term}: {type(e).__name__}")
+    return []
+
+
+def within_recency(last_modified_str):
+    if not last_modified_str:
+        return False, "no_last_modified"
+    try:
+        # tolerate trailing 'Z'
+        s = last_modified_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt >= RECENCY_CUTOFF, dt.isoformat()
+    except Exception:
+        return False, "parse_failed"
+
+
+def main():
+    os.makedirs(OUT_DIR, exist_ok=True)
+    log_path = os.path.join(OUT_DIR, "scrape_round4.log")
+    out_jsonl = os.path.join(OUT_DIR, "models.jsonl")
+    out_json = os.path.join(OUT_DIR, "summary.json")
+    rejects_path = os.path.join(OUT_DIR, "rejects.jsonl")
+
+    tok = hf_token()
+    token_present = bool(tok)
+    print(f"HF_TOKEN_present={token_present}")
+
+    records = []
+    rejects = []
+    with open(log_path, "w", encoding="utf-8") as log_fp:
+        log_line(log_fp, f"=== round-4 scrape started  {datetime.now(timezone.utc).isoformat()} ===")
+        log_line(log_fp, f"HF_TOKEN_present={token_present}  (token value never logged)")
+        log_line(log_fp, f"recency_cutoff_utc={RECENCY_CUTOFF.isoformat()}")
+        log_line(log_fp, f"cloud_models={[m['label'] for m in CLOUD_MODELS]}")
+        log_line(log_fp, f"local_models={[m['label'] for m in LOCAL_MODELS]}")
+
+        # Cloud: HF + OR page + OR API
+        for m in CLOUD_MODELS:
+            print(f"[cloud] {m['label']}")
+            rec = {"slot": "cloud", "label": m["label"], "or_slug": m["or_slug"]}
+            if m.get("hf_repo"):
+                rec["hf"] = fetch_hf(m["hf_repo"], log_fp)
+            rec["or_page"] = fetch_or_page(m["or_slug"], log_fp)
+            rec["or_api"] = fetch_or_api(m["or_slug"], log_fp)
+            records.append(rec)
+
+        # Local: HF only
+        for m in LOCAL_MODELS:
+            print(f"[local] {m['label']}")
+            rec = {"slot": "local", "label": m["label"]}
+            if m.get("hf_repo"):
+                rec["hf"] = fetch_hf(m["hf_repo"], log_fp)
+            else:
+                # ornith probe
+                hits = probe_ornith_repo(log_fp)
+                rec["ornith_search_hits"] = hits
+                if hits:
+                    # Take first match's hf lookup
+                    rec["hf"] = fetch_hf(hits[0]["id"], log_fp)
+            records.append(rec)
+
+        # Apply recency filter
+        for r in records:
+            hf = r.get("hf") or {}
+            lm = hf.get("last_modified")
+            ok, why = within_recency(lm)
+            r["recency_ok"] = ok
+            r["recency_checked"] = lm
+            r["recency_reason"] = why if not ok else None
+            if not ok:
+                rejects.append({
+                    "label": r.get("label"),
+                    "hf_repo": hf.get("hf_repo"),
+                    "last_modified": lm,
+                    "reason": f"pre_march_2026 ({why})",
+                })
+                log_line(log_fp, f"REJECT  {r.get('label')}  lm={lm}  reason={why}")
+
+        # Write outputs
+        with open(out_jsonl, "w", encoding="utf-8") as f:
+            for r in records:
+                f.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
+        with open(rejects_path, "w", encoding="utf-8") as f:
+            for r in rejects:
+                f.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
+
+        summary = {
+            "date": "2026-07-04",
+            "recency_cutoff_utc": RECENCY_CUTOFF.isoformat(),
+            "hf_token_present": token_present,
+            "openrouter_token_present": bool(os.environ.get("OPENROUTER_API_KEY")),
+            "cloud_models": [m["label"] for m in CLOUD_MODELS],
+            "local_models": [m["label"] for m in LOCAL_MODELS],
+            "counts": {"total": len(records), "rejected_pre_march": len(rejects)},
+            "per_model": [
+                {
+                    "label": r.get("label"),
+                    "slot": r.get("slot"),
+                    "recency_ok": r.get("recency_ok"),
+                    "hf_last_modified": (r.get("hf") or {}).get("last_modified"),
+                    "params_b": (r.get("hf") or {}).get("params_b"),
+                    "or_ctx": ((r.get("or_api") or {}).get("context_length")),
+                    "or_pricing_in": ((r.get("or_api") or {}).get("pricing") or {}).get("prompt"),
+                    "or_pricing_out": ((r.get("or_api") or {}).get("pricing") or {}).get("completion"),
+                }
+                for r in records
+            ],
+        }
+        with open(out_json, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+
+        log_line(log_fp, f"=== round-4 scrape complete  total={len(records)}  rejected_pre_march={len(rejects)} ===")
+
+    print(f"wrote {out_jsonl}")
+    print(f"wrote {out_json}")
+    print(f"wrote {log_path}")
+    print(f"total={len(records)}  rejected_pre_march={len(rejects)}")
+
+
+if __name__ == "__main__":
+    main()

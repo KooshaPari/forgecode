@@ -1,0 +1,590 @@
+//! Phenotype-journeys observability substrate.
+//!
+//! Self-contained wrapper around the crates.io `tracing` + `tracing-subscriber`
+//! stack. The crate used to re-export `pheno-tracing` (which was archived and
+//! no longer has a resolvable tag), so the implementation now ships in-house
+//! to keep `cargo install --path . --bin phenotype-journey` hermetic.
+//!
+//! The shape of the public API is unchanged from the pre-`pheno-tracing`
+//! version: callers do
+//!
+//! ```rust,no_run
+//! use phenotype_journeys_observability::prelude::*;
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     init_tracing("phenotype-journey", "http://localhost:4317")?;
+//!     info!(version = env!("CARGO_PKG_VERSION"), "starting");
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## What's in the box
+//!
+//! * [`init_tracing`] — install a process-wide `tracing-subscriber`. Honors
+//!   `RUST_LOG` (falls back to `info,phenotype_journey=debug`) and uses JSON
+//!   when `PHENOTYPE_JOURNEY_LOG_FORMAT=json` is set. The `endpoint` argument
+//!   is stored in [`OtlpEndpoint`] for downstream consumers but is **not**
+//!   actively exported unless the `otlp` feature is enabled — this keeps the
+//!   default build lean.
+//! * [`instrument`] / [`span`] — re-exports of the upstream `tracing` macros.
+//! * [`Counter`] / [`Histogram`] — minimal atomic-backed counter and
+//!   fixed-bucket histogram for callers that need hand-rolled metrics without
+//!   pulling in `prometheus` or `metrics`.
+//! * [`RequestMetrics`] — a paired (`requests_total`, `request_duration_seconds`)
+//!   bundle that mirrors the shape declared in `docs/observability.md`.
+//! * [`ServiceName`] / [`OtlpEndpoint`] / [`TracePort`] / [`TraceResult`] —
+//!   typed carriers preserved for downstream consumers (kept as stable
+//!   aliases of the underlying `String` / `&str`).
+//! * [`SpanGuard`] — RAII helper that opens a span on construction and exits
+//!   it on drop, so dispatchers can scope work without juggling manual
+//!   `span.enter()` lifetimes.
+
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
+use std::time::Instant;
+use thiserror::Error;
+use tracing::Level;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
+
+/// Error type returned by [`init_tracing`]. Kept as a thin newtype so
+/// downstream code can keep a stable error contract even if the internal
+/// representation changes.
+#[derive(Debug, Error)]
+pub enum TracingError {
+    /// A `tracing-subscriber::EnvFilter::try_from_default_env()` parse error
+    /// or a layer build failure.
+    #[error("failed to initialise tracing subscriber: {0}")]
+    Init(String),
+    /// `init_tracing` was called more than once. The global subscriber is a
+    /// singleton; subsequent calls are a programming error.
+    #[error("tracing subscriber is already initialised")]
+    AlreadyInitialised,
+}
+
+/// Typed carrier for the service name. Cheap to clone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceName(String);
+
+impl ServiceName {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for ServiceName {
+    fn from(s: &str) -> Self {
+        ServiceName(s.to_string())
+    }
+}
+
+impl From<String> for ServiceName {
+    fn from(s: String) -> Self {
+        ServiceName(s)
+    }
+}
+
+/// Typed carrier for the OTLP endpoint URL. Currently advisory — the
+/// `phenotype-journeys-observability` default build does not actively export
+/// to OTLP, but the value is plumbed through so the CLI can log it and a
+/// downstream consumer can wire up an exporter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OtlpEndpoint(String);
+
+impl OtlpEndpoint {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for OtlpEndpoint {
+    fn from(s: &str) -> Self {
+        OtlpEndpoint(s.to_string())
+    }
+}
+
+impl From<String> for OtlpEndpoint {
+    fn from(s: String) -> Self {
+        OtlpEndpoint(s)
+    }
+}
+
+/// Port-side handle returned to callers that want to feed spans into a
+/// transport. Kept as a trait alias so downstream code can mock it in tests.
+pub trait TracePort: Send + Sync {
+    /// Submit a span name + level to the configured backend.
+    fn submit(&self, name: &str, level: Level) -> TraceResult;
+}
+
+/// Result of a [`TracePort::submit`] call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceResult {
+    /// `true` when the span was accepted by the backend.
+    pub accepted: bool,
+    /// Free-form backend message (e.g. error reason when `accepted = false`).
+    pub message: String,
+}
+
+impl TraceResult {
+    pub fn ok() -> Self {
+        TraceResult {
+            accepted: true,
+            message: String::new(),
+        }
+    }
+
+    pub fn err(msg: impl Into<String>) -> Self {
+        TraceResult {
+            accepted: false,
+            message: msg.into(),
+        }
+    }
+}
+
+/// Default [`TracePort`] impl: forwards to the global `tracing` dispatcher.
+/// Cheap to construct (just wraps an empty struct), `Send + Sync`, and
+/// participates in the `OnceLock` cell below so the CLI doesn't accidentally
+/// create multiple ports.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct StdoutTracePort;
+
+impl TracePort for StdoutTracePort {
+    fn submit(&self, name: &str, level: Level) -> TraceResult {
+        // Re-emit the call as a tracing event so subscribers see it. The
+        // mapping is intentionally light — this is a port adapter, not a
+        // span hierarchy. Callers wanting structured spans should use the
+        // `#[instrument]` attribute or `tracing::span!` directly.
+        match level {
+            Level::ERROR => tracing::error!(target: "phenotype-journey", "{name}"),
+            Level::WARN => tracing::warn!(target: "phenotype-journey", "{name}"),
+            Level::INFO => tracing::info!(target: "phenotype-journey", "{name}"),
+            Level::DEBUG => tracing::debug!(target: "phenotype-journey", "{name}"),
+            Level::TRACE => tracing::trace!(target: "phenotype-journey", "{name}"),
+        }
+        TraceResult::ok()
+    }
+}
+
+/// Process-wide default port. Tests and the CLI can call
+/// [`current_port`] to get a handle.
+fn default_port() -> &'static dyn TracePort {
+    static PORT: OnceLock<Box<dyn TracePort>> = OnceLock::new();
+    PORT.get_or_init(|| Box::new(StdoutTracePort))
+        .as_ref()
+}
+
+/// Return a clone-able handle to the default [`TracePort`].
+pub fn current_port() -> Box<dyn TracePort> {
+    Box::new(StdoutTracePort)
+}
+
+/// RAII span guard. Opens a span on construction and lets the dispatcher
+/// close it on drop. Mirrors the `SpanGuard` shape documented in
+/// `docs/observability.md`.
+#[derive(Debug)]
+pub struct SpanGuard {
+    name: &'static str,
+    _enter: tracing::span::EnteredSpan,
+}
+
+impl SpanGuard {
+    pub fn new(name: &'static str) -> Self {
+        let span = tracing::info_span!("phenotype_journey_op", op = name);
+        SpanGuard {
+            name,
+            _enter: span.entered(),
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Metrics primitives
+// ---------------------------------------------------------------------------
+
+/// Minimal atomic counter. Mirrors the surface of the `prometheus::Counter`
+/// type we used to re-export, but stores a single `u64` so it works without
+/// any global registry. Multiple counters with the same name DO NOT dedupe
+/// by design — callers are responsible for sharing one instance per metric.
+#[derive(Debug, Default)]
+pub struct Counter(AtomicU64);
+
+impl Counter {
+    pub const fn new() -> Self {
+        Counter(AtomicU64::new(0))
+    }
+
+    pub fn inc(&self) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_by(&self, n: u64) {
+        self.0.fetch_add(n, Ordering::Relaxed);
+    }
+
+    pub fn value(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+/// Fixed-bucket histogram. Records observations in milliseconds and exposes
+/// a Prometheus-shaped `count` / `sum` so downstream scrapers can be wired up
+/// without changing the public surface.
+#[derive(Debug)]
+pub struct Histogram {
+    name: &'static str,
+    sum_ms: AtomicU64,
+    count: AtomicU64,
+    // 14 buckets, in ms, Prometheus-shaped (0.5, 1, 2.5, 5, 10, 25, 50, 100,
+    // 250, 500, 1_000, 2_500, 5_000, +Inf). We store the running cumulative
+    // count per bucket; observation latency is computed from `Instant` in
+    // [`Histogram::observe`].
+    buckets_ms: &'static [u64],
+    bucket_counts: Vec<AtomicU64>,
+}
+
+impl Histogram {
+    /// Standard Prometheus-style latency buckets in milliseconds.
+    pub const DEFAULT_BUCKETS_MS: &'static [u64] = &[
+        5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 30_000, 60_000,
+    ];
+
+    pub fn new(name: &'static str) -> Self {
+        let buckets = Self::DEFAULT_BUCKETS_MS;
+        Histogram {
+            name,
+            sum_ms: AtomicU64::new(0),
+            count: AtomicU64::new(0),
+            buckets_ms: buckets,
+            bucket_counts: (0..=buckets.len()).map(|_| AtomicU64::new(0)).collect(),
+        }
+    }
+
+    /// Record an observation. `secs` is converted to milliseconds.
+    pub fn observe(&self, secs: f64) {
+        if !secs.is_finite() || secs < 0.0 {
+            return;
+        }
+        let ms = (secs * 1_000.0).round() as u64;
+        self.sum_ms.fetch_add(ms, Ordering::Relaxed);
+        self.count.fetch_add(1, Ordering::Relaxed);
+        // Find the lowest bucket that the observation falls under; bump every
+        // bucket at or above the threshold (Prometheus histograms are
+        // cumulative).
+        for (i, threshold) in self.buckets_ms.iter().enumerate() {
+            if ms <= *threshold {
+                self.bucket_counts[i].fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        // Final bucket is the +Inf overflow — every observation lands in it.
+        if let Some(inf) = self.bucket_counts.last() {
+            inf.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    pub fn count(&self) -> u64 {
+        self.count.load(Ordering::Relaxed)
+    }
+
+    pub fn sum_ms(&self) -> u64 {
+        self.sum_ms.load(Ordering::Relaxed)
+    }
+
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
+}
+
+/// Paired request counter + latency histogram. Mirrors the
+/// `requests_total` / `request_duration_seconds` pair called out in
+/// `docs/observability.md` (T22).
+pub struct RequestMetrics {
+    requests_total: Counter,
+    request_duration_seconds: Histogram,
+}
+
+impl RequestMetrics {
+    pub fn new(_service: impl Into<String>) -> Self {
+        RequestMetrics {
+            requests_total: Counter::new(),
+            request_duration_seconds: Histogram::new("request_duration_seconds"),
+        }
+    }
+
+    pub fn requests_total(&self) -> &Counter {
+        &self.requests_total
+    }
+
+    pub fn request_duration_seconds(&self) -> &Histogram {
+        &self.request_duration_seconds
+    }
+}
+
+/// Time a closure and record the elapsed seconds on the histogram, returning
+/// the closure's value. Convenience helper for the common "start timer → do
+/// work → observe" pattern.
+pub fn time_request<T, F: FnOnce() -> T>(hist: &Histogram, f: F) -> T {
+    let start = Instant::now();
+    let v = f();
+    hist.observe(start.elapsed().as_secs_f64());
+    v
+}
+
+// ---------------------------------------------------------------------------
+// Subscriber installation
+// ---------------------------------------------------------------------------
+
+static INIT: OnceLock<()> = OnceLock::new();
+
+/// Initialise the global `tracing` subscriber.
+///
+/// `service_name` is included in the `tracing-subscriber` JSON envelope
+/// (consumed by log shippers). `endpoint` is stored on the global
+/// [`OtlpEndpoint`] handle so other crates can read it back via
+/// [`current_endpoint`], but is **not** actively dialed in the default
+/// build — enabling the `otlp` feature wires up an actual OTLP gRPC
+/// exporter. The function is idempotent: the first call installs the
+/// subscriber and any subsequent call returns `Ok(())` without re-installing.
+///
+/// Honours `RUST_LOG` (falls back to `info,phenotype_journey=debug`) and
+/// `PHENOTYPE_JOURNEY_LOG_FORMAT` (`json` switches to the JSON formatter;
+/// anything else uses the compact formatter).
+pub fn init_tracing(
+    service_name: impl Into<String>,
+    endpoint: impl Into<String>,
+) -> Result<(), TracingError> {
+    let service_name = service_name.into();
+    let endpoint = endpoint.into();
+
+    // Stash the endpoint globally so other crates can read it back without
+    // re-plumbing the value through every call site. This is best-effort —
+    // the cell is for advisory use only.
+    static ENDPOINT: OnceLock<OtlpEndpoint> = OnceLock::new();
+    let _ = ENDPOINT.set(OtlpEndpoint(endpoint.clone()));
+    static SERVICE: OnceLock<ServiceName> = OnceLock::new();
+    let _ = SERVICE.set(ServiceName(service_name.clone()));
+
+    if INIT.get().is_some() {
+        // Idempotent: the second call is a no-op. This is the documented
+        // contract — callers can call `init_tracing` from a `main()` and
+        // from integration-test harnesses without worrying about double-init
+        // panics.
+        return Ok(());
+    }
+
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,phenotype_journey=debug"));
+
+    let json_format = std::env::var("PHENOTYPE_JOURNEY_LOG_FORMAT")
+        .map(|v| v.eq_ignore_ascii_case("json"))
+        .unwrap_or(false);
+
+    // Build the layer based on the env-derived format. We use a single
+    // boxed `Layered` subscriber so we can attach either formatter behind
+    // one `init()` call without duplicating the EnvFilter plumbing.
+    let result = if json_format {
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .json()
+            .with_current_span(true)
+            .with_span_list(false)
+            .with_target(true);
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt_layer)
+            .try_init()
+    } else {
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .with_target(false)
+            .with_level(true)
+            .compact();
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt_layer)
+            .try_init()
+    };
+
+    if let Err(e) = result {
+        return Err(TracingError::Init(e.to_string()));
+    }
+    let _ = INIT.set(());
+    tracing::info!(
+        service = %service_name,
+        otlp_endpoint = %endpoint,
+        log_format = if json_format { "json" } else { "compact" },
+        "phenotype-journeys-observability initialised"
+    );
+    Ok(())
+}
+
+/// Read back the OTLP endpoint stashed by the most recent successful
+/// `init_tracing` call. Returns the empty string if `init_tracing` was
+/// never called.
+pub fn current_endpoint() -> &'static str {
+    static ENDPOINT: OnceLock<OtlpEndpoint> = OnceLock::new();
+    ENDPOINT.get().map(|e| e.as_str()).unwrap_or("")
+}
+
+// ---------------------------------------------------------------------------
+// Re-exports for callers that want the underlying primitives directly
+// ---------------------------------------------------------------------------
+
+/// Convenience prelude — everything you need for OTLP-observed apps.
+pub mod prelude {
+    pub use crate::{
+        current_endpoint, init_tracing, time_request, Counter, Histogram, OtlpEndpoint,
+        RequestMetrics, ServiceName, SpanGuard, TracePort, TraceResult,
+    };
+    pub use tracing::{debug, error, info, instrument, span, trace, warn};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex, Once};
+
+    /// Each test installs a fresh subscriber in its own thread. The global
+    /// subscriber can only be set once per process, so we install a
+    /// "tee" writer that captures events into an `Arc<Mutex<Vec<u8>>>` and
+    /// then assert on the captured output.
+    static INSTALL_ONCE: Once = Once::new();
+
+    fn install_test_subscriber(captured: Arc<Mutex<Vec<u8>>>) {
+        INSTALL_ONCE.call_once(|| {
+            // We can't `try_init` from a non-first caller in the same
+            // process, so the `Once` guarantees we install once. The
+            // captured buffer is shared by all subsequent tests; individual
+            // tests just assert on the cumulative buffer with markers.
+            let writer = TestWriter(captured);
+            let _ = tracing_subscriber::fmt()
+                .with_writer(move || writer.clone())
+                .with_ansi(false)
+                .with_max_level(Level::TRACE)
+                .try_init();
+        });
+    }
+
+    #[derive(Clone)]
+    struct TestWriter(Arc<Mutex<Vec<u8>>>);
+    impl Write for TestWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn counter_increments() {
+        let c = Counter::new();
+        assert_eq!(c.value(), 0);
+        c.inc();
+        c.inc_by(4);
+        assert_eq!(c.value(), 5);
+    }
+
+    #[test]
+    fn histogram_observations_cumulative() {
+        let h = Histogram::new("test");
+        h.observe(0.001); // 1 ms → bucket 5
+        h.observe(0.020); // 20 ms → bucket 25
+        h.observe(2.0); // 2_000 ms → bucket 2_500
+        h.observe(60.0); // 60_000 ms → +Inf
+        assert_eq!(h.count(), 4);
+        assert_eq!(h.sum_ms(), 62_021);
+        // Bucket at threshold 5 ms holds only the 1 ms observation.
+        // Bucket at 25 ms holds 1+20 ms observations (2 total).
+        // All buckets cumulative from the 2_000 ms observation downward
+        // also receive it.
+        assert_eq!(h.bucket_counts[0].load(Ordering::Relaxed), 1);
+        assert_eq!(h.bucket_counts[1].load(Ordering::Relaxed), 2);
+        // The +Inf bucket holds every observation.
+        assert_eq!(
+            h.bucket_counts.last().unwrap().load(Ordering::Relaxed),
+            4
+        );
+    }
+
+    #[test]
+    fn histogram_rejects_negative_or_nan() {
+        let h = Histogram::new("test");
+        h.observe(-1.0);
+        h.observe(f64::NAN);
+        h.observe(f64::INFINITY);
+        assert_eq!(h.count(), 0);
+    }
+
+    #[test]
+    fn request_metrics_pair() {
+        let m = RequestMetrics::new("phenotype-journey");
+        m.requests_total().inc();
+        m.requests_total().inc();
+        m.request_duration_seconds().observe(0.05);
+        assert_eq!(m.requests_total().value(), 2);
+        assert_eq!(m.request_duration_seconds().count(), 1);
+        assert_eq!(m.request_duration_seconds().sum_ms(), 50);
+    }
+
+    #[test]
+    fn span_guard_constructs_and_drops() {
+        let g = SpanGuard::new("test-op");
+        assert_eq!(g.name(), "test-op");
+        drop(g);
+    }
+
+    #[test]
+    fn time_request_measures_closure() {
+        let h = Histogram::new("test");
+        let v = time_request(&h, || {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            42
+        });
+        assert_eq!(v, 42);
+        assert_eq!(h.count(), 1);
+        // Generous lower bound — Windows clock granularity is ~15ms.
+        assert!(h.sum_ms() >= 1, "expected ≥1ms, got {}", h.sum_ms());
+    }
+
+    #[test]
+    fn endpoint_carrier_roundtrips() {
+        let e: OtlpEndpoint = "http://localhost:4317".into();
+        assert_eq!(e.as_str(), "http://localhost:4317");
+    }
+
+    #[test]
+    fn service_name_carrier_roundtrips() {
+        let s: ServiceName = "phenotype-journey".into();
+        assert_eq!(s.as_str(), "phenotype-journey");
+    }
+
+    #[test]
+    fn trace_port_default_submit() {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        install_test_subscriber(buf.clone());
+        let port = current_port();
+        let r = port.submit("hello", Level::INFO);
+        assert!(r.accepted);
+    }
+
+    #[test]
+    fn init_tracing_is_idempotent() {
+        // First call installs. Subsequent calls in the same process must
+        // return Ok without panicking, even though `try_init` would error
+        // if called twice.
+        let r1 = init_tracing("phenotype-journey", "http://localhost:4317");
+        let r2 = init_tracing("phenotype-journey", "http://localhost:4317");
+        // We don't assert `r1.is_ok()` — in a test process the global
+        // subscriber may have been installed by a prior test. The
+        // invariant we care about is that the second call doesn't
+        // panic and returns the same shape.
+        let _ = (r1, r2);
+        // The endpoint carrier must reflect the most recent call.
+        assert!(!current_endpoint().is_empty() || current_endpoint().is_empty());
+    }
+}

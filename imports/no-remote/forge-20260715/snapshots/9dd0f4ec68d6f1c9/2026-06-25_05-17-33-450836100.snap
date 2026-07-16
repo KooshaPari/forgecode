@@ -1,0 +1,57 @@
+"""Self-audit script: verify the scanner catches known-bad patterns."""
+import json
+import os
+import subprocess
+import sys
+
+REPO_ROOT = r"C:\Users\koosh\.claude\lanes\AppGen-ci-appgen-mm"
+SCANNER = os.path.join(REPO_ROOT, "tools", "legacy-enforcement", "scanner", "legacy_tooling_scanner.py")
+POLICY = os.path.join(REPO_ROOT, "tools", "legacy-enforcement", "policy", "rules.yaml")
+TMP = os.path.join(REPO_ROOT, "tests", "_tmp_audit.ts")
+JSON_OUT = os.path.join(REPO_ROOT, "legacy_tooling_report.json")
+MD_OUT = os.path.join(REPO_ROOT, "legacy_tooling_report.md")
+
+
+def run_scanner():
+    return subprocess.run(
+        [sys.executable, SCANNER, "--repo-root", REPO_ROOT, "--policy", POLICY,
+         "--output-json", JSON_OUT, "--output-md", MD_OUT],
+        capture_output=True, text=True, cwd=REPO_ROOT,
+    )
+
+
+def totals():
+    with open(JSON_OUT) as f:
+        return json.load(f)["totals"]
+
+
+# Test 1: bad console.log
+print("--- Test 1: console.log in temp TS file ---")
+with open(TMP, "w") as f:
+    f.write("// audit\nconsole.log('debug');\n")
+r = run_scanner()
+print("Exit:", r.returncode, "Totals:", totals())
+assert totals()["medium"] >= 1, f"Expected medium finding, got {totals()}"
+assert r.returncode == 1, f"Expected exit 1, got {r.returncode}"
+print("PASS")
+
+# Test 2: bad node-version in workflow
+print("--- Test 2: EOL node-version in temp workflow ---")
+os.remove(TMP)
+TMP2 = os.path.join(REPO_ROOT, ".github", "workflows", "_tmp_audit.yml")
+with open(TMP2, "w") as f:
+    f.write("name: x\non: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/setup-node@v6\n        with:\n          node-version: 16\n")
+r = run_scanner()
+print("Exit:", r.returncode, "Totals:", totals())
+assert totals()["high"] >= 1, f"Expected high finding, got {totals()}"
+os.remove(TMP2)
+
+# Test 3: clean state
+print("--- Test 3: clean state ---")
+r = run_scanner()
+print("Exit:", r.returncode, "Totals:", totals())
+assert r.returncode == 0, f"Expected exit 0, got {r.returncode}"
+assert totals() == {"critical": 0, "high": 0, "medium": 0, "low": 0}, totals()
+print("PASS")
+
+print("\nAll self-audit tests passed.")

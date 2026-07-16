@@ -1,0 +1,58 @@
+name: release-please
+
+# WP-15 — Versioning + changelog automation.
+# Watches conventional-commit messages on main, opens/updates a release
+# PR that bumps semver + regenerates CHANGELOG.md.
+# Merging the release PR creates the version tag + GitHub release, which
+# chains into signed-release.yml + release-sbom.yml.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - ".github/workflows/**"
+      - "CHANGELOG.md"
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  # One release PR at a time per branch.
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          # Release-please reads config from `.github/release-please-config.json`
+          # (repo root config path is relative to the repo root, not `.github/`).
+          config-file: .github/release-please-config.json
+          # PR title prefix for the release PR (the literal `chore(release):`).
+          pull-request-title-pattern: chore(release): release-${version}
+          token: ${{ secrets.GITHUB_TOKEN }}
+        outputs:
+          release_created: ${{ steps.release.outputs.release_created }}
+          tag_name: ${{ steps.release.outputs.tag_name }}
+          release_url: ${{ steps.release.outputs.release_url }}
+          pr: ${{ steps.release.outputs.pr }}
+
+      - name: Surface release outcome
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Release tag ${{ steps.release.outputs.tag_name }} created."
+          echo "Release URL: ${{ steps.release.outputs.release_url }}"
+          echo "PR: ${{ steps.release.outputs.pr }}"
+          echo "signed-release.yml + release-sbom.yml will fire on the tag push."

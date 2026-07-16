@@ -1,0 +1,13 @@
+import re, json
+with open(r"C:\Users\koosh\AppData\Local\Temp\all_full.txt") as f:
+    raw = f.read()
+# sqlite outputs rows separated by newlines (no commas), each row is a full JSON object
+objs = [json.loads(line) for line in raw.splitlines() if line.strip()]
+for o in objs:
+    print(f"=== {o['name']} ===")
+    print(f"  isActive={o.get('isActive','?')} isHidden={o.get('isHidden','?')} strategy={o.get('strategy','?')}")
+    for m in o.get('models', []):
+        if m.get('kind') == 'combo-ref':
+            print(f"  COMBO-REF -> {m.get('comboName')} (weight={m.get('weight',0)})")
+        else:
+            print(f"  MODEL    -> {m.get('model')}  (provider={m.get('providerId')}, weight={m.get('weight',0)})")

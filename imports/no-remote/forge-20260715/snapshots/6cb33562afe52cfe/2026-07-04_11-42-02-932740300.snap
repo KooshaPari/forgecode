@@ -1,0 +1,88 @@
+name: bench-gate
+
+# Benchora benchmark quality gate.
+#
+# Runs:
+#   1. cargo +nightly fmt --check
+#   2. cargo +nightly clippy -- -D warnings
+#   3. cargo +nightly test --all-features (criterion benchmarks run via `cargo test --benches`)
+#   4. cargo mutants (mutation testing, minimum 75% score)
+#   5. cargo +nightly test proptest (property tests, default 256 cases)
+#
+# Fails the build if:
+#   - any check fails
+#   - mutation score < 75%
+#   - proptest finds a counterexample (it shrinks + reports)
+#
+# DAG units: BEN-SOTA-002 (this workflow) + BEN-SOTA-001 (fixture harness, landed).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  fmt:
+    name: rustfmt (nightly)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+      - run: cargo +nightly fmt --all -- --check
+
+  clippy:
+    name: clippy (nightly, -D warnings)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy
+      - run: cargo +nightly clippy --all-features --all-targets -- -D warnings
+
+  test:
+    name: test (criterion benches + unit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo +nightly test --all-features --all-targets
+      - run: cargo +nightly bench --all-features --no-run
+
+  proptest:
+    name: proptest (256 cases, all targets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Run proptest cases
+        run: |
+          cargo +nightly test --lib --all-features proptest -- --test-threads=1
+        env:
+          PROPTEST_CASES: '256'
+
+  mutation:
+    name: cargo-mutants (>=75% kill rate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-mutants
+        run: cargo install --locked cargo-mutants
+      - name: Run mutation testing
+        run: |
+          cargo mutants --no-shuffle --jobs 2 \
+            --minimum-pass-rate 75 \
+            --output mutants-out
+      - name: Upload mutants report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutants-report
+          path: mutants-out/

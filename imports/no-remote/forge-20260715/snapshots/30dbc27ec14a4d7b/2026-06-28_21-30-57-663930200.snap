@@ -1,0 +1,55 @@
+@echo off
+rem ============================================================
+rem  omniroute-dev.cmd - literal bin for the OmniRoute fork
+rem ============================================================
+rem  Lives in %USERPROFILE%\.local\bin\ alongside agent-imessage,
+rem  claude, uv, etc. Resolved by `where` on this machine (the
+rem  .local\bin directory is first on user PATH).
+rem
+rem  Forwards every argument verbatim to the OmniRoute fork
+rem  CLI installed at:
+rem
+rem    C:\Users\koosh\OmniRoute-fresh2\bin\omniroute.mjs
+rem
+rem  This is a literal bin: no symlink magic, no upstream
+rem  fallback, no fork source modification. The fork must be
+rem  built (`bun run build:cli` in C:\Users\koosh\OmniRoute-fresh2)
+rem  so the CLI's `serve` subcommand can find its server entry.
+rem
+rem  Runtime: bun (not node). Bun executes the .mjs fork CLI
+rem  directly with native ESM/TS support — no `--import tsx`
+rem  flag needed. For TypeScript-heavy fork tooling (builds,
+rem  test runners), prefer `bunx tsgo` over `npx tsx`.
+rem
+rem  Override the fork location by setting OMNIRoute_DEV_FORK_ROOT
+rem  before invoking (e.g. to point at a different checkout).
+rem
+rem  Examples:
+rem    omniroute-dev --version
+rem    omniroute-dev --help
+rem    omniroute-dev serve
+rem    omniroute-dev doctor
+rem    omniroute-dev cloud
+rem ============================================================
+
+setlocal
+
+if "%OMNIRoute_DEV_FORK_ROOT%"=="" set "OMNIRoute_DEV_FORK_ROOT=C:\Users\koosh\OmniRoute-fresh2"
+set "FORK_BIN=%OMNIRoute_DEV_FORK_ROOT%\bin\omniroute.mjs"
+
+if not exist "%FORK_BIN%" (
+    echo [omniroute-dev] ERROR: fork CLI not found at "%FORK_BIN%" 1>&2
+    echo [omniroute-dev] Set OMNIRoute_DEV_FORK_ROOT to point at your fork checkout. 1>&2
+    exit /b 1
+)
+
+where bun >nul 2>&1
+if errorlevel 1 (
+    echo [omniroute-dev] ERROR: 'bun' is not on PATH. Install bun ^>=1.3 to run this fork. 1>&2
+    echo [omniroute-dev]   https://bun.sh  (or: powershell -c "irm bun.sh/install.ps1 | iex") 1>&2
+    exit /b 1
+)
+
+rem Forward all arguments verbatim. Use %* so quoting is preserved.
+bun "%FORK_BIN%" %*
+exit /b %ERRORLEVEL%

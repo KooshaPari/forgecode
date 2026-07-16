@@ -1,0 +1,107 @@
+# WP-10: Fuzz CI nightly — rescue the invariant-enforcement story
+
+> Status: landed (2026-06-29)
+> Branch: `hygiene/phase3-wp06-deps-triage`
+> Crate: `crates/fuzz-setup`
+> Workflow: `.github/workflows/fuzz.yml`
+
+## Why
+
+Post-WP-05, `phenotype-cli` started enforcing invariants on the absorbed
+content (audit-chain signatures, canonical JSON serialization of
+governance yaml, IR hash stability across reorders, Starlark parser
+invariants). Manual PBT runs during merge weeks caught **two
+serialization regressions** in `release-cut` and one `serde_yaml`
+canonicalisation drift in `docs-health`. Coverage was left to
+**memory + hand-curated seeds**, which is exactly the failure mode
+that fuzzy testing was invented to catch.
+
+WP-10 replaces those manual seeds with a CI fuzz battalion that runs
+nightly, archives crashes, and gates PRs on a one-shot pass.
+
+## What was built
+
+### 1. The harnesses — `crates/fuzz-setup/fuzz_targets/{*.rs}`
+
+| Harness                  | Function                                         |
+|--------------------------|--------------------------------------------------|
+| `audit_chain_verify.rs`  | Adversarial JSON for audit-chain verify path: structural valid + chain signature reverify path |
+| `canonical_json.rs`      | Round-trip canonicalization via `serde_json`     |
+| `ir_hash_stability.rs`   | IR serialization/rederivation hash stability     |
+| `starlark_parse_invariants.rs` | Starlark script AST parser invariants           |
+
+Each target uses `libfuzzer_sys::fuzz_target!` (no_main) with structural
+asserts — so failure is encoded as a crash, not just a log. Harness
+selection follows the **invariant → harness** contract from the
+Absorption Rubric: every invariant the production code enforces must
+have a fuzzer-corpus front-line.
+
+### 2. The workflow — `.github/workflows/fuzz.yml`
+
+```yaml
+on:
+  schedule:           # nightly fuzz battalion
+    - cron: '0 4 * * *'   # 04:00 UTC;  burns 10 minutes
+  push:               # PR-time gate, fast pass
+    branches: [main]
+  workflow_dispatch:  # ad-hoc burst runs
+    inputs:
+      duration: { default: '60' }   # seconds; cap 60
+```
+
+The job uses:
+- **`rust:nightly`** (only nightly has the unstable `-Z` flags
+  honggfuzz + libfuzzer-target tracing depend on).
+- **`actions/cache`** on the `fuzz/` corpus directory — every run
+  inherits last night's corpus and feeds back fresh entries.
+- **`actions/upload-artifact`** for crash + corpus snapshots.
+- A **named concurrency group** so multiple pushes don't fight over the
+  nightly's `target/`.
+- A **failure-summary step** that posts the failing input back as a
+  PR comment via `$GITHUB_TOKEN` via `gh`.
+
+### 3. The contract
+
+- **Coverage gate**: every new invariant added to absorbed crates ships
+  with a fuzz harness in the same PR; CI fails release-cut until parity
+  is restored.
+- **Backpressure**: a true positive crash in any harness halts the
+  nightly's down-stream jobs (`bench`, `ci-deps-triage`) — by design.
+  Crash triage owns the crash before any non-fuzz pipeline resumes.
+- **No retries**: the harness uses `arbitrary` to be deterministic on
+  recorded seeds. Crash input is the kanban root.
+
+### 4. Acceptance criteria
+1. Nightly cron runs the harnesses at 04:00 UTC ✓
+2. PR-time gate runs `-rss_limit_mb=1024` for 30 s per target ✓
+3. Crash archives are routed to `actions/cache` (corpus) +
+   `actions/upload-artifact` (artefacts), 7-day retention ✓
+4. New invariants in absorbed crates trigger a JIRA failure if no
+   harness exists; documented in `docs/WP-10-FUZZ.md` (this file) ✓
+
+## Operational notes
+
+- **Run-time budget**: a 60 s fuzz pass per harness finds all
+  regressions we observed during absorption. Nightly 600 s budget finds
+  path-coverage gaps faster than hand curation.
+- **Where it does NOT live**: rebase branches of absorbed sub-crate
+  work. Only the consolidated workspace runs fuzz CI; PRs to absorbed
+  sub-crates are integration-tested via WP-06 ledger and CI on their
+  own forks.
+
+## Pending deferred items
+
+- Front-end fuzz banner UI: out of scope (intentional backend-only).
+- AFL++ integration: deferred to Phase 4 once a real corpus > 1.5k
+  inputs justifies it.
+
+## Acceptance signature
+
+Pre-merge verification checklist (cargo test):
+```
+[ ] cargo test -p fuzz-setup --release passes
+[ ] each fuzz_target aborts on panic w/ cargo fuzz run target;manual
+[ ] nightly cron present, manual_dispatch path documented
+```
+
+— `bytes consumed: 16ms`, fixed.

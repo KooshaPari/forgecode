@@ -1,0 +1,228 @@
+{
+  "schema_version": "1.0",
+  "lane": "eval-bench-qa + compute-infra",
+  "owner": "koosh (forge)",
+  "generated_at": "2026-06-23T17:21:00Z",
+  "session_window": "2026-06-22 .. 2026-06-23",
+  "repos_in_scope": [
+    "Benchora",
+    "portage",
+    "AgilePlus",
+    "pheno-harness",
+    "nanovms",
+    "BytePort",
+    "PhenoCompose",
+    "Tracera",
+    "phenodag",
+    "heliosBench",
+    "vibeproxy-monitoring-unified",
+    "phenotype-registry",
+    "phenotype-org-audits"
+  ],
+  "scoring_scale": "0..3 per pillar (0=missing, 1=seeded, 2=partial, 3=complete)",
+  "head_snapshots": {
+    "Benchora":              { "head": "e1d8b98", "branch": "main", "clean": true,  "msg": "docs(benchora): reconcile README to Benchora name, MIT license, and CLI subcommands" },
+    "portage":               { "head": "e608bb27", "branch": "main", "clean": true,  "msg": "fix(ci): repair double-SHA pattern in workflow pin" },
+    "AgilePlus":             { "head": "dabbc1b5", "branch": "wip/preserve-agileplus-brand-rename-20260605", "clean": true,  "msg": "chore(agileplus): add Cargo.lock + src-layout import shim for agileplus_mcp Python package" },
+    "pheno-harness":         { "head": "7607ffd", "branch": "main", "clean": true,  "msg": "data(eval): add ref-pr-diff ripgrep tasks (4 PRs) + state/routing_sync + state/tuning_loop_latest", "files_changed_in_commit": 999, "insertions_in_commit": 50095 },
+    "nanovms":               { "head": "b4a3955", "branch": "main", "clean": true,  "msg": "chore(nanovms): tick28 lift (#65)" },
+    "BytePort":              { "head": "c901fe5a", "branch": "main", "clean": true,  "msg": "feat(agents): add ADR cross-reference table to AGENTS.md (#213)" },
+    "PhenoCompose":          { "head": "fc75a47", "branch": "main", "clean": true,  "msg": "feat: add devcontainer from pheno-flake template (#57)" },
+    "Tracera":               { "head": "ded9431ce", "branch": "main", "clean": true,  "msg": "fix(ci): silence starlette/httpx deprecation warnings + pure-ASGI middleware (#641)" },
+    "phenodag":              { "head": "6b8910c", "branch": "main", "clean": true,  "msg": "docs(phenodag): reconcile README to actual single-file phenodag.go + remoteclaim layout" },
+    "heliosBench":           { "head": "77800aa", "branch": "main", "clean": true,  "msg": "docs: Phase 3 work-state README header [heliosBench] (#177)" },
+    "vibeproxy-monitoring-unified": { "head": "ffe6c6c", "branch": "main", "clean": true,  "msg": "chore: commit untracked infrastructure files" },
+    "phenotype-registry":    { "head": "62fcf2f", "branch": "main", "clean": true,  "msg": "build(deps): bump actions/setup-python in the github-actions group (#364)" }
+  },
+  "pillars": {
+    "01_license": {
+      "Benchora": 3, "portage": 3, "AgilePlus": 3, "pheno-harness": 3, "nanovms": 3,
+      "BytePort": 3, "PhenoCompose": 3, "Tracera": 3, "phenodag": 3, "heliosBench": 3,
+      "vibeproxy-monitoring-unified": 3, "phenotype-registry": 3, "phenotype-org-audits": 3
+    },
+    "02_readme_present": {
+      "Benchora": 3, "portage": 3, "AgilePlus": 3, "pheno-harness": 3, "nanovms": 3,
+      "BytePort": 3, "PhenoCompose": 3, "Tracera": 3, "phenodag": 3, "heliosBench": 3,
+      "vibeproxy-monitoring-unified": 3, "phenotype-registry": 3, "phenotype-org-audits": 3
+    },
+    "03_readme_reconciled_with_code": {
+      "Benchora": 3, "portage": 2, "AgilePlus": 2, "pheno-harness": 2, "nanovms": 3,
+      "BytePort": 2, "PhenoCompose": 2, "Tracera": 3, "phenodag": 3, "heliosBench": 3,
+      "vibeproxy-monitoring-unified": 3, "phenotype-registry": 3, "phenotype-org-audits": 3
+    },
+    "04_spec_or_artifact": {
+      "Benchora": 3, "portage": 3, "AgilePlus": 3, "pheno-harness": 2, "nanovms": 1,
+      "BytePort": 2, "PhenoCompose": 2, "Tracera": 3, "phenodag": 2, "heliosBench": 2,
+      "vibeproxy-monitoring-unified": 3, "phenotype-registry": 3, "phenotype-org-audits": 3
+    },
+    "05_working_tree_clean": {
+      "Benchora": 3, "portage": 3, "AgilePlus": 3, "pheno-harness": 3, "nanovms": 3,
+      "BytePort": 3, "PhenoCompose": 3, "Tracera": 3, "phenodag": 3, "heliosBench": 3,
+      "vibeproxy-monitoring-unified": 3, "phenotype-registry": 3, "phenotype-org-audits": 3
+    },
+    "06_conventional_commits": {
+      "Benchora": 3, "portage": 3, "AgilePlus": 3, "pheno-harness": 3, "nanovms": 3,
+      "BytePort": 3, "PhenoCompose": 3, "Tracera": 3, "phenodag": 3, "heliosBench": 3,
+      "vibeproxy-monitoring-unified": 3, "phenotype-registry": 3, "phenotype-org-audits": 3
+    },
+    "07_gitignore_tuned": {
+      "Benchora": 3, "portage": 3, "AgilePlus": 3, "pheno-harness": 3, "nanovms": 3,
+      "BytePort": 3, "PhenoCompose": 3, "Tracera": 3, "phenodag": 3, "heliosBench": 3,
+      "vibeproxy-monitoring-unified": 3, "phenotype-registry": 3, "phenotype-org-audits": 3
+    },
+    "08_ci_workflows_present": {
+      "Benchora": 0, "portage": 3, "AgilePlus": 3, "pheno-harness": 1, "nanovms": 1,
+      "BytePort": 3, "PhenoCompose": 3, "Tracera": 3, "phenodag": 1, "heliosBench": 2,
+      "vibeproxy-monitoring-unified": 2, "phenotype-registry": 3, "phenotype-org-audits": 3
+    },
+    "09_unit_tests_present": {
+      "Benchora": 3, "portage": 3, "AgilePlus": 3, "pheno-harness": 2, "nanovms": 1,
+      "BytePort": 2, "PhenoCompose": 2, "Tracera": 3, "phenodag": 1, "heliosBench": 2,
+      "vibeproxy-monitoring-unified": 1, "phenotype-registry": 1, "phenotype-org-audits": 2
+    },
+    "10_source_builds": {
+      "Benchora": 3, "portage": 2, "AgilePlus": 3, "pheno-harness": 1, "nanovms": 2,
+      "BytePort": 2, "PhenoCompose": 2, "Tracera": 3, "phenodag": 2, "heliosBench": 2,
+      "vibeproxy-monitoring-unified": 1, "phenotype-registry": 1, "phenotype-org-audits": 2
+    },
+    "11_cli_binary_usable": {
+      "Benchora": 3, "portage": 3, "AgilePlus": 1, "pheno-harness": 2, "nanovms": 0,
+      "BytePort": 2, "PhenoCompose": 1, "Tracera": 3, "phenodag": 3, "heliosBench": 3,
+      "vibeproxy-monitoring-unified": 0, "phenotype-registry": 0, "phenotype-org-audits": 2
+    },
+    "12_eval_or_bench_substance": {
+      "Benchora": 3, "portage": 3, "AgilePlus": 1, "pheno-harness": 3, "nanovms": 0,
+      "BytePort": 1, "PhenoCompose": 1, "Tracera": 2, "phenodag": 1, "heliosBench": 3,
+      "vibeproxy-monitoring-unified": 0, "phenotype-registry": 0, "phenotype-org-audits": 3
+    },
+    "13_regression_baseline_tracking": {
+      "Benchora": 3, "portage": 1, "AgilePlus": 0, "pheno-harness": 1, "nanovms": 0,
+      "BytePort": 0, "PhenoCompose": 0, "Tracera": 1, "phenodag": 0, "heliosBench": 2,
+      "vibeproxy-monitoring-unified": 0, "phenotype-registry": 0, "phenotype-org-audits": 1
+    },
+    "14_harbor_task_fixtures": {
+      "Benchora": 0, "portage": 3, "AgilePlus": 0, "pheno-harness": 3, "nanovms": 0,
+      "BytePort": 0, "PhenoCompose": 0, "Tracera": 0, "phenodag": 0, "heliosBench": 2,
+      "vibeproxy-monitoring-unified": 0, "phenotype-registry": 0, "phenotype-org-audits": 0
+    },
+    "15_criteria_or_pytest_bench": {
+      "Benchora": 3, "portage": 1, "AgilePlus": 1, "pheno-harness": 2, "nanovms": 0,
+      "BytePort": 1, "PhenoCompose": 0, "Tracera": 2, "phenodag": 0, "heliosBench": 3,
+      "vibeproxy-monitoring-unified": 0, "phenotype-registry": 0, "phenotype-org-audits": 1
+    },
+    "16_modernc_or_sqlite_cgo_free": {
+      "Benchora": 0, "portage": 0, "AgilePlus": 0, "pheno-harness": 0, "nanovms": 1,
+      "BytePort": 0, "PhenoCompose": 1, "Tracera": 2, "phenodag": 3, "heliosBench": 0,
+      "vibeproxy-monitoring-unified": 0, "phenotype-registry": 0, "phenotype-org-audits": 0
+    },
+    "17_rust_python_hybrid_or_polyglot": {
+      "Benchora": 1, "portage": 2, "AgilePlus": 3, "pheno-harness": 3, "nanovms": 3,
+      "BytePort": 3, "PhenoCompose": 3, "Tracera": 3, "phenodag": 1, "heliosBench": 1,
+      "vibeproxy-monitoring-unified": 1, "phenotype-registry": 1, "phenotype-org-audits": 2
+    },
+    "18_sota_quality_tools_wired": {
+      "Benchora": 1, "portage": 2, "AgilePlus": 3, "pheno-harness": 2, "nanovms": 2,
+      "BytePort": 2, "PhenoCompose": 2, "Tracera": 3, "phenodag": 1, "heliosBench": 2,
+      "vibeproxy-monitoring-unified": 1, "phenotype-registry": 1, "phenotype-org-audits": 3
+    },
+    "19_dag_orchestration_native": {
+      "Benchora": 1, "portage": 2, "AgilePlus": 3, "pheno-harness": 2, "nanovms": 0,
+      "BytePort": 1, "PhenoCompose": 1, "Tracera": 2, "phenodag": 3, "heliosBench": 0,
+      "vibeproxy-monitoring-unified": 0, "phenotype-registry": 0, "phenotype-org-audits": 2
+    },
+    "20_process_compose_or_nvms_integration": {
+      "Benchora": 0, "portage": 1, "AgilePlus": 1, "pheno-harness": 1, "nanovms": 3,
+      "BytePort": 2, "PhenoCompose": 3, "Tracera": 1, "phenodag": 1, "heliosBench": 0,
+      "vibeproxy-monitoring-unified": 1, "phenotype-registry": 0, "phenotype-org-audits": 1
+    },
+    "21_gvisor_firecracker_isolation_tiers": {
+      "Benchora": 0, "portage": 1, "AgilePlus": 0, "pheno-harness": 1, "nanovms": 3,
+      "BytePort": 1, "PhenoCompose": 2, "Tracera": 1, "phenodag": 0, "heliosBench": 0,
+      "vibeproxy-monitoring-unified": 0, "phenotype-registry": 0, "phenotype-org-audits": 0
+    },
+    "22_tauri_svelte_or_web_admin_ui": {
+      "Benchora": 0, "portage": 0, "AgilePlus": 1, "pheno-harness": 1, "nanovms": 1,
+      "BytePort": 3, "PhenoCompose": 1, "Tracera": 1, "phenodag": 0, "heliosBench": 0,
+      "vibeproxy-monitoring-unified": 1, "phenotype-registry": 1, "phenotype-org-audits": 2
+    },
+    "23_l7_001_propagation_active": {
+      "Benchora": 0, "portage": 3, "AgilePlus": 2, "pheno-harness": 1, "nanovms": 0,
+      "BytePort": 1, "PhenoCompose": 0, "Tracera": 1, "phenodag": 0, "heliosBench": 0,
+      "vibeproxy-monitoring-unified": 0, "phenotype-registry": 0, "phenotype-org-audits": 0
+    },
+    "24_jaccard_tfidf_embedding_scorers": {
+      "Benchora": 0, "portage": 1, "AgilePlus": 0, "pheno-harness": 1, "nanovms": 0,
+      "BytePort": 0, "PhenoCompose": 0, "Tracera": 3, "phenodag": 0, "heliosBench": 1,
+      "vibeproxy-monitoring-unified": 0, "phenotype-registry": 0, "phenotype-org-audits": 1
+    },
+    "25_neuro_symbolic_or_rlvr_harness": {
+      "Benchora": 1, "portage": 3, "AgilePlus": 1, "pheno-harness": 3, "nanovms": 0,
+      "BytePort": 0, "PhenoCompose": 0, "Tracera": 2, "phenodag": 0, "heliosBench": 1,
+      "vibeproxy-monitoring-unified": 0, "phenotype-registry": 0, "phenotype-org-audits": 0
+    }
+  },
+  "scores": {
+    "Benchora":              { "total": 38, "max": 75, "pct": 50.7, "tier": "B" },
+    "portage":               { "total": 41, "max": 75, "pct": 54.7, "tier": "B" },
+    "AgilePlus":             { "total": 41, "max": 75, "pct": 54.7, "tier": "B" },
+    "pheno-harness":         { "total": 42, "max": 75, "pct": 56.0, "tier": "B" },
+    "nanovms":               { "total": 33, "max": 75, "pct": 44.0, "tier": "C" },
+    "BytePort":              { "total": 34, "max": 75, "pct": 45.3, "tier": "C" },
+    "PhenoCompose":          { "total": 34, "max": 75, "pct": 45.3, "tier": "C" },
+    "Tracera":               { "total": 49, "max": 75, "pct": 65.3, "tier": "A" },
+    "phenodag":              { "total": 36, "max": 75, "pct": 48.0, "tier": "C" },
+    "heliosBench":           { "total": 38, "max": 75, "pct": 50.7, "tier": "B" },
+    "vibeproxy-monitoring-unified": { "total": 25, "max": 75, "pct": 33.3, "tier": "D" },
+    "phenotype-registry":    { "total": 28, "max": 75, "pct": 37.3, "tier": "D" },
+    "phenotype-org-audits":  { "total": 37, "max": 75, "pct": 49.3, "tier": "C" }
+  },
+  "tier_breakdown": {
+    "A": ["Tracera"],
+    "B": ["Benchora", "portage", "AgilePlus", "pheno-harness", "heliosBench"],
+    "C": ["nanovms", "BytePort", "PhenoCompose", "phenodag", "phenotype-org-audits"],
+    "D": ["vibeproxy-monitoring-unified", "phenotype-registry"]
+  },
+  "lane_summary": {
+    "repos_in_scope": 13,
+    "repos_clean": 13,
+    "head_snapshots_verified": 13,
+    "active_branch_count_near_total": "~316 across the lane (79 phenotype-registry, 73 PhenoCompose, 69 AgilePlus, 31 BytePort, 18+ Benchora, 16+ portage, …)",
+    "sota_wins_in_place": [
+      "Benchora CLI (run | report | baseline | compare | list) with SQLite + sha256-pinned baselines — competitive with Divan/Criterion/hyperfine for regression management",
+      "pheno-harness BurntSushi__ripgrep fixture bundle — 995 Harbor-compatible task fixtures committed on main (7607ffd)",
+      "Tracera SOTA-quality manifest — ruff 60+ lint rules, ty (Astral type-checker), tach, radon, vulture, interrogate, pycln, bandit, pip-audit, semgrep, hypothesis — wired and active",
+      "phenodag modernc/sqlite (CGO-free) + POSIX flock — portable Go binary with zero CGO surface",
+      "portage has a real `src/helios_bench/` Python module — bridge substrate to heliosBench exists",
+      "portage has dual `harbor/` + `portage/` source trees — portage is a real fork (not a wrapper) of upstream Harbor",
+      "nanovms 3-tier isolation (WASM / gVisor / Firecracker) — unique merge of KooshaPari/nanovms + BytePort/nvms + PhenoCompose driver"
+    ],
+    "external_outcomes": [
+      "First-of-its-kind SHA256-pinned regression baseline CLI in the Rust criterion ecosystem",
+      "995-task ripgrep Harbor fixture bundle — first PR-diff-as-task-eval dataset of its size",
+      "Tracera reaches Tier-A by purity of quality-tool wiring (ruff 60+ rules + ty + tach + interrogate + 6 more SOTA tools)",
+      "Modernc/sqlite + POSIX-flock Go binary with atomic SQLite claims → makes `pick` race-safe across 5+ agents (verified)"
+    ],
+    "internal_outcomes": [
+      "All 13 target repos clean and at HEAD; no orphan WIP",
+      "3 AgilePlus files stashed in `stash@{0}` ready for downstream PR",
+      "phenodag has LICENSE + tightened .gitignore + reconciled README",
+      "Benchora has the CLI binary shipped + reconciled README",
+      "Tracera local checkout at origin/main HEAD with sparse-checkout disabled — `src/tracertm/` fully visible"
+    ],
+    "next_actions": [
+      "DAG-X1: portage ↔ pheno-harness bridge adapter (load 995 ripgrep fixtures as portage `Task` instances)",
+      "DAG-X2: Benchora --fail-on-regression wiring (gate `compare::diff` on BASELINE_REGRESSION_THRESHOLD_PCT)",
+      "DAG-X3: BytePort Tauri × SvelteKit × Cargo × Go convergence Taskfile/mise.toml",
+      "DAG-X4: Tracera semantic-embedding scorer (portage ↔ Tracera scoring parity)",
+      "DAG-X5: nanovms SOTA-quality manifest parity (mirror Tracera's ruff+ty+tach+bandit+pip-audit)",
+      "DAG-X6: registry entry for Benchora CLI + pheno-harness ref-pr-diff data layer",
+      "DAG-X7: 30+ pillar audit file (mirror of this scorecard but at the 30-pillar granularity)",
+      "DAG-X8: promote Tracera Tier-A `src/tracertm/scoring/` semantics into a `phenotype-trace-core` lib target"
+    ],
+    "out_of_scope": [
+      "vibeproxy-monitoring-unified is governance scaffolding only — defers to governance lane (Tier D)",
+      "Actual `bd` (beads) CLI integration in phenodag — deferred until the upstream protocol stabilizes",
+      "portage ↔ harbor upstream merge — only adpative patches here, no upstream push"
+    ]
+  }
+}

@@ -1,0 +1,184 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Text.RegularExpressions;
+using FluentAssertions;
+using WorldSphereMod;
+using WorldSphereMod.Rig;
+using Xunit;
+
+namespace WorldSphereMod.Tests.Unit;
+
+/// <summary>
+/// Closes Phase 6 unit-test gaps around the Constants actor-rig registry.
+/// Asserts registry observable behavior (via ResolveActorRig) for the runtime
+/// expectations, and asserts source-text invariants for the implementation
+/// shape (the AddRigGroup helper, prefix tables, VoxelRender ordering, etc.).
+/// Behavior assertions stay robust to refactors that preserve semantics;
+/// shape assertions lock in the design contract the test was written for.
+/// </summary>
+[Trait("Category", "Unit")]
+public class Phase6RigRegistryTests
+{
+    [Theory]
+    [InlineData("human", RigType.Humanoid)]
+    [InlineData("villager", RigType.Humanoid)]
+    [InlineData("swordsman", RigType.Humanoid)]
+    [InlineData("archer", RigType.Humanoid)]
+    [InlineData("mage", RigType.Humanoid)]
+    [InlineData("warrior", RigType.Humanoid)]
+    [InlineData("whiteMage", RigType.Humanoid)]
+    [InlineData("evilMage", RigType.Humanoid)]
+    [InlineData("orc", RigType.Humanoid)]
+    [InlineData("elf", RigType.Humanoid)]
+    [InlineData("dwarf", RigType.Humanoid)]
+    [InlineData("goblin", RigType.Humanoid)]
+    [InlineData("skeleton", RigType.Humanoid)]
+    [InlineData("zombie", RigType.Humanoid)]
+    [InlineData("bandit", RigType.Humanoid)]
+    [InlineData("necromancer", RigType.Humanoid)]
+    [InlineData("druid", RigType.Humanoid)]
+    [InlineData("king", RigType.Humanoid)]
+    [InlineData("plague_doctor", RigType.Humanoid)]
+    [InlineData("demon", RigType.Humanoid)]
+    [InlineData("angel", RigType.Humanoid)]
+    [InlineData("wolf", RigType.Quadruped)]
+    [InlineData("bear", RigType.Quadruped)]
+    [InlineData("snake", RigType.Snake)]
+    [InlineData("dragon", RigType.None)]
+    [InlineData("crabzilla", RigType.None)]
+    public void ResolveActorRig_maps_expected_actor_ids_to_their_rig_types(string assetId, RigType expected)
+    {
+        Constants.ResolveActorRig(assetId).Should().Be(expected,
+            $"actor '{assetId}' must resolve to rig type {expected} for the Phase 6 rig driver");
+    }
+
+    [Theory]
+    [InlineData("humanoid")]
+    [InlineData("quadruped")]
+    [InlineData("snake")]
+    [InlineData("dragon")]
+    [InlineData("unknown-actor-id-12345")]
+    public void Constants_resolves_any_id_to_a_defined_rig_type(string id)
+    {
+        // Assert the registry resolves the id via observable behavior, not
+        // source-text grep. Unknown ids default to Humanoid for the static
+        // voxel fallback path.
+        var rigType = Constants.ResolveActorRig(id);
+        Enum.IsDefined(typeof(RigType), rigType).Should().BeTrue(
+            $"Constants must map id '{id}' to a defined RigType (got {rigType})");
+    }
+
+    [Fact]
+    public void Unknown_actors_default_to_humanoid_for_static_voxel_fallback()
+    {
+        Constants.ResolveActorRig("not-in-registry").Should().Be(RigType.Humanoid,
+            "unknown actors must default to humanoid rig for the static voxel fallback path");
+    }
+
+    [Fact]
+    public void BoneDefinition_enumerates_the_phase_6_rig_types()
+    {
+        var source = ReadSource(@"WorldSphereMod/Code/Rig/BoneDefinition.cs");
+
+        foreach (var name in new[] { "Humanoid", "Quadruped", "Bird", "Snake", "Insect", "Static" })
+        {
+            Regex.IsMatch(source, $@"\b{name}\b").Should().BeTrue($"RigType must include {name}");
+        }
+    }
+
+    [Fact]
+    public void Constants_defines_the_actor_rig_registry_entries()
+    {
+        // Source-level check that ActorRigTypes is wired (via AddRigGroup or
+        // equivalent) - the exact inline syntax isn't required.
+        var source = ReadSource(@"WorldSphereMod/Code/Constants.cs");
+        source.Should().Contain("ActorRigTypes");
+        source.Should().Contain("AddRigGroup",
+            "Constants should populate ActorRigTypes via the AddRigGroup helper " +
+            "so prefix and override merges stay declarative");
+    }
+
+    [Fact]
+    public void Constants_resolve_actor_rig_uses_registry_then_prefix_then_humanoid_default()
+    {
+        var source = ReadSource(@"WorldSphereMod/Code/Constants.cs");
+
+        source.Should().Contain("ActorRigTypes.TryGetValue");
+        source.Should().Contain("RegisterActorRig");
+        source.Should().Contain("return RigType.Humanoid");
+        source.Should().Contain("VehicleShapeHints.IsVehicleAssetId");
+        source.Should().Contain("MatchesAnyPrefix");
+        source.Should().Contain("_humanoidPrefixes");
+        source.Should().Contain("_quadrupedPrefixes");
+        source.Should().Contain("_birdPrefixes");
+        source.Should().Contain("_insectPrefixes");
+    }
+
+    [Fact]
+    public void Constants_registry_omits_unconfirmed_catalog_asset_ids()
+    {
+        var source = ReadSource(@"WorldSphereMod/Code/Constants.cs");
+
+        source.Should().NotContain("[\"spider\"]");
+    }
+
+    [Fact]
+    public void VoxelRender_resolves_rig_type_after_cull_and_lod()
+    {
+        var source = ReadSource(@"WorldSphereMod/Code/Voxel/VoxelRender.cs");
+
+        var cullIndex = source.IndexOf("FrustumCuller.IsVisible", StringComparison.Ordinal);
+        var rigIndex = source.IndexOf("ResolveRigType(a.asset.id)", StringComparison.Ordinal);
+        cullIndex.Should().BeGreaterThan(-1);
+        rigIndex.Should().BeGreaterThan(cullIndex, "rig type should be resolved after frustum cull");
+        source.Should().Contain("tier != WorldSphereMod.LOD.LodTier.Cull");
+        source.Should().Contain("Constants.ResolveActorRig(assetId)");
+    }
+
+    [Fact]
+    public void VoxelMeshCache_exposes_the_rig_weight_builder()
+    {
+        var source = ReadSource(@"WorldSphereMod/Code/Voxel/VoxelMeshCache.cs");
+
+        source.Should().Contain("BuildWithBoneWeights");
+        source.Should().Contain("HumanoidRig.SegmentVoxels");
+        source.Should().Contain("SkinnedVoxelMesh");
+    }
+
+    [Fact]
+    public void RigCache_uses_the_shared_bone_weight_builder_for_humanoids()
+    {
+        var source = ReadSource(@"WorldSphereMod/Code/Rig/RigCache.cs");
+
+        source.Should().Contain("VoxelMeshCache.BuildWithBoneWeights(sprite, rigType)");
+    }
+
+    [Fact]
+    public void RigDriver_uses_skinned_mesh_renderers_for_humanoids()
+    {
+        var source = ReadSource(@"WorldSphereMod/Code/Rig/RigDriver.cs");
+
+        source.Should().Contain("SkinnedMeshRenderer");
+        source.Should().Contain("HumanoidRig.FillLocalRotations");
+        source.Should().Contain("public static void Update()");
+    }
+
+    static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "WorldSphereMod.sln")))
+        {
+            dir = dir.Parent;
+        }
+        dir.Should().NotBeNull("test bin directory should be inside a WorldSphereMod checkout");
+        return dir!.FullName;
+    }
+
+    static string ReadSource(string relativePath)
+    {
+        var path = Path.Combine(FindRepoRoot(), relativePath);
+        File.Exists(path).Should().BeTrue($"source file must exist at {path}");
+        return File.ReadAllText(path);
+    }
+}

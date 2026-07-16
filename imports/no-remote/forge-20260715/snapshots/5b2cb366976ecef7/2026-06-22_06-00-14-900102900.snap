@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Rust CI
+    timeout-minutes: 30
+    uses: KooshaPari/template-commons/.github/workflows/reusable-rust-ci.yml@48772d7560c964fff01a209742429f24283e96cf
+    with:
+      rust-version: stable
+      enable-coverage: true
+
+  security:
+    name: Security Audit
+    timeout-minutes: 20
+    uses: KooshaPari/template-commons/.github/workflows/reusable-security-scan.yml@48772d7560c964fff01a209742429f24283e96cf
+    with:
+      language: rust
+    secrets:
+      SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+  phenotype-validate:
+    name: Governance Validation
+    timeout-minutes: 10
+    uses: KooshaPari/phenotypeActions/.github/workflows/validate-governance.yml@48772d7560c964fff01a209742429f24283e96cf

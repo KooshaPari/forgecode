@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# _grade_all.sh — Run grade.sh --fast on all 6 owned repos
+set +e
+REG="C:/Users/koosh/phenotype-registry"
+OUT="C:/Users/koosh/_grade_owned"
+mkdir -p "$OUT"
+SUMMARY="$OUT/SUMMARY.md"
+{
+  echo "# Owned-Scope Grade Sweep"
+  echo
+  echo "Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "Grader: phenotype-registry/grade.sh --fast"
+  echo
+  echo "| Repo | Stack | Mode | Score | Grade |"
+  echo "|---|---|---|---|---|"
+} > "$SUMMARY"
+REPOS=(eyetracker Eventra Configra Benchora Authvault Quillr
+  phenotype-infra
+  OmniRoute)
+for r in "${REPOS[@]}"; do
+  DIR="C:/Users/koosh/Dev/$r"
+  if [[ ! -d "$DIR" ]]; then
+    echo "$r: missing_dir" >> "$SUMMARY"
+    continue
+  fi
+  cd "$DIR" || continue
+  RDIR="$OUT/$r"
+  mkdir -p "$RDIR"
+  echo "=== Grading $r ===" >&2
+  OUT_JSON=$(bash "$REG/grade.sh" --fast --json 2>&1)
+  echo "$OUT_JSON" > "$RDIR/run.log"
+  SCORE_LINE=$(echo "$OUT_JSON" | grep -E "SCORE:" | tail -1)
+  GRADE_LINE=$(echo "$OUT_JSON" | grep -E "GRADE:" | tail -1)
+  STACK_LINE=$(echo "$OUT_JSON" | grep -E "Stack:" | tail -1)
+  MODE_LINE=$(echo "$OUT_JSON" | grep -E "Mode:" | tail -1)
+  echo "| $r | ${STACK_LINE#Stack: } | ${MODE_LINE#Mode: } | ${SCORE_LINE#SCORE: } | ${GRADE_LINE#GRADE: } |" >> "$SUMMARY"
+  echo "=== $r: ${SCORE_LINE#SCORE: } / ${GRADE_LINE#GRADE: } ===" >&2
+done
+echo "" >> "$SUMMARY"
+echo "## Raw outputs" >> "$SUMMARY"
+echo "Per-repo: \$OUT/<repo>/run.log" >> "$SUMMARY"
+echo "Final log: \$OUT/SUMMARY.md" >&2

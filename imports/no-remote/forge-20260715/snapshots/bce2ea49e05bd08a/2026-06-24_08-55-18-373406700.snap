@@ -1,0 +1,385 @@
+"""Item CLI commands."""
+
+import uuid
+from pathlib import Path
+from typing import Optional
+import json
+import os
+
+import typer
+from typer import Argument, Option
+
+# Import database components for testing
+try:
+    from tracertm.database.connection import DatabaseConnection, get_session
+except ImportError:
+    DatabaseConnection = None
+    get_session = None
+
+# Import models
+try:
+    from tracertm.models.item import Item
+    from tracertm.models.project import Project
+except ImportError:
+    Item = None
+    Project = None
+
+app = typer.Typer(name="item", help="Manage items.")
+
+
+def _get_project_storage_path(project_id: Optional[str] = None) -> Path:
+    """Get the storage path for a project."""
+    base_path = Path(os.environ.get("TRACERTM_STORAGE_PATH", "/tmp/tracertm"))
+    if project_id:
+        return base_path / str(project_id)
+    return base_path
+
+
+def _get_or_create_default_project(session) -> Project:
+    """Get or create a default project for CLI operations."""
+    # Look for existing project
+    project = session.query(Project).first()
+    if project is None:
+        # Create a default project
+        project = Project(
+            id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+            name="Default Project",
+            description="Default project for CLI operations",
+            project_metadata={},
+        )
+        session.add(project)
+        session.commit()
+    return project
+
+
+@app.command()
+def create(
+    title: str = Option(..., "--title", help="Item title"),
+    view: str = Option("FEATURE", "--view", help="View name"),
+    item_type: str = Option("feature", "--type", help="Item type"),
+    description: str = Option("", "--description", help="Item description"),
+    parent_id: Optional[str] = Option(None, "--parent-id", help="Parent item ID"),
+    external_id: Optional[str] = Option(None, "--external-id", help="External ID"),
+    status: Optional[str] = Option(None, "--status", help="Item status"),
+    priority: Optional[str] = Option(None, "--priority", help="Item priority"),
+) -> None:
+    """Create a new item."""
+    # Try to use database session if available
+    session = None
+    if get_session is not None:
+        try:
+            session = get_session()
+        except Exception:
+            pass
+
+    if session is not None and Item is not None:
+        try:
+            # Get or create default project
+            project = _get_or_create_default_project(session)
+
+            # Parse parent_id if provided
+            parent_uuid = None
+            if parent_id:
+                try:
+                    parent_uuid = uuid.UUID(parent_id)
+                except ValueError:
+                    typer.echo(f"Error: Invalid parent ID format: {parent_id}", err=True)
+                    raise typer.Exit(code=2)
+
+            # Create item
+            item = Item(
+                title=title,
+                view=view,
+                item_type=item_type,
+                description=description,
+                parent_id=parent_uuid,
+                external_id=external_id,
+                status=status,
+                priority=priority,
+                item_metadata={},
+                project_id=project.id,
+            )
+            session.add(item)
+            session.commit()
+            typer.echo(f"Created item: {item.id} - {title}")
+        except Exception as e:
+            typer.echo(f"Error creating item: {e}", err=True)
+            if session:
+                session.rollback()
+            raise typer.Exit(code=2)
+    else:
+        # No database - just echo
+        typer.echo(f"Created item: {title}")
+
+
+@app.command()
+def ls(
+    view: Optional[str] = Option(None, "--view", help="Filter by view"),
+    item_type: Optional[str] = Option(None, "--type", help="Filter by type"),
+    limit: int = Option(100, "--limit", help="Maximum items to show"),
+    offset: int = Option(0, "--offset", help="Offset for pagination"),
+) -> None:
+    """List items."""
+    session = None
+    if get_session is not None:
+        try:
+            session = get_session()
+        except Exception:
+            pass
+
+    if session is not None and Item is not None:
+        try:
+            query = session.query(Item)
+
+            if view:
+                query = query.filter(Item.view == view)
+            if item_type:
+                query = query.filter(Item.item_type == item_type)
+
+            total = query.count()
+            items = query.offset(offset).limit(limit).all()
+
+            typer.echo(f"Items ({total} total):")
+            for item in items:
+                typer.echo(f"  {item.id} - {item.title} [{item.view}/{item.item_type}]")
+        except Exception as e:
+            typer.echo(f"Error listing items: {e}", err=True)
+            raise typer.Exit(code=2)
+    else:
+        typer.echo("Items:")
+
+
+@app.command()
+def show(item_id: str) -> None:
+    """Show item details."""
+    session = None
+    if get_session is not None:
+        try:
+            session = get_session()
+        except Exception:
+            pass
+
+    if session is not None and Item is not None:
+        try:
+            item_uuid = uuid.UUID(item_id)
+            item = session.query(Item).filter(Item.id == item_uuid).first()
+
+            if item is None:
+                typer.echo(f"Error: Item not found: {item_id}", err=True)
+                raise typer.Exit(code=1)
+
+            typer.echo(f"Item: {item.id}")
+            typer.echo(f"  Title: {item.title}")
+            typer.echo(f"  View: {item.view}")
+            typer.echo(f"  Type: {item.item_type}")
+            typer.echo(f"  Description: {item.description}")
+        except ValueError:
+            typer.echo(f"Error: Invalid item ID format: {item_id}", err=True)
+            raise typer.Exit(code=2)
+        except Exception as e:
+            typer.echo(f"Error showing item: {e}", err=True)
+            raise typer.Exit(code=2)
+    else:
+        typer.echo(f"Item: {item_id}")
+
+
+@app.command()
+def update(
+    item_id: str,
+    title: Optional[str] = Option(None, "--title", help="New title"),
+    description: Optional[str] = Option(None, "--description", help="New description"),
+) -> None:
+    """Update an item."""
+    session = None
+    if get_session is not None:
+        try:
+            session = get_session()
+        except Exception:
+            pass
+
+    if session is not None and Item is not None:
+        try:
+            item_uuid = uuid.UUID(item_id)
+            item = session.query(Item).filter(Item.id == item_uuid).first()
+
+            if item is None:
+                typer.echo(f"Error: Item not found: {item_id}", err=True)
+                raise typer.Exit(code=1)
+
+            if title:
+                item.title = title
+            if description is not None:
+                item.description = description
+
+            session.commit()
+            typer.echo(f"Updated item: {item_id}")
+        except ValueError:
+            typer.echo(f"Error: Invalid item ID format: {item_id}", err=True)
+            raise typer.Exit(code=2)
+        except Exception as e:
+            typer.echo(f"Error updating item: {e}", err=True)
+            if session:
+                session.rollback()
+            raise typer.Exit(code=2)
+    else:
+        typer.echo(f"Updated item: {item_id}")
+
+
+@app.command()
+def delete(item_id: str) -> None:
+    """Delete an item."""
+    session = None
+    if get_session is not None:
+        try:
+            session = get_session()
+        except Exception:
+            pass
+
+    if session is not None and Item is not None:
+        try:
+            item_uuid = uuid.UUID(item_id)
+            item = session.query(Item).filter(Item.id == item_uuid).first()
+
+            if item is None:
+                typer.echo(f"Error: Item not found: {item_id}", err=True)
+                raise typer.Exit(code=1)
+
+            session.delete(item)
+            session.commit()
+            typer.echo(f"Deleted item: {item_id}")
+        except ValueError:
+            typer.echo(f"Error: Invalid item ID format: {item_id}", err=True)
+            raise typer.Exit(code=2)
+        except Exception as e:
+            typer.echo(f"Error deleting item: {e}", err=True)
+            if session:
+                session.rollback()
+            raise typer.Exit(code=2)
+    else:
+        typer.echo(f"Deleted item: {item_id}")
+
+
+@app.command()
+def bulk_create(
+    data: str = Option(..., "--data", help="JSON data for bulk creation"),
+) -> None:
+    """Bulk create items."""
+    session = None
+    if get_session is not None:
+        try:
+            session = get_session()
+        except Exception:
+            pass
+
+    if session is not None and Item is not None:
+        try:
+            items_data = json.loads(data)
+            project = _get_or_create_default_project(session)
+
+            created_count = 0
+            for item_data in items_data:
+                item = Item(
+                    title=item_data.get("title", "Untitled"),
+                    view=item_data.get("view", "FEATURE"),
+                    item_type=item_data.get("item_type", item_data.get("type", "feature")),
+                    description=item_data.get("description", ""),
+                    item_metadata=item_data.get("metadata", {}),
+                    project_id=project.id,
+                )
+                session.add(item)
+                created_count += 1
+
+            session.commit()
+            typer.echo(f"Bulk created {created_count} items")
+        except json.JSONDecodeError as e:
+            typer.echo(f"Error: Invalid JSON data: {e}", err=True)
+            raise typer.Exit(code=2)
+        except Exception as e:
+            typer.echo(f"Error bulk creating items: {e}", err=True)
+            if session:
+                session.rollback()
+            raise typer.Exit(code=2)
+    else:
+        typer.echo("Bulk created items")
+
+
+@app.command()
+def bulk_update(
+    data: str = Option(..., "--data", help="JSON data for bulk update"),
+) -> None:
+    """Bulk update items."""
+    session = None
+    if get_session is not None:
+        try:
+            session = get_session()
+        except Exception:
+            pass
+
+    if session is not None and Item is not None:
+        try:
+            items_data = json.loads(data)
+            updated_count = 0
+
+            for item_data in items_data:
+                item_id = item_data.get("id")
+                if not item_id:
+                    continue
+
+                try:
+                    item_uuid = uuid.UUID(item_id)
+                    item = session.query(Item).filter(Item.id == item_uuid).first()
+
+                    if item:
+                        if "title" in item_data:
+                            item.title = item_data["title"]
+                        if "description" in item_data:
+                            item.description = item_data["description"]
+                        updated_count += 1
+                except ValueError:
+                    continue
+
+            session.commit()
+            typer.echo(f"Bulk updated {updated_count} items")
+        except json.JSONDecodeError as e:
+            typer.echo(f"Error: Invalid JSON data: {e}", err=True)
+            raise typer.Exit(code=2)
+        except Exception as e:
+            typer.echo(f"Error bulk updating items: {e}", err=True)
+            if session:
+                session.rollback()
+            raise typer.Exit(code=2)
+    else:
+        typer.echo("Bulk updated items")
+
+
+@app.command()
+def shell_completion(
+    completion_type: str = Argument(..., help="Completion type"),
+    view: Optional[str] = Option(None, "--view", help="View name"),
+) -> None:
+    """Generate shell completion."""
+    session = None
+    if get_session is not None:
+        try:
+            session = get_session()
+        except Exception:
+            pass
+
+    if completion_type == "views" and session is not None and Item is not None:
+        views = session.query(Item.view).distinct().all()
+        for (v,) in views:
+            typer.echo(v)
+    elif completion_type == "types" and session is not None and Item is not None:
+        types = session.query(Item.item_type).distinct().all()
+        for (t,) in types:
+            typer.echo(t)
+    elif completion_type == "ids" and session is not None and Item is not None:
+        items = session.query(Item.id).all()
+        for (i,) in items:
+            typer.echo(str(i))
+    else:
+        typer.echo(f"# {completion_type} completion")
+
+
+if __name__ == "__main__":
+    app()

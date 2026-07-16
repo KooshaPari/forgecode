@@ -1,0 +1,44 @@
+#!/usr/bin/awk -f
+# count-expected.awk - compute expected task count for a phenodag preset YAML
+# Usage: awk -f count-expected.awk presets/foo.yaml
+# Logic:
+#   - Track when we're inside `core:` block vs `side_dags:` block
+#   - core block: stages * width
+#   - side_dags block: sum of `size:` values inside the array
+#   - These are mutually exclusive; either may be absent.
+BEGIN {
+    c = 0; w = 0; s = 0
+    in_core = 0; in_side = 0
+    saw_any = 0
+}
+/^[[:space:]]*$/ { next }        # blank lines
+/^core:/ {
+    in_core = 1
+    in_side = 0
+    next
+}
+/^side_dags:/ {
+    in_core = 0
+    in_side = 1
+    next
+}
+/^[^[:space:]]/ {                # top-level key resets sections
+    in_core = 0
+    in_side = 0
+}
+in_core && /^[[:space:]]+stages:[[:space:]]+[0-9]+/ {
+    c = $2 + 0
+}
+in_core && /^[[:space:]]+width:[[:space:]]+[0-9]+/ {
+    w = $2 + 0
+}
+in_side && /^[[:space:]]+-[[:space:]]+id:/ {
+    # new side-DAG entry - nothing to add, just a marker
+    next
+}
+in_side && /^[[:space:]]+size:[[:space:]]+[0-9]+/ {
+    s += $2 + 0
+}
+END {
+    print (in_core ? c * w : 0) + (in_side ? s : 0)
+}

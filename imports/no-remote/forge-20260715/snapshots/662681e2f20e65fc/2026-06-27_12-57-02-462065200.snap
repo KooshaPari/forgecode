@@ -1,0 +1,74 @@
+//! CLI entry for the civ-dag crate.
+//!
+//! Reads `CIVIS_GAME_DAG.md` (or a path passed as arg[1]) and prints the
+//! sponsor-format tick report to stdout.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use civ_dag::loader::load_plan_from_file;
+use civ_dag::reporter::{RecorderReporter, Reporter};
+use civ_dag::wave::{NodeReport, WaveExecutor};
+
+fn render_snapshot(plan: &civ_dag::model::Plan, snap: &civ_dag::reporter::ReportSnapshot) -> String {
+    let mut s = String::new();
+    use std::fmt::Write;
+    let _ = writeln!(s, "Civis DAG · {} · {} nodes / {} ticks\n",
+        plan.metadata.last_updated.format("%Y-%m-%d"),
+        plan.nodes.len(),
+        plan.ticks.len());
+    for bar in &snap.epics {
+        let _ = writeln!(s, "  {:<20} {} {}/{} ({})",
+            bar.label, bar.glyph, bar.done, bar.total, bar.percent);
+    }
+    s
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let path = std::env::args()
+        .nth(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("CIVIS_GAME_DAG.md"));
+
+    println!("civ-dag · loading {}\n", path.display());
+
+    let plan = match load_plan_from_file(&path) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            eprintln!("warning: could not parse {}: {e}", path.display());
+            eprintln!("falling back to empty demo plan");
+            Arc::new(civ_dag::model::Plan {
+                id: "demo".into(),
+                version: "0".into(),
+                layers: Vec::new(),
+                lanes: Vec::new(),
+                ticks: Vec::new(),
+                pillars: Vec::new(),
+                queued_pillars: Vec::new(),
+                phases: Vec::new(),
+                nodes: Vec::new(),
+                metadata: civ_dag::model::PlanMeta {
+                    total_nodes: 0,
+                    total_ticks: 0,
+                    last_updated: chrono::Utc::now(),
+                    source_path: path.clone(),
+                },
+            })
+        }
+    };
+
+    let reporter = Arc::new(RecorderReporter::default());
+    let executor = WaveExecutor::new(Arc::clone(&plan));
+
+    let _reports: Vec<NodeReport> = match executor.run_all().await {
+        Ok(rs) => rs,
+        Err(e) => {
+            eprintln!("run_all halted: {e}");
+            Vec::new()
+        }
+    };
+
+    println!("{}", render_snapshot(&plan, &reporter.snapshot(&plan)));
+    Ok(())
+}

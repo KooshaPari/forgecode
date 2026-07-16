@@ -1,0 +1,138 @@
+//! BytePort-specific metric instruments.
+//!
+//! Defines metrics per ADR-008: serialization, transport, compression, and schema.
+//! Each instrument group is lazily initialised from the global meter.
+
+use opentelemetry::{
+    KeyValue,
+    metrics::{Counter, Histogram, Meter, UpDownCounter, Result},
+};
+use std::sync::OnceLock;
+
+/// The global meter name used by BytePort.
+const METER_NAME: &str = "byteport";
+
+/// BytePort metrics grouped by domain.
+pub struct BytePortMetrics {
+    // ── Serialization ──────────────────────────────────────────
+    pub serialize_duration: Histogram<f64>,
+    pub serialize_bytes: Histogram<u64>,
+    pub serialize_errors: Counter<u64>,
+    // ── Transport ──────────────────────────────────────────────
+    pub connection_count: UpDownCounter<i64>,
+    pub connection_created: Counter<u64>,
+    pub connection_closed: Counter<u64>,
+    pub transport_latency: Histogram<f64>,
+    pub transport_errors: Counter<u64>,
+    // ── Compression ────────────────────────────────────────────
+    pub compression_ratio: Histogram<f64>,
+    pub compression_original: Counter<u64>,
+    pub compression_compressed: Counter<u64>,
+    pub compression_duration: Histogram<f64>,
+    // ── Schema ─────────────────────────────────────────────────
+    pub schema_validations: Counter<u64>,
+    pub schema_validation_errors: Counter<u64>,
+    pub schema_lookups: Counter<u64>,
+    pub schema_cache_hits: Counter<u64>,
+    pub schema_cache_misses: Counter<u64>,
+}
+
+impl BytePortMetrics {
+    /// Initialise all metric instruments from the global meter.
+    pub fn new() -> Result<Self> {
+        let meter = opentelemetry::global::meter(METER_NAME);
+
+        Ok(Self {
+            // Serialization
+            serialize_duration: meter.f64_histogram("byteport.serialize.duration").with_description("Time to serialize a message").with_unit("s").init(),
+            serialize_bytes: meter.u64_histogram("byteport.serialize.bytes").with_description("Serialized payload size").with_unit("By").init(),
+            serialize_errors: meter.u64_counter("byteport.serialize.errors").with_description("Serialization error count").init(),
+
+            // Transport
+            connection_count: meter.i64_up_down_counter("byteport.connection.count").with_description("Active connections").init(),
+            connection_created: meter.u64_counter("byteport.connection.created").with_description("New connections created").init(),
+            connection_closed: meter.u64_counter("byteport.connection.closed").with_description("Connections closed").init(),
+            transport_latency: meter.f64_histogram("byteport.transport.latency").with_description("Transport round-trip latency").with_unit("s").init(),
+            transport_errors: meter.u64_counter("byteport.transport.errors").with_description("Transport error count").init(),
+
+            // Compression
+            compression_ratio: meter.f64_histogram("byteport.compression.ratio").with_description("Compression ratio (compressed/original)").init(),
+            compression_original: meter.u64_counter("byteport.compression.bytes.original").with_description("Uncompressed byte count").with_unit("By").init(),
+            compression_compressed: meter.u64_counter("byteport.compression.bytes.compressed").with_description("Compressed byte count").with_unit("By").init(),
+            compression_duration: meter.f64_histogram("byteport.compression.duration").with_description("Compression time").with_unit("s").init(),
+
+            // Schema
+            schema_validations: meter.u64_counter("byteport.schema.validations").with_description("Schema validation count").init(),
+            schema_validation_errors: meter.u64_counter("byteport.schema.validation_errors").with_description("Schema validation failure count").init(),
+            schema_lookups: meter.u64_counter("byteport.schema.lookups").with_description("Schema registry lookups").init(),
+            schema_cache_hits: meter.u64_counter("byteport.schema.cache.hits").with_description("Schema cache hits").init(),
+            schema_cache_misses: meter.u64_counter("byteport.schema.cache.misses").with_description("Schema cache misses").init(),
+        })
+    }
+
+    // ── Convenience recorders ─────────────────────────────────
+
+    /// Record a serialisation operation.
+    pub fn record_serialize(&self, duration_s: f64, bytes: u64) {
+        self.serialize_duration.record(duration_s, &[]);
+        self.serialize_bytes.record(bytes, &[]);
+    }
+
+    /// Record a serialisation error.
+    pub fn record_serialize_error(&self, error_type: &str) {
+        self.serialize_errors.add(1, &[KeyValue::new("error.type", error_type.to_owned())]);
+    }
+
+    /// Record a transport operation.
+    pub fn record_transport(&self, latency_s: f64, success: bool) {
+        self.transport_latency.record(latency_s, &[]);
+        if !success {
+            self.transport_errors.add(1, &[]);
+        }
+    }
+
+    /// Record a compression operation.
+    pub fn record_compression(&self, original: u64, compressed: u64, duration_s: f64) {
+        let ratio = if original > 0 { compressed as f64 / original as f64 } else { 1.0 };
+        self.compression_ratio.record(ratio, &[]);
+        self.compression_original.add(original, &[]);
+        self.compression_compressed.add(compressed, &[]);
+        self.compression_duration.record(duration_s, &[]);
+    }
+}
+
+// ── CLI invocation metrics ──────────────────────────────────────────
+
+/// Lazily-initialised singleton for CLI invocation metrics.
+fn cli_meter() -> &'static opentelemetry::metrics::Meter {
+    static METER: OnceLock<opentelemetry::metrics::Meter> = OnceLock::new();
+    METER.get_or_init(|| opentelemetry::global::meter(METER_NAME))
+}
+
+/// Record a CLI command invocation.
+pub fn record_cli_invocation(command: &str) {
+    let meter = cli_meter();
+    let counter = meter
+        .u64_counter("byteport.cli.invocations")
+        .with_description("Number of CLI command invocations")
+        .with_unit("{count}")
+        .init();
+    counter.add(1, &[KeyValue::new("cli.command", command.to_owned())]);
+}
+
+/// Record a CLI command error.
+pub fn record_cli_error(command: &str, error_kind: &str) {
+    let meter = cli_meter();
+    let counter = meter
+        .u64_counter("byteport.cli.errors")
+        .with_description("Number of CLI command errors")
+        .with_unit("{count}")
+        .init();
+    counter.add(
+        1,
+        &[
+            KeyValue::new("cli.command", command.to_owned()),
+            KeyValue::new("error.kind", error_kind.to_owned()),
+        ],
+    );
+}

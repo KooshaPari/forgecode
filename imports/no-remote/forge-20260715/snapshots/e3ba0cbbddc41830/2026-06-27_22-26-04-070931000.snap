@@ -1,0 +1,252 @@
+import json, subprocess, sys, datetime
+
+REPORT_PATH = r"C:\Users\koosh\_compute_infra_audit\reports\A11_byteport_branch_audit.json"
+
+# Step 1: Get branches
+result = subprocess.run(
+    ['gh', 'api', 'repos/KooshaPari/BytePort/branches', '--paginate', '--jq',
+     '.[] | {name, sha: .commit.sha, protected}'],
+    capture_output=True, text=True
+)
+branches = []
+for line in result.stdout.strip().split('\n'):
+    line = line.strip()
+    if line:
+        try:
+            branches.append(json.loads(line))
+        except json.JSONDecodeError:
+            pass
+
+print(f"Total branches: {len(branches)}")
+
+shas = list(set(b['sha'] for b in branches))
+print(f"Unique SHAs: {len(shas)}")
+
+now = datetime.datetime.now(datetime.timezone.utc)
+sha_dates = {}
+
+for i, sha in enumerate(shas):
+    r = subprocess.run(
+        ['gh', 'api', f'repos/KooshaPari/BytePort/commits/{sha}', '--jq',
+         '.commit.author.date'],
+        capture_output=True, text=True
+    )
+    date_str = r.stdout.strip()
+    if date_str and date_str != 'null':
+        sha_dates[sha] = date_str
+    if (i + 1) % 10 == 0:
+        print(f"  ... {i + 1}/{len(shas)} dates retrieved")
+
+print(f"Retrieved dates for: {len(sha_dates)} SHAs")
+
+# Get PR info
+pr_result = subprocess.run(
+    ['gh', 'api', 'repos/KooshaPari/BytePort/pulls', '--paginate', '--jq',
+     '.[] | {number, head: .head.ref, state, title, created_at, updated_at, draft: .draft}'],
+    capture_output=True, text=True
+)
+open_prs = {}
+for line in pr_result.stdout.strip().split('\n'):
+    line = line.strip()
+    if line:
+        try:
+            pr = json.loads(line)
+            open_prs[pr['head']] = pr
+        except json.JSONDecodeError:
+            pass
+
+print(f"Open PRs mapped: {len(open_prs)}")
+
+
+def categorize(name, age_days):
+    if name == 'main':
+        return 'main', 'active', 'keep'
+    if name.startswith('wip/'):
+        return 'wip', ('stale' if age_days > 14 else 'active'), 'recover-or-delete'
+    if name.startswith('recover/') or name.startswith('reconcile/'):
+        return 'recover', ('stale' if age_days > 7 else 'active'), 'review-and-merge-or-delete'
+    if name.startswith('dependabot/'):
+        return 'dependabot', ('stale' if age_days > 14 else 'active'), 'merge-or-close'
+    if name.startswith('fix/') or name.startswith('cve-') or name.startswith('cve/'):
+        return 'fix', ('stale' if age_days > 21 else 'active'), 'review-and-merge'
+    if name.startswith('chore/'):
+        return 'chore', ('stale' if age_days > 21 else 'active'), 'review-and-merge'
+    if name.startswith('ci/'):
+        return 'ci', ('stale' if age_days > 14 else 'active'), 'review-and-merge'
+    if name.startswith('docs/') or name.startswith('docs-'):
+        return 'docs', ('stale' if age_days > 21 else 'active'), 'review-and-merge'
+    if name.startswith('audit/') or name.startswith('review/') or name.startswith('consolidate/'):
+        return 'audit-review', ('stale' if age_days > 14 else 'active'), 'review-and-close'
+    if name.startswith('epic/') or name.startswith('epic-') or name.startswith('feat/'):
+        return 'feature', ('stale' if age_days > 21 else 'active'), 'active-development'
+    if name.startswith('B34-'):
+        return 'feature', ('stale' if age_days > 21 else 'active'), 'active-development'
+    if name.startswith('bp-dag'):
+        return 'feature', ('stale' if age_days > 14 else 'active'), 'active-development'
+    if name.startswith('a29') or name.startswith('a30') or name.startswith('t12'):
+        return 'feature', ('stale' if age_days > 21 else 'active'), 'review-and-merge'
+    prefix = name.split('/')[0] if '/' in name else 'other'
+    return prefix, ('stale' if age_days > 30 else 'active'), 'review'
+
+
+THRESHOLDS = {
+    'wip': 14, 'recover': 7, 'dependabot': 14, 'feature': 21,
+    'fix': 21, 'chore': 21, 'ci': 14, 'docs': 21,
+    'audit-review': 14, 'main': 0
+}
+
+report_branches = []
+for b in branches:
+    name = b['name']
+    sha = b['sha']
+    date_str = sha_dates.get(sha, '')
+    age_days = -1
+    if date_str:
+        dt = datetime.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+        age_days = (now - dt).days
+    cat, status, action = categorize(name, age_days)
+    pr_info = open_prs.get(name, None)
+    report_branches.append({
+        'name': name, 'sha': sha,
+        'last_commit_date': date_str or None, 'age_days': age_days,
+        'category': cat, 'status': status,
+        'recommended_action': action,
+        'has_open_pr': pr_info is not None,
+        'pr_number': pr_info['number'] if pr_info else None,
+        'pr_state': pr_info['state'] if pr_info else None,
+        'pr_draft': pr_info.get('draft', False) if pr_info else None,
+        'protected': b['protected'],
+        'staleness_threshold_days': THRESHOLDS.get(cat, 30)
+    })
+
+cats = {}
+for r in report_branches:
+    c = r['category']
+    cats.setdefault(c, {'total': 0, 'stale': 0, 'active': 0, 'with_pr': 0})
+    cats[c]['total'] += 1
+    if r['status'] == 'stale':
+        cats[c]['stale'] += 1
+    else:
+        cats[c]['active'] += 1
+    if r['has_open_pr']:
+        cats[c]['with_pr'] += 1
+
+stale_total = sum(1 for r in report_branches if r['status'] == 'stale')
+active_total = sum(1 for r in report_branches if r['status'] == 'active')
+with_pr = sum(1 for r in report_branches if r['has_open_pr'])
+
+report = {
+    'report_metadata': {
+        'dag_unit': 'A11',
+        'title': 'byteport-pool: Branch audit',
+        'phase': 'Phase 1',
+        'pool': 'byteport-pool',
+        'repo': 'KooshaPari/BytePort',
+        'analysis_date': '2026-06-27T07:00:00Z',
+        'data_source': 'GitHub API (gh api repos/KooshaPari/BytePort/branches --paginate)',
+        'staleness_threshold_days': THRESHOLDS,
+        'total_branches_fetched': len(report_branches),
+        'unique_commits_checked': len(shas)
+    },
+    'executive_summary': {
+        'total_branches': len(report_branches),
+        'active_branches': active_total,
+        'stale_branches': stale_total,
+        'stale_percentage': round(stale_total / len(report_branches) * 100, 1) if report_branches else 0,
+        'branches_with_open_prs': with_pr,
+        'protected_branches': sum(1 for r in report_branches if r['protected']),
+        'wip_branches': sum(1 for r in report_branches if r['category'] == 'wip'),
+        'recover_branches': sum(1 for r in report_branches if r['category'] == 'recover'),
+        'dependabot_branches': sum(1 for r in report_branches if r['category'] == 'dependabot')
+    },
+    'categories': cats,
+    'stale_branches': sorted(
+        [r for r in report_branches if r['status'] == 'stale'],
+        key=lambda x: x['age_days'], reverse=True
+    ),
+    'active_branches': sorted(
+        [r for r in report_branches if r['status'] == 'active' and r['name'] != 'main'],
+        key=lambda x: x['name']
+    ),
+    'protected_branches': [r for r in report_branches if r['protected']],
+    'wip_recover_branches': sorted(
+        [r for r in report_branches if r['category'] in ('wip', 'recover')],
+        key=lambda x: x['name']
+    ),
+    'all_branches': sorted(report_branches, key=lambda x: x['name']),
+    'findings': [
+        {
+            'id': 'F1',
+            'severity': 'medium',
+            'description': 'WIP branches exist without open PRs — likely local experiment dumps',
+            'branches': [r['name'] for r in report_branches if r['category'] == 'wip']
+        },
+        {
+            'id': 'F2',
+            'severity': 'high',
+            'description': 'Recover branches have open PRs but need prioritization — these represent recovered work from stashes',
+            'branches': [r['name'] for r in report_branches if r['category'] == 'recover']
+        },
+        {
+            'id': 'F3',
+            'severity': 'low',
+            'description': 'Dependabot branches accumulate — periodic review and merge needed',
+            'branches': [r['name'] for r in report_branches if r['category'] == 'dependabot']
+        },
+        {
+            'id': 'F4',
+            'severity': 'medium',
+            'description': f'Total branch count ({len(report_branches)}) exceeds recommended hygiene target of <20 active branches',
+            'branches': []
+        },
+        {
+            'id': 'F5',
+            'severity': 'medium',
+            'description': f'{stale_total} branch(es) flagged as stale — candidates for cleanup or merge',
+            'branches': [r['name'] for r in report_branches if r['status'] == 'stale']
+        }
+    ],
+    'recommendations': [
+        {
+            'priority': 'P1',
+            'action': 'Prioritize review and merge of recover/E* branches (terminal UI, tools CLI)',
+            'rationale': 'These represent recovered work from stashes that should be merged to main before diverging further'
+        },
+        {
+            'priority': 'P1',
+            'action': 'Close or delete wip/ branches if content already recovered to merged branches',
+            'rationale': 'WIP branches with no open PR are dead weight; recover any needed content then delete'
+        },
+        {
+            'priority': 'P2',
+            'action': 'Update or close dependabot branches >14d old',
+            'rationale': 'Dependabot branches that accumulate without merge create noise and potential merge conflicts'
+        },
+        {
+            'priority': 'P2',
+            'action': 'Consider branch lifecycle policy: auto-delete after merge, <14d for WIP, <7d for recover',
+            'rationale': 'Standardizing branch lifecycle improves repository hygiene and reduces cognitive overhead'
+        },
+        {
+            'priority': 'P3',
+            'action': 'Archive audit/A3-list-stale-branches branch after completing this audit',
+            'rationale': 'Audit-only branches should be cleaned up after their purpose is served'
+        },
+        {
+            'priority': 'P3',
+            'action': 'Review and close feature branches inactive for >21d if no longer prioritized',
+            'rationale': 'Stale feature branches indicate scope changes or blocked work that needs explicit closure'
+        }
+    ],
+    'next_steps': [
+        'A12: Apply cleanup actions — delete stale merged branches',
+        'A13: Verify recover/ branches merge cleanly with main',
+        'A14: Close WIP branches after content recovery confirmation'
+    ]
+}
+
+with open(REPORT_PATH, 'w') as f:
+    json.dump(report, f, indent=2)
+
+print(f"\nReport written to: {REPORT_PATH}")
+print(f"File size: {len(json.dumps(report, indent=2))} bytes")

@@ -1,0 +1,75 @@
+/// Rust FFI bindings for KodeVibeGo Go core.
+///
+/// This is the bridge layer for Go→Rust interop within phenotype-infra.
+/// Phase 1: FFI crate skeleton + C ABI boundary types.
+/// Phase 2: Compile Go core as C archive, link via cc crate.
+/// Phase 3: Pure Rust equivalent of Go analysis engine.
+
+pub mod ffi;
+
+// ── Go analysis types — mirrors KodeVibeGo's internal module ────────────
+
+/// Analysis result from KodeVibeGo engine
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct AnalysisResult {
+    pub issues: Vec<Issue>,
+    pub stats: AnalysisStats,
+}
+
+/// Individual issue found by analysis
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct Issue {
+    pub severity: String,
+    pub file: String,
+    pub line: u32,
+    pub message: String,
+    pub rule_id: Option<String>,
+}
+
+/// Analysis statistics
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct AnalysisStats {
+    pub files_analyzed: u32,
+    pub total_issues: u32,
+    pub duration_ms: u64,
+}
+
+impl AnalysisResult {
+    pub fn empty() -> Self {
+        Self {
+            issues: vec![],
+            stats: AnalysisStats {
+                files_analyzed: 0,
+                total_issues: 0,
+                duration_ms: 0,
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_analysis_result_serde() {
+        let result = AnalysisResult {
+            issues: vec![Issue {
+                severity: "error".into(),
+                file: "src/main.go".into(),
+                line: 42,
+                message: "unused variable".into(),
+                rule_id: Some("no-unused".into()),
+            }],
+            stats: AnalysisStats {
+                files_analyzed: 1,
+                total_issues: 1,
+                duration_ms: 12,
+            },
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: AnalysisResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.issues.len(), 1);
+        assert_eq!(back.stats.files_analyzed, 1);
+    }
+}

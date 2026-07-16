@@ -1,0 +1,44 @@
+# Locked Shortlist
+
+Date: 2026-07-04
+
+## Local Self-Hosted
+
+Only these local model families are current picks:
+
+| Alias | Model | Notes |
+|---|---|---|
+| `local/qwen35-08b` | `Qwen/Qwen3.5-0.8B` | Tiny drafter / local worker. User-specified exception to March-only rule: created 2026-02-28, modified 2026-03-02; GGUF candidates exist from 2026-03-01+. |
+| `local/lfm25-8b-a1b` | `LiquidAI/LFM2.5-8B-A1B` | Main local workhorse. Created 2026-05-28, modified 2026-07-02. GGUF and MLX variants exist. |
+| `local/ornith-8b` | Ornith 8B alias | Coding-agent comparison local workhorse. HF probe found Ornith 9B/35B/397B variants, not a clean owner `8B` id in top results; exact id remains unresolved. |
+
+No BF16 plan is accepted for large local models. Do not add other local SKUs
+without superseding ADR 0005.
+
+## OpenRouter Cloud Baselines
+
+| Model id | Role |
+|---|---|
+| `inclusionai/ling-2.6-flash` | primary cloud baseline |
+| `ibm-granite/granite-4.0-h-micro` | cheap micro baseline |
+| `liquid/lfm-2-24b-a2b` | alt-architecture MoE baseline |
+| `arcee-ai/trinity-mini` | small cloud baseline |
+| `ibm-granite/granite-4.1-8b` | enterprise 8B baseline |
+| `poolside/laguna-xs-2.1` | coding cloud baseline |
+| `tencent/hy3-preview` | preview cloud baseline |
+| `qwen/qwen3.5-flash-02-23` | Qwen flash cloud baseline |
+
+Before any eval binding, run:
+
+```powershell
+python scripts\scrape_openrouter_models.py
+```
+
+The scrape must read both OpenRouter API metadata and model pages. It must not
+make completions calls.
+
+## Decode Research Watch
+
+Do not reduce the decode plan to EAGLE/P-EAGLE only. Track DFlash/DSpark,
+JetSpec, MTP, DDTree, parallel tree drafting, and speculative speculative
+decoding across local and cloud eval notes.

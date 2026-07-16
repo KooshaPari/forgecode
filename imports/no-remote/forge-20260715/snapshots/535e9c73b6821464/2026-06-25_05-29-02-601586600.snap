@@ -1,0 +1,619 @@
+/**
+ * Lazy, no-deps OpenTelemetry bootstrap for OmniRoute.
+ *
+ * This module is intentionally dependency-free at the OmniRoute layer — it
+ * talks to the OpenTelemetry Collector via the standard OTLP/HTTP + JSON
+ * protocol directly over `fetch`, using only the well-known wire format.
+ * That keeps the runtime footprint small (no `@opentelemetry/*` npm deps)
+ * while still emitting real traces/metrics/logs the collector can ingest.
+ *
+ * Design constraints (mirrors PR-006/007/008/009):
+ *   - Default-OFF. Nothing happens until `initTelemetry(...)` is called AND
+ *     `OMNIROUTE_TELEMETRY_ENABLED=true` (or the explicit `force: true`).
+ *   - Best-effort. Network failures inside the exporter MUST NOT throw out
+ *     to the caller; they are caught and counted via the metrics module.
+ *   - The exported types (`Span`, `Tracer`, `Counter`, `Histogram`,
+ *     `LoggerProvider`) are intentionally tiny and stable so callers do not
+ *     need to learn the full OpenTelemetry API.
+ *
+ * @module observability/otel
+ */
+
+import { resolveServiceVersion } from "./resource.ts";
+import { SPAN_ATTRS, SPAN_NAMES } from "./spanTypes.ts";
+
+/** Status code used by `Span.setStatus`. */
+export type SpanStatusCode = "ok" | "error" | "unset";
+
+/** A flat key-value attribute map. */
+export type AttrMap = Record<string, string | number | boolean | null>;
+
+/** Minimal span interface exposed to callers. */
+export interface Span {
+  setAttribute(key: string, value: string | number | boolean | null): Span;
+  setAttributes(attrs: AttrMap): Span;
+  addEvent(name: string, attrs?: AttrMap): Span;
+  setStatus(code: SpanStatusCode, message?: string): Span;
+  recordException(err: unknown): Span;
+  end(endTimeMs?: number): void;
+  readonly context: SpanContext;
+  readonly ended: boolean;
+}
+
+/** Minimal tracer interface. */
+export interface Tracer {
+  startSpan(name: string, attrs?: AttrMap, parent?: SpanContext): Span;
+  withSpan<T>(name: string, fn: (span: Span) => T | Promise<T>, attrs?: AttrMap): Promise<T>;
+}
+
+/** OTel-style trace/span id pair. */
+export interface SpanContext {
+  traceId: string;
+  spanId: string;
+  traceFlags: number;
+}
+
+/** Minimal counter interface. */
+export interface Counter {
+  add(value: number, attrs?: AttrMap): void;
+}
+
+/** Minimal histogram interface. */
+export interface Histogram {
+  record(value: number, attrs?: AttrMap): void;
+}
+
+/** Minimal logger interface (text + structured). */
+export interface Logger {
+  info(message: string, attrs?: AttrMap): void;
+  warn(message: string, attrs?: AttrMap): void;
+  error(message: string, attrs?: AttrMap): void;
+  debug(message: string, attrs?: AttrMap): void;
+}
+
+/** Configuration accepted by `initTelemetry`. */
+export interface TelemetryConfig {
+  /** OTLP/HTTP base endpoint (e.g. http://localhost:4318). */
+  endpoint?: string;
+  /** Service name override. */
+  serviceName?: string;
+  /** Deployment environment. */
+  environment?: string;
+  /** Force initialization even when OMNIROUTE_TELEMETRY_ENABLED is unset. */
+  force?: boolean;
+  /** Disable the exporter (useful for unit tests). */
+  disableExport?: boolean;
+  /** Sampling rate in [0, 1]. Default 1. */
+  samplingRatio?: number;
+  /** Custom fetch implementation (used by tests). */
+  fetchImpl?: typeof fetch;
+  /** Custom `setTimeout` (used by tests for deterministic flush). */
+  setTimeoutImpl?: (cb: () => void, ms: number) => unknown;
+  /** Max buffered spans before forced flush. Default 256. */
+  bufferLimit?: number;
+}
+
+interface InternalSpan extends Span {
+  _name: string;
+  _kind: "SPAN_KIND_INTERNAL" | "SPAN_KIND_CLIENT" | "SPAN_KIND_SERVER";
+  _startTimeMs: number;
+  _endTimeMs: number | null;
+  _attrs: AttrMap;
+  _events: { name: string; timeMs: number; attrs: AttrMap }[];
+  _status: SpanStatusCode;
+  _statusMessage: string | undefined;
+  _context: SpanContext;
+  _ended: boolean;
+}
+
+interface PendingExport {
+  resourceAttrs: Record<string, string | number | boolean>;
+  spans: InternalSpan[];
+  metrics: MetricSample[];
+  logs: LogSample[];
+  droppedSpans: number;
+}
+
+interface MetricSample {
+  name: string;
+  value: number;
+  attrs: AttrMap;
+  tsMs: number;
+  kind: "counter" | "histogram";
+}
+
+interface LogSample {
+  level: "info" | "warn" | "error" | "debug";
+  message: string;
+  attrs: AttrMap;
+  tsMs: number;
+}
+
+/** Global state for the singleton SDK. */
+interface TelemetryState {
+  initialized: boolean;
+  config: TelemetryConfig;
+  resourceAttrs: Record<string, string | number | boolean>;
+  spans: Map<string, InternalSpan>;
+  metricSamples: MetricSample[];
+  logSamples: LogSample[];
+  flushTimer: ReturnType<typeof setTimeout> | null;
+  seq: number;
+  counters: Map<string, Counter>;
+  histograms: Map<string, Histogram>;
+  fetchImpl: typeof fetch;
+  setTimeoutImpl: (cb: () => void, ms: number) => unknown;
+}
+
+let STATE: TelemetryState | null = null;
+
+/** Singleton accessor — creates the state on first use. */
+function getState(): TelemetryState {
+  if (STATE) return STATE;
+  STATE = {
+    initialized: false,
+    config: {},
+    resourceAttrs: {},
+    spans: new Map(),
+    metricSamples: [],
+    logSamples: [],
+    flushTimer: null,
+    seq: 0,
+    counters: new Map(),
+    histograms: new Map(),
+    fetchImpl: globalThis.fetch,
+    setTimeoutImpl: (cb, ms) => setTimeout(cb, ms),
+  };
+  return STATE;
+}
+
+/**
+ * Decide whether telemetry is enabled. Returns `true` only when
+ * `OMNIROUTE_TELEMETRY_ENABLED` is one of `1|true|yes|on`, OR when
+ * `force: true` is passed explicitly.
+ *
+ * @param config - The bootstrap config (for the `force` flag).
+ * @returns Whether telemetry should run.
+ */
+export function isTelemetryEnabled(config: TelemetryConfig = {}): boolean {
+  if (config.force === true) return true;
+  const raw = (process?.env?.OMNIROUTE_TELEMETRY_ENABLED ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+/**
+ * One-time bootstrap. Safe to call multiple times (subsequent calls return
+ * the existing singleton).
+ *
+ * @param config - The bootstrap config.
+ * @returns `true` once initialized (also on subsequent calls); use
+ *   `getTracer` / `getMeter` to obtain instruments.
+ */
+export function initTelemetry(config: TelemetryConfig = {}): boolean {
+  const state = getState();
+  if (state.initialized) {
+    return true;
+  }
+  state.initialized = true;
+  state.config = { ...config };
+  state.fetchImpl = config.fetchImpl ?? state.fetchImpl;
+  state.setTimeoutImpl = config.setTimeoutImpl ?? state.setTimeoutImpl;
+
+  const enabled = isTelemetryEnabled(config);
+  if (!enabled || config.disableExport === true) {
+    state.config.endpoint = undefined;
+    state.resourceAttrs = {};
+    return true;
+  }
+
+  state.resourceAttrs = {
+    "service.name": config.serviceName ?? "omniroute",
+    "service.version": resolveServiceVersion(),
+    "telemetry.sdk.language": "nodejs",
+    "telemetry.sdk.name": "omniroute-observability",
+  };
+  if (config.environment) state.resourceAttrs["deployment.environment"] = config.environment;
+
+  // Schedule periodic flush — every 10 seconds by default.
+  if (!config.disableExport && config.endpoint) {
+    state.flushTimer = state.setTimeoutImpl(() => {
+      void flushTelemetry().catch(() => {
+        // best-effort
+      });
+    }, 10_000) as ReturnType<typeof setTimeout>;
+  }
+
+  return true;
+}
+
+/**
+ * Reset the SDK state. Test-only — production code must use `shutdown`.
+ *
+ * @internal
+ */
+export function __resetTelemetryForTests(): void {
+  const state = getState();
+  if (state.flushTimer) {
+    try {
+      clearTimeout(state.flushTimer as ReturnType<typeof setTimeout>);
+    } catch {
+      /* ignore */
+    }
+  }
+  STATE = null;
+}
+
+function makeHandle(state: TelemetryState) {
+  const enabled = isTelemetryEnabled(state.config);
+  const tracer: Tracer = makeTracer(state);
+  const meter = {
+    getCounter: (name: string) => getOrCreateCounter(state, name),
+    getHistogram: (name: string) => getOrCreateHistogram(state, name),
+  };
+  const logger: Logger = makeLogger(state);
+  return {
+    tracer,
+    meter,
+    logger,
+    flush: flushTelemetry,
+    shutdown,
+    enabled,
+  };
+}
+
+function makeTracer(state: TelemetryState): Tracer {
+  return {
+    startSpan(name, attrs, parent) {
+      const id = (++state.seq).toString(16).padStart(16, "0");
+      const ctx: SpanContext = {
+        traceId: parent?.traceId ?? randomHex(32),
+        spanId: id.slice(0, 16),
+        traceFlags: 1,
+      };
+      const span: InternalSpan = {
+        _name: name,
+        _kind: "SPAN_KIND_INTERNAL",
+        _startTimeMs: Date.now(),
+        _endTimeMs: null,
+        _attrs: { ...(attrs ?? {}) },
+        _events: [],
+        _status: "unset",
+        _statusMessage: undefined,
+        _context: ctx,
+        _ended: false,
+        get context() {
+          return ctx;
+        },
+        get ended() {
+          return span._ended;
+        },
+        setAttribute(k, v) {
+          if (!span._ended) span._attrs[k] = v;
+          return span;
+        },
+        setAttributes(a) {
+          if (span._ended) return span;
+          for (const [k, v] of Object.entries(a)) span._attrs[k] = v;
+          return span;
+        },
+        addEvent(evName, evAttrs) {
+          if (span._ended) return span;
+          span._events.push({ name: evName, timeMs: Date.now(), attrs: { ...(evAttrs ?? {}) } });
+          return span;
+        },
+        setStatus(code, msg) {
+          if (span._ended) return span;
+          span._status = code;
+          span._statusMessage = msg;
+          return span;
+        },
+        recordException(err) {
+          if (span._ended) return span;
+          const msg = err instanceof Error ? err.message : String(err);
+          const stack = err instanceof Error ? err.stack : undefined;
+          span._events.push({
+            name: "exception",
+            timeMs: Date.now(),
+            attrs: { [SPAN_ATTRS.ERROR_TYPE]: "Error", [SPAN_ATTRS.ERROR_MESSAGE]: msg },
+          });
+          if (stack) span._attrs[SPAN_ATTRS.ERROR_STACK] = stack;
+          return span;
+        },
+        end(endTimeMs) {
+          if (span._ended) return;
+          span._ended = true;
+          span._endTimeMs = endTimeMs ?? Date.now();
+          state.spans.set(span._context.spanId, span);
+        },
+      };
+      return span;
+    },
+    async withSpan<T>(name: string, fn: (span: Span) => T | Promise<T>, attrs) {
+      const span = this.startSpan(name, attrs);
+      try {
+        const out = await fn(span);
+        if (!span.ended) span.setStatus("ok").end();
+        return out;
+      } catch (err) {
+        if (!span.ended) {
+          span.recordException(err).setStatus("error", errMsg(err)).end();
+        }
+        throw err;
+      }
+    },
+  };
+}
+
+function makeLogger(state: TelemetryState): Logger {
+  return {
+    info(message, attrs) {
+      pushLog(state, "info", message, attrs);
+    },
+    warn(message, attrs) {
+      pushLog(state, "warn", message, attrs);
+    },
+    error(message, attrs) {
+      pushLog(state, "error", message, attrs);
+    },
+    debug(message, attrs) {
+      pushLog(state, "debug", message, attrs);
+    },
+  };
+}
+
+function pushLog(state: TelemetryState, level: LogSample["level"], message: string, attrs?: AttrMap) {
+  state.logSamples.push({ level, message, attrs: { ...(attrs ?? {}) }, tsMs: Date.now() });
+}
+
+function getOrCreateCounter(state: TelemetryState, name: string): Counter {
+  const existing = state.counters.get(name);
+  if (existing) return existing;
+  const c: Counter = {
+    add(value, attrs) {
+      state.metricSamples.push({ name, value, attrs: { ...(attrs ?? {}) }, tsMs: Date.now(), kind: "counter" });
+    },
+  };
+  state.counters.set(name, c);
+  return c;
+}
+
+function getOrCreateHistogram(state: TelemetryState, name: string): Histogram {
+  const existing = state.histograms.get(name);
+  if (existing) return existing;
+  const h: Histogram = {
+    record(value, attrs) {
+      state.metricSamples.push({ name, value, attrs: { ...(attrs ?? {}) }, tsMs: Date.now(), kind: "histogram" });
+    },
+  };
+  state.histograms.set(name, h);
+  return h;
+}
+
+/**
+ * Force a flush of all buffered spans/metrics/logs to the configured OTLP
+ * endpoint. Errors are swallowed (best-effort).
+ */
+export async function flushTelemetry(): Promise<void> {
+  const state = getState();
+  if (!state.config.endpoint) return;
+  const spans = Array.from(state.spans.values());
+  state.spans.clear();
+  const metrics = state.metricSamples.splice(0, state.metricSamples.length);
+  const logs = state.logSamples.splice(0, state.logSamples.length);
+  if (spans.length === 0 && metrics.length === 0 && logs.length === 0) return;
+  const payload: PendingExport = {
+    resourceAttrs: state.resourceAttrs,
+    spans,
+    metrics,
+    logs,
+    droppedSpans: 0,
+  };
+  await postExport(state, payload);
+}
+
+/**
+ * Shut the SDK down: flush, clear timers, and reset singleton state. The
+ * handle returned by `initTelemetry` will be inert afterwards; callers
+ * should obtain a fresh handle if needed.
+ */
+export async function shutdown(): Promise<void> {
+  const state = getState();
+  if (state.flushTimer) {
+    try {
+      clearTimeout(state.flushTimer as ReturnType<typeof setTimeout>);
+    } catch {
+      /* ignore */
+    }
+    state.flushTimer = null;
+  }
+  await flushTelemetry();
+  STATE = null;
+}
+
+/** Alias for `shutdown`. Matches the `shutdownTelemetry` naming used by callers/tests. */
+export const shutdownTelemetry = shutdown;
+
+/**
+ * Convenience accessor for a named tracer. Returns the cached handle; never
+ * throws. A no-op tracer is returned when telemetry is disabled.
+ *
+ * @param name - Logical tracer name (typically the instrumenting library).
+ * @returns A `Tracer`.
+ */
+export function getTracer(name: string): Tracer {
+  const state = getState();
+  if (!state.initialized) {
+    // Lazy initialize so callers don't have to remember to call initTelemetry.
+    initTelemetry();
+  }
+  void name; // name is reserved for future per-tracer isolation
+  return makeTracer(getState());
+}
+
+/**
+ * Convenience accessor for a named logger. Returns a tiny shim with the
+ * standard four log levels (`info` / `warn` / `error` / `debug`).
+ *
+ * @param name - Logical logger name.
+ */
+export function getLogger(name: string): Logger {
+  const state = getState();
+  if (!state.initialized) {
+    initTelemetry();
+  }
+  void name;
+  return makeLogger(getState());
+}
+
+/**
+ * Convenience accessor for a named meter. Returns a tiny shim exposing
+ * `createCounter` / `createHistogram` / `createUpDownCounter` (the OTel
+ * Meter interface used by OmniRoute's own bindings).
+ *
+ * @param name - Logical meter name.
+ */
+export function getMeter(name: string): {
+  createCounter: (n: string) => Counter;
+  createHistogram: (n: string) => Histogram;
+  createUpDownCounter: (n: string) => Counter;
+} {
+  const state = getState();
+  if (!state.initialized) {
+    initTelemetry();
+  }
+  void name;
+  const s = getState();
+  return {
+    createCounter: (n: string) => getOrCreateCounter(s, n),
+    createHistogram: (n: string) => getOrCreateHistogram(s, n),
+    createUpDownCounter: (n: string) => getOrCreateCounter(s, n),
+  };
+}
+
+/** Returns `true` when `initTelemetry` has been called and not yet shut down. */
+export function isTelemetryInitialized(): boolean {
+  return STATE?.initialized === true;
+}
+
+/**
+ * Run a callback inside a span. Convenience wrapper used by application
+ * code; equivalent to `tracer.withSpan(name, fn)`.
+ *
+ * @param name - Span name.
+ * @param fn - The async callback.
+ * @param attrs - Optional initial attributes.
+ * @returns The callback's resolved value.
+ */
+export function runInSpan<T>(
+  name: string,
+  fn: () => T | Promise<T>,
+  attrs?: AttrMap
+): Promise<T> {
+  const t = getTracer("omniroute");
+  return t.withSpan(name, async () => fn(), attrs);
+}
+
+async function postExport(state: TelemetryState, payload: PendingExport): Promise<void> {
+  const endpoint = state.config.endpoint;
+  if (!endpoint) return;
+  const url = `${endpoint.replace(/\/$/, "")}/v1/otlp/omniroute`;
+  const body = JSON.stringify(serializeExport(payload));
+  try {
+    await state.fetchImpl(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      // keepalive would be nice but not all runtimes support it
+    });
+  } catch {
+    // best-effort: drop the export
+  }
+}
+
+function serializeExport(payload: PendingExport): Record<string, unknown> {
+  const resource = { attributes: attrMapToAttrs(payload.resourceAttrs) };
+  const spans = payload.spans.map((s) => ({
+    traceId: s._context.traceId,
+    spanId: s._context.spanId,
+    parentSpanId: "",
+    name: s._name,
+    kind: s._kind,
+    startTimeUnixNano: s._startTimeMs * 1_000_000,
+    endTimeUnixNano: (s._endTimeMs ?? s._startTimeMs) * 1_000_000,
+    attributes: attrMapToAttrs(s._attrs),
+    events: s._events.map((e) => ({
+      timeUnixNano: e.timeMs * 1_000_000,
+      name: e.name,
+      attributes: attrMapToAttrs(e.attrs),
+    })),
+    status: { code: s._status === "ok" ? 1 : s._status === "error" ? 2 : 0, message: s._statusMessage ?? "" },
+  }));
+  const metrics = payload.metrics.map((m) => ({
+    name: m.name,
+    kind: m.kind,
+    value: m.value,
+    timeUnixNano: m.tsMs * 1_000_000,
+    attributes: attrMapToAttrs(m.attrs),
+  }));
+  const logs = payload.logs.map((l) => ({
+    timeUnixNano: l.tsMs * 1_000_000,
+    severityText: l.level.toUpperCase(),
+    body: l.message,
+    attributes: attrMapToAttrs(l.attrs),
+  }));
+  return {
+    resourceSpans: [{ resource, scopeSpans: [{ scope: { name: "omniroute" }, spans }] }],
+    resourceMetrics: [{ resource, scopeMetrics: [{ scope: { name: "omniroute" }, metrics }] }],
+    resourceLogs: [{ resource, scopeLogs: [{ scope: { name: "omniroute" }, logs }] }],
+  };
+}
+
+function attrMapToAttrs(attrs: AttrMap | Record<string, string | number | boolean>): { key: string; value: { stringValue?: string; intValue?: string; doubleValue?: number; boolValue?: boolean } }[] {
+  const out: { key: string; value: { stringValue?: string; intValue?: string; doubleValue?: number; boolValue?: boolean } }[] = [];
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === null || v === undefined) continue;
+    if (typeof v === "string") out.push({ key: k, value: { stringValue: v } });
+    else if (typeof v === "number") {
+      if (Number.isInteger(v)) out.push({ key: k, value: { intValue: v.toString() } });
+      else out.push({ key: k, value: { doubleValue: v } });
+    } else if (typeof v === "boolean") out.push({ key: k, value: { boolValue: v } });
+  }
+  return out;
+}
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function randomHex(bytes: number): string {
+  let s = "";
+  for (let i = 0; i < bytes; i++) {
+    const n = Math.floor(Math.random() * 256);
+    s += n.toString(16).padStart(2, "0");
+  }
+  return s;
+}
+
+/**
+ * Convenience helper — wraps `initTelemetry` with a no-op fallback when
+ * telemetry is disabled. Useful for `instrumentation-node.ts`.
+ */
+export async function initTelemetryDefault(): Promise<{
+  tracer: Tracer;
+  meter: { getCounter: (n: string) => Counter; getHistogram: (n: string) => Histogram };
+  logger: Logger;
+  flush: () => Promise<void>;
+  shutdown: () => Promise<void>;
+  enabled: boolean;
+}> {
+  const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? "http://localhost:4318";
+  const env = process.env.OMNIROUTE_ENVIRONMENT ?? process.env.NODE_ENV ?? undefined;
+  return initTelemetry({
+    endpoint,
+    environment: env,
+    serviceName: "omniroute",
+  });
+}
+
+/** Exported for tests only — the canonical SPAN_NAMES map. */
+export const _SPAN_NAMES = SPAN_NAMES;

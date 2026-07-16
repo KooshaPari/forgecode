@@ -1,0 +1,40 @@
+#!/usr/bin/env python
+"""Phase 6 push — push all repos that have pending commits."""
+import subprocess, sys
+
+# Read token from .env file
+with open(r'C:\Users\koosh\.env', 'r') as f:
+    for line in f:
+        if line.startswith('GITHUB_TOKEN='):
+            token = line.strip().split('=', 1)[1]
+            break
+
+print(f'Token len: {len(token)}')
+
+pushes = [
+    ('agileplus',                'HEAD:wip/preserve-agileplus-brand-rename-20260605'),
+    ('phenotype-infra',          'HEAD:master'),
+    ('PhenoCompose',             'HEAD:main'),
+    ('nanovms',                  'HEAD:main'),
+    ('BytePort',                 'HEAD:main'),
+    ('phenotype-infra-ci-fix',   'HEAD:master'),  # fallback to phenotype-infra
+    ('phenotype-registry-pr172-check', 'HEAD:feat/p6-thegent-closure-2026-06-21'),
+]
+
+for repo, ref in pushes:
+    name = repo.replace('phenotype-infra-ci-fix', 'phenotype-infra')  # ci-fix absorbed
+    url = f'https://KooshaPari:{token}@github.com/KooshaPari/{name}.git'
+    try:
+        r = subprocess.run(
+            ['git', '-C', rf'C:\Users\koosh\{repo}', 'push', url, ref],
+            capture_output=True, text=True, timeout=120,
+        )
+        out = (r.stderr or r.stdout)[-200:].strip()
+        status = 'OK' if r.returncode == 0 else f'FAIL(rc={r.returncode})'
+        print(f'[{status}] {repo} → {ref}')
+        if out:
+            print(f'        {out[:160]}')
+    except subprocess.TimeoutExpired:
+        print(f'[TIMEOUT] {repo}')
+    except Exception as e:
+        print(f'[ERROR] {repo}: {e}')

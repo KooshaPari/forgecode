@@ -1,0 +1,2 @@
+@echo off
+"c:\program files\Git\usr\bin\bash.exe" --noprofile --norc -c "PATH=/tmp/qs-shims-bash:$PATH bash ./grade.sh 2>&1" > C:\Users\koosh\AppData\Local\Temp\grade-full.log 2>&1

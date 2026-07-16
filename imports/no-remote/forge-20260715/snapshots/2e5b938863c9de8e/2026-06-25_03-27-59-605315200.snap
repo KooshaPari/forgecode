@@ -1,0 +1,6 @@
+"""Eval pillar scoring extensions.
+
+The base :class:`eval.pillars.PillarScores` surface lives in
+``eval/pillars.py``. Optional cross-repo bridges (e.g. Tracera semantic
+scorer) live here so they don't bloat the canonical scoring module.
+"""

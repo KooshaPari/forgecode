@@ -1,0 +1,124 @@
+//! Tests for the DAG §3 verification gate module (`crates/dag/src/gate.rs`).
+//!
+// These tests cover the pure gate logic — the binary shell-out to
+//! `cargo check` / `cargo test` is exercised by the integration suite, not
+//! here. The unit tests assert the contract: which crates get gated for a
+//! given node, what the JSON shape looks like, and how the design-only
+//! lanes are skipped.
+
+use civ_dag::gate::{
+    extract_crate_from_scope, gates_for_all, lane_to_crate, summary_json, Gate, GateMode,
+    SkipReason,
+};
+use civ_dag::model::{Node, NodeState, Plan, PlanMeta};
+
+fn make_node(id: &str, lane: &str, scope: &str) -> Node {
+    Node {
+        id: id.to_string(),
+        layer: "P0".into(),
+        pr: None,
+        title: format!("node-{id}"),
+        scope: scope.to_string(),
+        state: NodeState::Queued,
+        lane: lane.to_string(),
+        deps: vec![],
+        fr_ref: None,
+        adr_ref: None,
+        eta: None,
+        started_at: None,
+        finished_at: None,
+        summary: None,
+        agent: None,
+        task: None,
+    }
+}
+
+fn make_plan(nodes: Vec<Node>) -> Plan {
+    Plan {
+        version: 1,
+        meta: PlanMeta::default(),
+        nodes,
+    }
+}
+
+#[test]
+fn lane_to_crate_maps_known_lanes() {
+    // The §3 contract: every node has a lane, every lane maps to one crate.
+    // Unknown lanes must fall through to a Skip with UnknownLane so the
+    // gate runner can emit a clean JSON entry instead of crashing.
+    assert_eq!(lane_to_crate("core-sim"), Some("civ-engine".to_string()));
+    assert_eq!(lane_to_crate("emergence"), Some("civ-engine".to_string()));
+    assert_eq!(lane_to_crate("client"), Some("civ-bevy-ref".to_string()));
+    assert_eq!(lane_to_crate("unknown-lane-xyz"), None);
+}
+
+#[test]
+fn extract_crate_from_scope_picks_up_explicit_civ_prefix() {
+    // A node's `scope` may name a crate directly even when its lane is
+    // generic. The §3 contract: the explicit prefix wins.
+    assert_eq!(
+        extract_crate_from_scope("civ-protocol-3d: lifecycle hooks"),
+        Some("civ-protocol-3d".to_string())
+    );
+    assert_eq!(
+        extract_crate_from_scope("crates/voxel — fluid CA + boundary"),
+        Some("crates/voxel".to_string())
+    );
+    assert_eq!(extract_crate_from_scope("docs only — design doc"), None);
+}
+
+#[test]
+fn gate_for_node_returns_run_when_scope_resolves_a_crate() {
+    let node = make_node("n1", "core-sim", "core engine sim");
+    match gates_for_all(&[node.clone()]).pop().unwrap() {
+        Gate::Run { crate_name, .. } => assert_eq!(crate_name, "civ-engine"),
+        Gate::Skip { .. } => panic!("expected Run for core-sim lane"),
+    }
+}
+
+#[test]
+fn gate_for_node_returns_skip_when_lane_is_design_only() {
+    let node = make_node("n2", "design", "rendering ADR");
+    match gates_for_all(&[node.clone()]).pop().unwrap() {
+        Gate::Skip { reason } => match reason {
+            SkipReason::DesignOnly => {}
+            other => panic!("expected DesignOnly, got {:?}", other),
+        },
+        Gate::Run { .. } => panic!("expected Skip for design lane"),
+    }
+}
+
+#[test]
+fn summary_json_emits_per_node_run_or_skip_entries() {
+    let plan = make_plan(vec![
+        make_node("alpha", "core-sim", "core engine"),
+        make_node("beta", "design", "design only"),
+        make_node("gamma", "unknown-lane", "no crate"),
+    ]);
+    let gates = gates_for_all(&plan.nodes);
+    let report = summary_json(&gates);
+
+    let by_node = report.as_array().expect("top-level must be a JSON array");
+    assert_eq!(by_node.len(), 3);
+
+    let actions: Vec<&str> = by_node
+        .iter()
+        .map(|entry| entry["action"].as_str().unwrap())
+        .collect();
+    assert!(actions.contains(&"run"));
+    assert!(actions.contains(&"skip"));
+
+    let alpha = by_node
+        .iter()
+        .find(|e| e["node_id"] == "alpha")
+        .expect("alpha node must be present");
+    assert_eq!(alpha["action"], "run");
+    assert_eq!(alpha["crate"], "civ-engine");
+
+    let beta = by_node
+        .iter()
+        .find(|e| e["node_id"] == "beta")
+        .expect("beta node must be present");
+    assert_eq!(beta["action"], "skip");
+    assert!(beta["why"].is_string());
+}

@@ -1,0 +1,180 @@
+'use client';
+
+import React, { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
+import { createJob } from '@/lib/supabase';
+
+interface CreateJobFormProps {
+  /** Optional userId override (e.g. when rendered from a server component). */
+  userId?: string;
+  /** Optional models list (used when no client-side user/listing flow). */
+  models?: ModelOption[];
+  /** Optional prefill used when cloning an existing job. */
+  cloneJob?: { name?: string; model?: string; prompt?: string; max_tokens?: number } | null;
+}
+
+interface ModelOption {
+  id: string;
+  name: string;
+}
+
+export default function CreateJobForm({
+  userId: userIdProp,
+  models: modelsProp,
+  cloneJob,
+}: CreateJobFormProps = {}) {
+  const { user } = useAuth();
+  const router = useRouter();
+
+  const resolvedUserId = userIdProp ?? user?.id ?? '';
+
+  const [name, setName] = useState<string>(cloneJob?.name ?? '');
+  const [model, setModel] = useState<string>(cloneJob?.model ?? '');
+  const [prompt, setPrompt] = useState<string>(cloneJob?.prompt ?? '');
+  const [maxTokens, setMaxTokens] = useState<string>(
+    cloneJob?.max_tokens != null ? String(cloneJob.max_tokens) : '',
+  );
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const modelOptions = (modelsProp ?? []).map((m) => ({ id: m.id, name: m.name }));
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!name || !model || !prompt || !maxTokens) {
+      setError('Please fill in all required fields');
+      return;
+    }
+
+    const parsedMaxTokens = Number(maxTokens);
+    if (Number.isNaN(parsedMaxTokens)) {
+      setError('Max tokens must be a number');
+      return;
+    }
+
+    try {
+      setError(null);
+      setLoading(true);
+
+      const { data, error: createError } = await createJob(resolvedUserId, {
+        name,
+        model,
+        prompt,
+        max_tokens: parsedMaxTokens,
+      });
+
+      if (createError) {
+        setError(createError.message);
+        return;
+      }
+
+      if (data?.id) {
+        router.push(`/jobs/${data.id}`);
+      }
+    } catch (err) {
+      console.error('Error creating job:', err);
+      setError('An unexpected error occurred');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6" noValidate>
+      {error && (
+        <div className="p-4 text-red-700 bg-red-100 rounded-md">{error}</div>
+      )}
+
+      <div>
+        <label htmlFor="name" className="block text-sm font-medium text-gray-700">
+          Job name
+        </label>
+        <input
+          id="name"
+          name="name"
+          type="text"
+          required
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="block w-full px-3 py-2 mt-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+        />
+      </div>
+
+      <div>
+        <label htmlFor="model" className="block text-sm font-medium text-gray-700">
+          Model
+        </label>
+        {modelOptions.length > 0 ? (
+          <select
+            id="model"
+            name="model"
+            required
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            className="block w-full px-3 py-2 mt-1 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+          >
+            <option value="">Select a model</option>
+            {modelOptions.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            id="model"
+            name="model"
+            type="text"
+            required
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            className="block w-full px-3 py-2 mt-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+          />
+        )}
+      </div>
+
+      <div>
+        <label htmlFor="prompt" className="block text-sm font-medium text-gray-700">
+          Prompt
+        </label>
+        <textarea
+          id="prompt"
+          name="prompt"
+          required
+          rows={6}
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          className="block w-full px-3 py-2 mt-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+        />
+      </div>
+
+      <div>
+        <label htmlFor="max_tokens" className="block text-sm font-medium text-gray-700">
+          Max tokens
+        </label>
+        <input
+          id="max_tokens"
+          name="max_tokens"
+          type="number"
+          min={1}
+          required
+          value={maxTokens}
+          onChange={(e) => setMaxTokens(e.target.value)}
+          className="block w-full px-3 py-2 mt-1 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+        />
+      </div>
+
+      <div>
+        <button
+          type="submit"
+          disabled={loading}
+          className="flex justify-center w-full px-4 py-2 text-sm font-medium text-white bg-indigo-600 border border-transparent rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+        >
+          {loading ? 'Creating...' : 'Create Job'}
+        </button>
+      </div>
+    </form>
+  );
+}

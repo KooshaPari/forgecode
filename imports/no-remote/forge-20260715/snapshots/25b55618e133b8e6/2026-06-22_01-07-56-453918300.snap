@@ -1,0 +1,48 @@
+"""Remove PhenoProc phantom entry from active_repos.txt.
+
+Confirmed: pos=60 in tab-separated single line. Use exact-tab-bounded match.
+"""
+import re
+from pathlib import Path
+
+p = Path(r"C:\Users\koosh\active_repos.txt")
+content = p.read_text(encoding="utf-8")
+
+# Find PhenoProc as a tab-bounded token
+# Strategy: replace \tPhenoProc\t (or \tPhenoProc at end / start) with appropriate separator
+original_len = len(content)
+
+# Count tokens before/after
+tokens_before = [t for t in content.split("\t") if t.strip()]
+count_before = sum(1 for t in tokens_before if t == "PhenoProc")
+
+# Remove PhenoProc token (with its preceding or following tab, not both)
+patterns = [
+    (r"\tPhenoProc\t", "\t"),       # middle: collapse double tab
+    (r"^PhenoProc\t", ""),           # start
+    (r"\tPhenoProc$", ""),           # end
+    (r"^PhenoProc$", ""),            # only entry
+]
+
+removed = False
+new_content = content
+for pat, repl in patterns:
+    if re.search(pat, new_content):
+        new_content = re.sub(pat, repl, new_content)
+        removed = True
+        break
+
+if removed:
+    p.write_text(new_content, encoding="utf-8")
+    tokens_after = [t for t in new_content.split("\t") if t.strip()]
+    print(f"REMOVED PhenoProc (was {count_before} occurrence)")
+    print(f"tokens: {len(tokens_before)} -> {len(tokens_after)}")
+    print(f"bytes:  {original_len} -> {len(new_content)}")
+    # Verify gone
+    if "PhenoProc" in new_content:
+        print("WARN: 'PhenoProc' still present (partial match maybe)")
+    else:
+        print("CONFIRMED: 'PhenoProc' no longer in file")
+else:
+    print("ERROR: PhenoProc not found with any pattern")
+    print(repr(content[:300]))

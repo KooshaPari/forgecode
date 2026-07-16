@@ -1,0 +1,7 @@
+cd "C:\Users\koosh\Dev\Civis"
+git checkout feat/physics-integration-plan 2>&1
+echo "--- branch state ---"
+git branch --show-current
+git log --oneline -3
+echo "--- working tree state ---"
+git status --short

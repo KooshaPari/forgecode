@@ -1,0 +1,333 @@
+//! YAML/JSON serialization for the DAG.
+//!
+//! The internal [`Dag`] type is generic over `K` and uses hash-based
+//! collections, which makes direct serde serialisation awkward for arbitrary
+//! key types. This module provides a portable [`DagSchema`] that uses
+//! `String` node identifiers and supports full YAML / JSON round-trip.
+//!
+//! # Example
+//!
+//! ```rust
+//! use byteport_dag::dag::Dag;
+//! use byteport_dag::serialize::DagSchema;
+//!
+//! let mut dag: Dag<String> = Dag::new();
+//! dag.add_node("build".into()).unwrap();
+//! dag.add_node("test".into()).unwrap();
+//! dag.add_node("deploy".into()).unwrap();
+//! dag.add_edge("build".into(), "test".into()).unwrap();
+//! dag.add_edge("test".into(), "deploy".into()).unwrap();
+//!
+//! let schema = DagSchema::from_dag(&dag, "1.0.0");
+//! let yaml = schema.to_yaml().unwrap();
+//! let round: DagSchema = DagSchema::from_yaml(&yaml).unwrap();
+//! assert_eq!(schema, round);
+//! ```
+
+use std::collections::BTreeSet;
+
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::dag::Dag;
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/// Errors that can occur during DAG serialization / deserialization.
+#[derive(Debug, Error)]
+pub enum DagSerError {
+    #[error("YAML error: {0}")]
+    Yaml(#[from] serde_yaml::Error),
+    #[error("JSON error: {0}")]
+    Json(#[from] serde_json::Error),
+}
+
+// ---------------------------------------------------------------------------
+// Schema types  (concrete, serde-friendly representations)
+// ---------------------------------------------------------------------------
+
+/// A single entry in the DAG schema.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SchemaNode {
+    /// Unique node identifier.
+    pub id: String,
+    /// Human-readable label (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// A directed edge between two nodes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SchemaEdge {
+    /// Source node id.
+    pub from: String,
+    /// Target node id.
+    pub to: String,
+    /// Optional edge label / annotation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// Portable, serializable DAG representation.
+///
+/// This type is the **only** entry point for YAML / JSON serialization.
+/// It mirrors the internal [`Dag`] but owns `String`-keyed data so that
+/// serde derives work unconditionally.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DagSchema {
+    /// Schema version (e.g. "1.0.0").
+    pub version: String,
+    /// DAG name (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Nodes in the graph.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub nodes: Vec<SchemaNode>,
+    /// Directed edges.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub edges: Vec<SchemaEdge>,
+}
+
+impl DagSchema {
+    /// Build a `DagSchema` from an internal `Dag` keyed by `String`.
+    ///
+    /// `version` is a free-form version string (e.g. `"1.0.0"`).
+    /// The optional `name` is taken from a separate parameter since the
+    /// generic `Dag` does not carry metadata.
+    pub fn from_dag(dag: &Dag<String>, version: impl Into<String>) -> Self {
+        let nodes: Vec<SchemaNode> = dag
+            .iter_nodes()
+            .map(|id| SchemaNode {
+                id: id.clone(),
+                label: None,
+                prerequisites: Vec::new(),
+                acceptance: Vec::new(),
+                audit_hooks: Vec::new(),
+            })
+            .collect();
+
+        // Collect deduplicated edges.
+        let mut edges_set: BTreeSet<(String, String)> = BTreeSet::new();
+        for node in dag.iter_nodes() {
+            if let Some(children) = dag.children_of(node) {
+                for child in children {
+                    edges_set.insert((node.clone(), child.clone()));
+                }
+            }
+        }
+        let edges: Vec<SchemaEdge> = edges_set
+            .into_iter()
+            .map(|(from, to)| SchemaEdge {
+                from,
+                to,
+                label: None,
+            })
+            .collect();
+
+        Self {
+            version: version.into(),
+            name: None,
+            nodes,
+            edges,
+        }
+    }
+
+    /// Set an optional name on the schema.
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Reconstruct an internal `Dag<String>` from this schema.
+    ///
+    /// Returns an error if a duplicate node is encountered (the schema
+    /// should never produce duplicates, but we guard defensively).
+    pub fn into_dag(&self) -> Result<Dag<String>, crate::dag::DagError> {
+        let mut dag = Dag::new();
+        for node in &self.nodes {
+            dag.add_node(node.id.clone())?;
+        }
+        for edge in &self.edges {
+            dag.add_edge(edge.from.clone(), edge.to.clone())?;
+        }
+        Ok(dag)
+    }
+
+    // -----------------------------------------------------------------------
+    // YAML
+    // -----------------------------------------------------------------------
+
+    /// Serialize to a YAML string.
+    pub fn to_yaml(&self) -> Result<String, DagSerError> {
+        Ok(serde_yaml::to_string(self)?)
+    }
+
+    /// Deserialize from a YAML string.
+    pub fn from_yaml(yaml: &str) -> Result<Self, DagSerError> {
+        Ok(serde_yaml::from_str(yaml)?)
+    }
+
+    // -----------------------------------------------------------------------
+    // JSON
+    // -----------------------------------------------------------------------
+
+    /// Serialize to a compact JSON string.
+    pub fn to_json(&self) -> Result<String, DagSerError> {
+        Ok(serde_json::to_string(self)?)
+    }
+
+    /// Serialize to a pretty-printed JSON string.
+    pub fn to_json_pretty(&self) -> Result<String, DagSerError> {
+        Ok(serde_json::to_string_pretty(self)?)
+    }
+
+    /// Deserialize from a JSON string.
+    pub fn from_json(json: &str) -> Result<Self, DagSerError> {
+        Ok(serde_json::from_str(json)?)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dag::Dag;
+
+    fn sample_dag() -> Dag<String> {
+        let mut dag = Dag::new();
+        for n in ["checkout", "build", "test", "deploy"] {
+            dag.add_node(n.to_string()).unwrap();
+        }
+        dag.add_edge("checkout".into(), "build".into()).unwrap();
+        dag.add_edge("build".into(), "test".into()).unwrap();
+        dag.add_edge("test".into(), "deploy".into()).unwrap();
+        dag
+    }
+
+    #[test]
+    fn yaml_round_trip() {
+        let dag = sample_dag();
+        let schema = DagSchema::from_dag(&dag, "1.0.0").with_name("pipeline");
+        let yaml = schema.to_yaml().expect("YAML serialization");
+        let restored = DagSchema::from_yaml(&yaml).expect("YAML deserialization");
+        assert_eq!(schema, restored, "YAML round-trip must be lossless");
+    }
+
+    #[test]
+    fn json_round_trip() {
+        let dag = sample_dag();
+        let schema = DagSchema::from_dag(&dag, "1.0.0");
+        let json = schema.to_json().expect("JSON serialization");
+        let restored = DagSchema::from_json(&json).expect("JSON deserialization");
+        assert_eq!(schema, restored, "JSON round-trip must be lossless");
+    }
+
+    #[test]
+    fn json_pretty_round_trip() {
+        let dag = sample_dag();
+        let schema = DagSchema::from_dag(&dag, "1.0.0");
+        let json = schema.to_json_pretty().expect("Pretty JSON");
+        let restored = DagSchema::from_json(&json).expect("Pretty JSON deserialization");
+        assert_eq!(schema, restored);
+    }
+
+    #[test]
+    fn cross_format_consistency() {
+        let dag = sample_dag();
+        let schema = DagSchema::from_dag(&dag, "1.0.0");
+        let yaml = schema.to_yaml().unwrap();
+        let from_yaml = DagSchema::from_yaml(&yaml).unwrap();
+        let json = from_yaml.to_json().unwrap();
+        let from_json = DagSchema::from_json(&json).unwrap();
+        assert_eq!(schema, from_json, "YAML → JSON cross-format must be consistent");
+    }
+
+    #[test]
+    fn schema_to_dag_and_back() {
+        let dag = sample_dag();
+        let schema = DagSchema::from_dag(&dag, "2.0.0");
+        let reconstructed = schema.into_dag().expect("into_dag should succeed");
+        assert_eq!(dag.node_count(), reconstructed.node_count());
+        assert_eq!(dag.edge_count(), reconstructed.edge_count());
+        // Verify topological equivalence by checking all nodes exist
+        for n in dag.iter_nodes() {
+            assert!(reconstructed.contains(n), "node {n} should exist");
+        }
+    }
+
+    #[test]
+    fn empty_dag_round_trips() {
+        let dag: Dag<String> = Dag::new();
+        let schema = DagSchema::from_dag(&dag, "0.1.0");
+        let yaml = schema.to_yaml().unwrap();
+        let back = DagSchema::from_yaml(&yaml).unwrap();
+        assert_eq!(schema, back);
+    }
+
+    #[test]
+    fn yaml_content_is_readable() {
+        let dag = sample_dag();
+        let schema = DagSchema::from_dag(&dag, "1.0.0").with_name("ci-pipeline");
+        let yaml = schema.to_yaml().unwrap();
+        assert!(yaml.contains("version:"));
+        assert!(yaml.contains("ci-pipeline"));
+        assert!(yaml.contains("checkout"));
+        assert!(yaml.contains("deploy"));
+    }
+
+    #[test]
+    fn json_content_is_readable() {
+        let dag = sample_dag();
+        let schema = DagSchema::from_dag(&dag, "1.0.0");
+        let json = schema.to_json_pretty().unwrap();
+        assert!(json.contains("\"version\""));
+        assert!(json.contains("\"checkout\""));
+        assert!(json.contains("\"deploy\""));
+    }
+
+    #[test]
+    fn diamond_graph_round_trip() {
+        let mut dag = Dag::new();
+        for n in ["a", "b", "c", "d"] {
+            dag.add_node(n.to_string()).unwrap();
+        }
+        dag.add_edge("a".into(), "b".into()).unwrap();
+        dag.add_edge("a".into(), "c".into()).unwrap();
+        dag.add_edge("b".into(), "d".into()).unwrap();
+        dag.add_edge("c".into(), "d".into()).unwrap();
+
+        let schema = DagSchema::from_dag(&dag, "1.0.0");
+        let json = schema.to_json().unwrap();
+        let back = DagSchema::from_json(&json).unwrap();
+        assert_eq!(schema, back);
+        assert_eq!(back.edges.len(), 4);
+    }
+
+    #[test]
+    fn round_trip_via_dag_reconstruction_preserves_structure() {
+        let mut dag = Dag::new();
+        for n in ["root", "a1", "a2", "a3", "leaf"] {
+            dag.add_node(n.to_string()).unwrap();
+        }
+        dag.add_edge("root".into(), "a1".into()).unwrap();
+        dag.add_edge("root".into(), "a2".into()).unwrap();
+        dag.add_edge("root".into(), "a3".into()).unwrap();
+        dag.add_edge("a1".into(), "leaf".into()).unwrap();
+        dag.add_edge("a2".into(), "leaf".into()).unwrap();
+        dag.add_edge("a3".into(), "leaf".into()).unwrap();
+
+        let schema = DagSchema::from_dag(&dag, "1.0.0");
+        let dag2 = schema.into_dag().unwrap();
+        assert_eq!(dag.node_count(), dag2.node_count());
+        assert_eq!(dag.edge_count(), dag2.edge_count());
+
+        // Verify the fan-out/fan-in structure is intact
+        assert_eq!(dag2.children_of(&"root".to_string()).unwrap().len(), 3);
+        assert_eq!(dag2.parents_of(&"leaf".to_string()).unwrap().len(), 3);
+    }
+}

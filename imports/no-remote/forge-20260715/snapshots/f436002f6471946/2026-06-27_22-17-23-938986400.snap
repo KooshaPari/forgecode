@@ -1,0 +1,22 @@
+import json
+from collections import Counter
+
+d = json.load(open('docs/audits/fr-matrix.json', encoding='utf-8'))
+rows = d['rows']
+
+cand = [r for r in rows if r.get('status') == 'SPEC-ONLY' and r.get('test_refs') and not r.get('code_refs') and r['id'].startswith('FR-CIV-')]
+
+# Group by epic prefix
+epics = Counter()
+for r in cand:
+    prefix = '-'.join(r['id'].split('-')[:3])
+    epics[prefix] += 1
+
+print("SPEC-ONLY w/ tests, by epic prefix:")
+for prefix, count in epics.most_common(30):
+    print(f"  {prefix}: {count}")
+
+# Detail by epic
+for r in cand:
+    ep = '-'.join(r['id'].split('-')[:3])
+    print(f"{r['id']:40s} epic={ep:20s} test={r['test_refs'][0]}")

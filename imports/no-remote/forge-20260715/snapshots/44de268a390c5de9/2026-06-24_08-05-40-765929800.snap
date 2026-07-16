@@ -1,0 +1,58 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "tests/**"
+      - "libs/*/tests/**"
+      - "libs/*/benches/**"
+      - "examples/**"
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "tests/**"
+      - "libs/*/tests/**"
+      - "libs/*/benches/**"
+      - "examples/**"
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Triage of failing run #28077362402 (2026-06-24) — the previous matrix
+    # listed `javascript-typescript` alongside `rust` and `python`. The repo
+    # has CodeQL default setup enabled for actions/javascript/javascript-
+    # typescript/typescript, which already covers JS/TS. Scanning the same
+    # language from both default setup and an advanced workflow wastes CI
+    # minutes and produces duplicate alerts, so JS/TS is dropped here.
+    # `rust` and `python` are NOT in the default setup matrix and remain
+    # the responsibility of this advanced workflow.
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [rust, python]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v4
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"

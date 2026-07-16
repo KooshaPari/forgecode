@@ -1,0 +1,22 @@
+$json = [System.IO.File]::ReadAllText('C:\Users\koosh\PhenoCompose\.grade-reports\grade.json', [System.Text.Encoding]::UTF8)
+# Strip ANSI escape codes
+$json = [regex]::Replace($json, '\x1b\[[0-9;]*[mK]', '')
+$data = $json | ConvertFrom-Json
+
+Write-Host "=== GRADE SUMMARY ==="
+Write-Host "Project: $($data.project)"
+Write-Host "Stack: $($data.stack)"
+Write-Host "Mode: $($data.mode)"
+Write-Host "Score: $($data.score) / $($data.max) ($($data.percentage)%)"
+Write-Host "Grade: $($data.grade)"
+Write-Host "Timestamp: $($data.timestamp)"
+Write-Host ""
+
+Write-Host "=== INDIVIDUAL CHECKS ==="
+foreach ($check in $data.checks) {
+    Write-Host "--- $($check.name) ---"
+    Write-Host "  Status: $($check.status)"
+    Write-Host "  Score: $($check.score) / $($check.max)"
+    Write-Host "  Detail: $($check.detail)"
+    Write-Host ""
+}

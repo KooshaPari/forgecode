@@ -1,0 +1,107 @@
+$sbom = @"
+name: SBOM
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: `${{ github.workflow }}-`${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  sbom:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate SBOM (Syft)
+        uses: anchore/sbom-action@v0
+        with:
+          path: ./
+          format: cyclonedx-json
+          artifact-name: sbom.cyclonedx.json
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cyclonedx.json
+"@
+Set-Content -Path '.github\workflows\sbom.yml' -Value $sbom
+
+$license = @"
+name: License Check
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: `${{ github.workflow }}-`${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  license-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check top-level LICENSE files exist
+        run: |
+          for f in LICENSE LICENSE-APACHE LICENSE-MIT; do
+            if [ ! -f "`$f" ]; then
+              echo "::error file=`$f::Missing license file: `$f"
+              exit 1
+            fi
+            echo "`u2714 `$f found (`$(wc -l < "`$f") lines)"
+          done
+      - name: Check Rust workspace license declaration
+        run: |
+          LICENSE_DECL=`$(grep -E '^license\s*=' iac/Cargo.toml | head -1)
+          if echo "`$LICENSE_DECL" | grep -qiE 'MIT|Apache'; then
+            echo "`u2714 Cargo workspace license: `$LICENSE_DECL"
+          else
+            echo "::warning::Workspace license declaration may be missing or non-standard: `$LICENSE_DECL"
+          fi
+"@
+Set-Content -Path '.github\workflows\license-check.yml' -Value $license
+
+$changelog = @"
+name: Changelog Check
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+permissions:
+  contents: read
+  pull-requests: write
+concurrency:
+  group: `${{ github.workflow }}-`${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  changelog:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check CHANGELOG.md exists
+        run: |
+          if [ ! -f CHANGELOG.md ]; then
+            echo "::error::CHANGELOG.md is missing from the repository root"
+            exit 1
+          fi
+          echo "`u2714 CHANGELOG.md found"
+      - name: Check CHANGELOG was modified
+        uses: dorny/paths-filter@v3
+        id: changelog
+        with:
+          filters: |
+            updated:
+              - 'CHANGELOG.md'
+      - name: Warn if CHANGELOG not updated
+        if: steps.changelog.outputs.updated == 'false'
+        run: |
+          echo "::warning::CHANGELOG.md was not modified in this PR. Please add a changelog entry."
+"@
+Set-Content -Path '.github\workflows\changelog-check.yml' -Value $changelog

@@ -1,0 +1,24 @@
+import subprocess, sys, os
+os.chdir(r'C:\Users\koosh\OmniRoute-fresh2')
+BUN = r'C:\Users\koosh\AppData\Roaming\npm\bun.CMD'
+script = sys.argv[1] if len(sys.argv) > 1 else 'lint'
+log_path = f'C:\Users\koosh\_run_{script}.log'
+with open(log_path, 'wb') as logf:
+    proc = subprocess.Popen(
+        f'"{BUN}" run {script}',
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        cwd=r'C:\Users\koosh\OmniRoute-fresh2',
+        env={**os.environ, 'FORCE_COLOR': '0', 'NO_COLOR': '1'}
+    )
+    try:
+        for line in proc.stdout:
+            logf.write(line)
+            sys.stdout.buffer.write(line)
+        proc.wait(timeout=600)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        logf.write(b'\n[TIMEOUT - killed after 600s]\n')
+    logf.write(f'\n[exit={proc.returncode}]\n'.encode())
+print(f'\n--- done rc={proc.returncode} ---')

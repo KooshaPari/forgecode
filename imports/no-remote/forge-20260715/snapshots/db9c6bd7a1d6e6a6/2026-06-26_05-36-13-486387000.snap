@@ -1,0 +1,34 @@
+# phenotype-infra: lefthook pre-commit/pre-push gates
+# Mirror of BytePort/lefthook.yml format
+pre-commit:
+  parallel: true
+  commands:
+    rustfmt:
+      glob: "*.rs"
+      run: cargo fmt --check --all {staged_files}
+    clippy:
+      glob: "*.rs"
+      run: cargo clippy --all-targets -- -D warnings
+    deny:
+      run: cargo deny check
+    audit:
+      run: cargo audit
+    shellcheck:
+      glob: "*.sh"
+      run: shellcheck {staged_files}
+    yamllint:
+      glob: "*.{yaml,yml}"
+      run: yamllint {staged_files}
+
+commit-msg:
+  commands:
+    conventional-commit:
+      run: echo {1} | grep -qE '^(feat|fix|chore|docs|style|refactor|perf|test|ci|build|revert)(\(.+\))?!?: .{1,72}'
+
+pre-push:
+  parallel: true
+  commands:
+    test:
+      run: cargo test --workspace
+    deny-block:
+      run: cargo deny check && cargo audit

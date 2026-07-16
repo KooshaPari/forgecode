@@ -1,0 +1,51 @@
+## Summary
+
+Add a VitePress docs site under `docs/` (landing page + getting-started from README) and a GitHub Pages deploy workflow on push to `main`.
+
+## Context
+
+Tasken currently ships a `README.md` plus a `docs/` tree of design notes (journeys, operations, stories, SLSA), but no rendered documentation site. This PR adds a minimal VitePress setup that consumes the existing markdown (so nothing is duplicated) and wires up GitHub Pages deploy via the official `actions/*` trio, all action references pinned to commit SHAs.
+
+## Changes
+
+- **`docs/.vitepress/config.mts`** — VitePress config with `srcDir: '.'` rooted at `docs/`, hero/feature blocks, nav + sidebar linking to `/` and `/getting-started`.
+- **`docs/index.md`** — Converted to the VitePress home layout (hero + features) while preserving the existing docs subdirectory listing.
+- **`docs/getting-started.md`** — New page sourced from the README's *Implementations / Quick Start / Features / Quality Gates / License* sections.
+- **`package.json`** — VitePress dev dependency + `docs:dev` / `docs:build` / `docs:preview` scripts.
+- **`.gitignore`** — Exclude `node_modules/`, `docs/.vitepress/dist/`, `docs/.vitepress/cache/`, `package-lock.json`.
+- **`.github/workflows/docs.yml`** — Builds on push to `main` (and `workflow_dispatch`), uploads `docs/.vitepress/dist`, deploys via the official Pages actions.
+
+### Action pinning (all SHAs verified live against `repos/actions/*`)
+
+| Action                                | Tag | Commit SHA                                   |
+| ------------------------------------- | --- | -------------------------------------------- |
+| `actions/checkout`                    | v4  | `34e114876b0b11c390a56381ad16ebd13914f8d5`   |
+| `actions/setup-node`                  | v4  | `49933ea5288caeca8642d1e84afbd3f7d6820020`   |
+| `actions/configure-pages`             | v5  | `983d7736d9b0ae728b81ab479565c72886d7745b`   |
+| `actions/upload-pages-artifact`       | v3  | `56afc609e74202658d3ffba0e8f6dda462b719fa`   |
+| `actions/deploy-pages`                | v4  | `d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e`   |
+
+## First-time repo setup
+
+GitHub Pages deploy requires the repo to have Pages enabled with **Source: GitHub Actions**. After merge:
+
+1. Repo Settings → Pages → set Source to **GitHub Actions** (one-time).
+2. The workflow creates the `github-pages` environment automatically; first deploy will provision it.
+
+## Testing
+
+Local preview:
+
+```bash
+npm install
+npm run docs:dev    # http://localhost:5173
+npm run docs:build  # outputs docs/.vitepress/dist
+```
+
+CI verification: after merge to `main`, the `Docs` workflow runs; the `deploy` job publishes to the `github-pages` environment. The site URL is exposed as the environment URL and via `${{ steps.deployment.outputs.page_url }}`.
+
+## Links
+
+- Tracking issue / spec: see `AgilePlus` per `AGENTS.md`.
+- VitePress: https://vitepress.dev/
+- GitHub Pages with Actions: https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site#publishing-with-a-custom-github-actions-workflow

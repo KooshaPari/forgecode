@@ -1,0 +1,60 @@
+---
+layout: home
+
+hero:
+  name: Configra
+  text: Local-first config, flags, secrets, versions
+  tagline: Tier-2 Rust substrate for Phenotype projects.
+  actions:
+    - theme: brand
+      text: Get Started
+      link: /getting-started
+    - theme: alt
+      text: View on GitHub
+      link: https://github.com/KooshaPari/Configra
+
+features:
+  - title: Layered configuration
+    details: Type-safe runtime Config + ConfigBuilder with TOML/env overlay and `combine()` semantics across the four-crate workspace.
+  - title: Feature flag lifecycle
+    details: Create, enable, disable, rollback flags with full audit trails and point-in-time restore.
+  - title: Encrypted secrets
+    details: AES-256-GCM at rest, local-first storage, zero external service dependencies.
+  - title: Tier-2 quality bar
+    details: Every sub-crate ships a README, CHANGELOG, AGENTS, and passes `cargo clippy -- -D warnings` plus the ≥ 80 % coverage gate.
+---
+
+## What is Configra?
+
+Configra is the **tier-2 configuration substrate** for Phenotype projects.
+It provides consistent management of settings, feature flags, secrets, and
+version information, with local-first persistence, team-collaboration
+support, audit trails, and CLI-first workflows.
+
+## Workspace at a glance
+
+| Crate | Concern |
+| --- | --- |
+| `pheno-config` | Typed runtime `Config` + `ConfigBuilder` (env cascade, TOML+env overlay, `combine()`) |
+| `settly` | Settings lifecycle — validation, migration, versioning |
+| `config-schema` | JSON schema validation primitives (`SchemaField`, `ConfigSchema`, `SchemaError`) |
+| `phenotype-config-loader` | Generic JSON/TOML file loaders (`load_json<T>`, `load_toml<T>`, `ConfigLoadError`) |
+
+See [Getting Started](/getting-started) to clone, build, and run the
+workspace locally.
+
+## Quick example
+
+```bash
+# Clone and build the workspace
+git clone https://github.com/KooshaPari/Configra.git
+cd Configra
+cargo build --workspace
+
+# Run the full test suite
+cargo test --workspace
+```
+
+## License
+
+MIT — see [LICENSE](https://github.com/KooshaPari/Configra/blob/main/LICENSE).

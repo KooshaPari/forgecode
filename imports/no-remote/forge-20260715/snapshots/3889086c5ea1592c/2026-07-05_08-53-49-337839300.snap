@@ -1,0 +1,16 @@
+[package]
+name = "eyetracker-core"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-platform eye-tracking primitives (events, calibration, session). PR-1 scaffold; PR-2..7 add platform backends."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+log = "0.4"
+pheno-runtime = { path = "../pheno-runtime" }
+
+[lib]
+path = "src/lib.rs"

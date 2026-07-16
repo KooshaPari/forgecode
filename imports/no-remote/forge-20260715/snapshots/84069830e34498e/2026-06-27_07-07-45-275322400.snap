@@ -1,0 +1,669 @@
+//! Dedicated integration tests for FR-CIV-LIFE-001 / 002 / 003.
+//!
+//! These tests live in `tests/` (one binary per file) so they exercise the
+//! public API surface of `civ_needs` rather than its internals. Each test
+//! uses a deterministic `ChaCha8Rng` seed for replay-ability per ADR-008.
+//!
+//! Coverage:
+//!   - FR-CIV-LIFE-001 — needs decay toward zero each tick.
+//!   - FR-CIV-LIFE-002 — sickness from sustained deprivation.
+//!   - FR-CIV-LIFE-003 — death from unmet needs.
+//!
+//! Determinism contract: identical seeds must produce identical outcomes
+//! across runs and platforms (no wall-clock, no `thread_rng`).
+
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+
+use civ_needs::{
+    decay, tick, DecayRates, Health, HealthParams, Needs, NeedKind, TickOutcome, NEED_KINDS,
+};
+use rand::SeedableRng;
+use rand_chacha::ChaCha8Rng;
+
+/// Stable seed used across the FR-CIV-LIFE-001 decay tests.
+/// Hex literals only allow 0-9 / A-F, so we spell the playful "CIVI" as "C1F1".
+const SEED_DECAY: u64 = 0xC1F1_1F_001_0001;
+/// Stable seed for the FR-CIV-LIFE-002 sickness pipeline tests.
+const SEED_SICK: u64 = 0xC1F1_1F_002_0002;
+/// Stable seed for the FR-CIV-LIFE-003 death-pipeline tests.
+const SEED_DEATH: u64 = 0xC1F1_1F_003_0003;
+/// Tolerance for f32 equality on deterministic decay arithmetic.
+const EPS: f32 = 1.0e-6;
+
+/// Convenience constructor for a deterministic seeded RNG.
+fn seeded_rng(seed: u64) -> ChaCha8Rng {
+    ChaCha8Rng::seed_from_u64(seed)
+}
+
+/// Build a `DecayRates` fixture with zero rates everywhere except `food`,
+/// so a single test can isolate food-pressure dynamics.
+fn food_only_decay_rate() -> DecayRates {
+    DecayRates {
+        food: 0.004, // mirrors default food decay
+        water: 0.0,
+        rest: 0.0,
+        safety: 0.0,
+        social: 0.0,
+        health: 0.0,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FR-CIV-LIFE-001 — needs decay
+// ---------------------------------------------------------------------------
+
+/// FR-CIV-LIFE-001 — every non-health need strictly decreases after one tick
+/// of decay. This locks in the monotone-downward contract that callers
+/// depend on (utility-AI sees strictly worsening needs per tick).
+#[test]
+fn test_need_decays_over_time() {
+    let mut needs = Needs::sated();
+    let rates = DecayRates::default();
+    let mut rng = seeded_rng(SEED_DECAY);
+
+    // Record per-need starting levels for comparison.
+    let before_food = needs.food;
+    let before_water = needs.water;
+    let before_rest = needs.rest;
+    let before_safety = needs.safety;
+    let before_social = needs.social;
+
+    // tick() also drives the health/deprivation pipeline, but with full
+    // health & no critical needs this is a no-op for sickness/death. Using
+    // tick() matches the production call shape (and exercises decay() through
+    // it); a separate decay-only assertion is performed for strictness.
+    let _outcome: TickOutcome = tick(
+        &mut needs,
+        &mut Health::default(),
+        &rates,
+        &HealthParams::default(),
+        &mut rng,
+    );
+
+    assert!(
+        needs.food < before_food,
+        "food must decay: {before_food} -> {}",
+        needs.food
+    );
+    assert!(
+        needs.water < before_water,
+        "water must decay: {before_water} -> {}",
+        needs.water
+    );
+    assert!(
+        needs.rest < before_rest,
+        "rest must decay: {before_rest} -> {}",
+        needs.rest
+    );
+    assert!(
+        needs.safety < before_safety,
+        "safety must decay: {before_safety} -> {}",
+        needs.safety
+    );
+    assert!(
+        needs.social < before_social,
+        "social must decay: {before_social} -> {}",
+        needs.social
+    );
+
+    // Decay must clamp at zero — running past the floor must never produce
+    // negative satisfaction (the dedicated `decay_clamps_at_zero` invariant).
+    let mut zeroed = Needs {
+        food: 0.001,
+        water: 0.0,
+        rest: 0.0,
+        safety: 0.0,
+        social: 0.0,
+        health: 0.0,
+    };
+    for _ in 0..100 {
+        decay(&mut zeroed, &DecayRates::default());
+    }
+    for kind in NEED_KINDS {
+        let v = zeroed.get(kind);
+        assert!(v >= 0.0, "{kind:?} went negative after floor run: {v}");
+    }
+}
+
+/// FR-CIV-LIFE-001 — the per-tick decay magnitude is exactly equal to the
+/// configured rate (within f32 epsilon) when the need is well above zero.
+/// This pins the rate semantics so callers can rely on `need(t) = need(0)
+/// - rate * t` for short horizons.
+#[test]
+fn test_decay_rate_respects_threshold() {
+    // Use only food decay, with zero everywhere else, so the per-tick delta
+    // is exactly the configured food rate.
+    let rates = food_only_decay_rate();
+    let mut needs = Needs {
+        food: 1.0,
+        water: 1.0,
+        rest: 1.0,
+        safety: 1.0,
+        social: 1.0,
+        health: 1.0,
+    };
+
+    decay(&mut needs, &rates);
+
+    // Food delta = food_rate exactly.
+    assert!(
+        (needs.food - (1.0 - rates.food)).abs() < EPS,
+        "food must drop by exactly its rate: got {} expected {}",
+        needs.food,
+        1.0 - rates.food
+    );
+    // Non-food needs are untouched (zero rate).
+    assert!((needs.water - 1.0).abs() < EPS);
+    assert!((needs.rest - 1.0).abs() < EPS);
+    assert!((needs.safety - 1.0).abs() < EPS);
+    assert!((needs.social - 1.0).abs() < EPS);
+
+    // After 100 ticks the food curve is still monotone-decreasing.
+    let mut food_at_100 = needs.food;
+    for _ in 0..99 {
+        decay(&mut needs, &rates);
+        assert!(
+            needs.food <= food_at_100,
+            "food must be monotone-decreasing across ticks: {food_at_100} -> {}",
+            needs.food
+        );
+        food_at_100 = needs.food;
+    }
+    // Floor clamp: food must have bottomed at zero (1.0 - 0.004 * 100 = 0.6,
+    // so we're not at the floor yet, but we ARE bounded above zero).
+    assert!(needs.food >= 0.0 && needs.food <= 1.0);
+}
+
+/// FR-CIV-LIFE-001 — needs decay independently of one another: starving a
+/// food need must not change the trajectory of an already-sated water need,
+/// and vice-versa. This is the per-need isolation contract that lets the
+/// utility-AI reason about each need in isolation.
+#[test]
+fn test_multiple_needs_decay_independently() {
+    // Case A: only food decays.
+    let rates_food_only = food_only_decay_rate();
+    let mut needs_a = Needs::sated();
+    decay(&mut needs_a, &rates_food_only);
+
+    // Case B: only water decays.
+    let rates_water_only = DecayRates {
+        food: 0.0,
+        water: 0.006,
+        rest: 0.0,
+        safety: 0.0,
+        social: 0.0,
+        health: 0.0,
+    };
+    let mut needs_b = Needs::sated();
+    decay(&mut needs_b, &rates_water_only);
+
+    // In case A, food dropped but water/rest/etc stayed at 1.0.
+    assert!(needs_a.food < 1.0);
+    assert!((needs_a.water - 1.0).abs() < EPS);
+    assert!((needs_a.rest - 1.0).abs() < EPS);
+    assert!((needs_a.safety - 1.0).abs() < EPS);
+    assert!((needs_a.social - 1.0).abs() < EPS);
+
+    // In case B, water dropped but food/rest/etc stayed at 1.0.
+    assert!((needs_b.food - 1.0).abs() < EPS);
+    assert!(needs_b.water < 1.0);
+    assert!((needs_b.rest - 1.0).abs() < EPS);
+    assert!((needs_b.safety - 1.0).abs() < EPS);
+    assert!((needs_b.social - 1.0).abs() < EPS);
+
+    // Per-need order also stays independent: with default rates, water
+    // must decay strictly faster than food (water rate 0.006 > food rate 0.004).
+    let mut both = Needs::sated();
+    decay(&mut both, &DecayRates::default());
+    assert!(
+        both.water < both.food,
+        "water ({}) must decay faster than food ({}) under default rates",
+        both.water,
+        both.food
+    );
+
+    // Spot-check that `Needs::get` is a consistent indirection over fields
+    // (so users can reason about independence through the enum API too).
+    let needs_indirect = Needs {
+        food: 0.9,
+        water: 0.8,
+        rest: 0.7,
+        safety: 0.6,
+        social: 0.5,
+        health: 1.0,
+    };
+    assert!((needs_indirect.get(NeedKind::Food) - 0.9).abs() < EPS);
+    assert!((needs_indirect.get(NeedKind::Water) - 0.8).abs() < EPS);
+    assert!((needs_indirect.get(NeedKind::Rest) - 0.7).abs() < EPS);
+    assert!((needs_indirect.get(NeedKind::Safety) - 0.6).abs() < EPS);
+    assert!((needs_indirect.get(NeedKind::Social) - 0.5).abs() < EPS);
+}
+
+// ---------------------------------------------------------------------------
+// FR-CIV-LIFE-002 — sickness from deprivation
+// ---------------------------------------------------------------------------
+
+/// FR-CIV-LIFE-002 — when food is held at zero (a critical-need condition)
+/// the agent becomes sick within a bounded number of ticks. This locks in
+/// the deprivation → sickness causal arrow at the public API boundary.
+#[test]
+fn test_low_food_causes_sickness() {
+    // Construct a setup where food is the sole critical need and the sickness
+    // probability is forced to 1.0 so the roll is deterministic. Damage per
+    // tick is held at zero so the agent cannot die before the sickness
+    // threshold is reached.
+    let mut needs = Needs {
+        food: 0.0,
+        water: 1.0,
+        rest: 1.0,
+        safety: 1.0,
+        social: 1.0,
+        health: 1.0,
+    };
+    let mut health = Health::default();
+    let rates = DecayRates {
+        food: 0.0, // hold food at zero (do not decay further)
+        water: 0.0,
+        rest: 0.0,
+        safety: 0.0,
+        social: 0.0,
+        health: 0.0,
+    };
+    let params = HealthParams {
+        critical: 0.1,
+        damage_per_critical: 0.0, // no death-during-test
+        regen: 0.0,
+        sickness_onset_ticks: 5,
+        sickness_chance: 1.0, // force onset after threshold
+        sickness_damage: 0.0,
+    };
+
+    let mut rng = seeded_rng(SEED_SICK);
+    let mut fell_sick_at: Option<u32> = None;
+
+    for tick_index in 0..50u32 {
+        let outcome = tick(&mut needs, &mut health, &rates, &params, &mut rng);
+        assert_eq!(outcome.critical_count, 1, "food must be the lone critical need");
+        if outcome.fell_sick || health.sick {
+            fell_sick_at = fell_sick_at.or(Some(tick_index));
+        }
+        if fell_sick_at.is_some() && tick_index >= 5 {
+            break;
+        }
+    }
+
+    assert!(
+        fell_sick_at.is_some(),
+        "sustained food deprivation must trigger sickness under deterministic params"
+    );
+    assert!(
+        fell_sick_at.expect("fell_sick_at must be Some") >= 5,
+        "sickness onset must respect the threshold (>= 5)"
+    );
+    assert!(health.sick, "health.sick flag must be set after onset");
+}
+
+/// FR-CIV-LIFE-002 — the probability / frequency of sickness must scale
+/// with how long the agent has been deprived. Under identical seeds, a
+/// longer deprivation window must produce the same or earlier onset tick
+/// than a shorter one (sickness is monotone in deprivation duration).
+#[test]
+fn test_sickness_increases_with_duration() {
+    // Run A: sickness_onset_ticks = 3 (early onset).
+    let run_with_onset = |onset_ticks: u32, seed: u64| -> Option<u32> {
+        let mut needs = Needs {
+            food: 0.0,
+            water: 1.0,
+            rest: 1.0,
+            safety: 1.0,
+            social: 1.0,
+            health: 1.0,
+        };
+        let mut health = Health::default();
+        let rates = DecayRates {
+            food: 0.0,
+            water: 0.0,
+            rest: 0.0,
+            safety: 0.0,
+            social: 0.0,
+            health: 0.0,
+        };
+        let params = HealthParams {
+            critical: 0.1,
+            damage_per_critical: 0.0,
+            regen: 0.0,
+            sickness_onset_ticks: onset_ticks,
+            sickness_chance: 1.0,
+            sickness_damage: 0.0,
+        };
+        let mut rng = seeded_rng(seed);
+
+        for tick_index in 0..100u32 {
+            let outcome = tick(&mut needs, &mut health, &rates, &params, &mut rng);
+            if outcome.fell_sick {
+                return Some(tick_index);
+            }
+        }
+        None
+    };
+
+    let early = run_with_onset(3, SEED_SICK);
+    let late = run_with_onset(15, SEED_SICK);
+
+    assert!(early.is_some(), "early-onset run must produce sickness");
+    assert!(late.is_some(), "late-onset run must also produce sickness");
+
+    // Longer threshold must correspond to a strictly later (or equal) onset
+    // tick. With identical seeds and identical conditions except the
+    // threshold, the late run cannot fire before the early one.
+    let early_tick = early.expect("early must be Some");
+    let late_tick = late.expect("late must be Some");
+    assert!(
+        early_tick <= late_tick,
+        "earlier threshold must yield onset <= later threshold (early={early_tick}, late={late_tick})"
+    );
+}
+
+/// FR-CIV-LIFE-002 — once the agent's needs are restored above the critical
+/// threshold and integrity is high enough, the sickness flag must clear
+/// within a bounded number of ticks. This is the recovery contract.
+#[test]
+fn test_recovery_when_food_restored() {
+    // Pre-seed an agent who is sick and partially damaged.
+    let mut needs = Needs {
+        food: 1.0, // already restored
+        water: 1.0,
+        rest: 1.0,
+        safety: 1.0,
+        social: 1.0,
+        health: 1.0,
+    };
+    let mut health = Health {
+        integrity: 0.90,
+        sick: true,
+        deprivation_streak: 0,
+    };
+    let rates = DecayRates {
+        food: 0.0,
+        water: 0.0,
+        rest: 0.0,
+        safety: 0.0,
+        social: 0.0,
+        health: 0.0,
+    };
+    let params = HealthParams {
+        critical: 0.1,
+        damage_per_critical: 0.0,
+        regen: 0.06, // strong regen so integrity clears the 0.95 gate
+        sickness_onset_ticks: 30,
+        sickness_chance: 0.0, // no new sickness
+        sickness_damage: 0.0,
+    };
+
+    let mut rng = seeded_rng(SEED_SICK);
+    let mut recovered_at: Option<u32> = None;
+    for tick_index in 0..50u32 {
+        let outcome = tick(&mut needs, &mut health, &rates, &params, &mut rng);
+        assert!(!outcome.fell_sick, "must not re-trigger sickness during recovery");
+        if !health.sick {
+            recovered_at = Some(tick_index);
+            break;
+        }
+    }
+
+    let recovery_tick = recovered_at.expect("agent must recover once integrity exceeds 0.95");
+    assert!(recovery_tick < 50, "recovery must happen in bounded ticks");
+    assert!(!health.sick, "health.sick flag must clear post-recovery");
+    assert!(health.integrity >= 0.95, "recovery requires integrity >= 0.95");
+    assert!(health.integrity <= 1.0, "integrity must remain bounded at 1.0");
+}
+
+// ---------------------------------------------------------------------------
+// FR-CIV-LIFE-003 — death from unmet needs
+// ---------------------------------------------------------------------------
+
+/// FR-CIV-LIFE-003 — when health/integrity drains to zero from sustained
+/// deprivation, the agent must register as dead and `health.is_dead()`
+/// must be true. This pins the death-boundary semantics.
+#[test]
+fn test_death_when_health_reaches_zero() {
+    let mut needs = Needs {
+        food: 0.0,
+        water: 0.0,
+        rest: 0.0,
+        safety: 0.0,
+        social: 0.0,
+        health: 1.0,
+    };
+    let mut health = Health::default();
+    // Hold rates at zero (no decay — needs are already at zero) and crank
+    // damage_per_critical high enough to kill within a small number of ticks.
+    let rates = DecayRates {
+        food: 0.0,
+        water: 0.0,
+        rest: 0.0,
+        safety: 0.0,
+        social: 0.0,
+        health: 0.0,
+    };
+    let params = HealthParams {
+        critical: 0.5,
+        damage_per_critical: 0.25, // 5 critical needs × 0.25 = 1.25/tick → kill in 4 ticks
+        regen: 0.0,
+        sickness_onset_ticks: 1_000, // disable sickness-induced damage
+        sickness_chance: 0.0,
+        sickness_damage: 0.0,
+    };
+
+    let mut rng = seeded_rng(SEED_DEATH);
+    let mut died_at: Option<u32> = None;
+
+    for tick_index in 0..20u32 {
+        let outcome = tick(&mut needs, &mut health, &rates, &params, &mut rng);
+        if outcome.died {
+            died_at = Some(tick_index);
+            break;
+        }
+    }
+
+    let death_tick = died_at.expect("agent must die when integrity reaches zero");
+    assert!(death_tick < 20, "death must occur in bounded ticks");
+    assert!(health.is_dead(), "health.is_dead() must be true after death");
+    assert!(health.integrity <= 0.0 + EPS, "integrity must be at or below zero");
+}
+
+/// FR-CIV-LIFE-003 — the `TickOutcome::died` flag must be emitted on the
+/// exact tick that health crosses the zero boundary, and must not be
+/// emitted again after death (death is terminal at the API boundary).
+#[test]
+fn test_death_event_emitted() {
+    let mut needs = Needs {
+        food: 0.0,
+        water: 0.0,
+        rest: 0.0,
+        safety: 0.0,
+        social: 0.0,
+        health: 1.0,
+    };
+    let mut health = Health {
+        integrity: 0.01, // one tick of damage away from death
+        sick: false,
+        deprivation_streak: 0,
+    };
+    let rates = DecayRates {
+        food: 0.0,
+        water: 0.0,
+        rest: 0.0,
+        safety: 0.0,
+        social: 0.0,
+        health: 0.0,
+    };
+    let params = HealthParams {
+        critical: 0.5,
+        damage_per_critical: 0.05, // 5 × 0.05 = 0.25/tick → kills in 1 tick
+        regen: 0.0,
+        sickness_onset_ticks: 1_000,
+        sickness_chance: 0.0,
+        sickness_damage: 0.0,
+    };
+
+    let mut rng = seeded_rng(SEED_DEATH);
+
+    // Tick 1: must emit `died = true` exactly once.
+    let outcome = tick(&mut needs, &mut health, &rates, &params, &mut rng);
+    assert!(outcome.died, "death event must fire on the boundary-crossing tick");
+    assert!(health.is_dead(), "health must be marked dead");
+    let integrity_at_death = health.integrity;
+
+    // Tick 2+: post-death, `tick` is a no-op — must not emit a second death
+    // event and must not resurrect the agent (integrity must stay clamped at
+    // zero, and needs must remain unchanged by the death-tick body).
+    let needs_snapshot = needs;
+    let outcome_post = tick(&mut needs, &mut health, &rates, &params, &mut rng);
+    assert!(
+        !outcome_post.died,
+        "post-death ticks must not re-emit the died flag"
+    );
+    assert_eq!(health.integrity, integrity_at_death, "integrity must stay clamped at zero");
+    assert_eq!(needs, needs_snapshot, "needs must not change post-death");
+
+    // Further post-death ticks remain no-ops.
+    for _ in 0..5 {
+        let outcome_later = tick(&mut needs, &mut health, &rates, &params, &mut rng);
+        assert!(!outcome_later.died);
+        assert_eq!(health.integrity, 0.0);
+    }
+}
+
+/// FR-CIV-LIFE-003 — once dead, the civilian's needs vector must mirror the
+/// dead state (health channel at zero, no resurrection via restoration), and
+/// the death must be observable from the public `Needs`/`Health` snapshot
+/// the way a simulation manager would read it to remove the entity from the
+/// population.
+#[test]
+fn test_dead_civilian_removed_from_simulation() {
+    // Build a population of 3 civilians in a Vec-like pattern using the
+    // public types. Two survive; one dies after running the deprivation
+    // pipeline. The simulation manager pattern is: iterate the population,
+    // run tick(), then filter out any civilian whose `Health::is_dead()`
+    // returns true.
+    struct Civilian {
+        needs: Needs,
+        health: Health,
+    }
+
+    let mut civ_a = Civilian {
+        needs: Needs::sated(),
+        health: Health::default(),
+    };
+    let mut civ_b = Civilian {
+        needs: Needs::sated(),
+        health: Health::default(),
+    };
+    let mut civ_c = Civilian {
+        needs: Needs {
+            food: 0.0,
+            water: 0.0,
+            rest: 0.0,
+            safety: 0.0,
+            social: 0.0,
+            health: 1.0,
+        },
+        health: Health::default(),
+    };
+    let mut civ_dying = Civilian {
+        needs: Needs {
+            food: 0.0,
+            water: 0.0,
+            rest: 0.0,
+            safety: 0.0,
+            social: 0.0,
+            health: 1.0,
+        },
+        health: Health {
+            integrity: 0.005,
+            sick: false,
+            deprivation_streak: 0,
+        },
+    };
+
+    let rates = DecayRates::default();
+    let params = HealthParams {
+        critical: 0.5,
+        damage_per_critical: 0.1, // 5 × 0.1 = 0.5/tick → civ_dying dies in 1 tick
+        regen: 0.0,
+        sickness_onset_ticks: 1_000,
+        sickness_chance: 0.0,
+        sickness_damage: 0.0,
+    };
+
+    let mut rng_a = seeded_rng(SEED_DEATH);
+    let mut rng_b = seeded_rng(SEED_DEATH);
+    let mut rng_c = seeded_rng(SEED_DEATH);
+    let mut rng_d = seeded_rng(SEED_DEATH);
+
+    let civilians: &mut [(&mut Civilian, &mut ChaCha8Rng)] = &mut [
+        (&mut civ_a, &mut rng_a),
+        (&mut civ_b, &mut rng_b),
+        (&mut civ_c, &mut rng_c),
+        (&mut civ_dying, &mut rng_d),
+    ];
+
+    for (civ, rng) in civilians.iter_mut() {
+        let _ = tick(&mut civ.needs, &mut civ.health, &rates, &params, rng);
+    }
+
+    // Sated civilians survive.
+    assert!(!civ_a.health.is_dead());
+    assert!(!civ_b.health.is_dead());
+
+    // Deprived civilian with default damage (0.01 per critical × 5 = 0.05/tick)
+    // is damaged but still alive.
+    assert!(
+        !civ_c.health.is_dead(),
+        "civ_c took one tick of damage and must remain alive"
+    );
+    assert!(civ_c.health.integrity < 1.0, "civ_c must have lost integrity");
+
+    // civ_dying started at 0.005 with damage 0.5/tick → dead.
+    assert!(civ_dying.health.is_dead(), "civ_dying must be dead after one tick");
+
+    // Simulation-manager removal pattern: filter out dead civilians.
+    let _population_after_removal: Vec<&Civilian> = [&civ_a, &civ_b, &civ_c, &civ_dying]
+        .iter()
+        .copied()
+        .filter(|c| !c.health.is_dead())
+        .collect();
+
+    // Post-removal observable: needs.health mirrors integrity (so the
+    // simulation manager can also detect death via the needs vector).
+    assert_eq!(
+        civ_dying.needs.health, 0.0,
+        "needs.health must mirror the dead integrity"
+    );
+    assert!(
+        civ_dying.health.is_dead(),
+        "dead civilian must remain observably dead after the removal pass"
+    );
+
+    // Restoration of food must NOT resurrect a dead civilian (death is
+    // terminal — feeding a corpse is a no-op for life state).
+    let mut civ_dying_post = civ_dying; // re-bind to feed
+    civ_dying_post.needs.food = 1.0;
+    civ_dying_post.needs.water = 1.0;
+    civ_dying_post.needs.rest = 1.0;
+    civ_dying_post.needs.safety = 1.0;
+    civ_dying_post.needs.social = 1.0;
+    let _ = tick(
+        &mut civ_dying_post.needs,
+        &mut civ_dying_post.health,
+        &rates,
+        &params,
+        &mut rng_d,
+    );
+    assert!(
+        civ_dying_post.health.is_dead(),
+        "restoring food post-death must NOT resurrect the civilian"
+    );
+}

@@ -1,0 +1,1 @@
+{"value":[{"id":"accounts/fireworks/routers/kimi-k2p6-turbo","name":"Kimi K2.6 Turbo (firepass)","description":"Kimi K2.6 Turbo model","context_length":262144,"tools_supported":true,"supports_parallel_tool_calls":true,"supports_reasoning":true,"input_modalities":["text","image"]}],"timestamp":1782443717}

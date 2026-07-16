@@ -1,0 +1,246 @@
+#requires -Version 7
+<#
+.SYNOPSIS
+    Apply the gate-3 + gate-8 admin/host items for the ArgisMonitor/HeliosLite
+    program — by **renaming in place** rather than repo-create:
+
+      1. Rename KooshaPari/OmniRoute   -> KooshaPari/ArgisMonitor
+      2. Rename KooshaPari/forgecode   -> KooshaPari/heliosLite
+      3. Update the local `origin` remote URL in each clone to the new name.
+      4. Push the local `renames/<new>` branch to the new repo.
+      5. Open a PR from `renames/<new>` -> `main` on the new repo.
+      6. Apply the branch-protection config to `main`.
+
+.DESCRIPTION
+    Pre-conditions (NOT done by this script; user must supply):
+      - `gh auth refresh -s admin:org,repo,workflow`  (rename needs admin:org;
+        push + protection need repo,workflow)
+      - Working tree clean in both checkouts, on the renames branches.
+
+    Run:
+        pwsh -NoProfile -File forge/scripts/admin/finish-program.ps1
+        pwsh -NoProfile -File forge/scripts/admin/finish-program.ps1 -DryRun
+
+    The script does NOT publish to any registry; it does NOT run any
+    workflow; it does NOT touch Vercel / Cloudflare / Homebrew /
+    Chocolatey / winget.  It is the deterministic bootstrap for the
+    in-place repo rename + branch protection half of the program.
+
+.NOTES
+    Fork preservation: GitHub's `gh repo rename` keeps the parent fork
+    relationship intact (`KooshaPari/ArgisMonitor` remains a fork of
+    `diegosouzapw/OmniRoute`; `KooshaPari/heliosLite` remains a fork of
+    `tailcallhq/forgecode`).  Existing upstream-remote configs in
+    `renames/<new>` are preserved as additional remotes named `upstream`.
+#>
+
+[CmdletBinding(SupportsShouldProcess)]
+param(
+    [switch]$DryRun
+)
+
+$ErrorActionPreference = "Stop"
+
+function Step([string]$label, [scriptblock]$block) {
+    Write-Host ""
+    Write-Host "==> $label" -ForegroundColor Cyan
+    & $block
+}
+
+function Require-Cmd([string]$name) {
+    if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
+        throw "Required command '$name' not found on PATH."
+    }
+}
+
+Require-Cmd gh
+Require-Cmd git
+
+# ---------------------------------------------------------------------------
+# Pre-flight: gh auth + scopes
+# ---------------------------------------------------------------------------
+
+Step "Pre-flight: gh auth + scopes" {
+    $status = gh auth status 2>&1 | Out-String
+    Write-Host $status.Trim()
+    if ($status -notmatch 'Logged in to') {
+        throw "gh is not authenticated.  Run:  gh auth login --scopes repo,workflow"
+    }
+    # `admin:org` is only required for org-owned repos.  KooshaPari/* is a
+    # User account (verified), so rename works with just `repo` + `workflow`.
+    foreach ($scope in @('repo', 'workflow')) {
+        if ($status -notmatch [regex]::Escape($scope)) {
+            throw "gh is missing scope: $scope.  Run:  gh auth refresh -s repo,workflow"
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 1. Rename repos in place
+# ---------------------------------------------------------------------------
+
+function Rename-RepoInPlace([string]$oldName, [string]$newName) {
+    $current = gh repo view "KooshaPari/$oldName" --json name 2>$null | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  ! KooshaPari/$oldName not visible to gh; skipping."
+        return
+    }
+    if ($current -match "\""name\"":\s*\""$newName\""") {
+        Write-Host "  ✓ KooshaPari/$oldName is already named $newName; skipping rename."
+        return
+    }
+    if ($DryRun) {
+        Write-Host "  [dry-run] would: gh repo rename KooshaPari/$newName --repo KooshaPari/$oldName"
+        return
+    }
+    Write-Host "  → renaming KooshaPari/$oldName -> KooshaPari/$newName ..."
+    gh repo rename "KooshaPari/$newName" --repo "KooshaPari/$oldName" --confirm 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "gh repo rename failed: $oldName -> $newName" }
+    Write-Host "  ✓ renamed."
+}
+
+Step "Rename KooshaPari/OmniRoute -> KooshaPari/ArgisMonitor" {
+    Rename-RepoInPlace 'OmniRoute' 'ArgisMonitor'
+}
+
+Step "Rename KooshaPari/forgecode -> KooshaPari/heliosLite" {
+    Rename-RepoInPlace 'forgecode' 'heliosLite'
+}
+
+# ---------------------------------------------------------------------------
+# 2. Update local `origin` remote URLs in each clone
+# ---------------------------------------------------------------------------
+
+function Update-OriginRemote([string]$repoLocalPath, [string]$newName) {
+    Push-Location $repoLocalPath
+    try {
+        $originUrl = git remote get-url origin 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "no origin remote in $repoLocalPath"
+        }
+        $newUrl = "https://github.com/KooshaPari/$newName.git"
+        if ($originUrl -eq $newUrl) {
+            Write-Host "  ✓ origin already points at $newUrl"
+            return
+        }
+        if ($DryRun) {
+            Write-Host "  [dry-run] would: git remote set-url origin $newUrl   (was $originUrl)"
+            return
+        }
+        Write-Host "  → origin: $originUrl -> $newUrl"
+        git remote set-url origin $newUrl 2>&1 | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "git remote set-url failed in $repoLocalPath" }
+    } finally {
+        Pop-Location
+    }
+}
+
+Step "Update origin in OmniRoute-clean -> ArgisMonitor" {
+    Update-OriginRemote 'OmniRoute-clean' 'ArgisMonitor'
+}
+
+Step "Update origin in heliosLite-src -> heliosLite" {
+    Update-OriginRemote 'heliosLite-src' 'heliosLite'
+}
+
+# ---------------------------------------------------------------------------
+# 3. Push the rename branches to the (renamed) origin
+# ---------------------------------------------------------------------------
+
+function Push-Branch([string]$repoLocalPath, [string]$branch) {
+    Push-Location $repoLocalPath
+    try {
+        $currentBranch = git branch --show-current
+        if ($currentBranch -ne $branch) {
+            throw "Local checkout at $repoLocalPath is on '$currentBranch', not '$branch'."
+        }
+        if ($DryRun) {
+            Write-Host "  [dry-run] would: git push --set-upstream origin $branch  (in $repoLocalPath)"
+            return
+        }
+        Write-Host "  → pushing $branch to origin ..."
+        git push --set-upstream origin $branch 2>&1 | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "git push failed for $branch in $repoLocalPath" }
+    } finally {
+        Pop-Location
+    }
+}
+
+Step "Push renames/argismonitor" {
+    $workingBranch = git -C OmniRoute-clean branch --show-current
+    if ($workingBranch -ne 'renames/argismonitor') { throw "OmniRoute-clean is on '$workingBranch'" }
+    Push-Branch 'OmniRoute-clean' 'renames/argismonitor'
+}
+
+Step "Push renames/helioslite" {
+    $workingBranch = git -C heliosLite-src branch --show-current
+    if ($workingBranch -ne 'renames/helioslite') { throw "heliosLite-src is on '$workingBranch'" }
+    Push-Branch 'heliosLite-src' 'renames/helioslite'
+}
+
+# ---------------------------------------------------------------------------
+# 4. Open PR renames/<new> -> main on each renamed repo
+# ---------------------------------------------------------------------------
+
+function Open-PR([string]$repo, [string]$branch, [string]$title, [string]$body) {
+    if ($DryRun) {
+        Write-Host "  [dry-run] would: gh pr create --repo KooshaPari/$repo --base main --head $branch --title '$title'"
+        return
+    }
+    Write-Host "  → opening PR KooshaPari/${repo}: ${branch} -> main"
+    $out = gh pr create `
+        --repo "KooshaPari/$repo" `
+        --base main `
+        --head $branch `
+        --title $title `
+        --body $body 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "gh pr create failed for $repo/$branch" }
+    Write-Host "  ✓ PR opened."
+}
+
+Step "Open PR KooshaPari/ArgisMonitor: renames/argismonitor -> main" {
+    Open-PR 'ArgisMonitor' 'renames/argismonitor' `
+        'renames(argismonitor): publish-surface rename + provenance docs + release policy' `
+        'Additive rename per `forge/plans/ARGIS-HELIOS-PROGRAM.md`. Internal `omniroute` identifiers preserved as deprecated aliases. See `docs/FORK.md`, `docs/NOTICE.md`, `docs/RENAMES-STRATEGY.md`.'
+}
+
+Step "Open PR KooshaPari/heliosLite: renames/helioslite -> main" {
+    Open-PR 'heliosLite' 'renames/helioslite' `
+        'renames(helioslite): publish-surface rename + provenance docs + release policy' `
+        'Additive rename per `forge/plans/ARGIS-HELIOS-PROGRAM.md`. Internal `forge-dev`/`forge_*` identifiers preserved as deprecated aliases. See `docs/FORK.md`, `docs/NOTICE.md`, `docs/RENAMES-STRATEGY.md`.'
+}
+
+# ---------------------------------------------------------------------------
+# 5. Apply branch-protection config on main
+# ---------------------------------------------------------------------------
+
+$OmniBP = 'OmniRoute-clean/.github/branch-protection.main.json'
+$HeliosBP = 'heliosLite-src/.github/branch-protection.main.json'
+
+function Apply-BranchProtection([string]$repo, [string]$branch, [string]$configPath) {
+    if (-not (Test-Path $configPath)) {
+        Write-Host "  ! skipping ${repo}: config not found at ${configPath}"
+        return
+    }
+    if ($DryRun) {
+        Write-Host "  [dry-run] would: gh api repos/KooshaPari/$repo/branches/$branch/protection -X PUT -F @$configPath"
+        return
+    }
+    Write-Host "  → applying branch protection to KooshaPari/$repo/$branch"
+    $out = gh api "repos/KooshaPari/$repo/branches/$branch/protection" -X PUT -F "@$configPath" 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "gh api branch-protection failed for ${repo}/${branch}: ${out}" }
+    Write-Host "  ✓ branch protection applied"
+}
+
+Step "Apply branch protection on KooshaPari/ArgisMonitor/main" {
+    Apply-BranchProtection 'ArgisMonitor' 'main' $OmniBP
+}
+
+Step "Apply branch protection on KooshaPari/heliosLite/main" {
+    Apply-BranchProtection 'heliosLite' 'main' $HeliosBP
+}
+
+Write-Host ""
+Write-Host "==> Program bootstrap complete (in-place rename half)." -ForegroundColor Green
+Write-Host "    Next: paste ZDR tokens -> pwsh -File forge/scripts/admin/apply-secrets.ps1"
+Write-Host "    Then: pwsh -File forge/scripts/admin/cut-and-watch.ps1 -Repo <repo> -Tag <tag>"

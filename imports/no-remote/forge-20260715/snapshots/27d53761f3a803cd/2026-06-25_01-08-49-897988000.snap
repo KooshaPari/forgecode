@@ -1,0 +1,402 @@
+/**
+ * Streaming Response Assembly — extracted from chatCore.ts (#3501, PR #21).
+ *
+ * Owns the post-upstream pipeline that turns a raw `providerResponse.body` into
+ * the final `Response` the client receives on a `stream: true` chat request:
+ *
+ *   provider body  →  transform (translate/passthrough)  →  PII guard  →
+ *   progress tracker  →  SSE heartbeat  →  model-echo  →  final Response
+ *
+ * Each stage is exposed as a pure function over Web-Streams primitives so the
+ * pieces can be unit-tested in isolation and reassembled in `assembleStreamingResponse`.
+ *
+ * Header building (Content-Type, Cache-Control, X-OmniRoute-*) is co-located
+ * here with the streaming assembly so the module that produces the stream
+ * also owns the headers the client pairs it with.
+ */
+import { OMNIROUTE_RESPONSE_HEADERS } from "@/shared/constants/headers";
+import {
+  attachOmniRouteMetaHeaders,
+  buildOmniRouteResponseMetaHeaders,
+  getOmniRouteTokenCounts,
+  formatOmniRouteCost,
+} from "@/domain/omnirouteResponseMeta";
+import { HEARTBEAT_SHAPES, type HeartbeatShape } from "../../utils/sseHeartbeat.ts";
+
+/**
+ * Per-request context threaded through the streaming assembly pipeline.
+ * All fields are pure data so the assembly functions stay referentially
+ * transparent and easy to test.
+ */
+export interface StreamingResponseContext {
+  requestId: string;
+  provider: string;
+  model: string;
+  contentType: string;
+  usage?: Record<string, unknown> | null;
+  headers?: Record<string, string>;
+}
+
+export interface AssembleStreamingResponseArgs {
+  sseStream: ReadableStream<Uint8Array>;
+  requestId: string;
+  provider: string;
+  model: string;
+  contentType?: string;
+  usage?: Record<string, unknown> | null;
+  headers?: Record<string, string>;
+}
+
+export interface WrapStreamWithSseFramingOptions {
+  /** Base headers (Content-Type/Cache-Control set by `injectSseHeaders`). */
+  headers: Record<string, string>;
+  /** Per-request context for X-OmniRoute-* response meta. */
+  context: StreamingResponseContext;
+  /**
+   * Optional transform to run on the raw provider bytes BEFORE framing.
+   * The default is identity (passthrough). The chatCore pipeline plugs in
+   * `createSSETransformStreamWithLogger` (translate) or
+   * `createPassthroughStreamWithLogger` here.
+   */
+  upstreamTransform?: TransformStream<Uint8Array, Uint8Array> | null;
+  /**
+   * Optional PII / progress transforms chained after `upstreamTransform`.
+   * Order matches the production pipeline (PII guard → progress tracker).
+   */
+  piiTransform?: TransformStream<Uint8Array, Uint8Array> | null;
+  progressTransform?: TransformStream<Uint8Array, Uint8Array> | null;
+  /**
+   * Optional model-echo transform applied LAST so every chunk carries the
+   * client-requested model id (the alias/combo name), not the upstream one.
+   */
+  modelEchoTransform?: TransformStream<Uint8Array, Uint8Array> | null;
+  /**
+   * Whether to enable SSE heartbeat keep-alive. Default: true. Pass `false`
+   * for short-lived test responses where the interval timer is unwanted.
+   */
+  heartbeatEnabled?: boolean;
+  /** Heartbeat interval in ms. Default: 15_000. */
+  heartbeatIntervalMs?: number;
+  /** Heartbeat shape (openai chunk, claude ping, responses in_progress, comment). */
+  heartbeatShape?: HeartbeatShape;
+  /** Abort signal — when aborted, the heartbeat stops and the stream is torn down. */
+  signal?: AbortSignal | null;
+  /** Chunk id (OpenAI chat.completion.chunk `id`) and model for heartbeat payload. */
+  heartbeatChunkId?: string;
+  heartbeatChunkModel?: string;
+}
+
+export interface AddStreamingHeartbeatOptions {
+  signal?: AbortSignal | null;
+  intervalMs?: number;
+  shape?: HeartbeatShape;
+  chunkId?: string;
+  chunkModel?: string;
+}
+
+export interface FinalizeStreamingResponseArgs {
+  usage?: Record<string, unknown> | null;
+  cost?: number | string | null;
+}
+
+/** Default SSE heartbeat interval (matches `DEFAULT_SSE_HEARTBEAT_INTERVAL_MS`). */
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
+
+/** Default Content-Type for an SSE response. */
+const DEFAULT_SSE_CONTENT_TYPE = "text/event-stream";
+
+/** Default Cache-Control for an SSE response (no caching, no transformation). */
+const DEFAULT_SSE_CACHE_CONTROL = "no-cache, no-transform";
+
+/** Headers stripped from upstream provider headers when forwarding to the client. */
+const SSE_FORWARDING_DENYLIST = new Set([
+  "content-type",
+  "content-encoding",
+  "content-length",
+  "transfer-encoding",
+]);
+
+const HEARTBEAT_ENCODER = new TextEncoder();
+
+/**
+ * Build the header payload for an SSE streaming response.
+ *
+ * - Content-Type defaults to `text/event-stream` (or the caller-provided override)
+ * - Cache-Control: no-cache, no-transform (proxy + client must not buffer)
+ * - Connection: keep-alive (long-lived stream)
+ * - X-Accel-Buffering: no (defeat nginx buffering at edge)
+ * - All non-conflicting upstream provider headers forwarded as-is
+ * - X-OmniRoute-* meta headers attached (request id, provider, model, tokens)
+ *
+ * The returned Record is the full header set to drop straight into a Response.
+ * Pure function: same input → same output, no mutation of `context.headers`.
+ */
+export function injectSseHeaders(
+  context: StreamingResponseContext,
+  upstreamHeaders?: Headers | Record<string, string> | null
+): Record<string, string> {
+  const headers: Record<string, string> = {};
+
+  if (upstreamHeaders) {
+    if (upstreamHeaders instanceof Headers) {
+      // The `Headers` API lowercases all keys on iteration, which matches
+      // how fetch carries them on the wire (case-insensitive). We
+      // intentionally re-emit the lowercase form for consistency with
+      // `buildStreamingResponseHeaders` in responseHeaders.ts.
+      upstreamHeaders.forEach((value, key) => {
+        if (!SSE_FORWARDING_DENYLIST.has(key.toLowerCase())) {
+          headers[key] = value;
+        }
+      });
+    } else {
+      for (const [key, value] of Object.entries(upstreamHeaders)) {
+        if (typeof value !== "string") continue;
+        if (SSE_FORWARDING_DENYLIST.has(key.toLowerCase())) continue;
+        headers[key] = value;
+      }
+    }
+  }
+
+  headers["Content-Type"] = context.contentType || DEFAULT_SSE_CONTENT_TYPE;
+  headers["Cache-Control"] = DEFAULT_SSE_CACHE_CONTROL;
+  headers["Connection"] = "keep-alive";
+  headers["X-Accel-Buffering"] = "no";
+
+  // Cache miss for fresh upstream streams; cache HIT path uses a separate
+  // header (set by the semantic-cache layer) — see chatCore response flow.
+  headers[OMNIROUTE_RESPONSE_HEADERS.cache] = "MISS";
+
+  // Inject X-OmniRoute-* meta. attachOmniRouteMetaHeaders mutates the
+  // record in place but we own this Record (built locally above) so it's
+  // safe and keeps the call site free of side effects.
+  attachOmniRouteMetaHeaders(headers, {
+    cacheHit: false,
+    costUsd: 0,
+    model: context.model,
+    provider: context.provider,
+    requestId: context.requestId,
+    usage: context.usage ?? null,
+  });
+
+  // Allow caller overrides to win last (e.g. progress: enabled).
+  if (context.headers) {
+    for (const [key, value] of Object.entries(context.headers)) {
+      if (typeof value === "string") headers[key] = value;
+    }
+  }
+
+  return headers;
+}
+
+/**
+ * Build a heartbeat payload for a given shape. Exposed for unit tests and
+ * for callers that need to inject a one-off heartbeat outside a stream.
+ */
+export function buildHeartbeatPayload(
+  shape: HeartbeatShape,
+  opts: { chunkId?: string; chunkModel?: string } = {}
+): string {
+  switch (shape) {
+    case HEARTBEAT_SHAPES.ANTHROPIC_PING:
+      return "event: ping\ndata: {}\n\n";
+    case HEARTBEAT_SHAPES.OPENAI_RESPONSES_IN_PROGRESS:
+      return 'data: {"type":"response.in_progress"}\n\n';
+    case HEARTBEAT_SHAPES.OPENAI_CHUNK: {
+      const payload = {
+        id: opts.chunkId ?? "omniroute-keepalive",
+        object: "chat.completion.chunk",
+        created: Math.floor(Date.now() / 1000),
+        model: opts.chunkModel ?? "omniroute",
+        choices: [{ index: 0, delta: {}, finish_reason: null }],
+      };
+      return `data: ${JSON.stringify(payload)}\n\n`;
+    }
+    case HEARTBEAT_SHAPES.COMMENT:
+    default:
+      return `: keepalive ${new Date().toISOString()}\n\n`;
+  }
+}
+
+/**
+ * Append a keep-alive heartbeat to a stream. Returns a new ReadableStream
+ * that mirrors the input chunks and emits a heartbeat payload every
+ * `intervalMs` (default 15s) on the underlying transform.
+ *
+ * The timer is unref'd (Node-only) so it never blocks process shutdown, and
+ * is cleared on `flush()` / `cancel()` / `signal.abort` to avoid leaks.
+ *
+ * When `intervalMs <= 0` or `heartbeatEnabled` is false, returns a passthrough
+ * stream with no heartbeat side effect (used in unit tests).
+ */
+export function addStreamingHeartbeat(
+  stream: ReadableStream<Uint8Array>,
+  options: AddStreamingHeartbeatOptions = {}
+): ReadableStream<Uint8Array> {
+  const {
+    signal,
+    intervalMs = DEFAULT_HEARTBEAT_INTERVAL_MS,
+    shape = HEARTBEAT_SHAPES.COMMENT,
+    chunkId,
+    chunkModel,
+  } = options;
+
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+    return stream;
+  }
+
+  let intervalId: ReturnType<typeof setInterval> | undefined;
+  const stop = () => {
+    if (!intervalId) return;
+    clearInterval(intervalId);
+    intervalId = undefined;
+  };
+
+  const transform = new TransformStream<Uint8Array, Uint8Array>({
+    start(controller) {
+      intervalId = setInterval(() => {
+        if (signal?.aborted) {
+          stop();
+          return;
+        }
+        try {
+          controller.enqueue(
+            HEARTBEAT_ENCODER.encode(buildHeartbeatPayload(shape, { chunkId, chunkModel }))
+          );
+        } catch {
+          stop();
+        }
+      }, intervalMs);
+
+      if (intervalId && typeof intervalId === "object" && "unref" in intervalId) {
+        (intervalId as { unref?: () => void }).unref?.();
+      }
+      signal?.addEventListener("abort", stop, { once: true });
+    },
+    transform(chunk, controller) {
+      controller.enqueue(chunk);
+    },
+    flush() {
+      stop();
+    },
+  });
+
+  return stream.pipeThrough(transform);
+}
+
+/**
+ * Pure helper: derive the X-OmniRoute-Cost / tokens / model string from a
+ * finalized usage + cost pair. Used by callers (callbacks, telemetry) that
+ * need a normalized cost snapshot without recomputing the meta headers.
+ */
+export function finalizeStreamingResponse({
+  usage,
+  cost,
+}: FinalizeStreamingResponseArgs): {
+  metaHeaders: Record<string, string>;
+  costUsd: string;
+  tokens: { input: number; output: number };
+} {
+  const tokens = getOmniRouteTokenCounts(usage ?? null);
+  const costUsd = formatOmniRouteCost(cost);
+  const metaHeaders = buildOmniRouteResponseMetaHeaders({
+    cacheHit: false,
+    costUsd,
+    model: null,
+    provider: null,
+    requestId: null,
+    usage: usage ?? null,
+  });
+  return { metaHeaders, costUsd, tokens };
+}
+
+/**
+ * Apply SSE framing to a raw provider stream. This is the assembly choke
+ * point: every transform runs in the exact order the production pipeline
+ * applies them upstream of the final Response, and the headers come from
+ * `injectSseHeaders` so the caller gets a header+stream pair that is
+ * guaranteed to be consistent (Content-Type matches the framing, X-OmniRoute-*
+ * meta matches the context).
+ */
+export function wrapStreamWithSseFraming(
+  stream: ReadableStream<Uint8Array>,
+  options: WrapStreamWithSseFramingOptions
+): {
+  stream: ReadableStream<Uint8Array>;
+  headers: Record<string, string>;
+} {
+  const headers = injectSseHeaders(options.context, options.headers);
+
+  // Order MUST match the chatCore pipeline:
+  //   1. upstream transform (translate or passthrough)
+  //   2. PII guard
+  //   3. progress tracker (when enabled)
+  //   4. SSE heartbeat
+  let framed: ReadableStream<Uint8Array> = stream;
+  if (options.upstreamTransform) {
+    framed = framed.pipeThrough(options.upstreamTransform);
+  }
+  if (options.piiTransform) {
+    framed = framed.pipeThrough(options.piiTransform);
+  }
+  if (options.progressTransform) {
+    framed = framed.pipeThrough(options.progressTransform);
+  }
+
+  if (options.heartbeatEnabled !== false) {
+    framed = addStreamingHeartbeat(framed, {
+      signal: options.signal ?? null,
+      intervalMs: options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
+      shape: options.heartbeatShape ?? HEARTBEAT_SHAPES.COMMENT,
+      chunkId: options.heartbeatChunkId,
+      chunkModel: options.heartbeatChunkModel,
+    });
+  }
+
+  if (options.modelEchoTransform) {
+    framed = framed.pipeThrough(options.modelEchoTransform);
+  }
+
+  return { stream: framed, headers };
+}
+
+/**
+ * Top-level entry point used by `chatCore.handleChatCore` to assemble the
+ * final streaming Response. All the work that used to live inline at the
+ * bottom of chatCore.ts (lines ~4820-4940 in the v3.8.34 snapshot) now
+ * goes through this function, which is a thin façade over `wrapStreamWithSseFraming`
+ * with the chatCore defaults filled in.
+ *
+ * The default `heartbeatEnabled: true` matches the production behaviour
+ * (heartbeats are sent to long-lived SSE clients). Tests can pass
+ * `heartbeatEnabled: false` to avoid timer side effects.
+ */
+export function assembleStreamingResponse(
+  args: AssembleStreamingResponseArgs & Partial<WrapStreamWithSseFramingOptions>
+): {
+  stream: ReadableStream<Uint8Array>;
+  headers: Record<string, string>;
+} {
+  const context: StreamingResponseContext = {
+    requestId: args.requestId,
+    provider: args.provider,
+    model: args.model,
+    contentType: args.contentType ?? DEFAULT_SSE_CONTENT_TYPE,
+    usage: args.usage ?? null,
+    headers: args.headers,
+  };
+
+  return wrapStreamWithSseFraming(args.sseStream, {
+    headers: args.headers ?? {},
+    context,
+    upstreamTransform: args.upstreamTransform ?? null,
+    piiTransform: args.piiTransform ?? null,
+    progressTransform: args.progressTransform ?? null,
+    modelEchoTransform: args.modelEchoTransform ?? null,
+    heartbeatEnabled: args.heartbeatEnabled,
+    heartbeatIntervalMs: args.heartbeatIntervalMs,
+    heartbeatShape: args.heartbeatShape,
+    signal: args.signal ?? null,
+    heartbeatChunkId: args.heartbeatChunkId,
+    heartbeatChunkModel: args.heartbeatChunkModel,
+  });
+}

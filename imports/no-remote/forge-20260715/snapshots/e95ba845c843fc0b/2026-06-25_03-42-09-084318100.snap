@@ -1,0 +1,11 @@
+import json
+
+d = json.load(open('registry/disposition-index.json'))
+all_ids = ['repo-go-nippon-archive-only','repo-smart-mcp-go-no-merit','repo-mcpkit-superseded','repo-phenocompose-archive','repo-nanovms-archive','repo-byteport-affirm','repo-phenotype-infra-affirm','repo-phenotype-go-sdk-affirm']
+mine = [r for r in d['rows'] if isinstance(r, dict) and r.get('id') in all_ids]
+print('rows_found:', len(mine), 'of', len(all_ids), 'expected')
+for r in mine:
+    print(' -', r['id'], '|', r['path'], '|', r['disposition'], '|', r['fsm'])
+print('total_rows:', len(d['rows']))
+print('updated:', d.get('updated'))
+print('schema_version:', d.get('schema_version'))

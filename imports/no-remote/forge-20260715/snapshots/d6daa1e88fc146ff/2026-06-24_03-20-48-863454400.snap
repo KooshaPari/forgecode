@@ -1,0 +1,7 @@
+import json, re
+data = open(r'C:\Users\koosh\AppData\Local\Temp\api_jobs.json', encoding='utf-8').read()
+data = re.sub(r'\x1b\[[0-9;]*m', '', data)
+d = json.loads(data)
+with open(r'C:\Users\koosh\AppData\Local\Temp\job_list.txt', 'w', encoding='utf-8') as f:
+    for j in d.get('jobs', []):
+        f.write(f"{j['name']} | {j['conclusion']} | {j['id']}\n")

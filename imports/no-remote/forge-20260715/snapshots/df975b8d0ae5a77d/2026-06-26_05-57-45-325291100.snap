@@ -1,0 +1,70 @@
+# Dockerfile: NVMS OCI image for PhenoCompose
+#
+# Multi-stage build:
+#   1. Build the pheno-compose-driver Rust binary
+#   2. Distroless runtime stage (no shell, no package manager)
+#
+# SLSA Build L3 target: this image is built by the
+# slsa-github-generator containerized workflow with
+# non-forgeable provenance and ephemeral builders.
+
+# Stage 1: Rust builder
+FROM docker.io/rust:1.75-alpine3.18 AS builder
+LABEL stage="builder"
+
+RUN apk add --no-cache \
+    musl-dev \
+    pkgconfig \
+    openssl-dev \
+    perl \
+    make
+
+WORKDIR /workspace
+
+# Copy manifests first for layer caching
+COPY Cargo.toml Cargo.lock ./
+COPY pheno-compose-driver/Cargo.toml pheno-compose-driver/
+COPY bindings/rust-ffi/Cargo.toml bindings/rust-ffi/
+COPY crates/pheno-config/Cargo.toml crates/pheno-config/
+
+# Create dummy sources to cache dependencies
+RUN mkdir -p pheno-compose-driver/src \
+    bindings/rust-ffi/src \
+    crates/pheno-config/src \
+    && echo "fn main() {}" > pheno-compose-driver/src/main.rs \
+    && touch bindings/rust-ffi/src/lib.rs \
+    && touch crates/pheno-config/src/lib.rs
+
+# Build dependencies (cached layer)
+RUN cargo build --manifest-path pheno-compose-driver/Cargo.toml --release --locked 2>/dev/null || true
+
+# Copy actual sources
+COPY . .
+
+# Touch sources to force rebuild of the binary (not deps)
+RUN touch pheno-compose-driver/src/main.rs \
+    bindings/rust-ffi/src/lib.rs \
+    crates/pheno-config/src/lib.rs
+
+# Build the NVMS driver binary
+RUN cargo build --manifest-path pheno-compose-driver/Cargo.toml --release --locked
+
+# Stage 2: Distroless runtime
+FROM gcr.io/distroless/cc-debian12:latest
+
+# Copy the NVMS driver binary
+COPY --from=builder /workspace/target/release/pheno-compose-driver /usr/local/bin/pheno-compose-driver
+
+# Default configuration
+COPY --from=builder /workspace/pheno-compose-driver/nvms.toml /etc/nvms/nvms.toml
+
+# Expose NVMS API port
+EXPOSE 8080
+
+# Metadata
+LABEL org.opencontainers.image.source="https://github.com/KooshaPari/PhenoCompose"
+LABEL org.opencontainers.image.description="NVMS deployment composition driver"
+LABEL org.opencontainers.image.licenses="MIT OR Apache-2.0"
+LABEL org.opencontainers.image.version="0.1.0"
+
+ENTRYPOINT ["/usr/local/bin/pheno-compose-driver"]

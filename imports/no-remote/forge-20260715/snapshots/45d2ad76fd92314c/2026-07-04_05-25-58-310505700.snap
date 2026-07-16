@@ -1,0 +1,56 @@
+name: release-please
+
+# WP-15 — Versioning + changelog automation.
+# Watches conventional-commit messages on main, opens/updates a release
+# PR that bumps semver + regenerates CHANGELOG.md.
+# Merging the release PR tags the version + triggers signed-release.yml.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release-type: rust
+          package-name: phenotype-tooling
+          changelog-path: CHANGELOG.md
+          # Versioning rules:
+          #   chore/deps:    PATCH bump
+          #   feat:          MINOR bump
+          #   fix/perf/refactor: PATCH bump
+          #   feat!:         MAJOR bump
+          # Release PR target branch:
+          target-branch: main
+          # Manifest file path (release-please reads config):
+          config-path: .github/release-please-config.json
+          # Skip versioning for repos we don't want to release yet.
+          skip-github-release: true
+        outputs:
+          release_created: ${{ steps.release.outputs.release_created }}
+          tag_name: ${{ steps.release.outputs.tag_name }}
+
+      # When release-please pushes a release tag (e.g. v0.3.0), trigger
+      # signed-release.yml + release-sbom.yml. We chain via workflow_run
+      # so the new tag's push is the trigger.
+      - name: Chain to signed-release on new tag
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Release tag ${{ steps.release.outputs.tag_name }} created."
+          echo "Signed-release + sbom-publish will fire on the tag push."

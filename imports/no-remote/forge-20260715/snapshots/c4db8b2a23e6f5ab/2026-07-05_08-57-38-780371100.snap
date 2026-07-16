@@ -1,0 +1,502 @@
+/**
+ * Container runtime providers for the OmniRoute skill sandbox.
+ *
+ * The sandbox historically hardcoded the `docker` CLI. This module abstracts
+ * the container runtime so OmniRoute can pick the most performant / native
+ * runtime available on each host:
+ *
+ *   - macOS:  Apple Container (`container` CLI)  >  OrbStack (docker shim)  >  Podman  >  Docker
+ *   - Windows: WSL Container (`wslc` CLI)       >  Docker Desktop          >  Podman
+ *   - Linux:   Podman (rootless, daemonless)    >  Docker
+ *
+ * The user can override the auto-detected choice with `SKILLS_SANDBOX_RUNTIME`
+ * (`auto | docker | apple | wsl | orbstack | podman`). Each provider maps the
+ * sandbox's intent (resource caps, network isolation, capability drops,
+ * read-only fs, tmpfs workspaces) onto the runtime's native flag set.
+ */
+
+import { createRequire } from "module";
+import os from "os";
+
+const require = createRequire(import.meta.url);
+const childProcess = require("child_process") as typeof import("child_process");
+
+export type SandboxRuntimeId = "docker" | "apple" | "wsl" | "orbstack" | "podman";
+
+export interface SandboxConfig {
+  cpuLimit: number;
+  memoryLimit: number;
+  timeout: number;
+  networkEnabled: boolean;
+  readOnly: boolean;
+}
+
+export interface ResolvedContainerCommand {
+  /** Absolute command to spawn (e.g. `"docker"`, `"container"`, `"wslc"`). */
+  command: string;
+  /** Arguments for the command. */
+  args: string[];
+  /** Arguments appended for the `kill` cleanup path. */
+  killArgs: (containerName: string) => string[];
+}
+
+export interface ContainerProvider {
+  readonly id: SandboxRuntimeId;
+  readonly displayName: string;
+  /**
+   * Returns true when this provider is actually usable on the current host.
+   * Implementations should perform cheap CLI probes (`--version`) and never
+   * throw — failures are reported as `false` so the picker can fall through.
+   */
+  detect(): Promise<boolean>;
+  /**
+   * Build the CLI invocation that runs the sandboxed command. The runtime
+   * is responsible for translating OmniRoute's sandbox knobs onto the
+   * runtime's native flag set.
+   */
+  buildRun(image: string, command: string[], sandboxId: string, config: SandboxConfig): ResolvedContainerCommand;
+}
+
+const SANDBOX_NAME = (id: string) => `omniroute-sandbox-${id}`;
+
+/* ------------------------------------------------------------------------ */
+/* Probe helper — `which` / command --version style detection.              */
+/* ------------------------------------------------------------------------ */
+
+const detectionCache = new Map<SandboxRuntimeId, boolean>();
+let detectionInFlight: Promise<void> | null = null;
+
+function probeCommand(binary: string): boolean {
+  try {
+    const probeCmd = process.platform === "win32" ? "where" : "which";
+    const result = childProcess.spawnSync(probeCmd, [binary], {
+      stdio: "ignore",
+      shell: false,
+    });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+async function probeVersion(binary: string, args: string[] = ["--version"]): Promise<boolean> {
+  // Use spawnSync (not spawn) so test suites that mock `spawn` to inspect
+  // sandbox invocation args don't see probe traffic in their captured calls.
+  return new Promise((resolve) => {
+    try {
+      const result = childProcess.spawnSync(binary, args, {
+        stdio: "ignore",
+        shell: false,
+      });
+      resolve(result.status === 0);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+      };
+      proc.on("error", () => finish(false));
+      proc.on("close", (code) => finish(code === 0));
+      // Safety net so a stuck child doesn't hang the picker forever.
+      setTimeout(() => finish(false), 1500).unref();
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+async function clearDetectionCache(): Promise<void> {
+  detectionCache.clear();
+}
+
+/* ------------------------------------------------------------------------ */
+/* Provider: Docker                                                         */
+/* ------------------------------------------------------------------------ */
+
+class DockerProvider implements ContainerProvider {
+  readonly id: SandboxRuntimeId = "docker";
+  readonly displayName = "Docker";
+
+  async detect(): Promise<boolean> {
+    if (detectionCache.has(this.id)) return detectionCache.get(this.id)!;
+    const available = probeCommand("docker") && (await probeVersion("docker"));
+    detectionCache.set(this.id, available);
+    return available;
+  }
+
+  buildRun(image: string, command: string[], sandboxId: string, config: SandboxConfig): ResolvedContainerCommand {
+    const args = [
+      "run",
+      "--rm",
+      "--name",
+      SANDBOX_NAME(sandboxId),
+      "--cpus",
+      `${config.cpuLimit / 1000}`,
+      "--memory",
+      `${config.memoryLimit}m`,
+      "--network",
+      config.networkEnabled ? "bridge" : "none",
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges",
+      "--pids-limit",
+      "100",
+      "--tmpfs",
+      "/tmp:rw,noexec,nosuid,size=64m",
+      "--tmpfs",
+      "/workspace:rw,noexec,nosuid,size=64m",
+      "--workdir",
+      "/workspace",
+    ];
+    if (config.readOnly) args.push("--read-only");
+    args.push(image, ...command);
+
+    return {
+      command: "docker",
+      args,
+      killArgs: (name) => ["kill", name],
+    };
+  }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Provider: Apple Container (https://github.com/apple/container)           */
+/* ------------------------------------------------------------------------ */
+
+class AppleContainerProvider implements ContainerProvider {
+  readonly id: SandboxRuntimeId = "apple";
+  readonly displayName = "Apple Container";
+
+  async detect(): Promise<boolean> {
+    if (detectionCache.has(this.id)) return detectionCache.get(this.id)!;
+    // Apple Container ships only on macOS 26+ on Apple Silicon.
+    const platformOk = process.platform === "darwin" && os.arch() === "arm64";
+    const available =
+      platformOk && probeCommand("container") && (await probeVersion("container"));
+    detectionCache.set(this.id, available);
+    return available;
+  }
+
+  buildRun(image: string, command: string[], sandboxId: string, config: SandboxConfig): ResolvedContainerCommand {
+    // Apple Container exposes the same OCI primitives as Docker but uses a
+    // different network model (`--network` accepts `none` / `host` / `bridge`)
+    // and its own resource flag spellings. No `--cap-drop` yet — security
+    // defaults are handled by the runtime's micro-VM boundary.
+    const args = [
+      "run",
+      "--rm",
+      "--name",
+      SANDBOX_NAME(sandboxId),
+      "--cpus",
+      `${Math.max(1, Math.round(config.cpuLimit / 1000))}`,
+      "--memory",
+      `${config.memoryLimit}M`,
+      "--network",
+      config.networkEnabled ? "bridge" : "none",
+      "--security-opt",
+      "no-new-privileges:true",
+      "--tmpfs",
+      "/tmp:rw,noexec,nosuid,size=64m",
+      "--tmpfs",
+      "/workspace:rw,noexec,nosuid,size=64m",
+      "--workdir",
+      "/workspace",
+    ];
+    if (config.readOnly) args.push("--read-only");
+    args.push(image, ...command);
+
+    return {
+      command: "container",
+      args,
+      killArgs: (name) => ["stop", name],
+    };
+  }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Provider: WSL Container (https://learn.microsoft.com/windows/wsl/wsl-container) */
+/* ------------------------------------------------------------------------ */
+
+class WslContainerProvider implements ContainerProvider {
+  readonly id: SandboxRuntimeId = "wsl";
+  readonly displayName = "WSL Container";
+
+  async detect(): Promise<boolean> {
+    if (detectionCache.has(this.id)) return detectionCache.get(this.id)!;
+    // The WSL container CLI ships as `wslc.exe` (or `wslc`) on Windows hosts.
+    const platformOk = process.platform === "win32";
+    const available = platformOk && probeCommand("wslc") && (await probeVersion("wslc"));
+    detectionCache.set(this.id, available);
+    return available;
+  }
+
+  buildRun(image: string, command: string[], sandboxId: string, config: SandboxConfig): ResolvedContainerCommand {
+    // `wslc run` mirrors `docker run` but executes inside an isolated WSL
+    // distro so Windows hosts can run Linux containers natively without
+    // Docker Desktop. Default distro is selected via --distro if provided.
+    const distro = process.env.SKILLS_SANDBOX_WSL_DISTRO?.trim();
+    const args: string[] = ["run", "--rm"];
+    if (distro) {
+      args.push("--distro", distro);
+    }
+    args.push(
+      "--name",
+      SANDBOX_NAME(sandboxId),
+      "--cpus",
+      `${Math.max(1, Math.round(config.cpuLimit / 1000))}`,
+      "--memory",
+      `${config.memoryLimit}M`,
+      "--network",
+      config.networkEnabled ? "bridge" : "none",
+      "--security-opt",
+      "no-new-privileges",
+      "--tmpfs",
+      "/tmp:rw,noexec,nosuid,size=64m",
+      "--tmpfs",
+      "/workspace:rw,noexec,nosuid,size=64m",
+      "--workdir",
+      "/workspace"
+    );
+    if (config.readOnly) args.push("--read-only");
+    args.push(image, ...command);
+
+    return {
+      command: "wslc",
+      args,
+      killArgs: (name) => ["stop", name],
+    };
+  }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Provider: OrbStack (https://orbstack.dev) — docker shim on macOS          */
+/* ------------------------------------------------------------------------ */
+
+class OrbStackProvider implements ContainerProvider {
+  readonly id: SandboxRuntimeId = "orbstack";
+  readonly displayName = "OrbStack";
+
+  async detect(): Promise<boolean> {
+    if (detectionCache.has(this.id)) return detectionCache.get(this.id)!;
+    // OrbStack exposes a docker-compatible CLI at `orbctl` and a docker
+    // shim. We accept either: the shim is preferred when present because
+    // it's a drop-in for the Docker provider.
+    const platformOk = process.platform === "darwin";
+    const orbctlOk = platformOk && probeCommand("orbctl") && (await probeVersion("orbctl"));
+    const dockerShimOk = platformOk && probeCommand("docker") && (await probeOrbStackHint());
+    const available = orbctlOk || dockerShimOk;
+    detectionCache.set(this.id, available);
+    return available;
+  }
+
+  buildRun(image: string, command: string[], sandboxId: string, config: SandboxConfig): ResolvedContainerCommand {
+    // OrbStack is a high-performance drop-in replacement for Docker Desktop
+    // on macOS (VirtIO-based Linux VM, sub-second cold start). When the
+    // `docker` shim is present, prefer it for maximum compatibility; fall
+    // back to `orbctl` which exposes the same primitives with slightly
+    // different spelling.
+    if (probeCommand("docker")) {
+      const docker = new DockerProvider();
+      return docker.buildRun(image, command, sandboxId, config);
+    }
+    const args = [
+      "run",
+      "--rm",
+      "--name",
+      SANDBOX_NAME(sandboxId),
+      "--cpus",
+      `${Math.max(1, Math.round(config.cpuLimit / 1000))}`,
+      "--memory",
+      `${config.memoryLimit}M`,
+      "--network",
+      config.networkEnabled ? "host" : "none",
+      "--workdir",
+      "/workspace",
+    ];
+    if (config.readOnly) args.push("--read-only");
+    args.push(image, ...command);
+
+    return {
+      command: "orbctl",
+      args,
+      killArgs: (name) => ["stop", name],
+    };
+  }
+}
+
+async function probeOrbStackHint(): Promise<boolean> {
+  // `docker context show` returns "orbstack" when the docker CLI is shimmed
+  // by OrbStack. Best-effort probe — fall back to false on any error.
+  return new Promise((resolve) => {
+    try {
+      const proc = childProcess.spawn("docker", ["context", "show"], {
+        stdio: ["ignore", "pipe", "ignore"],
+        shell: false,
+      });
+      let stdout = "";
+      proc.stdout?.on("data", (chunk) => (stdout += chunk.toString()));
+      proc.on("error", () => resolve(false));
+      proc.on("close", () => resolve(/orbstack/i.test(stdout)));
+      setTimeout(() => resolve(false), 1500).unref();
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+/* ------------------------------------------------------------------------ */
+/* Provider: Podman (rootless, daemonless)                                  */
+/* ------------------------------------------------------------------------ */
+
+class PodmanProvider implements ContainerProvider {
+  readonly id: SandboxRuntimeId = "podman";
+  readonly displayName = "Podman";
+
+  async detect(): Promise<boolean> {
+    if (detectionCache.has(this.id)) return detectionCache.get(this.id)!;
+    const available = probeCommand("podman") && (await probeVersion("podman"));
+    detectionCache.set(this.id, available);
+    return available;
+  }
+
+  buildRun(image: string, command: string[], sandboxId: string, config: SandboxConfig): ResolvedContainerCommand {
+    // Podman mirrors docker's CLI but doesn't need a daemon. Most flags are
+    // identical; the only difference is `--network` accepts the same set
+    // (none/bridge/host/slirp4netns).
+    const args = [
+      "run",
+      "--rm",
+      "--name",
+      SANDBOX_NAME(sandboxId),
+      "--cpus",
+      `${config.cpuLimit / 1000}`,
+      "--memory",
+      `${config.memoryLimit}m`,
+      "--network",
+      config.networkEnabled ? "bridge" : "none",
+      "--cap-drop",
+      "ALL",
+      "--security-opt",
+      "no-new-privileges",
+      "--pids-limit",
+      "100",
+      "--tmpfs",
+      "/tmp:rw,noexec,nosuid,size=64m",
+      "--tmpfs",
+      "/workspace:rw,noexec,nosuid,size=64m",
+      "--workdir",
+      "/workspace",
+    ];
+    if (config.readOnly) args.push("--read-only");
+    args.push(image, ...command);
+
+    return {
+      command: "podman",
+      args,
+      killArgs: (name) => ["kill", name],
+    };
+  }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Registry & auto-detect                                                   */
+/* ------------------------------------------------------------------------ */
+
+export const ALL_PROVIDERS: ContainerProvider[] = [
+  new DockerProvider(),
+  new AppleContainerProvider(),
+  new WslContainerProvider(),
+  new OrbStackProvider(),
+  new PodmanProvider(),
+];
+
+const PROVIDER_BY_ID = new Map<SandboxRuntimeId, ContainerProvider>(
+  ALL_PROVIDERS.map((p) => [p.id, p])
+);
+
+function normaliseRuntimeOverride(raw: string | undefined): SandboxRuntimeId | null {
+  if (!raw) return null;
+  const id = raw.trim().toLowerCase();
+  if (id === "" || id === "auto") return null;
+  if (PROVIDER_BY_ID.has(id as SandboxRuntimeId)) return id as SandboxRuntimeId;
+  return null;
+}
+
+/**
+ * Returns the platform-specific priority order used in auto-detection mode.
+ * Higher index = preferred.
+ */
+export function platformPriority(): SandboxRuntimeId[] {
+  if (process.platform === "darwin") {
+    // Apple Container is the fastest path on Apple Silicon (micro-VM).
+    // OrbStack is the second-best path (VirtIO Linux VM).
+    // Podman / docker round out the list for non-native installs.
+    return ["docker", "podman", "orbstack", "apple"];
+  }
+  if (process.platform === "win32") {
+    // WSL Container avoids the Docker Desktop VM entirely.
+    return ["docker", "podman", "wsl"];
+  }
+  // Linux: podman is daemonless and rootless out of the box.
+  return ["docker", "podman"];
+}
+
+/**
+ * Resolves which runtime the sandbox should use for the current host.
+ *
+ * Resolution rules (in order):
+ *   1. Explicit override via `SKILLS_SANDBOX_RUNTIME`.
+ *   2. Auto-detect: walk the platform priority list and pick the first
+ *      runtime whose `detect()` succeeds.
+ *   3. Fall back to the Docker provider (the historical default) even if
+ *      detection fails — the spawn will surface a clear "docker not
+ *      found" error if Docker really is missing.
+ */
+export async function resolveProvider(): Promise<ContainerProvider> {
+  if (!detectionInFlight) {
+    detectionInFlight = (async () => {
+      await Promise.all(ALL_PROVIDERS.map((p) => p.detect().catch(() => false)));
+    })();
+  }
+  await detectionInFlight;
+
+  const override = normaliseRuntimeOverride(process.env.SKILLS_SANDBOX_RUNTIME);
+  if (override) {
+    const provider = PROVIDER_BY_ID.get(override)!;
+    if (detectionCache.get(provider.id)) return provider;
+    // Honour the explicit override even if detection failed — the user may
+    // be running inside an environment where the runtime is reachable but
+    // our probe failed (e.g. very locked-down CI).
+    return provider;
+  }
+
+  for (const id of platformPriority()) {
+    if (detectionCache.get(id)) return PROVIDER_BY_ID.get(id)!;
+  }
+  return PROVIDER_BY_ID.get("docker")!;
+}
+
+/** Exposed for tests — forces a fresh detection pass. */
+export async function _resetProviderCacheForTests(): Promise<void> {
+  await clearDetectionCache();
+  detectionInFlight = null;
+}
+
+/** Returns the binary / container-name pair used by the sandbox kill path. */
+export function buildKillCommand(provider: ContainerProvider, sandboxId: string): ResolvedContainerCommand {
+  const name = SANDBOX_NAME(sandboxId);
+  return {
+    command: provider.id === "wsl" ? "wslc" : provider.id === "apple" ? "container" : provider.id === "orbstack" ? (probeCommand("docker") ? "docker" : "orbctl") : provider.id === "podman" ? "podman" : "docker",
+    args: provider.buildRun("__noop__", [], "", DEFAULT_PROBE_CONFIG).killArgs(name),
+    killArgs: (n) => provider.buildRun("__noop__", [], "", DEFAULT_PROBE_CONFIG).killArgs(n),
+  };
+}
+
+const DEFAULT_PROBE_CONFIG: SandboxConfig = {
+  cpuLimit: 100,
+  memoryLimit: 64,
+  timeout: 1000,
+  networkEnabled: false,
+  readOnly: true,
+};

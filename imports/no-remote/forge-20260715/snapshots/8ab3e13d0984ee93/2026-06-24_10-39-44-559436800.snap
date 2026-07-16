@@ -1,0 +1,37 @@
+import { defineConfig } from 'vitepress';
+
+// VitePress config for the Configra docs site.
+// Deployed to GitHub Pages via .github/workflows/docs.yml.
+// site.base is set so the site works under the project sub-path
+// (e.g. https://<owner>.github.io/Configra/).
+export default defineConfig({
+  title: 'Configra',
+  description:
+    'Configra — local-first configuration management, feature flags, ' +
+    'secrets, and version tracking for Phenotype projects.',
+  cleanUrls: true,
+  base: '/Configra/',
+  lastUpdated: true,
+  themeConfig: {
+    nav: [
+      { text: 'Home', link: '/' },
+      { text: 'Getting Started', link: '/getting-started' },
+    ],
+    sidebar: [
+      {
+        text: 'Introduction',
+        items: [
+          { text: 'Home', link: '/' },
+          { text: 'Getting Started', link: '/getting-started' },
+        ],
+      },
+    ],
+    socialLinks: [
+      { icon: 'github', link: 'https://github.com/KooshaPari/Configra' },
+    ],
+    footer: {
+      message: 'Released under the MIT License.',
+      copyright: 'Copyright (c) 2026 KooshaPari',
+    },
+  },
+});

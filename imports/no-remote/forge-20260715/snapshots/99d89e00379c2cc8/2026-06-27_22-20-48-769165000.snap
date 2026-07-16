@@ -1,0 +1,248 @@
+# Phase A — Stability / Health Hardening Spec
+
+**Author:** Forge (KooshaPari planning)
+**Status:** Draft, awaiting KooshaPari approval
+**Date:** 2026-06-27
+**Anchor:** `E:\plans\OmniRoute\2026-06-27-stability-first-reanchored.md`
+
+The user’s stated intent in this turn was:
+
+> "the main focus is not cost optimization, its stability/latency/health optimization to make requests stop failing so much in harnesses."
+
+Phase A is the first PR cluster targeting that intent, designed to be the smallest possible surgical merge against `diegosouzapw/OmniRoute` with a feature flag, then completed with full E2E on the fork `KooshaPari/OmniRoute` before being proposed upstream.
+
+---
+
+## 1. Goal
+
+Make a downstream harness (Cursor-style multi-turn coding, claude-code-style agents) able to issue hundreds of auto-routed requests with **near-zero transient failures caused by routing decisions themselves** — i.e., failures that are not legitimate provider errors but are caused by the router choosing a model that is mid-cooldown, has a hidden health regression, or is suffering a slow death while still appearing nominally healthy.
+
+Specifically:
+
+- Reduce the rate of routing-induced transient failures against `auto/*` and `combo:*` aliases from the current observable baseline to **< 0.5 percent** in the soak variant of `tests/e2e/system-failover.test.ts` over a 1h synthetic workload.
+- Detect providers whose error rate is drifting upward in the **last 1 hour** even when their absolute failure rate is still nominally below the static lockout threshold.
+- Surface a learned, per-(provider, model, error_class) failure rate to every existing router strategy without modifying those strategies’ public interfaces.
+
+## 2. Non-goals
+
+- No change to provider auth flows, LiteLLM pricing sync, or quota subscription UI.
+- No change to the public CLI / API contract (everything is feature-flagged off by default).
+- No cost optimization beyond what falls out naturally (better failover ⇒ fewer wasted premium-tier retries).
+
+## 3. Pre-existing surface this builds on
+
+Verified during this session (cited by file:line):
+
+- `OmniRoute-upstream/open-sse/services/autoCombo/selfHealing.ts` — the 167-line class that today excludes providers below score 0.2, escalates cooldowns on repeated failures, and declares an incident if >= 50% are OPEN. This is the **only** existing health layer and it is purely in-memory and threshold-based.
+- `OmniRoute-upstream/open-sse/services/autoCombo/scoring.ts` — the 6-factor scoring engine (quota, health, cost, latency, taskFit, stability). This spec adds a 7th factor `learnedFailureRate` and feeds it as an _additive_ input to the existing score, never replacing the static thresholds.
+- `OmniRoute-upstream/open-sse/services/autoCombo/routerStrategy.ts:78-99` — pluggable `RouterStrategy` interface. No strategy is modified; the new `learningStrategy.ts` is added to the registry.
+- `OmniRoute-upstream/src/domain/quotaCache.ts` — quota observation surface. The Phase 1 spec already adds an observer hook at `setQuotaCache()`. Phase A consumes that hook’s downstream `QuotaObservation` shape but does not own it.
+- `OmniRoute-upstream/src/lib/db/migrations/097_model_intelligence.sql` — dormant-ish table for tiers/learned priors. Phase A adds a new sibling table `provider_health_history` rather than overloading it.
+- `OmniRoute-upstream/open-sse/services/circuitBreaker/` — current circuit breaker (in-memory) that this spec complements but does not replace.
+
+## 4. Proposed architecture (additive, opt-in)
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Existing flow (unchanged when OMNIR_HEALTH_LEARNING=0)                    │
+│                                                                          │
+│   chatCore → rate limit → combo resolve → scoring.ts → strategy → exec   │
+│                                            │                             │
+│                                            ▼                             │
+│                              ProviderResult + observed_error              │
+└──────────────────────────────────────────────────────────────────────────┘
+                                        │
+                  (new observer, no behavior change when off)
+                                        ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│ HealthLearning layer (Phase A, gated by OMNIR_HEALTH_LEARNING)           │
+│                                                                          │
+│  ProviderResultBus.emit({providerId, model, errorClass, errorKind,        │
+│                          latencyMs, outcome, ts, requestId, sessionId})  │
+│        │                                                                 │
+│        ▼                                                                 │
+│  HealthLearningObserver                                                  │
+│        ├── writes provider_health_history (raw rolling observation)      │
+│        ├── runs z-score anomaly detector every 60s on the last 1h bucket │
+│        ├── emits ProviderHealthSignal { providerId, errorClass,          │
+│        │     driftScore, sampleCount, anomalySeverity }                  │
+│        └── recomputes per-(provider, model, error_class) failure rate    │
+│            every 5 minutes → caches in provider_health_rates              │
+│                                                                          │
+│      Scoring hook: scoring.ts::calculateScore() consults                  │
+│        provider_health_rates[providerId, model] for the FAILURE_FACTOR   │
+│        factor and adds a penalty proportional to recent error rate        │
+│                                                                          │
+│      Self-healing hook: selfHealing.ts::excludeForReason() emits a soft  │
+│        exclusion with source='health-learning-drift' visible to test     │
+│        harnesses via the trace bus (Phase B), without triggering the     │
+│        existing 0.2 score threshold                                      │
+└──────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Existing selfHealingManager + circuitBreaker                              │
+│   (unchanged; their public behavior preserves current thresholds and      │
+│    cooldowns; they receive a new "soft" exclusion kind they do not act   │
+│    on but expose; this is testable)                                       │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+## 5. Data model — migration `114_provider_health_history.sql`
+
+```sql
+-- Rolling raw observations
+CREATE TABLE provider_health_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER NOT NULL,                   -- unix ms
+  provider_id TEXT NOT NULL,             -- matches provider_connections.id
+  model TEXT NOT NULL,
+  error_class TEXT,                      -- null when outcome=success
+  error_kind TEXT,                       -- provider sub-kind (e.g. rate_limit_exceeded)
+  outcome TEXT NOT NULL CHECK (outcome IN ('success','failure','retry')),
+  latency_ms INTEGER,
+  request_id TEXT,
+  session_id TEXT
+);
+
+CREATE INDEX idx_health_provider_ts ON provider_health_history(provider_id, ts);
+CREATE INDEX idx_health_provider_class_ts ON provider_health_history(provider_id, error_class, ts);
+CREATE INDEX idx_health_session ON provider_health_history(session_id);
+
+-- Aggregated, 5-minute-bucketed rates for hot path reads
+CREATE TABLE provider_health_rates (
+  provider_id TEXT NOT NULL,
+  model TEXT NOT NULL,
+  error_class TEXT NOT NULL,
+  window_start_ts INTEGER NOT NULL,      -- rounded down to 5 min
+  sample_count INTEGER NOT NULL,
+  failure_count INTEGER NOT NULL,
+  mean_latency_ms REAL,
+  p95_latency_ms REAL,
+  failure_rate REAL,                     -- failure_count / sample_count
+  drift_z_score REAL,                    -- z-score of failure_rate vs 1h prior bucket
+  PRIMARY KEY (provider_id, model, error_class, window_start_ts)
+);
+
+CREATE INDEX idx_health_rates_window ON provider_health_rates(window_start_ts);
+
+-- Soft exclusions (visible, non-cascading; do NOT block request flow)
+CREATE TABLE provider_health_exclusions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER NOT NULL,
+  provider_id TEXT NOT NULL,
+  model TEXT,
+  reason TEXT NOT NULL,                  -- 'drift_upward' | 'anomaly_severity_high' etc.
+  severity REAL,
+  expires_ts INTEGER NOT NULL
+);
+```
+
+No column on existing tables is altered. No existing row is rewritten.
+
+## 6. Components
+
+### 6.1 `open-sse/services/healthLearning/types.ts`
+
+Pure types. Exports `ProviderResult`, `ProviderHealthSignal`, `HealthObservation`, `HealthExclusionReason`. No behavior.
+
+### 6.2 `open-sse/services/healthLearning/observer.ts`
+
+Singleton `HealthLearningObserver`. Single responsibility: receive `ProviderResult` events, write to `provider_health_history`, recompute the affected `(provider_id, model, error_class)` rate row, emit `ProviderHealthSignal` if severity crosses threshold.
+
+Crucially, this is the **only** file in the layer that touches `provider_connections`/`scoring.ts`/etc. Everything else (drift detector, anomaly engine, recording, exclusions) is below this node.
+
+### 6.3 `open-sse/services/healthLearning/drift.ts`
+
+`computeDriftScore(failureRate, baselineFailureRate, sampleCount): number` — Old-school modified z-score (uses MAD, not std-dev), robustness against sparse data; soft-clamped to `[0, 1]`; emits `-1` when sampleCount < 10.
+
+Trained "baseline" is a 7-day rolling median per-(provider, model, error_class) lazily persisted next to `provider_health_rates`. Drift against baseline is the signal Viability 0 here, not absolute failure rate.
+
+### 6.4 `open-sse/services/healthLearning/anomaly.ts`
+
+`detect(providerId, errorClass, nowMs): HealthAnomaly | null` — checks the **last hour** of `provider_health_history` against today’s all-day baseline. Uses isolation-forest-light: median + 1.5*IQR on `failure_rate`, weighted by `sample_count`. Returns `null` when sample_count < 30 (insufficient).
+
+### 6.5 `open-sse/services/healthLearning/scoringHook.ts`
+
+Adds the 7th factor to `scoring.ts::calculateScore()`. Score change strictly additive:
+
+```
+finalScore = 0.85 * legacyScore - 0.15 * driftPenalty(provider, model, error_class)
+```
+
+Where `driftPenalty` is `clamp(driftScore, 0, 1)` and only applied when `sampleCount >= 30` AND `OMNIR_HEALTH_LEARNING=1`. Default-off behavior is byte-for-byte identical to current.
+
+### 6.6 `open-sse/services/healthLearning/e2eHarness.ts`
+
+Test-only utility exposing:
+
+- `seedHealthHistory(...)` — synthesize an N-row history directly via `INSERT INTO provider_health_history ...`.
+- `setDriftThreshold(providerId, t)` — for tests where we want a deterministic drift signal without waiting 60s.
+- `awaitNextHealthSignal(timeoutMs)` — race-condition-safe listener for the observation bus.
+
+Used exclusively in `tests/e2e/health-learning.test.ts` and integration tests. Lives under `tests/` runtime, never in the prod bundle.
+
+## 7. Test plan
+
+### 7.1 Unit tests
+
+| File | What it locks in |
+|---|---|
+| `tests/unit/healthLearning/drift.spec.ts` | z-score + MAD edge cases (sample_count < 10 → returns -1, baseline == 0 → no division error, all-failures → clamp at 1) |
+| `tests/unit/healthLearning/anomaly.spec.ts` | IQR isolation against IQR=0 input degrades to median only; returns null under sparse data |
+| `tests/unit/healthLearning/observer.spec.ts` | observation written; rate updated; signal emitted at threshold; no signal below |
+
+### 7.2 Integration tests
+
+| File | What it locks in |
+|---|---|
+| `tests/integration/healthLearning/scoring.spec.ts` | given a seeded history, the scoring hook subtracts the expected penalty and `OMNIR_HEARNING=0` keeps the legacy score |
+| `tests/integration/healthLearning/selfHealing.spec.ts` | a drift-upward signal inserts a `provider_health_exclusions` row, but `selfHealingManager` is **not** triggered (soft exclusion is observational) |
+
+### 7.3 Playwright E2E
+
+`tests/e2e/health-learning.test.ts`:
+
+1. Seed a synthetic history showing `provider X, model claude-3-5-sonnet` failing at 65% over the last 1h (baseline 4%). The synthetic provider is a fake endpoint specified via `OMNIR_FAKE_PROVIDER_URL`.
+2. Issue 50 `auto/coding` requests through a coding harness fixture (the existing `tests/fixtures/auto-coding.spec.ts` is reused).
+3. Assert: **no request was routed to that provider, model** — verified via `tests/api/traces`-shaped API.
+4. Assert: every request was routed to a different provider/model whose static thresholds are similar.
+5. Assert: `provider_health_exclusions` has at least one row with `reason='drift_upward'` and `expires_ts > now`.
+6. Flip `OMNIR_HEALTH_LEARNING=0` mid-session; new requests revert to baseline behavior — verifying observability-only posture.
+
+### 7.4 Soak test
+
+Extend `tests/e2e/system-failover.test.ts` with a 1h soak loop at 20 req/min targeting a mix of `auto/*` aliases with three fake providers, two healthy one with soft-degrading behavior. Acceptance: < 0.5% transient failures attributable to routing decisions.
+
+## 8. Configuration & observability
+
+| Variable | Default | Effect |
+|---|---|---|
+| `OMNIR_HEALTH_LEARNING` | `0` | Master switch. Off = current behavior |
+| `OMNIR_HEALTH_DRIFT_THRESHOLD` | `0.35` | Drift z-score above which a signal is emitted |
+| `OMNIR_HEALTH_HISTORY_RETENTION_HOURS` | `168` (7 days) | Window persists 7 days; older buckets pruned (`PRAGMA vacuum` weekly) |
+| `OMNIR_HEALTH_RATE_RECOMPUTE_INTERVAL_S` | `300` | How often the rolling rates recompute |
+
+Logging: drift > 0.7 → warn; anomaly severity > 0.7 → error. Both go to the existing logging surface, no new logger.
+
+Tracing: every `ProviderHealthSignal` emits a structured log entry that the Phase B `route_traces` table captures under `signal_metadata_json`, so users running with `OMNIR_TRACE=1` see *both* the routing decision **and** the health signal that influenced it.
+
+## 9. Three acceptance thresholds
+
+1. **Code-level:** feature flag works. `OMNIR_HEALTH_LEARNING=0` produces a byte-identical `calculateScore` output for any seed.
+2. **Unit/integration:** all `tests/unit/healthLearning/*` + `tests/integration/healthLearning/*` green.
+3. **End-to-end:** soak variant of `tests/e2e/system-failover.test.ts` shows < 0.5% transient failures attributable to the router across a 1h run. Trace replay confirms zero requests hit a soft-excluded (provider, model).
+
+## 10. Open questions for the user
+
+| | Question | My default if no reply |
+|---|---|---|
+| Q1 | Feature flag default-off (per spec) or default-on-but-with-low-impact-pattern? | default off (`OMNIR_HEALTH_LEARNING=0`) |
+| Q2 | Provider-repo `getProvidersMeta()` API for the observer’s wiring — pull-listener vs push-listener? | push-listener via small `providerResultEmitter` bus (zero coupling) |
+| Q3 | Anomaly detection method (IQR isolation vs EWMA control chart vs Holt-Winters) | IQR isolation (simple, deterministic, matches existing math) |
+
+Reply `go` to accept all defaults, or supply your picks.
+
+---
+
+**Total LOC budget:** ~750 LOC across components + ~600 LOC of tests + 1 migration (~30 LOC). First PR target: `diegosouzapw/OmniRoute` against `upstream/main` once your fork has the matching branch with green E2E.

@@ -1,0 +1,2 @@
+Set objShell = CreateObject("Wscript.Shell")
+objShell.Run "cmd /c run_build.cmd", 0, False

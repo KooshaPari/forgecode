@@ -1,0 +1,73 @@
+name: ci
+
+on:
+  push:
+    branches: [main, fix/**, feat/**, chore/**]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: cargo check (ubuntu-latest, stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: iac -> target
+      - name: cargo fmt --check
+        working-directory: iac
+        run: cargo fmt --all -- --check
+      - name: cargo check --workspace --all-targets
+        working-directory: iac
+        run: cargo check --workspace --all-targets --locked
+      - name: cargo clippy --workspace --all-targets -- -D warnings
+        working-directory: iac
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    name: cargo test (ubuntu-latest, stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: iac -> target
+      - name: cargo test --workspace
+        working-directory: iac
+        run: cargo test --workspace --locked --all-features
+
+  audit:
+    name: cargo deny + cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v1
+      - name: cargo audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  macos:
+    name: cargo check (macos-latest, stable)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: iac -> target
+      - name: cargo check --workspace
+        working-directory: iac
+        run: cargo check --workspace --locked

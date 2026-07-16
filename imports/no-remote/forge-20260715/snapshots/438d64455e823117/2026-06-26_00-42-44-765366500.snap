@@ -1,0 +1,107 @@
+// src/discovery/providers.ts — local provider discovery.
+//
+// Discovers provider credentials from the filesystem without requiring
+// users to set env vars. Mirrors docs/research/DISCOVERY_TOOL_DESIGN.md.
+//
+// Sources checked (in order):
+//   1. process.env (highest precedence)
+//   2. ~/.omniroute/.env (user-level)
+//   3. ~/.omniroute/cookies.json (web-session creds)
+//   4. ~/.config/<provider>/credentials.json (XDG-style)
+//   5. ~/.aws/credentials (for bedrock)
+
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+const HOME = homedir();
+const OMNI_DIR = join(HOME, ".omniroute");
+
+interface CookieJar {
+  [providerId: string]: {
+    cookies: Array<{ name: string; value: string; domain?: string }>;
+    userAgent?: string;
+    expiresAt?: string;
+  };
+}
+
+export interface DiscoveredCred {
+  source: "env" | "user-env" | "cookies" | "xdg" | "aws";
+  value: string;
+  meta?: Record<string, unknown>;
+}
+
+async function safeReadJson<T>(path: string): Promise<T | null> {
+  try {
+    const raw = await readFile(path, "utf-8");
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function readUserEnv(): Promise<Record<string, string>> {
+  try {
+    const raw = await readFile(join(OMNI_DIR, ".env"), "utf-8");
+    const out: Record<string, string> = {};
+    for (const line of raw.split(/\r?\n/)) {
+      const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+      if (m && m[1] && m[2] !== undefined) out[m[1]] = m[2];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export async function discoverCookies(): Promise<CookieJar> {
+  return (await safeReadJson<CookieJar>(join(OMNI_DIR, "cookies.json"))) ?? {};
+}
+
+/**
+ * Walk a list of env-var candidates and return the first match found.
+ * Sources checked in order: process.env, user .env, OS keychain (TODO).
+ */
+export async function discoverEnv(names: string[]): Promise<DiscoveredCred | null> {
+  for (const n of names) {
+    const v = process.env[n];
+    if (v) return { source: "env", value: v };
+  }
+  const userEnv = await readUserEnv();
+  for (const n of names) {
+    if (userEnv[n]) return { source: "user-env", value: userEnv[n] };
+  }
+  return null;
+}
+
+export interface DiscoveryReport {
+  envKeys: Record<string, DiscoveredCred | null>;
+  cookies: CookieJar;
+  summary: { found: number; missing: number };
+}
+
+export async function runDiscovery(): Promise<DiscoveryReport> {
+  const envKeys: Record<string, DiscoveredCred | null> = {};
+  for (const provider of [
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "MISTRAL_API_KEY",
+    "GROQ_API_KEY",
+    "COHERE_API_KEY",
+    "PPLX_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "OPENROUTER_API_KEY",
+    "AZURE_OPENAI_API_KEY",
+  ]) {
+    envKeys[provider] = await discoverEnv([provider]);
+  }
+  const cookies = await discoverCookies();
+  let found = Object.values(envKeys).filter(Boolean).length;
+  found += Object.keys(cookies).length;
+  return {
+    envKeys,
+    cookies,
+    summary: { found, missing: 10 - Object.values(envKeys).filter(Boolean).length },
+  };
+}

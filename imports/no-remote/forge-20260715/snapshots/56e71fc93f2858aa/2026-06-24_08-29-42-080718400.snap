@@ -1,0 +1,15 @@
+import { createMarkdownRenderer } from 'vitepress'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const repoRoot = path.resolve(__dirname, '..')
+
+// Globbing test
+const { default: fastGlob } = await import('fast-glob')
+const files = await fastGlob('**/*.md', {
+  cwd: path.join(repoRoot, 'docs'),
+  absolute: true
+})
+console.log('files in docs:', files)

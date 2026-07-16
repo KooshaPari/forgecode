@@ -1,0 +1,95 @@
+# Abandoned-Work Rescue Agent
+
+> Goal: locate codebases on `C:\Users\koosh\` that look abandoned or finished-but-not-pushed, finish them, push to remote, and delete the local copy to reclaim drive space. Stop using `C:` for new builds once the agent's first run completes.
+
+This is a separate, leaf-level project — it does **not** live in the OmniRoute PR cluster. It is a one-shot caretaker we run between codebases to keep the recovery context lean.
+
+---
+
+## 1. Inputs the agent needs
+
+For each candidate directory the user (or scheduled cron) wants audited:
+
+- **Path** — absolute path on disk.
+- **Repo origin** — `git remote get-url origin` (if any).
+- **Age of last commit** — `git log -1 --format=%ct`.
+- **Recent CI status** — pull `.github/workflows/*` if any, fetch last run via `gh api repos/<owner>/<repo>/actions/runs?per_page=1` if credentials allow; otherwise mark "unknown" and prefer human review.
+- **Last touched files** — `git stash list`, `git status --porcelain`, file mtimes within last 30d.
+- **Marker files** — `DONE/`, `_archived_/`, `_trash/`, `.kArchive` (custom).
+- **Disk footprint** — `du -sh` per candidate.
+
+The agent does *not* open LLM-credentials-gated resources, does *not* push to repos without explicit user approval, and does *not* modify `.env` files.
+
+## 2. Decision tree
+
+```
+is the repo clean?  (git status --porcelain == empty)
+ ├── no  → leave alone (in-flight work); report.
+ └── yes
+      is remote configured?
+       ├── no  → mark candidate as "abandoned local" (move to E:\rescue-vault\abandoned\).
+       └── yes
+            are there unpushed local commits?
+             ├── yes → push (default branch first), then check upstream open PRs.
+             └── no
+                  is there activity beyond `main`?
+                   ├── yes → audit branches, prune merged, archive stale (E:\rescue-vault\branches\<repo>).
+                   └── no  → candidate is "done & merged"; safe to delete.
+```
+
+Each leaf has user-confirmation hooks before destructive action. The agent never deletes a directory whose `.git/` indicates a non-merged branch exists on `origin/<branch>`.
+
+## 3. Tooling fold
+
+- **`scripts/rescue.sh`** — top-level entry. Reads `E:\rescue-vault\manifest.json` (`{"repos": [...]}`) and walks each.
+- **`scripts/rescue-audit.sh <path>`** — non-destructive, prints verdict.
+- **`scripts/rescue-push.sh <path>`** — sounds `gh` auth, pushes default branch, opens a PR-cleanup-issue when applicable.
+- **`scripts/rescue-archive.sh <path> <reason>`** — moves to `E:\rescue-vault\abandoned\`.
+- **`scripts/rescue-trash.sh <path>`** — moves to `E:\rescue-vault\trash\` (recoverable for 30 days before permanent deletion).
+
+Recovery window is enforced by a sentinel: `.trash-until-2026-07-XX` written on trash; cleanup sweep reads the sentinel and overwrites before deletion.
+
+## 4. Candidate list (initial — confirmed in this session)
+
+From the most recent `C:\Users\koosh\` listing:
+
+- `AgilePlus`, `OmniRoute-upstream`, `Tracera`, `pheno-harness`, `phenodag`, `portage`, `vibeproxy-monitoring-unified`, `heliosBench`, `heliosApp-mirror`, `E:\rich-stubs` (mirrored under `C:\Users\koosh\E:\rich-stubs` — duplicates that should be deleted).
+- Worktrees clusters (`w26-*`, `w28-*`, `w31-*`, `w32-*`, `w28-tracera`, etc.) — see `E:\plans\worktree-manager-audit-listing.txt` for the prior audit; reuse that file as one input.
+- Scattered ad-hoc dirs (`benchora-fix`, `bcwork`, `c`, `_audit*`, `_repos`, `audit*`, `pheno-*`, `kit-*`, `hex-*`) — most are 100% audit/log scratch space; perfect to recycle.
+
+## 5. The agent outputs
+
+- `E:\rescue-vault\manifest.json` — updated with verdicts.
+- `E:\rescue-vault\trash\` — recoverable deletion bucket.
+- `E:\rescue-vault\abandoned\<repo>\<date>\` — local-only no-remote dir.
+- `E:\plans\OmniRoute\rescue-runs\<timestamp>.md` — human-readable report.
+
+## 6. Aftermath: stop working in `C:`
+
+- Working tree for OmniRoute moves to `E:\projects\OmniRoute-upstream`.
+- New plans/specs land in `E:\plans\OmniRoute\` (already underway).
+- Future shells pin `cwd=E:\projects\…` via `.forge/config` or workspace manifest (verify routing once written).
+- Restart-volatile awareness: any path under `C:\Users\koosh\AppData\Local\Temp\` or fresh-shell transient mounts is excluded from rescue-agent inputs by default.
+
+## 7. Acceptance criteria
+
+- All `AgilePlus`, `OmniRoute-upstream`, and `Tracera` worktrees either live in a verified remote or are quarantined into `E:\rescue-vault\`.
+- `du` of `C:\Users\koosh\` drops by ≥ 30% after first full run; second run ≤ first.
+- No destructive action was taken without an explicit user confirmation token (`OMNIRESCUE_CONFIRM=…`).
+- The agent reports every action via a markdown summary at `E:\plans\OmniRoute\rescue-runs\<timestamp>.md`.
+
+## 8. Risks
+
+| Risk | Mitigation |
+|---|---|
+| Lost work due to unmerged branches | Hard pre-check: refuse to delete if any non-default branch exists with unpulled ancestor or unique commits. |
+| Wrong remote target | Print remote URL, require `--yes-i-mean-it`. |
+| Edge-case in `_audit/` dirs mixed with active code | Rescue agent only inspects paths from `manifest.json`; no recursive walk. |
+
+---
+
+## Open questions
+
+1. Should the agent auto-create stash + push for repos with uncommitted work, or leave them alone? *Recommended: leave alone unless `--allow-uncommitted` is set.*
+2. How frequently should it run (manual, weekly cron, on-demand after major merges)? *Recommended: manual + a 7-day rolling scheduler; never auto-delete.*
+3. Does the user want to *rename* rescued artifacts or just relocate? *Recommended: rename with date suffix so duplicates don't collide.*

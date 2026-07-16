@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""Update PR #373 body via GraphQL mutation (gh pr edit --body is broken on Windows)."""
+import json, subprocess, sys, pathlib
+
+PR_NUMBER = 373
+REPO = "KooshaPari/phenotype-registry"
+BODY_FILE = pathlib.Path(r"C:\Users\koosh\infra-research\phenotype-registry\.forge\FORGE_PR_DESCRIPTION_p373.md")
+
+def gh(args, **kw):
+    return subprocess.run(["gh"] + args, capture_output=True, text=True, **kw)
+
+# 1. Get PR node ID
+r = gh(["pr", "view", str(PR_NUMBER), "-R", REPO, "--json", "id"])
+if r.returncode != 0:
+    print("FAIL get node id:", r.stderr); sys.exit(1)
+pr_node_id = json.loads(r.stdout)["id"]
+print(f"PR #{PR_NUMBER} node id: {pr_node_id}")
+
+# 2. Build mutation JSON with the body as a real string (no @-file reference)
+body = BODY_FILE.read_text(encoding="utf-8")
+mutation = {
+    "query": "mutation($id: ID!, $body: String!) { updatePullRequest(input: {pullRequestId: $id, body: $body}) { pullRequest { number body } } }",
+    "variables": {"id": pr_node_id, "body": body},
+}
+
+# 3. Write to a temp file and pipe via --input
+import tempfile
+with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+    json.dump(mutation, f, ensure_ascii=False)
+    tmp_path = f.name
+
+r = gh(["api", "graphql", "--input", tmp_path])
+print("EXIT", r.returncode)
+if r.returncode != 0:
+    print("STDERR:", r.stderr)
+    print("STDOUT:", r.stdout[:2000])
+    sys.exit(1)
+
+out = json.loads(r.stdout)
+print("OK body length:", len(out.get("data", {}).get("updatePullRequest", {}).get("pullRequest", {}).get("body", "")))

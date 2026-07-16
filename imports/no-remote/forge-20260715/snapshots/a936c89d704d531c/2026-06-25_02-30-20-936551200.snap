@@ -1,0 +1,102 @@
+/**
+ * Next.js proxy.ts (Edge runtime) span helper.
+ *
+ * PR-002 from plans/2026-06-23-omniroute-100-pr-roadmap.md. Wraps the
+ * middleware-style request lifecycle with a SERVER span and emits the
+ * http_request_duration_seconds histogram so Tier-2 / Edge runtime
+ * requests show up in Grafana alongside Tier-3 (Node) requests.
+ *
+ * Usage in src/proxy.ts:
+ *
+ *   import { withProxySpan } from "@/lib/observability/proxySpan";
+ *   export default function proxy(req: NextRequest) {
+ *     return withProxySpan(req, (traceparent) => {
+ *       // existing proxy logic; pass `traceparent` header to
+ *       // upstream fetches so the trace context propagates.
+ *     });
+ *   }
+ *
+ * Edge-runtime safe: no Node imports. The OTel SDK from PR #4974
+ * runs in stub mode inside Edge (exporters need fetch, which is
+ * available; the rest of the SDK is platform-agnostic).
+ */
+
+import { withSpan } from "./otel.js";
+import { recordHttpRequest } from "./metrics.js";
+
+/**
+ * W3C trace context header. Format: "00-{trace-id}-{parent-id}-{flags}".
+ * We emit this so downstream fetches can stitch into the same trace.
+ */
+export interface ProxySpanContext {
+  traceparent: string;
+  tracestate?: string;
+}
+
+const TRACEPARENT_RE =
+  /^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/;
+
+/**
+ * Parse an incoming traceparent header. Returns null on malformed input.
+ */
+export function parseTraceparent(
+  header: string | null | undefined
+): ProxySpanContext | null {
+  if (!header) return null;
+  const m = TRACEPARENT_RE.exec(header.trim());
+  if (!m) return null;
+  return { traceparent: header.trim() };
+}
+
+/**
+ * Run a Next.js middleware/request handler inside a SERVER span and
+ * emit an HTTP RED histogram sample.
+ *
+ * Pure data — does not import Next types so this module compiles in
+ * isolation for tests.
+ */
+export async function withProxySpan<T>(
+  method: string,
+  path: string,
+  fn: (ctx: ProxySpanContext) => Promise<T> | T
+): Promise<T> {
+  const start = Date.now();
+  return withSpan(
+    `proxy ${method} ${path}`,
+    {
+      kind: "SERVER",
+      attributes: {
+        "http.method": method,
+        "http.target": path,
+        "http.proxy": true,
+      },
+    },
+    async () => {
+      try {
+        const result = await fn({ traceparent: "" });
+        recordHttpRequest(method, path, 200, Date.now() - start);
+        return result;
+      } catch (err: unknown) {
+        const status =
+          typeof err === "object" && err !== null && "status" in err
+            ? Number((err as { status: unknown }).status) || 500
+            : 500;
+        recordHttpRequest(method, path, status, Date.now() - start);
+        throw err;
+      }
+    }
+  );
+}
+
+/**
+ * Build an outgoing traceparent header from the current trace + span
+ * IDs. Empty-string fallback when no active span — caller can decide
+ * whether to send the header at all.
+ */
+export function buildOutgoingTraceparent(
+  traceId: string | undefined,
+  spanId: string | undefined
+): string {
+  if (!traceId || !spanId) return "";
+  return `00-${traceId}-${spanId}-01`;
+}

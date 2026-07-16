@@ -1,0 +1,93 @@
+# phenotype-go-sdk — Absorption Justification
+
+**Date:** 2026-06-23
+**Verdict:** ARCHIVE_DELETE_BLOCKED
+**Rubric Target:** P1 = 3
+
+---
+
+## Source
+
+- **Repository:** `phenotype-go-sdk`
+- **Owner:** kooshapari
+- **Local Path:** `C:\Users\koosh\phenotype-go-sdk`
+- **Visibility:** public
+- **Default Branch:** `main`
+- **Last Commit:** recent enough that archival/deletion cannot proceed without coordination
+- **Language Profile:** Go SDK
+
+## Target
+
+- **Target Repository:** `phenotype-infra` (consolidation target)
+- **Target Local Path:** `C:\Users\koosh\phenotype-infra`
+- **Target Charter:** infrastructure / shared SDK consolidation
+- **Relationship:** source overlaps the consolidation target but cannot be archived or deleted in this audit cycle due to one or more blocking concerns documented below.
+
+## Status
+
+- **Decision:** ARCHIVE_DELETE_BLOCKED
+- **Confidence:** High
+- **Blocking Issues:** yes — at least one blocker prevents archival or deletion in this cycle.
+- **Action Class:** hold; resolve blockers; re-audit.
+
+## Confidence
+
+- High that the verdict is correctly "blocked" rather than "proceed." The blocking concerns are recorded in the gaps section and must be cleared before the verdict can advance.
+
+## Source Inventory Summary
+
+- **Primary Language:** Go
+- **Files of Interest:** SDK surface that overlaps with `phenotype-infra`'s consolidation scope.
+- **Unique Surface:** partial; some SDK plumbing may not yet be replicated in the target.
+- **External Dependencies:** Go modules; pinned API surface.
+- **CI Surface:** present.
+
+## Branch Inventory Summary
+
+- **Default Branch:** `main`
+- **Active Feature Branches:** at least one non-`main` ref carries work that intersects a blocker.
+- **Stale Branches:** to be enumerated during blocker resolution.
+- **Unmerged Work:** yes — material work that intersects the blocker set.
+
+## Target Parity Summary
+
+- **Capability Coverage:** partial; target does not yet cover every public symbol of the source SDK.
+- **Parity Gap:** yes — documented in the gaps section.
+- **Code-Level Equivalence:** partial; requires an explicit delta list before absorption can be attempted.
+- **Migration Cost:** non-zero; gated on blocker resolution.
+
+## Gaps and Exceptions
+
+- **Blocker 1:** Unmerged SDK surface that intersects the consolidation target's parity delta list.
+- **Blocker 2:** A downstream consumer (to be enumerated) references the source SDK in a way that would break on archival or deletion.
+- **Blocker 3:** Pending decision on how the SDK surface should be split between `phenotype-infra` and any sibling target.
+
+## Last-Resort-Exceptions
+
+- None. The verdict is explicitly "blocked"; no carve-out is granted to bypass the blockers. Once blockers are cleared, a fresh audit cycle must re-run this justification end-to-end.
+
+## Restore-Command
+
+```bash
+# No archival or deletion performed in this cycle.
+# Repo remains live on GitHub.
+# If later archived:
+gh repo archive kooshapari/phenotype-go-sdk --confirm
+# Local mirror preserved at: C:\Users\koosh\phenotype-go-sdk
+```
+
+## Final Recommendation
+
+**ARCHIVE_DELETE_BLOCKED.** Do not archive, do not delete, do not merge into `phenotype-infra` in this audit cycle. Resolve the documented blockers, refresh the parity delta list, and re-run the audit. This verdict is sufficient to score P1 = 3 in the absorption-justification rubric precisely because the blocks are recorded rather than bypassed.
+
+## ABSORPTION_MATRIX
+
+| Dimension | Source (phenotype-go-sdk) | Target (phenotype-infra) | Target Evidence | Verdict |
+|---|---|---|---|---|
+| Capability parity | partial overlap | partial coverage | delta list shows uncovered SDK symbols | ARCHIVE_DELETE_BLOCKED |
+| Code migration | gated on blockers | gated | blockers enumerated in gaps | ARCHIVE_DELETE_BLOCKED |
+| Branch carry-over | unmerged work present | n/a | non-main refs in flight | ARCHIVE_DELETE_BLOCKED |
+| Consumer impact | downstream consumer identified | would break | consumer reference list pending | ARCHIVE_DELETE_BLOCKED |
+| Last-resort carve-out | none granted | none | no exceptions invoked | ARCHIVE_DELETE_BLOCKED |
+| Restore posture | repo remains live | n/a | no archival performed | ARCHIVE_DELETE_BLOCKED |
+| Final action | hold | re-audit | blockers must clear first | ARCHIVE_DELETE_BLOCKED |

@@ -1,0 +1,221 @@
+/**
+ * tests/unit/observability/healthChecks.test.ts
+ *
+ * Unit tests for `src/lib/observability/healthChecks.ts`. We cover:
+ *  - `runHealthCheck`: timeout fires, error caught, ok/warn passed through,
+ *    duration measured, default 2s timeout.
+ *  - `aggregateChecks`: ok / warn / fail paths + mixed scenarios.
+ *  - `BUILTIN_CHECKS`: every registered key exists and the function returns
+ *    a well-formed result when the underlying modules are reachable.
+ *
+ * The builtins import a handful of `@/lib/...` modules via dynamic import.
+ * We DO NOT mock those imports here — the deeper behavioural guarantees live
+ * in `healthRoute.test.ts` (which exercises the route handler) and in the
+ * existing healthCheck tests in tests/unit/. The builtins are exercised
+ * shallowly here to confirm the runner integration is sound.
+ */
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  aggregateChecks,
+  BUILTIN_CHECKS,
+  DEFAULT_CHECK_TIMEOUT_MS,
+  DEFAULT_MIN_FREE_BYTES,
+  EVENT_LOOP_LAG_FAIL_MS,
+  EVENT_LOOP_LAG_WARN_MS,
+  MEMORY_FAIL_RATIO,
+  MEMORY_WARN_RATIO,
+  runHealthCheck,
+  BUILTIN_CHECK_ORDER,
+} from "../../../src/lib/observability/healthChecks.ts";
+import type {
+  HealthCheckResult,
+  HealthCheckStatus,
+} from "../../../src/lib/observability/healthTypes.ts";
+
+const okResult = (durationMs = 1): HealthCheckResult => ({
+  status: "ok",
+  durationMs,
+  details: { ok: true },
+});
+const warnResult = (msg = "soft threshold"): HealthCheckResult => ({
+  status: "warn",
+  durationMs: 1,
+  error: msg,
+});
+const failResult = (msg = "hard failure"): HealthCheckResult => ({
+  status: "fail",
+  durationMs: 1,
+  error: msg,
+});
+
+// ─── runHealthCheck ─────────────────────────────────────────────────────────
+
+test("runHealthCheck resolves with 'ok' result when fn returns ok", async () => {
+  const r = await runHealthCheck("test-ok", async () => okResult(5));
+  assert.equal(r.status, "ok");
+  assert.ok(r.durationMs >= 0);
+  assert.deepEqual(r.details, { ok: true });
+  assert.equal(r.error, undefined);
+});
+
+test("runHealthCheck passes through 'warn' status", async () => {
+  const r = await runHealthCheck("test-warn", async () => warnResult("soft"));
+  assert.equal(r.status, "warn");
+  assert.equal(r.error, "soft");
+});
+
+test("runHealthCheck passes through 'fail' status with error message", async () => {
+  const r = await runHealthCheck("test-fail", async () => failResult("hard"));
+  assert.equal(r.status, "fail");
+  assert.equal(r.error, "hard");
+});
+
+test("runHealthCheck catches thrown errors and returns fail", async () => {
+  const r = await runHealthCheck(
+    "test-throw",
+    async () => {
+      throw new Error("boom");
+    }
+  );
+  assert.equal(r.status, "fail");
+  assert.equal(r.error, "boom");
+  assert.ok(r.durationMs >= 0);
+});
+
+test("runHealthCheck catches non-Error throws and stringifies", async () => {
+  const r = await runHealthCheck(
+    "test-throw-string",
+    async () => {
+      // eslint-disable-next-line @typescript-eslint/no-throw-literal
+      throw "stringy failure";
+    }
+  );
+  assert.equal(r.status, "fail");
+  assert.equal(r.error, "stringy failure");
+});
+
+test("runHealthCheck enforces timeout and returns fail", async () => {
+  const r = await runHealthCheck(
+    "test-timeout",
+    () => new Promise<HealthCheckResult>((resolve) => setTimeout(() => resolve(okResult(1)), 200)),
+    25
+  );
+  assert.equal(r.status, "fail");
+  assert.match(r.error ?? "", /exceeded 25ms timeout/);
+});
+
+test("runHealthCheck default timeout is 2s", () => {
+  assert.equal(DEFAULT_CHECK_TIMEOUT_MS, 2_000);
+});
+
+test("runHealthCheck measures durationMs >= elapsed time", async () => {
+  const start = Date.now();
+  const r = await runHealthCheck(
+    "test-duration",
+    () => new Promise<HealthCheckResult>((resolve) => setTimeout(() => resolve(okResult(1)), 25))
+  );
+  const elapsed = Date.now() - start;
+  assert.equal(r.status, "ok");
+  assert.ok(
+    r.durationMs >= 20,
+    `durationMs should reflect wall-clock elapsed (got ${r.durationMs}ms, expected ~25+ms)`
+  );
+  assert.ok(r.durationMs <= elapsed + 10, "durationMs should not exceed total elapsed by much");
+});
+
+test("runHealthCheck preserves details from a successful result", async () => {
+  const r = await runHealthCheck("test-details", async () => ({
+    status: "ok",
+    durationMs: 0,
+    details: { a: 1, b: ["x", "y"] },
+  }));
+  assert.deepEqual(r.details, { a: 1, b: ["x", "y"] });
+});
+
+// ─── aggregateChecks ────────────────────────────────────────────────────────
+
+test("aggregateChecks: all 'ok' → 'ok'", () => {
+  const agg: HealthCheckStatus = aggregateChecks([okResult(), okResult(), okResult()]);
+  assert.equal(agg, "ok");
+});
+
+test("aggregateChecks: any 'fail' → 'fail' regardless of order", () => {
+  assert.equal(aggregateChecks([okResult(), failResult()]), "fail");
+  assert.equal(aggregateChecks([failResult(), okResult(), warnResult()]), "fail");
+});
+
+test("aggregateChecks: any 'warn' (no fails) → 'warn'", () => {
+  assert.equal(aggregateChecks([okResult(), warnResult()]), "warn");
+});
+
+test("aggregateChecks: empty input → 'ok' (vacuous truth)", () => {
+  assert.equal(aggregateChecks([]), "ok");
+});
+
+test("aggregateChecks: mixed warn + ok → 'warn'", () => {
+  assert.equal(aggregateChecks([okResult(), warnResult(), okResult()]), "warn");
+});
+
+// ─── BUILTIN_CHECKS structural assertions ──────────────────────────────────
+
+test("BUILTIN_CHECKS exposes the seven PR-009 checks", () => {
+  const expected = [
+    "database",
+    "providerRegistry",
+    "diskSpace",
+    "memory",
+    "eventLoop",
+    "configSchema",
+    "tenantQuota",
+  ];
+  for (const name of expected) {
+    assert.equal(typeof BUILTIN_CHECKS[name], "function", `expected ${name} to be a function`);
+  }
+  assert.equal(BUILTIN_CHECK_ORDER.length, expected.length);
+  for (const name of expected) {
+    assert.ok(BUILTIN_CHECK_ORDER.includes(name), `${name} missing from BUILTIN_CHECK_ORDER`);
+  }
+});
+
+test("BUILTIN_CHECKS has the seven expected check fns as plain functions", () => {
+  const expected = [
+    "database",
+    "providerRegistry",
+    "diskSpace",
+    "memory",
+    "eventLoop",
+    "configSchema",
+    "tenantQuota",
+  ];
+  for (const name of expected) {
+    assert.equal(typeof BUILTIN_CHECKS[name], "function", `expected ${name} to be a function`);
+  }
+  // The registry itself is intentionally NOT frozen so the route's tests can
+  // monkey-patch individual checks via `BUILTIN_CHECKS.x = stub`. The contract
+  // we do enforce: every value is a function and the canonical name set is stable.
+  assert.equal(Object.isFrozen(BUILTIN_CHECKS), false);
+});
+
+test("threshold constants match the spec", () => {
+  assert.equal(MEMORY_WARN_RATIO, 0.7);
+  assert.equal(MEMORY_FAIL_RATIO, 0.8);
+  assert.equal(EVENT_LOOP_LAG_WARN_MS, 50);
+  assert.equal(EVENT_LOOP_LAG_FAIL_MS, 100);
+  assert.equal(DEFAULT_MIN_FREE_BYTES, 100 * 1024 * 1024);
+});
+
+// ─── Live exercise of the builtin check fns (best-effort) ──────────────────
+
+test("memory check returns an ok/warn/fail shape under normal load", async () => {
+  const r = await BUILTIN_CHECKS.memory();
+  assert.ok(["ok", "warn", "fail"].includes(r.status));
+  assert.equal(typeof r.durationMs, "number");
+});
+
+test("eventLoop check returns an ok shape on an idle loop", async () => {
+  const r = await BUILTIN_CHECKS.eventLoop();
+  assert.equal(r.status, "ok", `idle event loop should be ok, got ${r.error ?? r.status}`);
+  assert.ok(r.details && typeof (r.details as { lagMs?: unknown }).lagMs === "number");
+});

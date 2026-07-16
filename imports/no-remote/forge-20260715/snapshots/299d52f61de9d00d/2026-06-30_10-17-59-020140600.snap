@@ -1,0 +1,8 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+
+test("debug — can we import streamHelpers?", async () => {
+  const mod = await import("./utils/streamHelpers.ts");
+  assert.equal(typeof mod.createSSEDataLineNormalizer, "function");
+  assert.equal(typeof mod.isKnownNonClaudeStreamPayload, "function");
+});

@@ -1,0 +1,175 @@
+/**
+ * TDD for PR-012 — `src/lib/observability/slo.ts`.
+ *
+ * Covers:
+ *   - define an SLO (shape, validation of target)
+ *   - evaluate against an SLI measurement
+ *   - validity windows (windowDays / windowMs)
+ *   - target boundary (exactly-at-target counts as met, no off-by-one)
+ *
+ * Run from the repo root:
+ *   node --import tsx --test tests/unit/observability/slo.test.ts
+ */
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  evaluateSlo,
+  isValidSliValue,
+  isValidSloTarget,
+  windowDays,
+  windowMs,
+  type SloDefinition,
+  type SliMeasurement,
+} from "../../../src/lib/observability/slo.ts";
+
+const SAMPLE_DEFINITION: SloDefinition = {
+  id: "chat-completion-availability",
+  objective: "Chat completion availability",
+  window: "28d",
+  sli_query: "success_ratio{service=\"chat-completions\"}",
+  target: 0.999,
+};
+
+const NOW = 1_700_000_000_000;
+
+function measurement(overrides: Partial<SliMeasurement> = {}): SliMeasurement {
+  return {
+    slo_id: SAMPLE_DEFINITION.id,
+    value: 0.9995,
+    measured_at: NOW,
+    ...overrides,
+  };
+}
+
+describe("slo: windowDays", () => {
+  it("maps each SloWindow to its day count", () => {
+    assert.equal(windowDays("1d"), 1);
+    assert.equal(windowDays("7d"), 7);
+    assert.equal(windowDays("14d"), 14);
+    assert.equal(windowDays("28d"), 28);
+    assert.equal(windowDays("30d"), 30);
+  });
+
+  it("windowMs returns days * 24 * 60 * 60 * 1000", () => {
+    assert.equal(windowMs("28d"), 28 * 24 * 60 * 60 * 1000);
+    assert.equal(windowMs("1d"), 24 * 60 * 60 * 1000);
+  });
+
+  it("throws on unknown window values", () => {
+    // The type system forbids this at compile time, but the runtime guard
+    // exists for caller-supplied strings that bypass TS.
+    assert.throws(
+      // @ts-expect-error intentionally invalid
+      () => windowDays("99d"),
+      /Unknown SLO window/,
+    );
+  });
+});
+
+describe("slo: isValidSliValue", () => {
+  it("accepts values in [0, 1]", () => {
+    assert.equal(isValidSliValue(0), true);
+    assert.equal(isValidSliValue(0.5), true);
+    assert.equal(isValidSliValue(1), true);
+  });
+
+  it("rejects NaN, Infinity, and out-of-range", () => {
+    assert.equal(isValidSliValue(NaN), false);
+    assert.equal(isValidSliValue(Infinity), false);
+    assert.equal(isValidSliValue(-0.0001), false);
+    assert.equal(isValidSliValue(1.0001), false);
+  });
+});
+
+describe("slo: isValidSloTarget", () => {
+  it("accepts targets in (0, 1]", () => {
+    assert.equal(isValidSloTarget(0.001), true);
+    assert.equal(isValidSloTarget(0.999), true);
+    assert.equal(isValidSloTarget(1), true);
+  });
+
+  it("rejects zero and targets above 1", () => {
+    assert.equal(isValidSloTarget(0), false);
+    assert.equal(isValidSloTarget(-0.1), false);
+    assert.equal(isValidSloTarget(1.0001), false);
+  });
+});
+
+describe("slo: evaluateSlo", () => {
+  it("marks the SLO as met when sli_value >= target", () => {
+    const result = evaluateSlo(SAMPLE_DEFINITION, measurement({ value: 0.9995 }));
+    assert.equal(result.is_met, true);
+    assert.equal(result.is_violated, false);
+    assert.equal(result.is_at_risk, false);
+    assert.equal(result.sli_value, 0.9995);
+    assert.equal(result.error_ratio, 0.0005);
+  });
+
+  it("treats sli_value == target as met (no off-by-one)", () => {
+    const result = evaluateSlo(SAMPLE_DEFINITION, measurement({ value: 0.999 }));
+    assert.equal(result.is_met, true);
+    assert.equal(result.is_violated, false);
+    assert.equal(result.is_at_risk, false);
+    assert.equal(result.gap, 0);
+  });
+
+  it("flags at_risk when sli_value is below target but within margin", () => {
+    const result = evaluateSlo(SAMPLE_DEFINITION, measurement({ value: 0.9985 }));
+    // 0.999 - 0.9985 = 0.0005, well within the default 1% margin.
+    assert.equal(result.is_violated, true);
+    assert.equal(result.is_at_risk, true);
+    assert.equal(result.is_met, false);
+    assert.equal(result.gap, 0.0005);
+  });
+
+  it("flags violated when sli_value is below target by more than the margin", () => {
+    const result = evaluateSlo(SAMPLE_DEFINITION, measurement({ value: 0.97 }));
+    assert.equal(result.is_violated, true);
+    assert.equal(result.is_at_risk, false);
+    assert.equal(result.gap, 0.029);
+  });
+
+  it("honors a custom at_risk_margin option", () => {
+    const result = evaluateSlo(
+      SAMPLE_DEFINITION,
+      measurement({ value: 0.99 }),
+      { at_risk_margin: 0.02 },
+    );
+    // 0.999 - 0.99 = 0.009, inside the 2% margin → at_risk.
+    assert.equal(result.is_violated, true);
+    assert.equal(result.is_at_risk, true);
+  });
+
+  it("rejects a definition/measurement id mismatch", () => {
+    assert.throws(
+      () =>
+        evaluateSlo(SAMPLE_DEFINITION, measurement({ slo_id: "something-else" })),
+      /slo_id mismatch/,
+    );
+  });
+
+  it("rejects invalid target values", () => {
+    assert.throws(
+      () =>
+        evaluateSlo(
+          { ...SAMPLE_DEFINITION, target: 1.5 },
+          measurement(),
+        ),
+      /invalid target/,
+    );
+  });
+
+  it("rejects invalid sli_value", () => {
+    assert.throws(
+      () => evaluateSlo(SAMPLE_DEFINITION, measurement({ value: -0.1 })),
+      /invalid sli_value/,
+    );
+  });
+
+  it("echoes measured_at and window_ms in the result", () => {
+    const result = evaluateSlo(SAMPLE_DEFINITION, measurement());
+    assert.equal(result.evaluated_at, NOW);
+    assert.equal(result.window_ms, 28 * 24 * 60 * 60 * 1000);
+  });
+});

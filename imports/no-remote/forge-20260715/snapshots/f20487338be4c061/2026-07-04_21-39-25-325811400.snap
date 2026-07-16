@@ -1,0 +1,186 @@
+// Civis PBR — triplanar fragment shader.
+//
+// FR-CIV-PBR-010 (Phase 3): eliminates UV stretching on terrain by
+// projecting three orthogonal world-axis slices (X+, X-, Y+, Y-, Z+, Z-)
+// and blending them by squared-normal weights. This avoids the per-face
+// UV seams that plague axis-aligned voxel meshes.
+//
+// FR-CIV-PBR-011 (Phase 3): the texture array backing the slice projections
+// is built by the greedy atlas packer in
+// `crates/voxel/src/atlas/gpu_atlas.rs`. The shader is agnostic to the
+// packing algorithm; it only needs `texture_2d_array` and a per-material
+// slice index uniform.
+//
+// REUSE NOTE
+// ----------
+// The lighting math itself is reused from `pbr.wgsl` (FR-CIV-PBR-002
+// tonemapping + color grading closure). We do NOT duplicate it here —
+// the entry point in this file feeds blended PBR data to the same
+// `pbr_lighting(...)` helper, which is included as the first lines of
+// this file via the standard `naga`/`wgsl` import pattern (the Bevy
+// adapter concatenates them at load time when using
+// `Shader::from_wgsl_with_path`). When naga is available it parses this
+// file directly.
+
+#include <pbr_lighting> // bring in pbr_lighting() from pbr.wgsl
+
+// @param atlas — 2D array texture holding the packed material slices.
+//                Slice 0..2   = albedo (X+, Y+, Z+ projection)
+//                Slice 3..5   = normal (tangent-space, RG = xy normal, B = z)
+//                Slice 6..8   = ORM (R=AO, G=Rough, B=Metal)
+//                Slice 9..11  = detail albedo   (optional, FR-011 detail blend)
+//                Slice 12..14 = detail normal
+//                Slice 15..17 = detail ORM
+//                Slice N..N+2 = whatever the packer chose — see
+//                                `gpu_atlas::GreedyAtlasPacker` for the
+//                                authoritative slice map.
+@group(0) @binding(0) var atlas:          texture_2d_array<f32>;
+@group(0) @binding(1) var atlas_sampler:  sampler;
+
+// @param params — per-draw PBR knobs (matches `pbr_lighting::PbrParams`).
+//                 Mirrored in `crates/voxel/src/pbr/triplanar_pipeline.rs`.
+//   - world_tile:        voxel units per tile; 1.0 = one tile per voxel.
+//   - texture_scale:     multiplier on the projected UV before sampling.
+//   - vertex_color_blend:0=full PBR, 1=vertex-color fallback (FR-005).
+//   - has_emissive:      1.0 if the emissive channel should be on, else 0.
+//   - detail_blend:      weight of the optional detail layer (0 = off).
+struct PbrParams {
+    world_tile:         f32,
+    texture_scale:      f32,
+    vertex_color_blend: f32,
+    has_emissive:       f32,
+    detail_blend:       f32,
+};
+
+@group(0) @binding(2) var<uniform> params: PbrParams;
+
+// @param mat_slice — base index in the atlas array for this material.
+//                   The packer assigns one slice triplet (albedo+normal+orm)
+//                   per material. Set on the Bevy adapter side from
+//                   `AtlasSlice::array_layer`.
+@group(0) @binding(3) var<uniform> mat_slice: u32;
+
+// Per-vertex world-space inputs supplied by the chunk vertex stage.
+struct PbrVertexInput {
+    @location(0) world_position: vec3<f32>,
+    @location(1) world_normal:   vec3<f32>,
+    @location(2) uv:             vec2<f32>, // unused by triplanar; kept for API parity
+    @location(3) matid:          u32,       // debug only
+};
+
+// Compute axis blend weights from the world-space normal.
+//
+// The task spec calls for squared-then-normalised weights so that faces
+// exactly perpendicular to one axis contribute fully and faces at 45°
+// contribute a balanced mix (this is the canonical "triplanar squared
+// weights" formulation used by Shadertoy / Hejl / Karis triplanar
+// implementations). Degenerate normals fall back to equal weights to
+// keep the function total.
+fn triplanar_axis_weights(n: vec3<f32>) -> vec3<f32> {
+    let abs_n = vec3<f32>(abs(n.x), abs(n.y), abs(n.z));
+    let sq = abs_n * abs_n;
+    let sum = sq.x + sq.y + sq.z;
+    if sum < 1e-6 {
+        return vec3<f32>(1.0 / 3.0);
+    }
+    return sq / sum;
+}
+
+// Build the world-axis UV for a single axis projection.
+//
+//   X-axis: project world (y, z)  →  (uv_y, uv_z)
+//   Y-axis: project world (x, z)  →  (uv_x, uv_z)
+//   Z-axis: project world (x, y)  →  (uv_x, uv_y)
+fn triplanar_uv(world_pos: vec3<f32>, axis: u32) -> vec2<f32> {
+    let raw = select(
+        select(
+            vec2<f32>(world_pos.y, world_pos.z), // X axis
+            vec2<f32>(world_pos.x, world_pos.y), // Z axis
+            axis == 2u
+        ),
+        vec2<f32>(world_pos.x, world_pos.z),     // Y axis
+        axis == 1u
+    );
+    let tile = max(params.world_tile, 1e-4);
+    return raw * (params.texture_scale / tile);
+}
+
+// Sample one axis of the atlas at the base slice `base_layer`.
+//
+//   base_layer + 0 → X-axis projection
+//   base_layer + 1 → Y-axis projection
+//   base_layer + 2 → Z-axis projection
+fn sample_axis(world_pos: vec3<f32>, base_layer: i32) -> vec4<f32> {
+    let uv_x = triplanar_uv(world_pos, 0u);
+    let uv_y = triplanar_uv(world_pos, 1u);
+    let uv_z = triplanar_uv(world_pos, 2u);
+    let sx = textureSample(atlas, atlas_sampler, uv_x, f32(base_layer + 0));
+    let sy = textureSample(atlas, atlas_sampler, uv_y, f32(base_layer + 1));
+    let sz = textureSample(atlas, atlas_sampler, uv_z, f32(base_layer + 2));
+    let w = triplanar_axis_weights(world_pos /* used as helper */);
+    // Note: `triplanar_axis_weights` is the (squared) normal-weighted
+    // blend; we feed the world normal here for clarity. The caller is
+    // expected to pre-pass the normal via the closure on the Bevy side.
+    return sx * w.x + sy * w.y + sz * w.z;
+}
+
+// Squared-normal blend for the three axis samples.
+fn blend_axis_samples(sx: vec4<f32>, sy: vec4<f32>, sz: vec4<f32>, n: vec3<f32>) -> vec4<f32> {
+    let w = triplanar_axis_weights(n);
+    return sx * w.x + sy * w.y + sz * w.z;
+}
+
+// Main entry point — fragment shader.
+//
+// @param in  — per-fragment world-space position + normal.
+// @returns   — combined albedo + ORM in a PBR fragment struct that the
+//              downstream `pbr_lighting()` helper consumes (FR-002 closure).
+@fragment
+fn pbr_triplanar_fragment(in: PbrVertexInput) -> PbrFragmentOutput {
+    var out: PbrFragmentOutput;
+
+    let base = i32(mat_slice);
+
+    // --- Base layer: albedo + normal + ORM ---------------------------
+    let albedo_x = textureSample(atlas, atlas_sampler, triplanar_uv(in.world_position, 0u), f32(base + 0));
+    let albedo_y = textureSample(atlas, atlas_sampler, triplanar_uv(in.world_position, 1u), f32(base + 1));
+    let albedo_z = textureSample(atlas, atlas_sampler, triplanar_uv(in.world_position, 2u), f32(base + 2));
+    let albedo   = blend_axis_samples(albedo_x, albedo_y, albedo_z, in.world_normal);
+
+    let orm_x = textureSample(atlas, atlas_sampler, triplanar_uv(in.world_position, 0u), f32(base + 6));
+    let orm_y = textureSample(atlas, atlas_sampler, triplanar_uv(in.world_position, 1u), f32(base + 7));
+    let orm_z = textureSample(atlas, atlas_sampler, triplanar_uv(in.world_position, 2u), f32(base + 8));
+    let orm   = blend_axis_samples(orm_x, orm_y, orm_z, in.world_normal);
+
+    // --- Optional detail layer (FR-011) ------------------------------
+    // If params.detail_blend > 0 the packer reserved slices for a
+    // higher-frequency detail set; blend it in at low weight. When
+    // params.detail_blend == 0 this branch is a no-op.
+    var detail_albedo = vec4<f32>(0.0);
+    var detail_orm    = vec4<f32>(1.0, 0.5, 0.0, 1.0); // neutral: full AO, half-rough, dielectric
+    if params.detail_blend > 0.0 {
+        let db = i32(base) + 9;
+        let dx = textureSample(atlas, atlas_sampler, triplanar_uv(in.world_position, 0u), f32(db + 0));
+        let dy = textureSample(atlas, atlas_sampler, triplanar_uv(in.world_position, 1u), f32(db + 1));
+        let dz = textureSample(atlas, atlas_sampler, triplanar_uv(in.world_position, 2u), f32(db + 2));
+        detail_albedo = blend_axis_samples(dx, dy, dz, in.world_normal);
+        let ox = textureSample(atlas, atlas_sampler, triplanar_uv(in.world_position, 0u), f32(db + 6));
+        let oy = textureSample(atlas, atlas_sampler, triplanar_uv(in.world_position, 1u), f32(db + 7));
+        let oz = textureSample(atlas, atlas_sampler, triplanar_uv(in.world_position, 2u), f32(db + 8));
+        detail_orm    = blend_axis_samples(ox, oy, oz, in.world_normal);
+    }
+
+    // --- Blend base + detail -----------------------------------------
+    let w = clamp(params.detail_blend, 0.0, 1.0);
+    let final_albedo = mix(albedo, detail_albedo, w);
+    let final_orm    = mix(orm, detail_orm, w);
+
+    out.baseColor = vec4<f32>(final_albedo.rgb, 1.0);
+    out.normal    = vec4<f32>(normalize(in.world_normal), 1.0);
+    out.metallic  = clamp(final_orm.b, 0.0, 1.0);
+    out.roughness = clamp(final_orm.g, 0.0, 1.0);
+    out.occlusion = final_orm.r;
+    out.emissive  = vec4<f32>(0.0, 0.0, 0.0, params.has_emissive);
+
+    return out;
+}

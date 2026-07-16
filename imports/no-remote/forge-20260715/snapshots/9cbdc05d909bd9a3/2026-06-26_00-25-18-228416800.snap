@@ -1,0 +1,13 @@
+import v8 from "node:v8";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+const p = path.join(os.tmpdir(), "heap-test.heapsnapshot");
+v8.writeHeapSnapshot(p);
+const content = fs.readFileSync(p, "utf8");
+console.log("size:", content.length);
+console.log('has meta_data:', content.includes('"meta_data"'));
+console.log('has trace_function_info_flags:', content.includes('"trace_function_info_flags"'));
+console.log('has node_types:', content.includes('"node_types"'));
+console.log('first 300:', content.substring(0, 300));
+fs.unlinkSync(p);

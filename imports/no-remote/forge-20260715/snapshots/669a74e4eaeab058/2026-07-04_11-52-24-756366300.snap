@@ -1,0 +1,6 @@
+$env:CARGO_INCREMENTAL = "1"
+$env:CARGO_TARGET_DIR = "E:\cargo-target\benchora"
+Set-Location C:\Users\koosh\Benchora
+Remove-Item C:\Users\koosh\_benchora_check.log -ErrorAction SilentlyContinue
+cargo test --lib --locked --no-run 2>&1 | Out-File -Encoding utf8 C:\Users\koosh\_benchora_check.log
+"test_build_exit=$LASTEXITCODE" | Out-File -Append -Encoding utf8 C:\Users\koosh\_benchora_check.log

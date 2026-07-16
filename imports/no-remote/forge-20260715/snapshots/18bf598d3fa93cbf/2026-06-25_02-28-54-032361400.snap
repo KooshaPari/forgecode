@@ -1,0 +1,308 @@
+/**
+ * Auto-instrumentation for OmniRoute's hot paths.
+ *
+ * PR-002 from plans/2026-06-23-omniroute-100-pr-roadmap.md. This module
+ * wires the OTel SDK from PR #4974 (src/lib/observability/otel.ts) into
+ * the actual request paths that operators have flagged as opaque:
+ *
+ *   1. HTTP requests via global fetch — covers the undici #4252
+ *      502-burst path (per-request latency + DNS / connect / TLS
+ *      spans).
+ *   2. SQLite queries — covers DB slow-query observability (#4608
+ *      per-tenant latency).
+ *   3. Cache get/set — covers the cache-hit-rate question (#4771 OOM
+ *      investigation: was it cache pressure?).
+ *   4. Provider HTTP — covers the AI provider fan-out (the path that
+ *      generates 90% of request latency).
+ *
+ * Every instrumented call uses `withSpan` so the trace context
+ * propagates to children. Cardinality is bounded by a label
+ * allow-list (see ALLOWED_* constants) — operators cannot blow up
+ * the metric registry through user input.
+ */
+
+import {
+  startSpan,
+  withSpan,
+  currentTraceId,
+  currentSpanId,
+  getTracer,
+  isObservabilityDisabled,
+} from "./otel.js";
+import {
+  recordHttpRequest,
+  recordProviderRequest,
+  recordCacheHit,
+  recordCacheMiss,
+  recordDbQuery,
+} from "./metrics.js";
+
+/**
+ * Allowed HTTP route templates. Anything not on this list is bucketed
+ * as "other" so a malicious URL like /api/users/12345 can't blow up
+ * the histogram cardinality.
+ */
+const ALLOWED_HTTP_ROUTES = new Set<string>([
+  "/api/v1/chat/completions",
+  "/api/v1/embeddings",
+  "/api/v1/images/generations",
+  "/api/v1/audio/speech",
+  "/api/v1/audio/transcriptions",
+  "/api/combos",
+  "/api/combos/{id}",
+  "/api/system/version",
+  "/api/system/update",
+  "/api/auth/login",
+  "/api/auth/reload",
+  "/api/dashboard/stats",
+  "/api/dashboard/recent",
+  "/api/quota/usage",
+  "/live-ws",
+]);
+
+const ALLOWED_HTTP_METHODS = new Set<string>([
+  "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD",
+]);
+
+const ALLOWED_PROVIDERS = new Set<string>([
+  "openai", "anthropic", "google", "azure", "bedrock", "cohere",
+  "mistral", "groq", "together", "fireworks", "perplexity",
+  "deepseek", "xai", "replicate", "huggingface", "openrouter",
+]);
+
+const ALLOWED_CACHE_KINDS = new Set<string>([
+  "memory", "disk", "redis", "combo", "pricing", "models",
+]);
+
+const ALLOWED_DB_OPS = new Set<string>([
+  "select", "insert", "update", "delete", "begin", "commit",
+]);
+
+/**
+ * Normalize a route template. Replaces numeric/uuid path segments
+ * with {id}/{n} so /api/users/12345 and /api/users/67890 share a
+ * histogram bucket.
+ */
+export function normalizeRoute(method: string, url: string): string {
+  let path = url;
+  try {
+    const u = new URL(url, "http://localhost");
+    path = u.pathname;
+  } catch {
+    // url is a relative path; use as-is
+  }
+  // Collapse UUIDs, numerics, base64-ish blobs
+  path = path.replace(
+    /\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+    "/{id}"
+  );
+  path = path.replace(/\/[0-9]{2,}/g, "/{n}");
+  // Method-bucketed lookups
+  const m = (method || "GET").toUpperCase();
+  const key = `${m} ${path}`;
+  if (ALLOWED_HTTP_ROUTES.has(path) && ALLOWED_HTTP_METHODS.has(m)) {
+    return path;
+  }
+  // The path isn't in the allow-list; bucket as "other"
+  if (path.length > 128) path = path.slice(0, 128);
+  return key;
+}
+
+/**
+ * Wrap the global `fetch` so every outbound HTTP request emits a
+ * CLIENT span + an http_request_duration_seconds histogram.
+ *
+ * Idempotent: calling installFetchInstrumentation twice is a no-op.
+ */
+let fetchInstalled = false;
+export function installFetchInstrumentation(): void {
+  if (fetchInstalled) return;
+  if (isObservabilityDisabled()) return;
+  if (typeof globalThis.fetch !== "function") return;
+  fetchInstalled = true;
+
+  const originalFetch = globalThis.fetch.bind(globalThis);
+  globalThis.fetch = function instrumentedFetch(
+    input: RequestInfo | URL,
+    init?: RequestInit
+  ): Promise<Response> {
+    const start = Date.now();
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : (input as Request).url;
+    const method =
+      init?.method ??
+      (typeof input === "object" && !(input instanceof URL)
+        ? (input as Request).method
+        : "GET");
+    const route = normalizeRoute(method, url);
+
+    return withSpan(
+      `HTTP ${method} ${route}`,
+      { kind: "CLIENT", attributes: { "http.method": method, "http.url": url } },
+      () => originalFetch(input, init).then(
+        (res) => {
+          recordHttpRequest(method, route, res.status, Date.now() - start);
+          return res;
+        },
+        (err: unknown) => {
+          recordHttpRequest(method, route, 0, Date.now() - start);
+          throw err;
+        }
+      )
+    );
+  };
+}
+
+/**
+ * Wrap an AI provider call so it emits a CLIENT span + a
+ * provider_request_duration_seconds histogram.
+ *
+ * Use at the executor level (open-sse/services/{provider}/{provider}Client.ts)
+ * so we capture the actual upstream latency without the
+ * orchestration overhead.
+ */
+export async function withProviderSpan<T>(
+  provider: string,
+  model: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const safeProvider = ALLOWED_PROVIDERS.has(provider)
+    ? provider
+    : "other";
+  const start = Date.now();
+  try {
+    const result = await withSpan(
+      `provider.${safeProvider}.${model}`,
+      {
+        kind: "CLIENT",
+        attributes: {
+          "ai.provider": safeProvider,
+          "ai.model": model,
+        },
+      },
+      fn
+    );
+    recordProviderRequest(safeProvider, model, 200, Date.now() - start);
+    return result;
+  } catch (err: unknown) {
+    const status =
+      typeof err === "object" && err !== null && "status" in err
+        ? Number((err as { status: unknown }).status) || 0
+        : 0;
+    recordProviderRequest(safeProvider, model, status, Date.now() - start);
+    throw err;
+  }
+}
+
+/**
+ * Wrap a SQLite query so it emits an INTERNAL span + a
+ * db_query_duration_seconds histogram.
+ */
+export function withDbSpan<T>(
+  op: string,
+  table: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const safeOp = ALLOWED_DB_OPS.has(op) ? op : "other";
+  const safeTable = table.length > 64 ? table.slice(0, 64) : table;
+  const start = Date.now();
+  return withSpan(
+    `db.${safeOp}.${safeTable}`,
+    {
+      kind: "CLIENT",
+      attributes: {
+        "db.system": "sqlite",
+        "db.operation": safeOp,
+        "db.sql.table": safeTable,
+      },
+    },
+    async () => {
+      try {
+        const result = await fn();
+        recordDbQuery(safeOp, safeTable, Date.now() - start, false);
+        return result;
+      } catch (err) {
+        recordDbQuery(safeOp, safeTable, Date.now() - start, true);
+        throw err;
+      }
+    }
+  );
+}
+
+/**
+ * Wrap a cache lookup. Records hit/miss + span.
+ */
+export async function withCacheSpan<T>(
+  kind: string,
+  key: string,
+  fn: () => Promise<{ value: T | undefined; hit: boolean }>
+): Promise<T | undefined> {
+  const safeKind = ALLOWED_CACHE_KINDS.has(kind) ? kind : "other";
+  const safeKey = key.length > 128 ? key.slice(0, 128) : key;
+  return withSpan(
+    `cache.${safeKind}`,
+    { kind: "INTERNAL", attributes: { "cache.system": safeKind, "cache.key": safeKey } },
+    async () => {
+      const { value, hit } = await fn();
+      if (hit) recordCacheHit(safeKind);
+      else recordCacheMiss(safeKind);
+      return value;
+    }
+  );
+}
+
+/**
+ * Initialize all auto-instrumentation hooks. Call once at app
+ * startup (from src/instrumentation-node.ts) so the global fetch
+ * wrap installs before any HTTP traffic.
+ *
+ * Safe to call multiple times — the fetch wrap is idempotent.
+ */
+export function installAutoInstrumentation(): void {
+  installFetchInstrumentation();
+  // Future hooks:
+  // installSqliteInstrumentation(db);
+  // installWorkerInstrumentation();
+}
+
+/**
+ * Diagnostic: returns a snapshot of what's currently installed.
+ * Used by the `/api/system/diagnostics` endpoint + tests.
+ */
+export function autoInstrumentationStatus(): {
+  fetch: boolean;
+  traceId: string | undefined;
+  spanId: string | undefined;
+  tracer: string;
+} {
+  return {
+    fetch: fetchInstalled,
+    traceId: currentTraceId(),
+    spanId: currentSpanId(),
+    tracer: getTracer().name,
+  };
+}
+
+/**
+ * Test helper: reset instrumentation install state. NOT exported
+ * from the package barrel — only consumed by tests.
+ */
+export function resetAutoInstrumentationForTests(): void {
+  fetchInstalled = false;
+}
+
+/**
+ * Re-export the active-span helpers from otel.ts for the convenience
+ * of instrumented callers that want to add attributes to the
+ * current span without starting a new one.
+ */
+export {
+  startSpan,
+  withSpan,
+  currentTraceId,
+  currentSpanId,
+};

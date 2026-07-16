@@ -1,0 +1,21 @@
+$repos = @(
+    "KooshaPari/kvirtualstage",
+    "KooshaPari/kmobile",
+    "KooshaPari/mobile-cli",
+    "KooshaPari/Eidolon",
+    "KooshaPari/playcua",
+    "KooshaPari/phenotype-journeys",
+    "kooshapari/agileplus"
+)
+$out = @()
+foreach ($r in $repos) {
+    $raw = gh api "repos/$r/commits/HEAD" 2>&1 | Out-String
+    try {
+        $j = $raw | ConvertFrom-Json
+        $msg = ($j.commit.message -split "`n")[0]
+        $out += "$r | sha=$($j.sha) | date=$($j.commit.author.date) | msg=$msg"
+    } catch {
+        $out += "$r | ERROR: $raw"
+    }
+}
+$out | ForEach-Object { Write-Output $_ }

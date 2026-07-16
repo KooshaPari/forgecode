@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""Grade the 5 new audits and emit a summary."""
+import json
+import os
+import subprocess
+import sys
+
+AUDITS_DIR = "C:/Users/koosh/phenotype-registry/audits/absorption-justifications"
+GRADER = "C:/Users/koosh/phenotype-registry/registry/audit-absorption-justification/grade.sh"
+
+bash_exe = "C:/Windows/System32/bash.exe"
+
+for fname in sorted(os.listdir(AUDITS_DIR)):
+    if not fname.endswith("-2026-06-25.md"):
+        continue
+    audit_path = os.path.join(AUDITS_DIR, fname)
+    mount_path = "/mnt/c/" + audit_path[3:].replace("\\", "/")
+    try:
+        result = subprocess.run(
+            [bash_exe, "-c", f"bash '{GRADER}' '{mount_path}'"],
+            capture_output=True, text=True, timeout=30,
+        )
+        d = json.loads(result.stdout)
+        print(f"=== {fname} ===")
+        print(f"  score={d['score']}/14 ({d['percentage']}%) {d['grade']}")
+        for p in d["pillars"]:
+            print(f"  P{p['id']}={p['status']} {p['score']}/{p['max']}: {p['detail'][:80]}")
+    except Exception as e:
+        print(f"=== {fname} ===")
+        print(f"  ERROR: {e}")
+        print(f"  stderr: {result.stderr[:200] if 'result' in dir() else 'n/a'}")

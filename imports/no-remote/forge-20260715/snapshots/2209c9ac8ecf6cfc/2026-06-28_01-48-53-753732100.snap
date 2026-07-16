@@ -1,0 +1,8 @@
+@echo off
+set MSYS_NO_PATHCONV=1
+"C:\Program Files\Git\usr\bin\bash.exe" -c "export MSYS_NO_PATHCONV=1 && export PATH=/c/Users/koosh/.cargo/bin:$PATH && cd /c/Users/koosh/phenotype-tooling && cargo build --offline 2>&1 | head -30" 1>C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.stdout 2>C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.stderr
+echo exit=%errorlevel%
+echo --- STDOUT ---
+type C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.stdout
+echo --- STDERR ---
+type C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.stderr

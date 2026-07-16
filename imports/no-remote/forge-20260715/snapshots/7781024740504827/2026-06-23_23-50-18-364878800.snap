@@ -1,0 +1,21 @@
+# Build artifacts
+phenodag
+*.db
+*.db-shm
+*.db-wal
+*.md
+!README.md
+!docs/*.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Go
+*.test
+*.out
+
+phenodag.exe
+

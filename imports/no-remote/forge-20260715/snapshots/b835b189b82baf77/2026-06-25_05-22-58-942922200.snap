@@ -1,0 +1,22 @@
+$ErrorActionPreference = "Stop"
+$tokens = $null
+$errors = $null
+$files = @(
+    "C:\Users\koosh\repos\phenotype-tooling\bin\absorption-justification.ps1",
+    "C:\Users\koosh\repos\phenotype-tooling\bin\repo-delete-gate.ps1"
+)
+foreach ($f in $files) {
+    if (-not (Test-Path $f)) {
+        Write-Output "MISSING: $f"
+        continue
+    }
+    $tokens = $null
+    $errors = $null
+    [System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$tokens, [ref]$errors) | Out-Null
+    if ($errors.Count -eq 0) {
+        Write-Output "PS_PARSE_OK: $f"
+    } else {
+        Write-Output "PS_PARSE_ERR: $f"
+        foreach ($e in $errors) { Write-Output ("  " + $e.Message) }
+    }
+}

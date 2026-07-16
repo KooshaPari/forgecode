@@ -1,0 +1,17 @@
+$ErrorActionPreference = 'Continue'
+$out = gh api 'search/repositories?q=user:KooshaPari&per_page=100' 2>&1 | Out-String
+try {
+    $json = $out | ConvertFrom-Json
+} catch {
+    Write-Host "PARSE ERROR: $_"
+    Write-Host "RAW OUTPUT (first 500 chars):"
+    Write-Host $out.Substring(0, [Math]::Min(500, $out.Length))
+    exit 1
+}
+$top = $json.items |
+    Where-Object { $_.fork -eq $false } |
+    Sort-Object { $_.size } -Descending |
+    Select-Object -First 20 name, size, stargazers_count, language, pushed_at
+foreach ($r in $top) {
+    "{0,-35} | size={1,7}kb | stars={2,4} | {3,-12} | pushed={4}" -f $r.name, $r.size, $r.stargazers_count, $r.language, $r.pushed_at
+}

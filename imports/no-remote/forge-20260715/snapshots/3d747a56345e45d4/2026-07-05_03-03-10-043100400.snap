@@ -1,0 +1,41 @@
+{
+  "name": "phenotype-sdk",
+  "path": "KooshaPari/phenotype-sdk",
+  "size_mb": 0.0,
+  "default_branch": "main",
+  "languages": ["go", "mojo", "python", "rust", "ts", "zig"],
+  "status": "AFFIRM",
+  "disposition": "ABSORB_PARTIAL",
+  "absorbed_into": [
+    "pheno-runtime (Rust crates from lang/rust/packages)",
+    "python monorepo (lang/python/packages 14 pkgs)",
+    "go-nippon hydrate path (lang/go)",
+    "@phenotype/sdk workspace (lang/ts/packages)",
+    "phenotype-core standalone (lang/zig)",
+    "Magic >=24.x mojo pin (lang/mojo)"
+  ],
+  "fr_catalog": [
+    "FR-SDK-001: lang/rust 17-crate workspace partition",
+    "FR-SDK-002: lang/python 14-package workspace partition",
+    "FR-SDK-003: lang/ts @phenotype/sdk workspace build",
+    "FR-SDK-004: lang/zig standalone build.zig",
+    "FR-SDK-005: lang/go hydration into go-nippon",
+    "FR-SDK-006: lang/mojo pin to Magic >=24.x"
+  ],
+  "absorption_targets": {
+    "rust": "phenotype-sdk/lang/rust/packages (17 crates) -> pheno-runtime",
+    "python": "phenotype-sdk/lang/python/packages (14 pkgs) -> python monorepo",
+    "go": "phenotype-sdk/lang/go -> go-nippon hydrate path",
+    "ts": "phenotype-sdk/lang/ts/packages -> @phenotype/sdk workspace",
+    "zig": "phenotype-sdk/lang/zig/phenotype-core -> standalone build.zig",
+    "mojo": "phenotype-sdk/lang/mojo -> Magic >=24.x pin"
+  },
+  "audit": "audits/absorption-justifications/phenotype-sdk-2026-07-02.md",
+  "last_audit": "2026-07-02",
+  "registry_status": "AFFIRM",
+  "scope_partition": {
+    "rust": "PR-1 (17 crates into pheno-runtime workspace)",
+    "python": "PR-2 (14 packages into python monorepo)",
+    "ts_zig_go_mojo": "PR-3 (4 lang sub-skeletons registered under registry/projects/)"
+  }
+}

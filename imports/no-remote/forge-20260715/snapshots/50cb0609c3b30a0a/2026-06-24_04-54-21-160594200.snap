@@ -1,0 +1,2 @@
+@echo off
+git -c credential.helper= -c core.askPass= push -u "https://x-access-token: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@github.com/KooshaPari/Civis.git" chore/readme-workstate

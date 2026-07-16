@@ -1,0 +1,89 @@
+//! Integration tests for the SpanSink port.
+//!
+//! Exercises the contract that any SpanSink implementation must satisfy:
+//! record() accepts a SpanRecord, snapshot is observable through the
+//! concrete adapter types, and the noop sink silently discards.
+
+use pheno_tracing::adapters::{NoopSpanSink, VecSpanSink};
+use pheno_tracing::port::{SpanKind, SpanRecord, SpanSink};
+use pheno_tracing::adapters::{NoopSpanSink, VecSpanSink};
+use pheno_tracing::port::{SpanKind, SpanRecord, SpanSink};
+use std::collections::BTreeMap;
+
+#[test]
+fn span_record_default_fields() {
+    let r = SpanRecord::new("op", SpanKind::Server, BTreeMap::new());
+    assert_eq!(r.name(), "op");
+    assert!(matches!(r.kind(), SpanKind::Server));
+    assert_eq!(r.started_at_ns(), 0);
+    assert_eq!(r.ended_at_ns(), 0);
+    assert!(r.duration_ns().is_none());
+}
+
+#[test]
+fn vec_sink_captures_records() {
+    let sink = VecSpanSink::new();
+    let mut rec = SpanRecord::new("a", SpanKind::Internal, BTreeMap::new());
+    rec.close(5);
+    sink.record(rec);
+    assert_eq!(sink.len(), 1);
+    assert_eq!(sink.snapshot()[0].name(), "a");
+    assert_eq!(sink.snapshot()[0].ended_at_ns(), 5);
+}
+
+#[test]
+fn noop_sink_accepts_records() {
+    let sink = NoopSpanSink;
+    let rec = SpanRecord::new("x", SpanKind::Client, BTreeMap::new());
+    sink.record(rec);
+}
+
+#[test]
+fn vec_sink_records_in_order() {
+    let mut sink = VecSpanSink::default();
+    sink.record(rec("alpha", SpanKind::Server));
+    sink.record(rec("beta", SpanKind::Client));
+    assert_eq!(sink.len(), 2);
+    assert_eq!(sink.snapshot()[0].name, "alpha");
+    assert_eq!(sink.snapshot()[1].name, "beta");
+}
+
+#[test]
+fn vec_sink_is_empty_initially() {
+    let sink = VecSpanSink::default();
+    assert!(sink.is_empty());
+    assert_eq!(sink.len(), 0);
+}
+
+#[test]
+fn noop_sink_accepts_records() {
+    let mut sink = NoopSpanSink;
+    sink.record(rec("ignored", SpanKind::Internal));
+    // No observable state — that's the point.
+}
+
+#[test]
+fn span_kind_variants() {
+    let kinds = [
+        SpanKind::Internal,
+        SpanKind::Server,
+        SpanKind::Client,
+        SpanKind::Producer,
+        SpanKind::Consumer,
+    ];
+    for (i, a) in kinds.iter().enumerate() {
+        for (j, b) in kinds.iter().enumerate() {
+            assert_eq!(i == j, a == b);
+        }
+    }
+}
+
+#[test]
+fn span_record_preserves_fields() {
+    let r = rec("test", SpanKind::Server);
+    assert_eq!(r.name, "test");
+    assert_eq!(r.kind, SpanKind::Server);
+    assert_eq!(r.fields.get("svc").map(String::as_str), Some("absorb"));
+    assert_eq!(r.started_at_ns, 1_000_000);
+    assert_eq!(r.ended_at_ns, 2_000_000);
+}

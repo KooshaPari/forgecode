@@ -1,0 +1,154 @@
+import json, os, re
+
+home = r'C:\Users\koosh'
+repos = [
+    ('phenotype-registry', 'phenotype-registry'),
+    ('phenotype-infra', 'phenotype-infra'),
+    ('PhenoCompose', 'PhenoCompose'),
+    ('BytePort', 'BytePort'),
+]
+
+results = {}
+for label, dirname in repos:
+    path = home + '/' + dirname + '/.grade-reports/grade.json'
+    with open(path, encoding='utf-8', errors='replace') as f:
+        raw = f.read()
+    # Fix invalid JSON escapes: Windows paths have \U, \k, \p, etc.
+    # Replace any \X (where X is not a valid JSON escape char) with \\X
+    def fix_backslashes(s):
+        result = []
+        i = 0
+        while i < len(s):
+            if s[i] == '\\' and i + 1 < len(s):
+                nxt = s[i + 1]
+                if nxt in '"\\/bfnrtu':
+                    result.append(s[i])
+                    result.append(nxt)
+                    i += 2
+                else:
+                    # Invalid escape - add double backslash
+                    result.append('\\\\')
+                    result.append(nxt)
+                    i += 2
+            else:
+                result.append(s[i])
+                i += 1
+        return ''.join(result)
+    
+    raw = fix_backslashes(raw)
+    try:
+        d = json.loads(raw)
+    except json.JSONDecodeError as e:
+        print(f"[ERROR] Still failed for {label}: {e}")
+        # Fallback: extract data manually
+        d = None
+    
+    if d:
+        results[label] = d
+
+# Print the delta dashboard
+print("=" * 110)
+print("  B12 DELTA DASHBOARD - Cross-Repo Grade Comparison")
+print("  Generated: 2026-06-29")
+print("=" * 110)
+print()
+
+# Header
+header = f"{'Check':<20}"
+for label, _ in repos:
+    header += f"  {label:<22}"
+header += f"  {'Fails':<6}"
+print(header)
+print("-" * 110)
+
+all_checks = set()
+for r in results.values():
+    for c in r["checks"]:
+        all_checks.add(c["name"])
+all_checks = sorted(all_checks)
+
+fail_count_by_check = {}
+for check in all_checks:
+    row = f"{check:<20}"
+    fails = 0
+    for label, _ in repos:
+        d = results[label]
+        match = [c for c in d["checks"] if c["name"] == check]
+        if match and match[0]["status"] == "fail":
+            row += f"  {'FAIL':<22}"
+            fails += 1
+        elif match and match[0]["status"] == "pass":
+            row += f"  {'PASS':<22}"
+        else:
+            row += f"  {'N/A':<22}"
+    fail_count_by_check[check] = fails
+    row += f"  {fails}/4"
+    print(row)
+
+print("-" * 110)
+
+# Totals
+row = f"{'TOTAL':<20}"
+for label, _ in repos:
+    d = results[label]
+    row += f"  {d['score']}/{d['max']} ({d['percentage']}%)        "
+print(row)
+
+row = f"{'GRADE':<20}"
+for label, _ in repos:
+    d = results[label]
+    row += f"  {d['grade']:<22}"
+print(row)
+
+row = f"{'STACK':<20}"
+for label, _ in repos:
+    d = results[label]
+    row += f"  {d['stack']:<22}"
+print(row)
+
+print()
+print("=" * 110)
+print("  WEAKEST PILLARS (ranked by fail count)")
+print("=" * 110)
+sorted_fails = sorted(fail_count_by_check.items(), key=lambda x: (-x[1], x[0]))
+for check, count in sorted_fails:
+    if count == 0:
+        continue
+    bar = "#" * count + "." * (4 - count)
+    print(f"  {check:<20} {count}/4  [{bar}]")
+
+print()
+print("=" * 110)
+print("  ROOT CAUSE ANALYSIS")
+print("=" * 110)
+
+for label, _ in repos:
+    d = results[label]
+    print(f"\n--- {label} (Grade: {d['grade']}, {d['score']}/{d['max']}) ---")
+    for c in d["checks"]:
+        if c["status"] == "fail":
+            detail = c.get("detail", "")
+            detail = detail.replace("\n", " ").replace("\r", "")
+            if len(detail) > 150:
+                detail = detail[:150] + "..."
+            print(f"  [{c['name']}] {detail}")
+
+print()
+print("=" * 110)
+
+threshold = 85
+all_pass = True
+failing_repos = []
+for label, _ in repos:
+    d = results[label]
+    if d["percentage"] < threshold:
+        all_pass = False
+        failing_repos.append(f"{label} ({d['percentage']}% Grade {d['grade']})")
+
+if all_pass:
+    print("  RESULT: PASS - All repos meet the 85% threshold")
+else:
+    print(f"  RESULT: FAIL - {len(failing_repos)} repo(s) below 85% threshold:")
+    for r in failing_repos:
+        print(f"           - {r}")
+print("=" * 110)

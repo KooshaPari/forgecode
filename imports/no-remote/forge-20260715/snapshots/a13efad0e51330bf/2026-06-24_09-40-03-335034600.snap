@@ -1,0 +1,37 @@
+#!/bin/bash
+# grade-all.sh — run grade.sh on all 8 audits, emit aggregated report.
+set -u
+AUDITS_DIR="/mnt/c/Users/koosh/phenotype-registry/audits/absorption-justifications"
+GRADER="/mnt/c/Users/koosh/phenotype-registry/registry/audit-absorption-justification/grade.sh"
+cd "$AUDITS_DIR" || exit 1
+
+echo "Per-audit grading:"
+echo "==================="
+total_score=0
+total_max=0
+count=0
+for f in *-2026-06-23.md; do
+    # Run grader and parse JSON
+    out=$(bash "$GRADER" "$f" 2>&1)
+    score=$(echo "$out" | grep -o '"score":[[:space:]]*[0-9]*' | head -1 | grep -o '[0-9]*')
+    pct=$(echo "$out" | grep -o '"percentage":[[:space:]]*"[0-9.]*"' | head -1 | grep -o '"[0-9.]*"' | tr -d '"')
+    grade=$(echo "$out" | grep -o '"grade":[[:space:]]*"[A-Z0-9]*"' | head -1 | grep -o '"[A-Z0-9]*"' | tr -d '"')
+    p7_status=$(echo "$out" | grep -A2 '"id": 7' | grep -o '"status":[[:space:]]*"[a-z]*"' | head -1 | grep -o '"[a-z]*"' | tr -d '"')
+    p7_score=$(echo "$out" | grep -A2 '"id": 7' | grep -o '"score":[[:space:]]*[0-9.]*' | head -1 | grep -o '[0-9.]*')
+    printf "  %-32s  %5s/14  %6s%%  %s  P7=%s/%s\n" "$f" "$score" "$pct" "$grade" "$p7_score" "$p7_status"
+    total_score=$((total_score + score))
+    total_max=$((total_max + 14))
+    count=$((count + 1))
+done
+
+echo
+echo "Fleet summary:"
+echo "=============="
+echo "  Audits graded: $count"
+echo "  Total score:   $total_score / $total_max"
+if [[ $total_max -gt 0 ]]; then
+    pct_int=$((total_score * 10000 / total_max))
+    pct_whole=$((pct_int / 100))
+    pct_dec=$((pct_int - pct_whole * 100))
+    echo "  Fleet avg:     $((total_score / count)).$(( (total_score * 100 / count) % 100 ))/14  (${pct_whole}.${pct_dec}%)"
+fi

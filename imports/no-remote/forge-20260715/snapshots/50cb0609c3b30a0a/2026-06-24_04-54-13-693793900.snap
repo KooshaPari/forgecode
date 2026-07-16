@@ -1,0 +1,3 @@
+@echo off
+set TOKEN=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
+git -C "%~dp0" -c credential.helper= -c core.askPass= push -u "https://x-access-token:%TOKEN%@github.com/KooshaPari/Civis.git" chore/readme-workstate

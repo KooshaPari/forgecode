@@ -1,0 +1,15 @@
+$root = 'C:\Users\koosh\Civis'
+$out = Join-Path $root '_pbr_locs.tsv'
+$rows = New-Object System.Collections.Generic.List[string]
+
+# Collect all .rs files under crates/ and clients/, excluding any target/ dir
+Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -in @('crates','clients') } | ForEach-Object {
+    Get-ChildItem -Path $_.FullName -Recurse -Filter *.rs -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch '\\target\\' } | ForEach-Object {
+        $lines = (Get-Content $_.FullName -ErrorAction SilentlyContinue | Measure-Object -Line).Lines
+        $rel = $_.FullName.Substring($root.Length + 1)
+        $rows.Add(('{0}`t{1}' -f $rel, $lines))
+    }
+}
+
+$rows | Out-File -FilePath $out -Encoding UTF8
+Set-Content -Path (Join-Path $root '_pbr_locs.done') -Value 'done' -Encoding ASCII

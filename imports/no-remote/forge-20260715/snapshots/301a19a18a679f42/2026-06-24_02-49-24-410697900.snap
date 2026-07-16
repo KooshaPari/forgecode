@@ -1,0 +1,80 @@
+import { describe, test, mock } from "node:test";
+import assert from "node:assert/strict";
+
+/**
+ * The helper is parameterized by three modules:
+ *   - @/lib/localDb → isCloudEnabled
+ *   - @/shared/utils/machineId → getConsistentMachineId
+ *   - the local module → syncToCloud
+ *
+ * We mock the localDb + machineId modules via require cache, and the
+ * local syncToCloud via a private override.
+ */
+
+async function loadHelper(opts: {
+  cloudEnabled: boolean;
+  machineId?: string;
+  syncToCloudImpl?: () => Promise<unknown>;
+}) {
+  // Reset module registry for a clean import.
+  delete require.cache[require.resolve("@/lib/localDb")];
+  delete require.cache[require.resolve("@/shared/utils/machineId")];
+  delete require.cache[require.resolve("@/lib/cloudSync")];
+
+  // Stub isCloudEnabled
+  require.cache[require.resolve("@/lib/localDb")] = {
+    id: require.resolve("@/lib/localDb"),
+    filename: require.resolve("@/lib/localDb"),
+    loaded: true,
+    exports: { isCloudEnabled: async () => opts.cloudEnabled },
+  } as unknown as NodeJS.Module;
+
+  // Stub getConsistentMachineId
+  require.cache[require.resolve("@/shared/utils/machineId")] = {
+    id: require.resolve("@/shared/utils/machineId"),
+    filename: require.resolve("@/shared/utils/machineId"),
+    loaded: true,
+    exports: {
+      getConsistentMachineId: async () => opts.machineId ?? "machine-123",
+    },
+  } as unknown as NodeJS.Module;
+
+  // Now load cloudSync; the module will import the stubs above and define
+  // its own `syncToCloud` internally. We can't easily mock that one
+  // without changing source. Instead, test the *integration*: when
+  // cloudEnabled is false, no call to syncToCloud can happen. When
+  // cloudEnabled is true, the real syncToCloud runs (which will be a
+  // no-op in test env if CLOUD_URL is unset, but we tolerate either).
+  const mod = await import("@/lib/cloudSync");
+  return { syncToCloudIfEnabled: mod.syncToCloudIfEnabled };
+}
+
+describe("syncToCloudIfEnabled", () => {
+  test("no-ops when cloud is disabled", async () => {
+    const { syncToCloudIfEnabled } = await loadHelper({ cloudEnabled: false });
+    // Should resolve without throwing and without doing any work.
+    await assert.doesNotReject(syncToCloudIfEnabled());
+  });
+
+  test("does not throw when CLOUD_URL is unset and cloud is enabled", async () => {
+    // CLOUD_URL is undefined in test env, so the real syncToCloud will
+    // log a warning and return. The wrapper must still resolve.
+    const { syncToCloudIfEnabled } = await loadHelper({ cloudEnabled: true });
+    await assert.doesNotReject(syncToCloudIfEnabled());
+  });
+
+  test("silently swallows errors from the underlying syncToCloud", async () => {
+    // Simulate an exception in any of the underlying modules.
+    delete require.cache[require.resolve("@/lib/localDb")];
+    require.cache[require.resolve("@/lib/localDb")] = {
+      id: require.resolve("@/lib/localDb"),
+      filename: require.resolve("@/lib/localDb"),
+      loaded: true,
+      exports: { isCloudEnabled: async () => { throw new Error("boom"); } },
+    } as unknown as NodeJS.Module;
+    delete require.cache[require.resolve("@/lib/cloudSync")];
+
+    const mod = await import("@/lib/cloudSync");
+    await assert.doesNotReject(mod.syncToCloudIfEnabled());
+  });
+});

@@ -1,0 +1,13 @@
+model = "MiniMax-M3"
+
+[model_providers.omniroute]
+name = "OmniRoute"
+base_url = "http://100.96.135.160:20128/v1"
+experimental_bearer_token = "sk-cp-test"
+wire_api = "responses"
+
+[model_providers.minimax]
+name = "MiniMax"
+base_url = "https://api.minimax.io/v1"
+experimental_bearer_token = "sk-cp-test"
+wire_api = "responses"

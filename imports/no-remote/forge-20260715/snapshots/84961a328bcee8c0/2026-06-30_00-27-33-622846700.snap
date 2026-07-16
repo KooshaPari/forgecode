@@ -1,0 +1,24 @@
+## Summary
+
+Standardize PhenoCompose README with DAG-compliant work-state header and fix broken CI badges that referenced non-existent workflows.
+
+## Context
+
+As part of DAG unit A9 in the compute/infra epic_A hygiene sweep, the README needed:
+- A standardized work-state header following the phenotype-infra pattern (epic status, DAG phase, progress indicator)
+- CI badges that actually point to existing workflows instead of the non-existent `quality-gate.yml`
+
+## Changes
+
+- **Work-state header**: Replaced stale `Work State: docs/readme-m2` line with EPIC_A / DAG phase A9 pattern matching phenotype-infra's README style
+- **Rust CI badge**: Added inline Rust CI badge at the top for immediate build status visibility
+- **Build badge**: Fixed `quality-gate.yml` → `rust-ci.yml` with updated workflow URL
+- **CI badge**: Fixed `quality-gate.yml` → `ci.yml` (renamed from "Quality Gate" to "CI")
+
+## Testing
+
+Verify badges render correctly at:
+- [Rust CI](https://github.com/KooshaPari/PhenoCompose/actions/workflows/rust-ci.yml)
+- [CI](https://github.com/KooshaPari/PhenoCompose/actions/workflows/ci.yml)
+
+View the rendered README on the branch to confirm the work-state header displays correctly.

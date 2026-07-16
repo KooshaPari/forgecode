@@ -1,0 +1,129 @@
+# docs/
+| `0005-locked-baseline-march-2026-cutoff.md` | **Round-5** recency cutoff + locked baseline (7 cloud + 3 self-hosted after Granite-4.0-h-micro dropped; Ling + Granite-4.1 + Trinity + LFM2-24B-A2B + Laguna-XS-2.1 + Hy3 + Qwen3.5-Flash cloud; Qwen3.5-0.8B + LFM2.5-8B-A1B + Ornith-1.0-9B local). Token-handling rule. | accepted |
+| `0006-pheno-serve-dev-bootstrap.md` | **Round-6** the local-model-driven-item execution: `pheno-serve-dev` started, smoke + probe passed, OR drift captured, **`qwen35-08b` profile gated on `llama-server.exe` install** (see spec 005). Reproducibility manifest + all 9 bench artifacts. | accepted |
+| `005-engine-binary-install.md` | **Round-6** one-page bootstrap for installing `llama-server.exe` / `ik_llama-server.exe` so the `qwen35-08b` profile actually has a backend. 3 install paths (scoop / prebuilt / from source), verification commands, fallback to ik_llama fork if upstream llama.cpp regressions. | accepted |
+
+and self-improvement layer owned by `pheno-harness`).
+
+## Reading order for a new agent
+
+1. `../SPEC.md`
+2. `../DESIGN.md`
+3. `ARCHITECTURE_LAYERS.md` — layer contract: `forge-dev`,
+   `omniroute-dev`, `pheno-serve-dev`, `PhenoLM`, engines, `bifrost`.
+4. `GARDEN_LOOP.md` — managed self-improvement policy.
+5. `PHENOLM_MIGRATION.md` — `pheno-specs` → `PhenoLM` migration,
+   `agileplus-specs/` submodule handling.
+6. `PUBLISHING.md` — split-repo publishing protocol.
+7. `adrs/0001-current-state-audit.md` — read-only state snapshot,
+   citations, unknowns.
+8. `adrs/0003-local-serving-bootstrap.md` — local model workstream
+   decision + bootstrap commands.
+9. `specs/001-eval-architecture.md` — eval suite taxonomy, metric
+   taxonomy, reproducibility contract, intent-graph design.
+10. `specs/002-trace-evalset.md` — per-role trace-derived eval pipeline.
+11. `specs/003-model-engine-matrix.md` — local 0.8B–35B × engine
+    matrix, 3090 Ti vRAM budget, M1 Pro fallback, spec-dec zoo.
+12. `specs/004-implementation-plan.md` — staged plan, ordered PRs,
+    weekly roll-out.
+
+# docs/
+
+This directory is the canonical home for **decisions** (ADRs) and
+**specifications** (specs). All docs here are dated and traceable;
+all live data (model picks, cost projections, scrape snapshots)
+lives under `state/`.
+
+## Reading order for a new agent
+
+1. `SPEC.md` and `DESIGN.md` at the repo root — single-page
+   specification + design intent.
+2. `docs/ARCHITECTURE_LAYERS.md` — the layer contract
+   (`forge-dev` → `omniroute-dev` → `pheno-serve-dev` → engine
+   → PhenoLM), naming conventions, and ownership rules.
+3. `docs/GARDEN_LOOP.md` — how the harness self-improves via
+   traces + gates + promotion.
+4. `docs/PHENOLM_MIGRATION.md` + `docs/PUBLISHING.md` —
+   PhenoLM migration plan and publishing rules.
+5. ADRs in `docs/adrs/` — chronological, immutable once accepted.
+6. Specs in `docs/specs/` — versioned, superseding older versions.
+7. Live state in `../state/` — pick/scrape/cost snapshots.
+
+## adrs/ — Architecture Decision Records
+
+| ADR | Topic | Status |
+|---|---|---|
+| `0001-current-state-audit.md` | Read-only state snapshot, primary-source verification, gap analysis, unknowns. | accepted, last refresh 2026-07-03 |
+| `0002-risks-register.md` | 20 named risks with detection + mitigation. | living |
+| `0003-local-serving-bootstrap.md` | Local-first workstream **decision + bootstrap commands**. **No model SKUs asserted in this ADR** — picks live in `state/hf_scrape/2026-07-03/v2_shortlist.md` and are sign-off-gated by user. | revised |
+| `0004-stale-sku-retrospective.md` | Root-cause analysis of the stale-Qwen-2.5 / stale-Qwen3-8B / missed-Gemma-4 chain. 6 control rules for future model picks, including the March-2026 recency cutoff. | accepted |
+| `0005-locked-baseline-march-2026-cutoff.md` | Locked cloud baselines (7) + self-hosted (3) + March-2026 recency cutoff + b16/BitNet dropped + spec-dec zoo in scope + HF-token-handling rule. Single source of truth for what we evaluate. **Round 5 update:** Granite-4.0-H-Micro dropped per user 2026-07-04; Qwen3.5-0.8B serves dual-role as T0 + T1 small-task. | accepted |
+# docs/
+
+Read this top-to-bottom on first session, then jump to the `Live data sources`
+section whenever you need to know what we're currently evaluating.
+
+## Reading order for a new agent
+
+1. `../SPEC.md` — what we're building (one page).
+2. `../DESIGN.md` — how it's built (one page).
+3. `../AGENTS.md` — repo-local governance rules.
+4. `../README.md` — entrypoint + layer contract summary.
+5. `ARCHITECTURE_LAYERS.md` — `forge-dev → omniroute-dev → pheno-serve-dev → PhenoLM` contract.
+6. `PUBLISHING.md`, `PHENOLM_MIGRATION.md`, `GARDEN_LOOP.md` — operational specifics.
+
+Then jump into the ADRs in numerical order, then the specs.
+
+## adrs/ — Architecture Decision Records
+
+| ADR | Topic | Status |
+|---|---|---|
+
+| Spec | Topic |
+|---|---|
+| `001-eval-architecture.md` | Eval suites, metric taxonomy, reproducibility contract, intent-graph layers A–E. |
+| `002-trace-evalset.md` | Trace-derived per-role eval set, spec schema, replay executor. |
+| `003-model-engine-matrix.md` | Model × engine matrix, vRAM budget, parallel sweep targets, spec-dec zoo. **No model SKUs asserted** — see `state/hf_scrape/2026-07-04/locked_shortlist.md` (locked picks from ADR 0005) or `state/hf_scrape/2026-07-03/v2_shortlist.md` (superseded round-3 shortlist). |
+| `004-implementation-plan.md` | Stages (1 = TB driver, 2 = DeepSWE primary, 3 = Intent-graph A, 4 = perf suite, 5 = self-improvement, 6 = matrix sweep, 7 = trace per-role, 8 = Intent-graph B–E, 9 = SWE-bench Verified debug-only, 10 = Codex fork gated), ordered PRs, weekly roll-out. Cost per stage: `state/hf_scrape/2026-07-04/cost_projection.md`. |
+
+## Top-level canonicals
+
+- `../SPEC.md` — single-page specification.
+- `../DESIGN.md` — single-page design intent.
+
+## Live data sources (NOT docs, but referenced from the docs above)
+
+**Current (2026-07-04) — locked picks per ADR 0005:**
+
+- `../state/hf_scrape/2026-07-04/locked_shortlist.md` — single source of truth for what we evaluate. 7 cloud baselines (Granite-4.0-H-Micro dropped) + 3 self-hosted (Qwen3.5 0.8B serves as both T0 drafter and T1 small-task tier) + recency stamps + OR + HF pricing cross-ref.
+- `../state/hf_scrape/2026-07-04/cost_projection.md` — per-stage run-cost projection (TB 2.0/2.1, DeepSWE primary, SWE-bench Verified demoted) with token-budget assumptions and `n_attempts` sensitivity.
+- `../state/hf_scrape/2026-07-04/locked_shortlist.json` — machine-readable form.
+- `../state/hf_scrape/2026-07-04/models.jsonl` — 11 records (8 cloud + 3 self-hosted) with canonical IDs + OR + HF data.
+- `../state/hf_scrape/2026-07-04/or_api_snapshot.json` — raw OpenRouter `/api/v1/models` response for the 8 cloud picks.
+- `../state/hf_scrape/2026-07-04/last_modified_probes.json` — HF last-modified dates for recency stamps.
+
+**Historical (2026-07-03) — superseded, kept for traceability:**
+
+- `../state/hf_scrape/2026-07-03/v2_shortlist.md` — round-3 capability-first shortlist (superseded by 2026-07-04 locked_shortlist).
+- `../state/hf_scrape/2026-07-03/author_flagships.json` — round-3 author-flagship probe.
+- `../state/hf_scrape/2026-07-03/models.jsonl` — 260-model baseline corpus (kept records from the unauthenticated 2026-07-03 sweep).
+
+**Scripts (re-runnable):**
+
+- `../scripts/hf_round4_locked.py` — round-4 locked-pick scraper (OR + HF).
+- `../scripts/hf_round4_followups.py` + `hf_round4_followups_v2.py` — Ornith / Liquid / Qwen canonical-id probes.
+- `../scripts/hf_round4_last_modified.py` — HF last-modified-date probes.
+- `../scripts/hf_list_families.py` — fast family-existence probe.
+- `../scripts/hf_scrape_2026_07_03.py` — round-3 baseline corpus scraper.
+
+These files are referenced from the docs and the live eval loop, but
+they are **state, not docs**.
+
+## Conventions
+
+- ADRs are immutable once accepted; corrections go in a follow-up ADR.
+- Specs are versioned by spec number; v2 of a spec supersedes v1.
+- Docs never embed secrets. Any secret reference uses an env-var name
+  only, never a value.
+- `*.manifest.json` files (from `../specs/001-eval-architecture.md`
+  §6) are committed; result JSONs are gitignored.

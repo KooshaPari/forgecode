@@ -1,0 +1,14 @@
+import subprocess
+
+CWD = r'C:\Users\koosh\OmniRoute-fresh2'
+def run(args, timeout=60):
+    r = subprocess.run(args, capture_output=True, text=True, cwd=CWD, timeout=timeout)
+    return r.stdout.strip()
+
+# Use diff --stat to get aggregate count
+for branch in ['feat-sveltekit-dashboard', 'fix/off-next-ci-257', 'feat/router-eval-replay-gate', 'fix/main-docs-build-gates']:
+    stat = run(['git', 'diff', '--shortstat', 'HEAD', f'origin/{branch}'], timeout=30)
+    # Count files different
+    name_only = run(['git', 'diff', '--name-only', 'HEAD', f'origin/{branch}'], timeout=30)
+    files_diff = len(name_only.split('\n')) if name_only else 0
+    print(f'{branch}: {stat} | {files_diff} files different from HEAD')

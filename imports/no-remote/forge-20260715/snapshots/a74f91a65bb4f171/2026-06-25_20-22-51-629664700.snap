@@ -1,0 +1,26 @@
+{
+  "project": "nanovms",
+  "stack": "node",
+  "mode": "fast",
+  "score": 1,
+  "max": 13,
+  "percentage": 7,
+  "grade": "F",
+  "checks": [
+    {"name":"install","status":"pass","score":1,"max":1,"detail":""},
+    {"name":"build","status":"fail","score":0,"max":2,"detail":" > nanovms-docs@0.1.0 build > vitepress build docs  C:\Users\koosh\nanovms\node_modules\rollup\dist\native.js:115"},
+    {"name":"test-unit","status":"fail","score":0,"max":3,"detail":"npm error Missing script: \"test\""},
+    {"name":"lint","status":"fail","score":0,"max":2,"detail":"ESLint: 9.25.1 error"},
+    {"name":"fmt","status":"fail","score":0,"max":2,"detail":"Prettier: code style issues found in 3 files"},
+    {"name":"typecheck","status":"fail","score":0,"max":2,"detail":"tsc error"},
+    {"name":"test-e2e","status":"skipped","score":0,"max":2,"detail":"skipped in fast mode"},
+    {"name":"test-perf","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},
+    {"name":"test-mutation","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},
+    {"name":"coverage","status":"skipped","score":0,"max":2,"detail":"skipped in fast mode"},
+    {"name":"audit","status":"fail","score":0,"max":1,"detail":"esbuild <=0.24.2 moderate advisory"}
+  ],
+  "timestamp": "2026-06-25T20:22:28Z",
+  "dag_unit": "B9",
+  "epic": "epic_B",
+  "task": "Re-point PhenoCompose NVMS module to phenotype-tooling/nanovms/"
+}

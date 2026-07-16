@@ -1,0 +1,29 @@
+## Summary
+Add per-repo, per-epic, and search filters to the interactive DAG renderer with URL-based shareability and client-side filtering.
+
+## Context
+The F24 interactive DAG renderer showed all nodes at once with no way to narrow down by repository, epic, or text search. F25 adds filter controls so users can focus on specific repos or epics, find nodes by name, and share filtered views via URL.
+
+## Changes
+- **DAG data expanded**: 46 nodes across 7 repositories and 8 epics (A-H), each with repo and epic metadata
+- **Per-repo dropdown filter**: hide/show nodes by repository (phenotype-infra, phenotype-landing, pheno-mcp-router, etc.)
+- **Per-epic dropdown filter**: hide/show nodes by epic (Epic A through Epic H)
+- **Search text input**: highlights matching nodes with yellow border, searches node labels case-insensitively
+- **Filter state indicators**: shows visible/total node count, active filter badge, clear all button
+- **URL query param sync**: ?repo=, ?epic=, ?search= params updated via History.replaceState on every filter change
+- **Edge visibility**: edges are hidden unless both connected nodes are visible
+- **DagRenderer API**: getFilterOptions() and applyFilter() exposed on window.DagRenderer for programmatic use
+
+## Testing
+All 24 tests pass (18 original + 7 new filter tests):
+- repo filter, epic filter, search filter
+- combined filters, empty query, case-insensitive search
+- node metadata validation (type, epic, repo coverage)
+- multi-repo and multi-epic data integrity
+
+Run: cd sites/projects-landing && npx vitest run tests/dag-renderer.test.ts
+
+## Links
+- F24: Interactive DAG renderer (PR #21) - base for this work
+- F27: Drill-down detail panel - merged for enriched node metadata
+- Area: compute-infra

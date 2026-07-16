@@ -1,0 +1,15 @@
+import json
+import re
+from pathlib import Path
+
+raw = Path(r'C:\Users\koosh\Civis\_prs_all.json').read_bytes()
+text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', raw.decode('utf-8', 'replace')).strip()
+prs = json.loads(text)
+
+print(f"Recent PRs (all states): {len(prs)}\n")
+for p in prs:
+    n = p['number']
+    s = p['state']
+    m = (p.get('mergedAt') or '')[:10]
+    t = p['title'][:85]
+    print(f"  #{n:>4} {s:<10} merged={m:<11}  {t}")

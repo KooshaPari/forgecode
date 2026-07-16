@@ -1,0 +1,88 @@
+//! Integration tests for the bundled SpanSink adapters.
+
+use pheno_tracing::adapters::{NoopSpanSink, VecSpanSink};
+use pheno_tracing::adapters::{NoopSpanSink, VecSpanSink};
+use pheno_tracing::port::{SpanKind, SpanRecord};
+use std::collections::BTreeMap;
+
+#[test]
+fn vec_sink_new_is_empty() {
+    let s = VecSpanSink::new();
+    assert_eq!(s.len(), 0);
+    assert!(s.is_empty());
+}
+
+#[test]
+fn vec_sink_default_matches_new() {
+    let a = VecSpanSink::new();
+    let b = VecSpanSink::default();
+    assert_eq!(a.len(), b.len());
+    assert!(a.is_empty() && b.is_empty());
+}
+
+#[test]
+fn vec_sink_records_multiple() {
+    let s = VecSpanSink::new();
+    s.record(SpanRecord::new("a", SpanKind::Internal, BTreeMap::new()));
+    s.record(SpanRecord::new("b", SpanKind::Client, BTreeMap::new()));
+    s.record(SpanRecord::new("c", SpanKind::Server, BTreeMap::new()));
+    assert_eq!(s.len(), 3);
+    let snap = s.snapshot();
+    assert_eq!(snap[0].name(), "a");
+    assert_eq!(snap[2].name(), "c");
+}
+
+#[test]
+fn noop_sink_unit_struct() {
+    let _ = NoopSpanSink; // constructible
+    let s = NoopSpanSink;
+    let r = SpanRecord::new("op", SpanKind::Server, BTreeMap::new());
+    s.record(r);
+}
+    SpanRecord {
+        name: name.to_string(),
+        kind: SpanKind::Internal,
+        fields: BTreeMap::new(),
+        started_at_ns: 0,
+        ended_at_ns: 1,
+    }
+}
+
+#[test]
+fn vec_sink_new_is_empty() {
+    let sink = VecSpanSink::new();
+    assert!(sink.is_empty());
+}
+
+#[test]
+fn vec_sink_default_is_empty() {
+    let sink = VecSpanSink::default();
+    assert!(sink.is_empty());
+}
+
+#[test]
+fn vec_sink_grows_on_record() {
+    let mut sink = VecSpanSink::new();
+    for i in 0..5 {
+        sink.record(rec(&format!("span-{i}")));
+    }
+    assert_eq!(sink.len(), 5);
+}
+
+#[test]
+fn vec_sink_snapshot_is_independent() {
+    let mut sink = VecSpanSink::new();
+    sink.record(rec("a"));
+    let snap = sink.snapshot();
+    sink.record(rec("b"));
+    // Snapshot taken before second record is unaffected.
+    assert_eq!(snap.len(), 1);
+    assert_eq!(sink.len(), 2);
+}
+
+#[test]
+fn noop_sink_is_zero_sized() {
+    let _ = NoopSpanSink;
+    // Compile-time: NoopSpanSink is a unit struct.
+    assert_eq!(std::mem::size_of::<NoopSpanSink>(), 0);
+}

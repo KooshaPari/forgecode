@@ -1,0 +1,62 @@
+## Summary
+
+`docs/design/MARKETS_CURRENCY.md` — a planner-only design spec for **emergent markets + emergent currency**, built on top of the trade-routes + economy layers already on `main`. Companion to `civ-economy-emergent-markets.md` (PR #736) and `polities-markets.md`.
+
+## Context
+
+The current `civ-economy` crate computes prices via a hardcoded `Default for MarketState` price table and a per-tick random-walk in `MarketState::step` (see `crates/economy/src/market.rs:1`). Currency is implicit (goods-as-money, but no explicit numeraire role or cross-region exchange rate). This spec replaces both with a pure-emergent alternative:
+
+- **No hardcoded prices** — emergent price field from local supply/demand at the per-settlement / per-locale level.
+- **No hardcoded currency** — money emerges as the *role* of the most-tradeable good (liquidity rank + acceptability), not as a designated token.
+- **No hardcoded exchange rates** — cross-region FX rates emerge from the trade-route graph (spatial overlap + co-trade counts).
+
+## Three pillars
+
+| Pillar | Projection | Read from |
+|--------|-----------|-----------|
+| **Price discovery** | `price(g, s) = median(realized_unit_value, recent_window)` with age-decay and supply/demand pressure | `Allocator::trades_log`, `Stocks` |
+| **Numeraire emergence** | `M(s) = argmax_g L(g, s)` where `L` is a liquidity score (trade count, acceptance breadth, salability age) | `Allocator::trades_log`, `Stocks`, `Settlement` |
+| **Exchange rate** | `R(s1, s2) = median(implicit_pair, last_k_cross_region_trades)` with confidence | `trade_routes`, `trades_log` |
+
+## Banking / credit (deferred)
+
+Banks-as-nodes, fractional reserve, IOUs, demurrage, and interest are **explicitly out of scope** for this spec. They are listed as a later-phase roadmap (Phase 3+) and depend on first landing the three pillars and running criticality scans.
+
+## Charters honored
+
+- Emergence Charter (`docs/guides/emergence-charter.md`) — no hardcoded values, all knobs are criticality dials.
+- Polity/Markets companion (`polities-markets.md`) — market emergence drives polity formation, not the reverse.
+- No 3D engine assumptions; readout surface is the L2 web dashboard + a future Mods panel.
+
+## Phased WBS
+
+- **Phase 0 (this spec)**: design only.
+- **Phase 1**: emergent price field — `EconomyRead::price_field`, replace `Default for MarketState` table, add `civ-economy` test for price drift, gate via `civis-3d-verify`.
+- **Phase 2**: emergent numeraire — `EconomyRead::numeraire`, `EconomyRead::exchange_rate` between adjacent settlements on the trade-route graph.
+- **Phase 3**: full emergence, cross-region FX, currency regime classification, dashboard panel.
+- **Phase 4 (later, out of scope here)**: banking primitives (banks-as-nodes, IOU ledger, fractional reserve, demurrage, interest).
+
+## Criticality knobs
+
+| Knob | Range | Effect |
+|------|-------|--------|
+| `price_window` | 1..=4096 | Tracked-trades window for price median |
+| `price_decay_halflife` | 1..=8192 ticks | Weight of older trades |
+| `liquidity_decay_halflife` | 1..=8192 ticks | How fast `L(g,s)` forgets past trades |
+| `numeraire_min_acceptance` | 0..=settlement_size | Floor for a good to qualify as money |
+| `fx_window` | 1..=4096 | Cross-region FX median window |
+| `fx_min_overlap` | 0..=1 | Min co-trade count for FX to exist between two regions |
+
+## Testing (when implementation lands)
+
+- Determinism: identical seed → identical price field + numeraire sequence.
+- Criticality sweeps: at the high-price-decay / low-liquidity-decay end, expect a single dominant numeraire and high FX variance; at the opposite end, expect flat prices and many candidate numeraires.
+- Dashboard: web `civ-watch` exposes a Markets panel with price drift, numeraire map, FX matrix, currency-regime distribution.
+- No agent-smoke / verify changes in this PR (design only).
+
+## Links
+
+- Companion implementation-ready spec: `docs/design/civ-economy-emergent-markets.md` (PR #736)
+- High-level polity/markets emergence: `docs/design/polities-markets.md`
+- Substrate: `crates/economy/src/{lib,allocator,market,stocks,trade_routes,institution,allocation}.rs`
+- Emergence Charter: `docs/guides/emergence-charter.md`

@@ -1,0 +1,32 @@
+## Summary
+Run `terraform fmt` and `terraform validate` across all 5 IaC modules in the phenotype-infra repo — all passed clean without issues.
+
+## Context
+This is unit C1 of the compute/infra epic (epic_C — IaC + runbooks hardening). The goal is to baseline the IaC modules so they pass formatting and validation checks, ensuring CI can gate on these in subsequent work.
+
+## Changes
+- Ran `terraform fmt -check -recursive` on `iac/terraform/` and all submodules — **no formatting fixes needed** (canonical format already maintained)
+- Ran `terraform init -backend=false` on each of the 5 modules to install providers
+- Ran `terraform validate` on each module — **all passed with `Success! The configuration is valid.`**
+
+### Modules validated
+| Module | Directory | Files | Status |
+|--------|-----------|-------|--------|
+| Root | `iac/terraform/` | `providers.tf`, `tailscale.tf` | Valid |
+| AWS | `iac/terraform/aws/` | `lambda-webhook.tf` | Valid |
+| Cloudflare | `iac/terraform/cloudflare/` | `tunnel.tf`, `versions.tf`, `workers.tf` | Valid |
+| GCP | `iac/terraform/gcp/` | `e2-micro.tf` | Valid |
+| OCI | `iac/terraform/oci/` | `ampere-primary.tf`, `ampere-secondary.tf` | Valid |
+
+### Notes
+- The OCI module uses `hashicorp/oci` provider source (deprecated) — `terraform init` emitted a warning that the provider has moved to `oracle/oci`. This should be addressed in a follow-up but is outside the scope of this unit (which is scoped to fmt-only fixes).
+- No `.tf` files were modified since all were already canonical.
+
+## Testing
+```bash
+# Verify formatting
+terraform fmt -check -recursive iac/terraform/
+
+# Validate each module (requires init first)
+terraform init -backend=false && terraform validate
+```

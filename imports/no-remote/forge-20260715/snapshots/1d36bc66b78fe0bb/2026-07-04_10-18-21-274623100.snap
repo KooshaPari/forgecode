@@ -1,0 +1,75 @@
+# ADR 0005 — Locked Baseline and March-2026 Cutoff
+
+Date: 2026-07-04
+
+## Status
+
+Accepted.
+
+## Decision
+
+Local self-hosted models are locked to exactly:
+
+- Qwen3.5 0.8B (`local/qwen35-08b`)
+- LiquidAI LFM 2.5 8B-A1B (`local/lfm25-8b-a1b`)
+- Ornith 8B (`local/ornith-8b`)
+
+No other local model SKU is a current pick. BF16 local serving for large
+models is not part of the plan.
+
+Cloud baselines are ForgeCode -> OpenRouter models:
+
+- `inclusionai/ling-2.6-flash`
+- `ibm-granite/granite-4.0-h-micro`
+- `liquid/lfm-2-24b-a2b`
+- `arcee-ai/trinity-mini`
+- `ibm-granite/granite-4.1-8b`
+- `poolside/laguna-xs-2.1`
+- `tencent/hy3-preview`
+- `qwen/qwen3.5-flash-02-23`
+
+Before eval binding, scrape both OpenRouter API metadata and the model pages.
+
+## Recency Rule
+
+Prefer models released no earlier than 2026-03-01 unless an exception is
+explicitly justified.
+
+Current exceptions:
+
+- `Qwen/Qwen3.5-0.8B` was user-specified. HF owner repo was created
+  2026-02-28 and modified 2026-03-02; GGUF derivatives exist from
+  2026-03-01 onward.
+
+## HF Probe Result
+
+Metadata-only HF probe found:
+
+- `Qwen/Qwen3.5-0.8B`
+- `LiquidAI/LFM2.5-8B-A1B`
+- Ornith search results around `deepreinforce-ai/Ornith-1.0-9B` and larger
+  variants, but no clean owner `Ornith 8B` id in top results.
+
+Keep `local/ornith-8b` as the alias until the exact HF id is confirmed.
+
+## Decode Research Scope
+
+The eval plan must cover the broader speculative/diffusion family:
+
+- DFlash / DSpark-style diffusion speculative decoding
+- JetSpec
+- MTP
+- DDTree
+- parallel tree drafting
+- speculative speculative decoding, meaning multi-branch speculation over
+  plausible continuations, not only one drafted path
+- EAGLE / P-EAGLE as one family, not the whole plan
+
+## Consequences
+
+- Stale local picks stay only in superseded/postmortem sections.
+- `config/pheno_serve.yaml`, `config/model_engine_matrix.yaml`, and
+  `config/harbor_tbench_pheno_serve.yaml` must use only the three local aliases.
+- OpenRouter metadata scrape artifacts live under `state/openrouter_scrape/`.
+- HF credentials remain runtime-only and must not be committed, echoed, or
+  written to disk.

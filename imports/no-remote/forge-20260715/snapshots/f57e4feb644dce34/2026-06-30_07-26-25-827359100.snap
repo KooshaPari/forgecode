@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""Fetch cline/cline PRs and dump file diffs."""
+import json, os, re, subprocess, sys
+
+os.environ["NO_COLOR"] = "1"
+os.environ["CLICOLOR"] = "0"
+
+def gh(path):
+    r = subprocess.run(
+        ["gh", "api", path],
+        capture_output=True, text=True, encoding="utf-8", shell=False,
+        env=os.environ,
+    )
+    if r.returncode != 0:
+        print(f"FAIL {path}: {r.stderr.strip()}", file=sys.stderr)
+        return None
+    out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", r.stdout)
+    try:
+        return json.loads(out)
+    except json.JSONDecodeError as e:
+        print(f"JSON err {e} for {path}; stdout[:300]={out[:300]!r}", file=sys.stderr)
+        return None
+
+def emit_pr(num):
+    pr = gh(f"repos/cline/cline/pulls/{num}")
+    if not pr:
+        return
+    print(f"\n========== PR #{num} ==========")
+    print(f"title:   {pr.get('title')}")
+    print(f"state:   {pr.get('state')}  merged: {pr.get('merged')}  url: {pr.get('html_url')}")
+    print(f"branch:  head={pr.get('head',{}).get('ref')}  base={pr.get('base',{}).get('ref')}")
+    print(f"\n--- BODY ---\n{pr.get('body') or '(empty)'}")
+    files = gh(f"repos/cline/cline/pulls/{num}/files?per_page=200")
+    if files:
+        print(f"\n--- FILES ({len(files)}) ---")
+        for f in files:
+            print(f"\n=== {f['filename']}  +{f['additions']} -{f['deletions']} ===")
+            patch = f.get('patch') or '(no patch)'
+            print(patch)
+
+for n in (11986, 11990, 11974):
+    emit_pr(n)

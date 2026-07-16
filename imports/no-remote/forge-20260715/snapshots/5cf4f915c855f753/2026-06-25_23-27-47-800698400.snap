@@ -1,0 +1,276 @@
+#!/usr/bin/env bash
+# scripts/sre/slo-report.sh
+#
+# Query Prometheus for the four OmniRoute platform SLIs (PR-015) and emit
+# a markdown summary.
+#
+# The four SLIs:
+#   1. Availability     — 1 - (5xx rate)
+#   2. Latency p99      — histogram_quantile over omniroute_http_request_duration_seconds
+#   3. Error rate       — 5xx / total
+#   4. Throughput       — requests / second
+#
+# Usage:
+#   scripts/sre/slo-report.sh
+#   scripts/sre/slo-report.sh --window 24h
+#   scripts/sre/slo-report.sh --prometheus-url http://prom.internal:9090
+#   scripts/sre/slo-report.sh --out /var/log/omniroute/slo-2026-06-25.md
+#
+# Resolves the Prometheus endpoint in this order:
+#   1. --prometheus-url flag
+#   2. OMNIROUTE_PROMETHEUS_URL env var
+#   3. http://localhost:9090
+#
+# Degradation policy:
+#   - If Prometheus is unreachable, the script still exits 0 and emits a
+#     "Prometheus unreachable" banner with the queries it *would* have run.
+#     This is critical: this script runs from cron and from the on-call
+#     post-incident flow — a hard exit would mask the report.
+#   - If a single SLI query fails, that row is marked "n/a" and the rest
+#     of the report still emits.
+#   - promtool is preferred over curl when available (it does instant-query
+#     parsing natively and avoids HTTP edge cases in restricted CI).
+
+set -uo pipefail
+
+# Defaults
+WINDOW="${OMNIROUTE_SLO_WINDOW:-1h}"
+PROM_URL="${OMNIROUTE_PROMETHEUS_URL:-http://localhost:9090}"
+OUT_PATH=""
+SERVICE="${OMNIROUTE_SLO_SERVICE:-omniroute}"
+DATE_TODAY="$(date -u +%Y-%m-%d)"
+TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --window)          WINDOW="${2:-}"; shift 2 ;;
+    --prometheus-url)  PROM_URL="${2:-}"; shift 2 ;;
+    --service)         SERVICE="${2:-}"; shift 2 ;;
+    --out)             OUT_PATH="${2:-}"; shift 2 ;;
+    -h|--help)
+      sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *) echo "Unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+# ---------------------------------------------------------------------------
+# Query helpers
+# ---------------------------------------------------------------------------
+
+# query_prom <promql> -> stdout: query result text, stderr: status
+# Returns 0 on success, non-zero on failure.
+query_prom() {
+  local q="$1"
+  local encoded
+  encoded="$(printf '%s' "$q" | sed 's/ /%20/g; s/+/%2B/g; s/{/%7B/g; s/}/%7D/g; s/=/%3D/g; s/"/%22/g')"
+
+  if command -v promtool >/dev/null 2>&1; then
+    # promtool prints query results to stdout. It will refuse non-instant
+    # queries, but our four SLIs are all instant queries with the window
+    # already encoded as rate(...[5m]) / rate(...[1h]) etc.
+    if ! promtool query instant "$PROM_URL" "$q" 2>/dev/null; then
+      echo "promtool failed for: $q" >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  if command -v curl >/dev/null 2>&1; then
+    local resp
+    resp="$(curl -sS --max-time 5 \
+              -G "$PROM_URL/api/v1/query" \
+              --data-urlencode "query=$q" \
+              -w '\n__HTTP_STATUS__:%{http_code}' 2>/dev/null || true)"
+    local status="${resp##*__HTTP_STATUS__:}"
+    resp="${resp%__HTTP_STATUS__:*}"
+    if [[ "$status" != "200" ]]; then
+      echo "HTTP $status from Prometheus for: $q" >&2
+      return 1
+    fi
+    # Cheap parse: pull the first numeric "value" pair. Prometheus returns
+    # JSON; we want the most stable shape so the report doesn't churn if
+    # Prometheus adds fields. jq is preferred, sed fallback otherwise.
+    if command -v jq >/dev/null 2>&1; then
+      printf '%s' "$resp" \
+        | jq -r '.data.result[0].value[1] // "n/a"' 2>/dev/null \
+        | head -1
+    else
+      printf '%s' "$resp" \
+        | sed -n 's/.*"value":\["[^"]*","\?\([^"]*\)"\?].*/\1/p' \
+        | head -1
+    fi
+    return 0
+  fi
+
+  echo "neither promtool nor curl available" >&2
+  return 127
+}
+
+# Probe Prometheus once so we can show a banner if it's unreachable.
+prometheus_reachable() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -sS --max-time 3 -o /dev/null -w '%{http_code}' \
+      "$PROM_URL/-/ready" 2>/dev/null | grep -q '^200$' \
+      && return 0 \
+      || return 1
+  fi
+  if command -v promtool >/dev/null 2>&1; then
+    promtool query instant "$PROM_URL" 'up' >/dev/null 2>&1 && return 0 || return 1
+  fi
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# SLI queries — each is an instant query over its own window.
+# ---------------------------------------------------------------------------
+
+Q_AVAIL="1 - (
+  sum(rate(http_requests_total{job=\"${SERVICE}\",status=~\"5..\"}[${WINDOW}]))
+  /
+  sum(rate(http_requests_total{job=\"${SERVICE}\"}[${WINDOW}]))
+)"
+
+Q_ERROR="(
+  sum(rate(http_requests_total{job=\"${SERVICE}\",status=~\"5..\"}[${WINDOW}]))
+  /
+  sum(rate(http_requests_total{job=\"${SERVICE}\"}[${WINDOW}]))
+)"
+
+Q_LATENCY="histogram_quantile(0.99,
+  sum by (le) (rate(omniroute_http_request_duration_seconds_bucket{job=\"${SERVICE}\"}[${WINDOW}]))
+)"
+
+Q_THROUGHPUT="sum(rate(http_requests_total{job=\"${SERVICE}\"}[${WINDOW}]))"
+
+# ---------------------------------------------------------------------------
+# Emit report
+# ---------------------------------------------------------------------------
+
+REACHABLE=0
+if prometheus_reachable; then
+  REACHABLE=1
+fi
+
+# Each SLI row resolves independently so a single failure doesn't blank the
+# report. We capture into variables (empty if query failed).
+avail_raw=""; latency_raw=""; error_raw=""; throughput_raw=""
+banner=""
+
+if [[ "$REACHABLE" -eq 1 ]]; then
+  avail_raw="$(query_prom "$Q_AVAIL"      2>/dev/null || true)"
+  latency_raw="$(query_prom "$Q_LATENCY"   2>/dev/null || true)"
+  error_raw="$(query_prom "$Q_ERROR"       2>/dev/null || true)"
+  throughput_raw="$(query_prom "$Q_THROUGHPUT" 2>/dev/null || true)"
+else
+  banner="> **Warning**: Prometheus at \`${PROM_URL}\` is unreachable. Queries shown below were *not* executed; the report degrades gracefully. Re-run once Prometheus is back."
+fi
+
+# Format helpers — produce n/a when the metric is missing.
+fmt_pct() {
+  local v="${1:-}"
+  if [[ -z "$v" || "$v" == "n/a" || "$v" == "NaN" ]]; then
+    echo "n/a"
+    return
+  fi
+  # awk gives us a stable 3-decimal format across GNU/busybox.
+  awk -v x="$v" 'BEGIN { printf "%.3f%%\n", x * 100 }'
+}
+
+fmt_latency() {
+  local v="${1:-}"
+  if [[ -z "$v" || "$v" == "n/a" || "$v" == "NaN" ]]; then
+    echo "n/a"
+    return
+  fi
+  awk -v x="$v" 'BEGIN { printf "%.0f ms\n", x * 1000 }'
+}
+
+fmt_rps() {
+  local v="${1:-}"
+  if [[ -z "$v" || "$v" == "n/a" || "$v" == "NaN" ]]; then
+    echo "n/a"
+    return
+  fi
+  awk -v x="$v" 'BEGIN { printf "%.2f rps\n", x }'
+}
+
+avail_str="$(fmt_pct "$avail_raw")"
+error_str="$(fmt_pct "$error_raw")"
+latency_str="$(fmt_latency "$latency_raw")"
+throughput_str="$(fmt_rps "$throughput_raw")"
+
+# Build the report.
+{
+  echo "# OmniRoute SLO Report"
+  echo
+  echo "- **Generated**: ${TIMESTAMP}"
+  echo "- **Window**: last ${WINDOW}"
+  echo "- **Service**: \`${SERVICE}\`"
+  echo "- **Prometheus**: \`${PROM_URL}\`"
+  if [[ -n "$banner" ]]; then
+    echo
+    echo "$banner"
+  fi
+  echo
+  echo "## Summary table"
+  echo
+  echo "| SLI | Value | SLO target | Status |"
+  echo "|-----|-------|------------|--------|"
+  # Status thresholds (intentionally simple — see PR-015 burn-rate for the
+  # full multi-window version).
+  awk -v a="$avail_raw"     'BEGIN { printf "| Availability  | %s | 99.5%%      | %s |\n", (a==""||a=="n/a"||a=="NaN" ? "n/a" : sprintf("%.3f%%", a*100)), (a==""||a=="n/a"||a=="NaN" ? "n/a" : (a+0 >= 0.995 ? "OK" : (a+0 >= 0.99 ? "WARN" : "BREACH"))) }'
+  awk -v l="$latency_raw"   'BEGIN { printf "| Latency p99   | %s | < 800 ms   | %s |\n", (l==""||l=="n/a"||l=="NaN" ? "n/a" : sprintf("%.0f ms", l*1000)), (l==""||l=="n/a"||l=="NaN" ? "n/a" : (l+0 < 0.8 ? "OK" : (l+0 < 1.5 ? "WARN" : "BREACH"))) }'
+  awk -v e="$error_raw"     'BEGIN { printf "| Error rate    | %s | < 0.5%%     | %s |\n", (e==""||e=="n/a"||e=="NaN" ? "n/a" : sprintf("%.3f%%", e*100)), (e==""||e=="n/a"||e=="NaN" ? "n/a" : (e+0 < 0.005 ? "OK" : (e+0 < 0.01 ? "WARN" : "BREACH"))) }'
+  awk -v t="$throughput_raw" 'BEGIN { printf "| Throughput    | %s | n/a        | %s |\n", (t==""||t=="n/a"||t=="NaN" ? "n/a" : sprintf("%.2f rps", t)), (t==""||t=="n/a"||t=="NaN" ? "n/a" : "OK") }'
+  echo
+  echo "## SLO targets"
+  echo
+  echo "- **Availability**: 99.5% over 30 days, with 14.4x burn alerting at 1h/6h windows (PR-015)."
+  echo "- **Latency p99**: < 800 ms for chat completions, < 1.5 s for embeddings."
+  echo "- **Error rate**: < 0.5% rolling 5-minute, < 1% rolling 1-hour."
+  echo "- **Throughput**: informational — no SLO target."
+  echo
+  echo "## Queries executed"
+  echo
+  echo '```promql'
+  echo "$Q_AVAIL"
+  echo
+  echo "$Q_LATENCY"
+  echo
+  echo "$Q_ERROR"
+  echo
+  echo "$Q_THROUGHPUT"
+  echo '```'
+  echo
+  echo "## On-call"
+  echo
+  echo "Current on-call (resolved by \`scripts/sre/page-rotation.sh\`):"
+  echo
+  echo '```'
+  if "${REPO_ROOT:-}/scripts/sre/page-rotation.sh" 2>/dev/null | sed 's/^/  /'; then
+    :
+  else
+    echo "  (page-rotation.sh failed; resolve manually from docs/runbooks/oncall-rotation.txt)"
+  fi
+  echo '```'
+  echo
+  echo "## See also"
+  echo
+  echo "- \`docs/observability/12-slo.md\` (PR-015) — full SLO and burn-rate definitions."
+  echo "- \`docs/runbooks/\` — operator runbooks keyed off the metrics above."
+  echo "- \`scripts/sre/post-incident-template.md\` — template if a SLI breaches."
+} >"${OUT_PATH}"
+
+# When no --out was supplied, redirect to the script's real stdout. /dev/stdout
+# is unreliable on Windows Git Bash so we avoid it.
+if [ -z "$OUT_PATH" ]; then
+  if [ -e "_stdout_" ]; then
+    cat "_stdout_"
+    rm -f "_stdout_"
+  fi
+fi
+
+# Even on degraded mode we exit 0 so this script is safe in cron / CI.
+exit 0

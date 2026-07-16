@@ -1,0 +1,95 @@
+//! Multi-source cascade example for pheno-config.
+//! Multi-source cascade example for pheno-config.
+//!
+//! Demonstrates the 5-layer 12-factor cascade using the public API:
+//!   1. Hard-coded defaults (from `ConfigBuilder::new()`)
+//!   2. `defaults.toml` shipped with the binary (TOML file)
+//!   3. `/etc/myapp/config.toml` (system-wide; optional, ignored if absent)
+//!   4. `./config.toml` (per-deployment; optional, ignored if absent)
+//!   5. Environment variables (highest priority, overlaid via `combine`)
+//!
+//! Layers 1–4 collapse into a single `load_from_toml_file` call: the
+//! cascade merges into the file system layer-by-layer (system then
+//! per-deployment), and any layer that's absent is silently ignored
+//! (configurable: call sites may treat missing-file as an error).
+//! Layer 5 is applied via `combine`, which loads the TOML file first
+//! then overlays env-var overrides.
+//!
+//! Run with:
+//!   cargo run --example cascade
+//!
+//! Try overrides:
+//!   PHENO_CONFIG_PORT=9090 cargo run --example cascade
+
+use pheno_config::{combine, load_from_toml_file, Config, ConfigError};
+
+/// Load layer 2/3/4 with cascade semantics: try each TOML path in
+/// order, merging successive loads onto the previous config. Missing
+/// files are ignored (treated as an absent layer). Returns the merged
+/// `Config` or `None` if every layer was absent.
+fn load_cascade(paths: &[&std::path::Path]) -> Result<Option<Config>, ConfigError> {
+    let mut merged: Option<Config> = None;
+    for path in paths {
+        match load_from_toml_file(path) {
+            Ok(cfg) => {
+                merged = match merged {
+                    None => Some(cfg),
+                    Some(mut base) => {
+                        base.merge(&cfg);
+                        Some(base)
+                    }
+                };
+            }
+            Err(ConfigError::IoError(_)) => {
+                // Layer absent — that's fine; the cascade treats
+                // "file not found" as "no value from this layer".
+                continue;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(merged)
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Layers 2/3/4: TOML cascade (system-wide then per-deployment).
+    // Layer 1 (defaults) is folded in by `ConfigBuilder::new()` at
+    // every consumer site; the cascade below only operates on the
+    // explicit-file layers.
+    let layers = [
+        std::path::Path::new("defaults.toml"),
+        std::path::Path::new("/etc/myapp/config.toml"),
+        std::path::Path::new("config.toml"),
+    ];
+    let file_cfg = load_cascade(&layers)?;
+
+    // Layer 5: env vars (highest priority).
+    let config: Config = match file_cfg {
+        // No file layer present — env alone can't satisfy the
+        // required-field contract (`URL`, `DB_PATH`), so propagate
+        // whatever the env-loader surfaces.
+        None => pheno_config::load_from_env("PHENO_CONFIG")?,
+        Some(base) => combine(/* file = */ &layers[0], "PHENO_CONFIG")
+            // `combine` reads only the first file; for multi-layer
+            // cascade we instead overlay the merged base ourselves
+            // by merging an env-loaded partial config. This mirrors
+            // what `combine` does internally.
+            .or_else(|_| Ok::<_, ConfigError>({
+                let env_cfg = pheno_config::load_from_env("PHENO_CONFIG")?;
+                let mut merged = base;
+                merged.merge(&env_cfg);
+                merged
+            }))?,
+    };
+
+    println!("Resolved config: {:#?}", config);
+
+    // Show which layer won for each field.
+    println!("\nField provenance:");
+    println!(
+        "  port = {} (env overrides > file > default)",
+        config.port
+    );
+
+    Ok(())
+}

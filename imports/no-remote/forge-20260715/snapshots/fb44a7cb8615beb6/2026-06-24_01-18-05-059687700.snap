@@ -1,0 +1,208 @@
+$ErrorActionPreference = 'SilentlyContinue'
+$exts = @{'.md'=$true;'.txt'=$true;'.json'=$true;'.toml'=$true;'.yaml'=$true;'.yml'=$true}
+$maxDepth = 10
+
+# Focused candidate roots — project workspaces + scratch dirs at home root.
+$candidates = @(
+  'C:\Users\koosh\.forge',
+  'C:\Users\koosh\.phenotype',
+  'C:\Users\koosh\.thegent',
+  'C:\Users\koosh\.mcp',
+  'C:\Users\koosh\.output',
+  'C:\Users\koosh\.software',
+  'C:\Users\koosh\.software-planning-tool',
+  'C:\Users\koosh\forge',
+  'C:\Users\koosh\plans',
+  'C:\Users\koosh\pheno',
+  'C:\Users\koosh\pheno-absorb',
+  'C:\Users\koosh\pheno-harness',
+  'C:\Users\koosh\pheno-specs',
+  'C:\Users\koosh\phenodag',
+  'C:\Users\koosh\phenotype-infra',
+  'C:\Users\koosh\phenotype-infra-ci-fix',
+  'C:\Users\koosh\phenotype-journeys',
+  'C:\Users\koosh\phenotype-org-audits',
+  'C:\Users\koosh\phenotype-registry',
+  'C:\Users\koosh\phenotype-registry-pr172-check',
+  'C:\Users\koosh\phenotype-sdk',
+  'C:\Users\koosh\PhenoCompose',
+  'C:\Users\koosh\PhenoFastMCP-rust',
+  'C:\Users\koosh\PhenoMCP-main',
+  'C:\Users\koosh\PhenoMCP-pr164',
+  'C:\Users\koosh\PhenoMCPServers',
+  'C:\Users\koosh\PhenoObservability',
+  'C:\Users\koosh\PhenoObservability-cve-openssl-0.10.80',
+  'C:\Users\koosh\PhenoObservability-pr178',
+  'C:\Users\koosh\phenodocs-fix',
+  'C:\Users\koosh\phenokits-deny-fix',
+  'C:\Users\koosh\phenokits-fix',
+  'C:\Users\koosh\phenoproc-fix',
+  'C:\Users\koosh\phenoroutermonitor-fix',
+  'C:\Users\koosh\repo',
+  'C:\Users\koosh\repos',
+  'C:\Users\koosh\repo-tmp',
+  'C:\Users\koosh\audit-repos',
+  'C:\Users\koosh\archive-migration',
+  'C:\Users\koosh\authvault-cve-13RjMo',
+  'C:\Users\koosh\absorption-staging',
+  'C:\Users\koosh\absorb',
+  'C:\Users\koosh\absorb-kits',
+  'C:\Users\koosh\agileplus',
+  'C:\Users\koosh\agslag-9e28f7bf0d879ae9ac87707a33537332b1ef1fa4',
+  'C:\Users\koosh\ansel',
+  'C:\Users\koosh\Benchora',
+  'C:\Users\koosh\BytePort',
+  'C:\Users\koosh\Civis',
+  'C:\Users\koosh\CodeWatch',
+  'C:\Users\koosh\Contacts',
+  'C:\Users\koosh\Courses',
+  'C:\Users\koosh\coursera',
+  'C:\Users\koosh\cp',
+  'C:\Users\koosh\crossproj2-session-summary.md',
+  'C:\Users\koosh\DINOForge-UnityDoorstop',
+  'C:\Users\koosh\Dino',
+  'C:\Users\koosh\dino-warfare-airforce',
+  'C:\Users\koosh\dinoshot',
+  'C:\Users\koosh\Documents',
+  'C:\Users\koosh\Downloads',
+  'C:\Users\koosh\Eidolon',
+  'C:\Users\koosh\files',
+  'C:\Users\koosh\findings',
+  'C:\Users\koosh\gamedev',
+  'C:\Users\koosh\go',
+  'C:\Users\koosh\heliosApp-mirror',
+  'C:\Users\koosh\heliosBench',
+  'C:\Users\koosh\helioslab-bootstrap',
+  'C:\Users\koosh\ideaProjects',
+  'C:\Users\koosh\jobhunt',
+  'C:\Users\koosh\kits',
+  'C:\Users\koosh\kitty-specs',
+  'C:\Users\koosh\kmobile',
+  'C:\Users\koosh\kmobile-inv',
+  'C:\Users\koosh\KooshaPari-Planify',
+  'C:\Users\koosh\KooshaPari-Planify2',
+  'C:\Users\koosh\laycua',
+  'C:\Users\koosh\logs',
+  'C:\Users\koosh\ls',
+  'C:\Users\koosh\MCPForge_temp',
+  'C:\Users\koosh\muuri-test',
+  'C:\Users\koosh\nanovms',
+  'C:\Users\koosh\OmniRoute-main-check',
+  'C:\Users\koosh\OmniRoute-upstream',
+  'C:\Users\koosh\omni-edit',
+  'C:\Users\koosh\phase4-handoff',
+  'C:\Users\koosh\platform-tools',
+  'C:\Users\koosh\playcua_ci_test',
+  'C:\Users\koosh\pluggedin-app',
+  'C:\Users\koosh\portage',
+  'C:\Users\koosh\Postman',
+  'C:\Users\koosh\Projects',
+  'C:\Users\koosh\Ready',
+  'C:\Users\koosh\rich-cli-kit',
+  'C:\Users\koosh\scrape-windows',
+  'C:\Users\koosh\scripts',
+  'C:\Users\koosh\secret-triage',
+  'C:\Users\koosh\Sidekick-ci-fix',
+  'C:\Users\koosh\sidekick-deny-fix',
+  'C:\Users\koosh\source',
+  'C:\Users\koosh\substrate',
+  'C:\Users\koosh\teach',
+  'C:\Users\koosh\tests',
+  'C:\Users\koosh\thegent-partial',
+  'C:\Users\koosh\tmp',
+  'C:\Users\koosh\tmp_branch_salvage',
+  'C:\Users\koosh\tmp_cifix_phenoobs',
+  'C:\Users\koosh\tmp_combo',
+  'C:\Users\koosh\tmp_inspect_pce',
+  'C:\Users\koosh\tmp_nginx',
+  'C:\Users\koosh\tmp_omniroute_combo_flow',
+  'C:\Users\koosh\tmp_pr_work',
+  'C:\Users\koosh\tmp_readme_prs',
+  'C:\Users\koosh\Tracera',
+  'C:\Users\koosh\tutor',
+  'C:\Users\koosh\vibeproxy-monitoring-unified',
+  'C:\Users\koosh\webWork',
+  'C:\Users\koosh\wsm-decomp',
+  'C:\Users\koosh\wt-civis-attach',
+  'C:\Users\koosh\wt-fp-pr82-3'
+)
+
+$skip = @('\node_modules\','\.git\','\.venv\','\.tox\','\__pycache__\','\target\','\build\','\dist\','\vendor\')
+
+$results = New-Object System.Collections.Generic.List[object]
+$seen = @{}
+
+function Walk($dir, $depth) {
+  if ($depth -le 0) { return }
+  if ($seen[$dir]) { return }
+  $seen[$dir] = $true
+  foreach ($s in $skip) { if ($dir -like "*$s*") { return } }
+  $items = Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue
+  foreach ($it in $items) {
+    if ($it.PSIsContainer) {
+      Walk -dir $it.FullName -depth ($depth - 1)
+    } else {
+      $ext = $it.Extension.ToLowerInvariant()
+      if ($exts[$ext]) {
+        try {
+          $lineNo = 0
+          $reader = [System.IO.StreamReader]::new($it.FullName)
+          while ($null -ne ($line = $reader.ReadLine())) {
+            $lineNo++
+            if ($line.ToLower().Contains('nippon')) {
+              $results.Add([pscustomobject]@{
+                Path = $it.FullName
+                Line = $lineNo
+                Text = $line.Trim()
+              })
+              if ($results.Count -ge 500) { $reader.Close(); return }
+            }
+          }
+          $reader.Close()
+        } catch {}
+      }
+    }
+  }
+}
+
+foreach ($c in $candidates) {
+  if (Test-Path -LiteralPath $c) {
+    Walk -dir $c -depth $maxDepth
+  }
+}
+
+# Also scan root-level *.md, *.txt, *.json, *.toml, *.yaml, *.yml files at C:\Users\koosh
+$rootFiles = Get-ChildItem -LiteralPath 'C:\Users\koosh' -File -Force -ErrorAction SilentlyContinue | Where-Object {
+  $exts[$_.Extension.ToLowerInvariant()]
+}
+foreach ($f in $rootFiles) {
+  try {
+    $lineNo = 0
+    $reader = [System.IO.StreamReader]::new($f.FullName)
+    while ($null -ne ($line = $reader.ReadLine())) {
+      $lineNo++
+      if ($line.ToLower().Contains('nippon')) {
+        $results.Add([pscustomobject]@{
+          Path = $f.FullName
+          Line = $lineNo
+          Text = $line.Trim()
+        })
+      }
+    }
+    $reader.Close()
+  } catch {}
+}
+
+# Group results by file
+$grouped = $results | Group-Object Path | Sort-Object Name
+"=== FILES WITH HITS: $($grouped.Count) ==="
+$grouped | ForEach-Object {
+  $file = $_.Name
+  $count = $_.Count
+  Write-Host ""
+  Write-Host "FILE: $file ($count hit(s))"
+  $_.Group | Select-Object -First 5 | ForEach-Object {
+    Write-Host ("  L{0}: {1}" -f $_.Line, $_.Text)
+  }
+}
+"=== TOTAL MATCH LINES: $($results.Count) ==="

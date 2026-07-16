@@ -1,0 +1,237 @@
+//! Allowed-use enforcement guard (FR-CIV-LLM-004, FR-CIV-LLM-005).
+//!
+//! The guard restricts LLM generation to three permitted domains:
+//!   - Lore rephrase
+//!   - Diplomatic wording garnish
+//!   - ε tie-break flicker
+//!
+//! Everything else — event generation, rumor logic, utility/GOAP, treaty
+//! acceptance, trust math, needs/mood — is **forbidden**.  Callers must pass
+//! through `check_allowed` *before* building a provider request; the guard
+//! returns a descriptive [`UseGuardError`] on forbidden domains so the
+//! enforcement is loud and named (per CLAUDE.md).
+
+use crate::prompt_tags::PromptDomain;
+
+/// Error returned when a prompt domain is not in the allowed-use set.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum UseGuardError {
+    /// Domain is not in the allowed-use matrix.
+    #[error("LLM generation forbidden for domain {0:?}: {reason}")]
+    Forbidden {
+        /// The domain that was rejected.
+        domain: PromptDomain,
+        /// Human-readable explanation of why it's forbidden.
+        reason: String,
+    },
+}
+
+/// Default human-readable reason for each forbidden domain.
+#[must_use]
+pub fn forbidden_reason(domain: PromptDomain) -> &'static str {
+    match domain {
+        PromptDomain::Lore => "unreachable — lore is always allowed",
+        PromptDomain::Diplomacy => "unreachable — diplomacy is always allowed",
+        PromptDomain::ETieBreak => "unreachable — ε tie-break is always allowed",
+        PromptDomain::Unknown => {
+            "unknown domain: only lore rephrase, diplomatic garnish, and \
+             ε tie-break flicker are permitted (FR-CIV-LLM-004). \
+             Forbidden: event generation, rumor logic, utility/GOAP, \
+             treaty acceptance, trust math, needs/mood (FR-CIV-LLM-005)"
+        }
+    }
+}
+
+/// Check whether a [`PromptDomain`] is in the allowed-use set.
+///
+/// Returns `Ok(())` for allowed domains, `Err(UseGuardError::Forbidden)`
+/// with a descriptive reason for everything else.
+///
+/// # Examples
+///
+/// ```
+/// use civ_ai::prompt_tags::{PromptDomain, PromptTag};
+/// use civ_ai::use_guard::check_allowed;
+///
+/// assert!(check_allowed(&PromptDomain::Lore).is_ok());
+/// assert!(check_allowed(&PromptDomain::Diplomacy).is_ok());
+/// assert!(check_allowed(&PromptDomain::ETieBreak).is_ok());
+/// assert!(check_allowed(&PromptDomain::Unknown).is_err());
+/// ```
+pub fn check_allowed(domain: &PromptDomain) -> Result<(), UseGuardError> {
+    match domain {
+        PromptDomain::Lore | PromptDomain::Diplomacy | PromptDomain::ETieBreak => Ok(()),
+        other => Err(UseGuardError::Forbidden {
+            domain: *other,
+            reason: forbidden_reason(*other).to_string(),
+        }),
+    }
+}
+
+/// Convenience wrapper: check a [`PromptTag`] before it reaches the provider.
+///
+/// ```
+/// use civ_ai::prompt_tags::PromptTag;
+/// use civ_ai::use_guard::check_tag_allowed;
+///
+/// let tag = PromptTag::lore("old kingdom");
+/// assert!(check_tag_allowed(&tag).is_ok());
+///
+/// let forbidden = PromptTag {
+///     domain: civ_ai::prompt_tags::PromptDomain::Unknown,
+///     text: "raw world state".into(),
+/// };
+/// let err = check_tag_allowed(&forbidden).unwrap_err();
+/// assert!(format!("{err}").contains("forbidden"));
+/// ```
+pub fn check_tag_allowed(tag: &crate::prompt_tags::PromptTag) -> Result<(), UseGuardError> {
+    check_allowed(&tag.domain)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prompt_tags::PromptTag;
+
+    // ── FR-CIV-LLM-004: allowed uses ──────────────────────────────────────
+
+    #[test]
+    fn fr_civ_llm_004_allows_lore() {
+        assert!(check_allowed(&PromptDomain::Lore).is_ok());
+    }
+
+    #[test]
+    fn fr_civ_llm_004_allows_diplomacy() {
+        assert!(check_allowed(&PromptDomain::Diplomacy).is_ok());
+    }
+
+    #[test]
+    fn fr_civ_llm_004_allows_epsilon_tie_break() {
+        assert!(check_allowed(&PromptDomain::ETieBreak).is_ok());
+    }
+
+    #[test]
+    fn fr_civ_llm_004_rejects_unknown() {
+        let err = check_allowed(&PromptDomain::Unknown).unwrap_err();
+        match err {
+            UseGuardError::Forbidden { domain, reason } => {
+                assert_eq!(domain, PromptDomain::Unknown);
+                assert!(reason.contains("event generation"));
+                assert!(reason.contains("rumor logic"));
+                assert!(reason.contains("GOAP"));
+                assert!(reason.contains("treaty"));
+                assert!(reason.contains("trust math"));
+                assert!(reason.contains("needs/mood"));
+            }
+        }
+    }
+
+    #[test]
+    fn fr_civ_llm_004_tag_wrapper_allows_lore() {
+        let tag = PromptTag::lore("chronicle");
+        assert!(check_tag_allowed(&tag).is_ok());
+    }
+
+    #[test]
+    fn fr_civ_llm_004_tag_wrapper_rejects_unknown() {
+        let tag = PromptTag {
+            domain: PromptDomain::Unknown,
+            text: "raw state".into(),
+        };
+        assert!(check_tag_allowed(&tag).is_err());
+    }
+
+    // ── FR-CIV-LLM-005: forbidden uses (guard tests) ──────────────────────
+
+    /// Helper: assert a domain is rejected.
+    fn assert_forbidden(text: &str, domain: PromptDomain) {
+        let err = check_allowed(&domain).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("forbidden"),
+            "expected 'forbidden' in error, got: {msg}"
+        );
+        assert!(
+            msg.contains("FR-CIV-LLM-005"),
+            "expected FR reference in error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn fr_civ_llm_005_forbids_event_generation() {
+        let tag = PromptTag {
+            domain: PromptDomain::Unknown,
+            text: "generate a random flood event".into(),
+        };
+        let err = check_tag_allowed(&tag).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("event generation"));
+    }
+
+    #[test]
+    fn fr_civ_llm_005_forbids_rumor_logic() {
+        let tag = PromptTag {
+            domain: PromptDomain::Unknown,
+            text: "create a tavern rumor about the duke".into(),
+        };
+        let err = check_tag_allowed(&tag).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("rumor logic"));
+    }
+
+    #[test]
+    fn fr_civ_llm_005_forbids_utility_goap() {
+        let tag = PromptTag {
+            domain: PromptDomain::Unknown,
+            text: "choose best action via GOAP".into(),
+        };
+        let err = check_tag_allowed(&tag).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("GOAP"));
+    }
+
+    #[test]
+    fn fr_civ_llm_005_forbids_treaty_acceptance() {
+        let tag = PromptTag {
+            domain: PromptDomain::Unknown,
+            text: "should we accept this treaty".into(),
+        };
+        let err = check_tag_allowed(&tag).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("treaty"));
+    }
+
+    #[test]
+    fn fr_civ_llm_005_forbids_trust_math() {
+        let tag = PromptTag {
+            domain: PromptDomain::Unknown,
+            text: "compute trust between factions".into(),
+        };
+        let err = check_tag_allowed(&tag).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("trust math"));
+    }
+
+    #[test]
+    fn fr_civ_llm_005_forbids_needs_mood() {
+        let tag = PromptTag {
+            domain: PromptDomain::Unknown,
+            text: "adjust mood based on unmet needs".into(),
+        };
+        let err = check_tag_allowed(&tag).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("needs/mood"));
+    }
+
+    #[test]
+    fn fr_civ_llm_005_forbidden_error_contains_guard_label() {
+        let tag = PromptTag {
+            domain: PromptDomain::Unknown,
+            text: "something".into(),
+        };
+        let err = check_tag_allowed(&tag).unwrap_err();
+        let msg = format!("{err}");
+        // The error type ensures "Forbidden" is in the display
+        assert!(msg.contains("Forbidden"), "guard label not in error: {msg}");
+    }
+}

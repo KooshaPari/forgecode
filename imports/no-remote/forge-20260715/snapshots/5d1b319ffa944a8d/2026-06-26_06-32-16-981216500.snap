@@ -1,0 +1,16 @@
+{
+  "name": "OmniRoute",
+  "languages": ["typescript"],
+  "primary_language": "typescript",
+  "status": "archived",
+  "has_readme": true,
+  "type": "platform",
+  "path": "repos/OmniRoute",
+  "domain_role": "route",
+  "fork_parent": "diegosouzapw/OmniRoute",
+  "disposition": "ARCHIVED",
+  "wave": "rationalization-1",
+  "archived_at": "2026-06-25",
+  "canonical_routing": false,
+  "note": "Archived per RATIONALIZATION_PLAN.md Step 1 (2026-06-25). Substrate's omniroute-adapter is the canonical Rust counterpart; the upstream Next.js fork is frozen. GitHub PATCH confirmed archived=true."
+}

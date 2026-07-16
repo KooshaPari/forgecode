@@ -1,0 +1,266 @@
+//! oci-post-acquire — universal post-acquire hook chain.
+//!
+//! Entry point invoked by `oci-lottery` the moment OCI Always-Free capacity is
+//! granted. Reads `~/.cloudprovider/oci-instance.json`, then executes a
+//! sequenced, idempotent chain of provisioning steps. Each step is independently
+//! retry-safe; partial-success recovery is documented in
+//! `docs/governance/oci-acquire-hook-chain.md`.
+
+use anyhow::{Context, Result, anyhow};
+use chrono::Utc;
+use clap::Parser;
+use oci_helpers::{expand_home, home_or_fallback};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::time::Duration;
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpStream;
+use tokio::process::Command;
+use tracing::{error, info, warn};
+
+mod cf;
+mod hooks;
+mod mesh;
+mod tailscale;
+
+#[derive(Parser, Debug)]
+#[command(name = "oci-post-acquire", version, about)]
+struct Cli {
+    /// Path to oci-instance.json written by oci-lottery on success.
+    #[arg(
+        long,
+        env = "OCI_INSTANCE_FILE",
+        default_value = "~/.cloudprovider/oci-instance.json"
+    )]
+    instance_file: String,
+
+    /// DNS name to register (A record).
+    #[arg(long, env = "OCI_DNS_NAME", default_value = "oci-1.kooshapari.com")]
+    dns_name: String,
+
+    /// Cloudflare zone ID for kooshapari.com.
+    #[arg(
+        long,
+        env = "CF_ZONE_ID",
+        default_value = "6c9edab581e9c7b8fdb6a83adc6878ea"
+    )]
+    cf_zone_id: String,
+
+    /// Cloudflare API token file.
+    #[arg(long, env = "CF_TOKEN_FILE", default_value = "~/.cloudflare-token")]
+    cf_token_file: String,
+
+    /// Path to phenotype-infra repo (for mesh state commit).
+    #[arg(
+        long,
+        env = "PHENOTYPE_INFRA_REPO",
+        default_value = "~/CodeProjects/Phenotype/repos/phenotype-infra"
+    )]
+    repo: String,
+
+    /// Path to ansible playbook.
+    #[arg(long, default_value = "iac/ansible/playbooks/oci-baseline.yml")]
+    playbook: String,
+
+    /// Hook drop-in directory.
+    #[arg(
+        long,
+        env = "OCI_HOOKS_DIR",
+        default_value = "~/.config/phenotype/oci-acquire-hooks.d"
+    )]
+    hooks_dir: String,
+
+    /// Skip steps that mutate (DNS, mesh commit, notify, downstream hooks). For dry-run.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+pub struct InstanceFile {
+    pub instance_ocid: String,
+    pub region: String,
+    pub ad: String,
+    pub public_ip: String,
+    pub acquired_at: String,
+}
+#[tokio::main(flavor = "multi_thread")]
+async fn main() -> Result<()> {
+    phenotype_logging::init("oci-post-acquire");
+    // T22 (ADR-036): also wire pheno-tracing substrate so spans can be
+    // submitted through the fleet-wide TracePort.
+    let _pheno_port = phenotype_infra_observability::init_tracing("oci-post-acquire");
+
+    let cli = Cli::parse();
+    let started = Utc::now();
+    info!(?started, "oci-post-acquire chain starting");
+
+    // Step 1: read instance file.
+    let inst = read_instance(&cli.instance_file)
+        .await
+        .context("step 1: read oci-instance.json")?;
+    info!(public_ip = %inst.public_ip, region = %inst.region, "instance file loaded");
+
+    // Step 2: wait for SSH.
+    wait_for_ssh(&inst.public_ip, 22, 90)
+        .await
+        .context("step 2: wait for SSH")?;
+
+    // Step 3: tailscale enroll.
+    if let Err(e) = tailscale::enroll(&inst).await {
+        warn!(error = ?e, "step 3 (tailscale) failed — continuing; can be retried via re-run");
+    }
+
+    // Step 4: ansible baseline.
+    if let Err(e) = run_ansible(&cli.repo, &cli.playbook, &inst.public_ip).await {
+        error!(error = ?e, "step 4 (ansible) failed — node may be partially provisioned");
+        return Err(e.context("step 4: ansible baseline"));
+    }
+
+    // Step 5: DNS.
+    if !cli.dry_run {
+        if let Err(e) = cf::upsert_a_record(
+            &cli.cf_zone_id,
+            &cli.cf_token_file,
+            &cli.dns_name,
+            &inst.public_ip,
+        )
+        .await
+        {
+            warn!(error = ?e, "step 5 (DNS) failed — record may need manual upsert");
+        }
+    } else {
+        info!("step 5: DNS skipped (dry-run)");
+    }
+
+    // Step 6: mesh state commit.
+    if !cli.dry_run
+        && let Err(e) = mesh::commit_state(&cli.repo, &inst).await
+    {
+        warn!(error = ?e, "step 6 (mesh-state commit) failed — manual git commit needed");
+    }
+
+    // Step 7: notify.
+    if !cli.dry_run
+        && let Err(e) = notify(&inst).await
+    {
+        warn!(error = ?e, "step 7 (notify) failed — failsoft");
+    }
+
+    // Step 8: downstream hooks.
+    if !cli.dry_run
+        && let Err(e) = hooks::run_dropins(&cli.hooks_dir, &inst).await
+    {
+        warn!(error = ?e, "step 8 (downstream hooks) reported errors");
+    }
+
+    let elapsed = Utc::now().signed_duration_since(started);
+    info!(
+        elapsed_s = elapsed.num_seconds(),
+        "oci-post-acquire chain complete"
+    );
+    Ok(())
+}
+
+async fn read_instance(path: &str) -> Result<InstanceFile> {
+    let p = expand(path);
+    let bytes = tokio::fs::read(&p)
+        .await
+        .with_context(|| format!("read {}", p.display()))?;
+    let inst: InstanceFile = serde_json::from_slice(&bytes)?;
+    Ok(inst)
+}
+
+async fn wait_for_ssh(host: &str, port: u16, max_secs: u64) -> Result<()> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(max_secs);
+    let addr = format!("{host}:{port}");
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        match tokio::time::timeout(Duration::from_secs(3), TcpStream::connect(&addr)).await {
+            Ok(Ok(_)) => {
+                info!(attempt, "SSH port open on {addr}");
+                return Ok(());
+            }
+            _ => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(anyhow!(
+                        "SSH unreachable on {addr} after {max_secs}s ({attempt} attempts)"
+                    ));
+                }
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        }
+    }
+}
+
+async fn run_ansible(repo: &str, playbook: &str, host: &str) -> Result<()> {
+    let repo_path = expand(repo);
+    let inventory = format!("{host},");
+    info!(
+        host,
+        "running ansible-playbook (repo={})",
+        repo_path.display()
+    );
+    let status = Command::new("ansible-playbook")
+        .arg("-i")
+        .arg(&inventory)
+        .arg("-u")
+        .arg("ubuntu")
+        .arg(playbook)
+        .current_dir(&repo_path)
+        .status()
+        .await
+        .context("spawn ansible-playbook (is it installed?)")?;
+    if !status.success() {
+        return Err(anyhow!("ansible-playbook exited with {status}"));
+    }
+    Ok(())
+}
+
+async fn notify(inst: &InstanceFile) -> Result<()> {
+    // 7a: iMessage via agent-imessage-mcp (failsoft — best-effort CLI).
+    let body = format!(
+        "OCI Always-Free acquired: {} in {} ({}). Public IP {}. Mesh provisioning complete.",
+        inst.instance_ocid, inst.region, inst.ad, inst.public_ip
+    );
+    if let Err(e) = imessage_send(&body).await {
+        warn!(error = ?e, "imessage failed — continuing");
+    }
+    // 7b: append worklog.
+    let date = Utc::now().format("%Y_%m_%d");
+    let path = expand(&format!(
+        "~/CodeProjects/Phenotype/repos/worklogs/SESSION_{date}_OCI_ACQUIRED.md"
+    ));
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await.ok();
+    }
+    let mut f = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .await?;
+    let line = format!(
+        "# OCI Acquired {date}\n\n- ocid: {}\n- region: {}\n- ad: {}\n- ip: {}\n- acquired_at: {}\n",
+        inst.instance_ocid, inst.region, inst.ad, inst.public_ip, inst.acquired_at
+    );
+    f.write_all(line.as_bytes()).await?;
+    Ok(())
+}
+
+async fn imessage_send(body: &str) -> Result<()> {
+    // Best-effort: invoke agent-imessage-mcp CLI if present.
+    let status = Command::new("agent-imessage")
+        .arg("notify")
+        .arg("--to")
+        .arg("kooshapari@gmail.com")
+        .arg("--title")
+        .arg("OCI Acquired")
+        .arg("--body")
+        .arg(body)
+        .status()
+        .await;
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => Err(anyhow!("agent-imessage exited {s}")),
+        Err(e) => Err(anyhow!("agent-imessage not available: {e}")),
+    }
+}

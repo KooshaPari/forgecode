@@ -1,0 +1,31 @@
+// Final verification: run cargo check + cargo test and report SHA.
+const { execSync } = require('child_process');
+const cwd = 'C:/Users/koosh/Civis_fresh';
+
+function run(cmd) {
+    return execSync(cmd, { cwd, encoding: 'utf8' });
+}
+
+try {
+    const branch = run('git branch --show-current').trim();
+    console.log('Branch:', branch);
+
+    const head = run('git rev-parse HEAD').trim();
+    console.log('HEAD:', head);
+
+    const remote = run('git ls-remote origin feat/fr-civ-life-dedicated-tests').trim();
+    console.log('Remote:', remote);
+
+    console.log('--- cargo check ---');
+    const checkOut = run('cargo check -p civ-needs --offline --color=never 2>&1');
+    console.log(checkOut.split('\n').slice(-10).join('\n'));
+
+    console.log('--- cargo test ---');
+    const testOut = run('cargo test -p civ-needs --offline --color=never --test fr_civ_life_lifecycle 2>&1');
+    const lines = testOut.split('\n');
+    console.log(lines.slice(-25).join('\n'));
+} catch (e) {
+    console.error('ERROR:', e.message);
+    console.error(e.stderr?.toString() || '');
+    process.exit(1);
+}

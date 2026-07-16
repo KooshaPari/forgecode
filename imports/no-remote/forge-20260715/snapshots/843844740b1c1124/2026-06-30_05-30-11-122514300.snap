@@ -1,0 +1,88 @@
+## Summary
+
+Cline Bot Inc. has launched **ClinePass**, a $4.99 → $9.99/mo subscription
+that bundles 10 open-weight models from 6 labs into a single Cline-native
+*provider*:
+
+| Model | Lab |
+|---|---|
+| GLM 5.2 | Z.ai |
+| Kimi K2.7 Code | Moonshot AI |
+| Kimi K2.6 | Moonshot AI |
+| DeepSeek V4 Pro | DeepSeek |
+| DeepSeek V4 Flash | DeepSeek |
+| MiniMax M3 | MiniMax |
+| MiMo V2.5 Pro | MiMo |
+| MiMo V2.5 | MiMo |
+| Qwen3.7-Max | Qwen |
+| Qwen3.7-Plus | Qwen |
+
+The ClinePass FAQ states that ClinePass can be used *"with other coding agents
+by using your ClinePass API key"*. Cline's own README already supports "any
+OpenAI-compatible API" as a provider, so adding a ClinePass entry is a known
+pattern in the broader ecosystem.
+
+This issue is to **track** first-class ClinePass support inside `forgecode`.
+
+## Why this fits `forgecode`'s wiring
+
+Investigation of `forgecode` shows the codebase already routes every
+OpenAI-compatible provider through one shared code path:
+
+- The `ProviderResponse::OpenAI` arm of
+  `crates/forge_repo/src/provider/chat.rs:124-194` dispatches to
+  `OpenAIResponseRepository` (defined at
+  `crates/forge_repo/src/provider/openai.rs:329-374`).
+- Provider entries are declared in
+  `crates/forge_repo/src/provider/provider.json` (precedents: `fireworks-ai-firepass`
+  at json:3724-3743, `openai_compatible` at json:591-599, `openai_responses_compatible`
+  at json:612-620).
+- A new entry can therefore be added as: `ProviderId` constant +
+  `Display`/`FromStr` arms in `crates/forge_domain/src/provider.rs:46-128,176-222` +
+  the `provider.json` block + per-provider tests in
+  `crates/forge_domain/src/provider.rs:554-887`.
+
+This is a low-effort change **provided** that the ClinePass provider behaves
+like an OpenAI-compatible chat-completions endpoint.
+
+## Open Questions (please answer before the PR)
+
+Public `https://cline.bot/cline-pass` does not document these. To wire ClinePass
+correctly we need definitive answers:
+
+1. **Base URL** — what hostname do third-party agents call?
+   (e.g. `https://api.cline.bot`, `https://api.clinepass.ai`, `<other>`).
+2. **API key issuance surface and env-var name** — under what name should
+   the bearer token be supplied? (`CLINEPASS_API_KEY` is the proposal here.)
+3. **Wire protocol** — is ClinePass OpenAI-compatible chat-completions,
+   OpenAI Responses-API-compatible, Anthropic-Messages-compatible, or some
+   Cline-native shape? The routing code (`ProviderResponse` enum at
+   `crates/forge_domain/src/provider.rs:230-238`) covers the first three with
+   one shared arm each; a new shape would require a new variant.
+4. **Model-id namespace** — what model id strings does ClinePass accept?
+   Passthrough (`zai/glm-5.2`, `moonshotai/kimi-k2.7-code`, …), aliased
+   (`cline/glm-5.2`), or something else?
+5. **Key interchangeability** — does the key issued for Cline IDE/CLI work
+   for third-party harnesses, or do third-party agents need a separately
+   provisioned "agent key"?
+
+A working draft PR can be opened as **Draft** using placeholder defaults
+(env var `CLINEPASS_API_KEY`, base URL `<pending-ClinePass-endpoint>`,
+`response_type: "OpenAI"`, model IDs passthrough) without blocking
+on these answers; reviewers can correct assumptions in-thread.
+
+## Acceptance criteria
+
+- `forgecode --provider cline_pass --model <id>` resolves to a working
+  ClinePass entry without forcing a custom base URL or any bespoke code path.
+- A `provider.json` entry, a `ProviderId::CLINEPASS` constant, the
+  `display_name`/`FromStr` arms, and the per-provider tests are added.
+- `cargo test -p forge_domain -p forge_repo` and `cargo clippy` pass.
+- README / docs/news entry are updated if a "providers" list is maintained.
+
+## References
+
+- Public ClinePass landing page: https://cline.bot/cline-pass
+- Cline monorepo (cline/cline) — providers table at the bottom of the README.
+- This issue's local triage design doc: `docs/superpowers/specs/2026-06-29-clinepass-triage-design.md`
+  (in the reporter's local checkout).

@@ -1,0 +1,10 @@
+import os
+
+print("=== CIVIS DIR ===")
+for item in os.listdir('C:/Users/koosh/Civis'):
+    print(item)
+
+print()
+print("=== Cargo.toml ===")
+with open('C:/Users/koosh/Civis/Cargo.toml') as f:
+    print(f.read())

@@ -1,0 +1,19 @@
+[package]
+name = "pheno-compose"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "NVMS driver layer for the phenotype-infra compute mesh."
+# Note: no [lib] section - Cargo auto-discovers src/lib.rs.
+# Note: no [dev-dependencies] here - tests are pure sync via the mock backend.
+
+[dependencies]
+nvms-ffi = { path = "../nvms-ffi" }
+pheno-config = { path = "../pheno-config" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { workspace = true }
+
+[features]
+default = ["mock-backend"]
+mock-backend = []
+real-backend = []

@@ -1,0 +1,180 @@
+#requires -Version 7
+<#
+.SYNOPSIS
+    Apply the gate-3 + gate-8 admin/host items for the ArgisMonitor/HeliosLite program:
+      1. Create the two new GitHub repos: KooshaPari/ArgisMonitor and KooshaPari/heliosLite.
+      2. Push the local `renames/argismonitor` branch to KooshaPari/ArgisMonitor.
+      3. Push the local `renames/helioslite` branch to KooshaPari/heliosLite.
+      4. Apply the branch-protection config (file at .github/branch-protection.main.json)
+         to the new `main` branch of both repos.
+
+.DESCRIPTION
+    Pre-conditions (NOT done by this script; user must supply):
+      - `gh auth refresh -s admin:org,delete_repo,repo,workflow,write:packages`
+      - Working tree for both checkouts has no pending edits
+        (OmniRoute-clean + heliosLite-src, local on `renames/argismonitor`
+        and `renames/helioslite` respectively).
+
+    This script is the deterministic executor for what we wired up at
+    Gate 3 in forge/plans/ARGIS-HELIOS-PROGRAM.md.  Run it as:
+
+        pwsh -NoProfile -File forge/scripts/admin/finish-program.ps1
+
+    It will fail loudly with a list of the exact missing things if any
+    pre-condition is unmet.  It does NOT publish to any registry; it does
+    NOT push to any other branch; it does NOT run any workflow; it does
+    NOT touch Vercel / Cloudflare / Homebrew / Chocolatey / winget.
+
+.PARAMETER DryRun
+    If -DryRun is supplied, the script prints every command it would run,
+    wires no secrets, and exits 0 without doing anything.
+
+.EXAMPLE
+    pwsh -NoProfile -File forge/scripts/admin/finish-program.ps1 -DryRun
+#>
+
+[CmdletBinding(SupportsShouldProcess)]
+param(
+    [switch]$DryRun
+)
+
+$ErrorActionPreference = "Stop"
+
+function Step([string]$label, [scriptblock]$block) {
+    Write-Host ""
+    Write-Host "==> $label" -ForegroundColor Cyan
+    & $block
+}
+
+function Require-Cmd([string]$name) {
+    if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
+        throw "Required command `$name` not found on PATH."
+    }
+}
+
+Require-Cmd gh
+Require-Cmd git
+
+# ---------------------------------------------------------------------------
+# Pre-flight: are we authenticated with admin scope?
+# ---------------------------------------------------------------------------
+
+Step "Pre-flight: gh auth + scopes" {
+    $status = gh auth status 2>&1 | Out-String
+    Write-Host $status.Trim()
+    if ($status -notmatch 'Logged in to') {
+        throw "gh is not authenticated.  Run:  gh auth login --scopes admin:org,repo,workflow"
+    }
+    foreach ($scope in @('repo', 'workflow')) {
+        if ($status -notmatch [regex]::Escape($scope)) {
+            throw "gh is missing scope: $scope.  Run:  gh auth refresh -s admin:org,delete_repo,repo,workflow,write:packages"
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 1. Create the new repos (idempotent)
+# ---------------------------------------------------------------------------
+
+function New-RepoIfMissing([string]$name, [string]$description) {
+    $exists = gh repo view "KooshaPari/$name" 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  ✓ KooshaPari/$name already exists, skipping creation."
+        return
+    }
+    if ($DryRun) {
+        Write-Host "  [dry-run] would create KooshaPari/$name -- '$description'"
+        return
+    }
+    Write-Host "  → creating KooshaPari/$name ..."
+    gh repo create "KooshaPari/$name" `
+        --private=$false `
+        --description $description `
+        --add-readme $false `
+        --license mit `
+        --gitignore "" 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "gh repo create failed for KooshaPari/$name" }
+}
+
+Step "Create KooshaPari/ArgisMonitor" {
+    New-RepoIfMissing 'ArgisMonitor' 'AI-DD/HITL-less monitoring + routing platform. Fork of diegosouzapw/OmniRoute.'
+}
+
+Step "Create KooshaPari/heliosLite" {
+    New-RepoIfMissing 'heliosLite'   'AI-DD/HITL-less coding agent CLI. Fork of tailcallhq/forgecode.'
+}
+
+# ---------------------------------------------------------------------------
+# 2. Push the rename branches
+# ---------------------------------------------------------------------------
+
+function Push-Branch([string]$repoLocalPath, [string]$branch, [string]$remoteRepo) {
+    Push-Location $repoLocalPath
+    try {
+        $currentBranch = git branch --show-current
+        if ($currentBranch -ne $branch) {
+            throw "Local checkout at $repoLocalPath is on '$currentBranch', not '$branch'."
+        }
+        $remote = "https://github.com/$remoteRepo.git"
+        git remote get-url $remoteRepo 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            git remote add $remoteRepo $remote
+        }
+        if ($DryRun) {
+            Write-Host "  [dry-run] would:  git push --set-upstream $remoteRepo $branch  (in $repoLocalPath)"
+            return
+        }
+        Write-Host "  → pushing $branch to $remoteRepo ..."
+        git push --set-upstream $remoteRepo $branch 2>&1 | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "git push failed for $remoteRepo/$branch" }
+    } finally {
+        Pop-Location
+    }
+}
+
+Step "Push renames/argismonitor -> KooshaPari/ArgisMonitor" {
+    $workingBranch = git -C OmniRoute-clean branch --show-current
+    if ($workingBranch -ne 'renames/argismonitor') { throw "OmniRoute-clean is on '$workingBranch', expected renames/argismonitor" }
+    Push-Branch 'OmniRoute-clean' 'renames/argismonitor' 'origin'
+    Push-Branch 'OmniRoute-clean' 'renames/argismonitor' 'KooshaPari/ArgisMonitor'
+}
+
+Step "Push renames/helioslite -> KooshaPari/heliosLite" {
+    $workingBranch = git -C heliosLite-src branch --show-current
+    if ($workingBranch -ne 'renames/helioslite') { throw "heliosLite-src is on '$workingBranch', expected renames/helioslite" }
+    Push-Branch 'heliosLite-src' 'renames/helioslite' 'KooshaPari/heliosLite'
+}
+
+# ---------------------------------------------------------------------------
+# 3. Apply branch-protection config
+# ---------------------------------------------------------------------------
+
+$OmniBP = 'OmniRoute-clean/.github/branch-protection.main.json'
+$HeliosBP = 'heliosLite-src/.github/branch-protection.main.json'
+
+function Apply-BranchProtection([string]$repo, [string]$branch, [string]$configPath) {
+    if (-not (Test-Path $configPath)) {
+        Write-Host "  ! skipping ${repo}: config not found at ${configPath}"
+        return
+    }
+    if ($DryRun) {
+        Write-Host "  [dry-run] would: gh api repos/KooshaPari/$repo/branch-protection/$branch -F @$configPath"
+        return
+    }
+    Write-Host "  → applying branch protection to KooshaPari/$repo/$branch"
+    $out = gh api "repos/KooshaPari/$repo/branches/$branch/protection" -X PUT -F "@$configPath" 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "gh api branch-protection failed for ${repo}/${branch}: ${out}" }
+    Write-Host "  ✓ branch protection applied"
+}
+
+Step "Apply branch protection on KooshaPari/ArgisMonitor/main" {
+    Apply-BranchProtection 'ArgisMonitor' 'main' $OmniBP
+}
+
+Step "Apply branch protection on KooshaPari/heliosLite/main" {
+    Apply-BranchProtection 'heliosLite' 'main' $HeliosBP
+}
+
+Write-Host ""
+Write-Host "==> Program bootstrap complete." -ForegroundColor Green
+Write-Host "    Next: secrets + publish (gates 4-6), gated on token paste."

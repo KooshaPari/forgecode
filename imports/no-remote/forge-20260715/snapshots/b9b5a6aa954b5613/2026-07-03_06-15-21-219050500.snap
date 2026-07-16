@@ -1,0 +1,91 @@
+name: observability-smoke
+
+on:
+  push:
+    branches:
+      - feat/t22-observability-pheno-tracing-otlp-2026-06-20
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  otlp-smoke:
+    name: OTLP smoke (otel-collector + pheno-tracing)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      otel-collector:
+        image: otel/opentelemetry-collector-contrib:0.96.0
+        env:
+          OTELCOL_CONFIG: |
+            receivers:
+              otlp:
+                protocols:
+                  grpc:
+                    endpoint: 0.0.0.0:4317
+                  http:
+                    endpoint: 0.0.0.0:4318
+            processors:
+              batch: {}
+            exporters:
+              debug: {}
+            service:
+              pipelines:
+                traces:
+                  receivers: [otlp]
+                  processors: [batch]
+                  exporters: [debug]
+        ports:
+          - 4317:4317
+          - 4318:4318
+          - 13133:13133
+        # otel-collector-contrib:0.96.0 is a distroless image with no
+        # shell, curl, or wget — a Docker health-cmd cannot probe the
+        # collector's /healthz endpoint. We drop the healthcheck entirely
+        # (no --health-cmd) and rely on the explicit smoke step below to
+        # wait for the OTLP gRPC port to be reachable with a 60-second
+        # retry loop. The collector is ready within ~1 second of startup
+        # in practice (see logs: "Everything is ready" prints immediately).
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "phenotype-tooling-observability"
+      - name: Build observability crate
+        run: cargo build -p phenotype-tooling-observability
+      - name: Run unit tests
+        run: cargo test -p phenotype-tooling-observability --no-fail-fast
+      - name: Smoke test — assert OTLP receiver is reachable
+        env:
+          OTEL_EXPORTER_OTLP_ENDPOINT: http://localhost:4317
+          OTEL_SERVICE_NAME: hook-entry-smoke
+        run: |
+          set -e
+          # Wait up to 60s for the otel-collector to become healthy.
+          # The collector container is started as a service and runs as a
+          # distroless image with no healthcheck (see service comment),
+          # so this loop is the only readiness gate we have.
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:13133/ > /dev/null; then
+              echo "OTEL_COLLECTOR_HEALTH_OK"
+              break
+            fi
+            sleep 2
+          done
+          if ! curl -sf http://localhost:13133/ > /dev/null; then
+            echo "::error::otel-collector did not become healthy within 60s"
+            exit 1
+          fi
+          python3 - <<'PY'
+          import socket
+          s = socket.socket()
+          s.settimeout(2)
+          try:
+              s.connect(("127.0.0.1", 4317))
+              print("OTLP_PORT_OPEN")
+          finally:
+              s.close()
+          PY

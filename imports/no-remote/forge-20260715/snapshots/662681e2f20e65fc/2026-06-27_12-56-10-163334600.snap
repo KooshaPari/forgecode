@@ -1,0 +1,44 @@
+//! CLI entry for the civ-dag crate.
+//!
+//! Reads `CIVIS_GAME_DAG.md` (or a path passed as arg[1]) and prints the
+//! sponsor-format tick report to stdout.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use civ_dag::loader::load_plan_from_file;
+use civ_dag::reporter::{RecorderReporter, Reporter, render_report};
+use civ_dag::wave::{NodeReport, WaveExecutor};
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let path = std::env::args()
+        .nth(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("CIVIS_GAME_DAG.md"));
+
+    println!("civ-dag · loading {}\n", path.display());
+
+    let plan = match load_plan_from_file(&path) {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            eprintln!("warning: could not parse {}: {e}", path.display());
+            eprintln!("falling back to empty demo plan");
+            Arc::new(civ_dag::model::demo_plan())
+        }
+    };
+
+    let reporter = Arc::new(RecorderReporter::default());
+    let executor = WaveExecutor::new(Arc::clone(&plan));
+
+    let _reports: Vec<NodeReport> = match executor.run_all().await {
+        Ok(rs) => rs,
+        Err(e) => {
+            eprintln!("run_all halted: {e}");
+            Vec::new()
+        }
+    };
+
+    println!("{}", render_report(&plan, &reporter.snapshot(&plan)));
+    Ok(())
+}

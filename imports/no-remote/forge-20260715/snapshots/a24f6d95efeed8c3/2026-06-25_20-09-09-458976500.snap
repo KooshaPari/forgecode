@@ -1,0 +1,36 @@
+$branches = @(
+    'chore/l2-23-taskfile-justfile-2026-06-11',
+    'chore/l2-28-hygiene-baselines-2026-06-11',
+    'chore/l2-29-dependabot-2026-06-11',
+    'chore/l2-32-ci-hardening-2026-06-11',
+    'chore/l2-34-secret-scan-2026-06-11',
+    'chore/l2-35-scorecard-renovate-2026-06-11',
+    'chore/l2-36-license-changelog-2026-06-11',
+    'chore/l3-43-phenocompose-cov-2026-06-11-impl',
+    'chore/l4-63-phenocompose-hex-2026-06-11',
+    'chore/l4-71-phenocompose-merge-2026-06-11',
+    'chore/l4-71-phenocompose-pine-merge-2026-06-11',
+    'chore/l5-83-phenocompose-integration-2026-06-11',
+    'chore/l5-87-spec-arch-2026-06-11',
+    'chore/l5-88-focus-repo-readme-agents-2026-06-11'
+)
+
+$results = @()
+foreach ($b in $branches) {
+    $ref = 'origin/' + $b
+    $null = git merge-base --is-ancestor $ref HEAD 2>&1
+    $merged = $LASTEXITCODE -eq 0
+    $log = git log -1 --format='%ci %h' $ref 2>&1
+    $results += [PSCustomObject]@{
+        Branch = $b
+        Merged = $merged
+        LastCommit = "$log"
+    }
+}
+
+$results | Format-Table -AutoSize
+Write-Output "`n--- Summary ---"
+$mergedCount = ($results | Where-Object { $_.Merged }).Count
+$unmergedCount = ($results | Where-Object { -not $_.Merged }).Count
+Write-Output "Merged into main: $mergedCount"
+Write-Output "Not merged into main: $unmergedCount"

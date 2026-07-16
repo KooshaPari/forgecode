@@ -1,0 +1,110 @@
+# Categorize files by staleness and reference analysis
+$repo = "C:\Users\koosh\_compute_infra_audit\PhenoCompose.git"
+$now = 1782600032
+$cutoff = $now - (90 * 86400)  # 1774824032
+
+Write-Output "Now: $now, Cutoff (90 days ago): $cutoff"
+Write-Output "Cutoff date: $((Get-Date -UnixTimeSeconds $cutoff).ToString('yyyy-MM-dd'))"
+Write-Output ""
+
+# Read the timestamps
+$lines = Get-Content "C:\Users\koosh\_compute_infra_audit\timestamps.txt"
+
+$active = @()
+$stale = @()
+
+foreach ($line in $lines) {
+    $parts = $line.Split(' ', 2)
+    $ts = [long]$parts[0]
+    $file = $parts[1]
+    $dt = (Get-Date -UnixTimeSeconds $ts).ToString('yyyy-MM-dd')
+    if ($ts -ge $cutoff) {
+        $active += @{File=$file; Timestamp=$ts; Date=$dt}
+    } else {
+        $stale += @{File=$file; Timestamp=$ts; Date=$dt}
+    }
+}
+
+Write-Output "=== ACTIVE (modified in last 90 days) ==="
+Write-Output "Count: $($active.Count)"
+foreach ($f in $active) {
+    Write-Output "  $($f.Date) $($f.File)"
+}
+
+Write-Output ""
+Write-Output "=== STALE (not modified in 90+ days) ==="
+Write-Output "Count: $($stale.Count)"
+foreach ($f in $stale) {
+    Write-Output "  $($f.Date) $($f.File)"
+}
+
+# Check references for stale files
+Write-Output ""
+Write-Output "=== REFERENCE CHECK FOR STALE FILES ==="
+
+# Build a reference DB: search all tracked files for identifiers related to each stale file
+$allFiles = git -C $repo ls-tree -r HEAD --name-only
+
+# For each stale file, check if its basename or stem is referenced anywhere
+$orphaned = @()
+$referencedStale = @()
+
+foreach ($sf in $stale) {
+    $filepath = $sf.File
+    $stem = [System.IO.Path]::GetFileNameWithoutExtension($filepath)
+    $basename = [System.IO.Path]::GetFileName($filepath)
+    $dirpart = [System.IO.Path]::GetDirectoryName($filepath)
+    
+    # Skip the file itself when searching
+    $refs = @()
+    foreach ($af in $allFiles) {
+        if ($af -eq $filepath) { continue }
+        $content = git -C $repo show "HEAD:$af"
+        # Check if the file name or stem appears in the content
+        # Be thorough: check stem, file name, and relevant patterns
+        if ($content -match [regex]::Escape($basename) -or $content -match [regex]::Escape($stem)) {
+            $refs += $af
+        }
+    }
+    
+    if ($refs.Count -eq 0) {
+        $orphaned += $sf
+        Write-Output "  ORPHANED: $filepath (last modified $($sf.Date))"
+    } else {
+        $referencedStale += $sf
+        Write-Output "  STALE:    $filepath (last modified $($sf.Date)) — referenced by $($refs.Count) file(s)"
+    }
+}
+
+Write-Output ""
+Write-Output "=== SUMMARY ==="
+Write-Output "Active (modified < 90d): $($active.Count)"
+Write-Output "Stale (untouched 90d+): $($stale.Count)"
+Write-Output "  → Orphaned (no refs): $($orphaned.Count)"
+Write-Output "  → Stale (has refs):   $($referencedStale.Count)"
+
+# Output as JSON
+$report = @{
+    "report_id" = "A8-dead-code-sweep"
+    "repo" = "PhenoCompose"
+    "generated_at" = (Get-Date -UFormat "%Y-%m-%dT%H:%M:%SZ")
+    "current_timestamp" = $now
+    "cutoff_timestamp" = $cutoff
+    "cutoff_days" = 90
+    "summary" = @{
+        "total_files" = $active.Count + $stale.Count
+        "active" = $active.Count
+        "stale" = $stale.Count
+        "orphaned" = $orphaned.Count
+    }
+    "categories" = @{
+        "active" = $active | ForEach-Object { @{file = $_.File; last_modified = $_.Date; timestamp = $_.Timestamp} }
+        "stale" = $referencedStale | ForEach-Object { @{file = $_.File; last_modified = $_.Date; timestamp = $_.Timestamp} }
+        "orphaned" = $orphaned | ForEach-Object { @{file = $_.File; last_modified = $_.Date; timestamp = $_.Timestamp} }
+    }
+}
+
+$json = $report | ConvertTo-Json -Depth 10
+$json | Out-File -FilePath "C:\Users\koosh\_compute_infra_audit\reports\A8_dead_code_sweep.json" -Encoding UTF8
+Write-Output ""
+Write-Output "Report written to C:\Users\koosh\_compute_infra_audit\reports\A8_dead_code_sweep.json"

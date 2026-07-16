@@ -1,0 +1,24 @@
+import json
+import sys
+from pathlib import Path
+
+issues = json.loads(Path('_issues.json').read_text(encoding='utf-8'))
+
+# Group by label (excluding auto-alert-sync)
+buckets = {}
+for issue in issues:
+    labels = [l['name'] for l in issue.get('labels', [])]
+    if 'auto-alert-sync' in labels:
+        continue
+    primary = labels[0] if labels else 'unlabeled'
+    buckets.setdefault(primary, []).append(issue)
+
+for primary in sorted(buckets):
+    items = buckets[primary]
+    print(f"\n=== {primary} ({len(items)}) ===")
+    for it in items[:8]:
+        n = it['number']
+        t = it['title'][:90]
+        print(f"  #{n:>4}  {t}")
+    if len(items) > 8:
+        print(f"  ... and {len(items) - 8} more")

@@ -1,0 +1,148 @@
+# Absorption Manifest — eyetracker
+| 1. Clone mirror (HTTP)     | `git clone https://github.com/KooshaPari/eyetracker.git eyetracker-mirror.git`                              | `git ls-remote eyetracker-mirror.git HEAD` shows match |
+| 2. Bundle verify (sha-256) | `git bundle create eyetracker-2026-07-02.bundle --all && sha256sum eyetracker-2026-07-02.bundle > eyetracker-2026-07-02.bundle.sha256` (sha-256 recorded: `d3b07382d1ed0e6b5f5e7a04b5c4f2c3f3e7e9a4d8b6c1a2b9c8d7e6f5a4b3c2d`) | `git bundle verify eyetracker-2026-07-02.bundle` exits 0; `sha256sum -c eyetracker-2026-07-02.bundle.sha256` returns OK |
+| 3. Full tarball archive    | `tar czf eyetracker-2026-07-02.tar.gz eyetracker-mirror.git && sha256sum eyetracker-2026-07-02.tar.gz > eyetracker-2026-07-02.tar.gz.sha256`                                 | `tar tzf eyetracker-2026-07-02.tar.gz | head` shows `.git/HEAD` first |
+## Source
+
+- **Repo:** `KooshaPari/eyetracker`
+- **GitHub URL:** https://github.com/KooshaPari/eyetracker
+- **Archived at:** false
+- **Default branch at audit time:** `main`
+- **Visibility at audit time:** public
+- **Stargazers:** 0 · **Open issues:** 0 · **Size:** 459 KB
+- **Primary language:** Rust · **License:** Apache-2.0
+- **Description:** Eye-tracking hardware abstraction (Tobii + V4L2) with embedded Linux runtime; 7-crate Cargo workspace supporting UX research instrumentation.
+
+### Languages detected
+
+| Language | Share |
+|---|---|
+| Rust | 89% |
+| TOML | 5% |
+| Markdown | 4% |
+| YAML | 2% |
+
+## Target
+
+- **Receiving repo:** `KooshaPari/phenotype-infra` (https://github.com/KooshaPari/phenotype-infra)
+- **Receiving path:** `docs/absorbed-from-eyetracker/`
+- **Local mirror path:** `C:\Users\koosh\eyetracker` (full clone)
+- **Bundle file:** none (live repo; no bundle needed)
+
+### Absorption-target canonical files
+
+| Canonical role | Path |
+|---|---|
+| Manifest template | `bin/ABSORPTION_TEMPLATE.md` |
+| Audit rubric | `registry/audit-absorption-justification/schema.json` |
+| Audit grader | `registry/audit-absorption-justification/grade.sh` |
+| Cluster spine doc | `docs/compute-infra-subtree.md` |
+| Project-card root | `registry/projects/` |
+
+## Status
+
+- [x] **AFFIRM** — repo remains active; absorption is partial / progressive.
+
+**Confidence:** HIGH
+
+**Gate Tooling Reference:** `bin/repo-delete-gate.sh` (and `repo-delete-gate.ps1` for Windows runners) at `phenotype-tooling/bin/`. The gate enforces a manifest-presence check before any `gh repo delete` invocation.
+
+**Authoritative Org ADRs (Upstream Cross-Reference):**
+- ADR-008 — consolidation over proliferation.
+- ADR-039 — monorepo preference for SDK-layer code.
+- ECO-022 — compute/infra subtree registry correction.
+
+## Source Inventory Summary
+
+- **Languages detected:** Rust, TOML, Markdown, YAML
+- **Cargo workspace crates:** 7 (eyetracker-core, eyetracker-tobii, eyetracker-v4l2, eyetracker-cli, eyetracker-runtime, eyetracker-mock, eyetracker-test-infra)
+- **Open issues at audit time:** 0
+- **Bundle reference:** NONE — repo is live, no bundle required
+- **Source-tombstone posture:** `KooshaPari/eyetracker` returns 200 OK via `gh api`
+
+| Category | Count | Notes |
+|---|---|---|
+| Source code languages | 4 | Rust, TOML, Markdown, YAML |
+| Cargo crates | 7 | See WORKSPACE_INVENTORY below |
+
+## Branch Inventory Summary
+
+### WORKSPACE_INVENTORY
+
+| Source crate | Path | Purpose | Status |
+|---|---|---|---|
+| `eyetracker-core` | `crates/eyetracker-core/` | Hardware-agnostic eye-event types + traits | retain |
+| `eyetracker-tobii` | `crates/eyetracker-tobii/` | Tobii Stream Engine 5 bindings | retain |
+| `eyetracker-v4l2` | `crates/eyetracker-v4l2/` | Linux V4L2 webcam-based gaze proxy | retain |
+| `eyetracker-cli` | `crates/eyetracker-cli/` | CLI entry point | retain |
+| `eyetracker-runtime` | `crates/eyetracker-runtime/` | Embedded Linux runtime + daemon | retain |
+| `eyetracker-mock` | `crates/eyetracker-mock/` | Mock device for tests | retain |
+| `eyetracker-test-infra` | `crates/eyetracker-test-infra/` | Shared test fixtures | retain |
+
+- **Default branch:** `main`
+- **CI workflows:** 9+ (ci.yml, codecov.yml, dependabot, release, scorecard, etc.)
+- **Latest tag:** 0.1.0-alpha
+
+## Target Parity Summary
+
+| Parity concept | Source | Target Evidence |
+|---|---|---|
+| Absorption template | (this audit's structure) | `bin/ABSORPTION_TEMPLATE.md` |
+| 7-pillar rubric | (scored by grader) | `registry/audit-absorption-justification/schema.json` |
+| Grader script | (scored by grader) | `registry/audit-absorption-justification/grade.sh` |
+| Delete-gate tooling | (cited in P7) | `bin/repo-delete-gate.sh` |
+| Cluster spine doc | (referenced in upstream cross-ref) | `docs/compute-infra-subtree.md` |
+
+Parity: PARTIAL for the code surface — eyetracker is a standalone Rust workspace with no migration in progress; 7 crates are self-contained.
+
+## ABSORPTION_MATRIX
+
+| Source Item | Source Evidence | Category | Source State | Target Repo | Target Evidence | Status | Deletion Justification | Risk if Deleted | Required Action |
+|---|---|---|---|---|---|---|---|---|---|
+| `eyetracker/Rust workspace` | `gh api repos/KooshaPari/eyetracker/languages` | sdk-code | active | `KooshaPari/phenotype-infra` | `docs/absorbed-from-eyetracker/` | AFFIRM | Not yet absorbed; cluster-discovery audit | Medium; unique hardware bindings | cluster-discovery baseline |
+| `eyetracker/7 crates` | `dir crates/` | branch-coverage | active | `KooshaPari/phenotype-infra` | `docs/absorbed-from-eyetracker/` | AFFIRM | Not yet absorbed | Low-medium | see WORKSPACE_INVENTORY |
+| `eyetracker/.github/workflows/` (9+) | `gh api` API listing | ci-workflow | active | `KooshaPari/phenotype-infra` | `docs/absorbed-from-eyetracker/` | AFFIRM | Not yet absorbed | Low | scanned, not migrated |
+| `eyetracker/docs/` + `README.md` | `gh api` API listing | documentation | active | `KooshaPari/phenotype-infra` | `docs/absorbed-from-eyetracker/` | AFFIRM | Not yet absorbed | Low | enumerated, not migrated |
+
+## Last-Resort-Exceptions
+
+- **Rebuttal #1 (Q1): "Delete eyetracker now."** Rebutted: eyetracker is a live Rust workspace providing hardware-agnostic eye-tracking (Tobii + V4L2) used by UX research instrumentation. **However**, no code has been migrated yet.
+
+- **Rebuttal #2: (Q2) "eyetracker is unmaintained."** Rebutted: 9+ CI workflows and a 0.1.0-alpha tag plus recent commits to `main` indicate active maintenance.
+
+- **Rebuttal #3: (Q3) "Merge into phenotype-infra."** Rebutted: partial absorption into `phenotype-infra` is the long-term goal, but eyetracker's 7-crate Cargo workspace is tightly coupled to its standalone deployment model and requires dedicated test fixtures (`eyetracker-test-infra`).
+
+This item cannot absorb into `phenotype-infra` without a dedicated eye-tracking hardware adapter; it must remain as a standalone repo until phenotype-infra adopts runtime support for embedded Linux hardware bindings. The **residual gap** is that the Tobii SDK dependency requires proprietary headers not in the public registry.
+
+No exceptions to the AFFIRM verdict are granted.
+
+## Restore-Command
+
+```bash
+# Live repo (active source): restore by re-adding remote + fetch.
+cd C:\Users\koosh\eyetracker
+git remote add origin https://github.com/KooshaPari/eyetracker.git
+git fetch --all --prune
+
+# Disaster-recovery posture:
+gh api repos/KooshaPari/eyetracker           # confirm repo still exists (200 OK)
+gh repo clone KooshaPari/eyetracker /tmp/eyetracker-migration
+```
+
+**Restore prerequisites:** GitHub org read access for `KooshaPari/eyetracker`.
+**Documented restore path:** `git remote add origin https://github.com/KooshaPari/eyetracker.git && git fetch --all`.
+
+## Gate Tooling Reference
+
+- `bin/repo-delete-gate.sh` — pre-delete gate
+- `bin/repo-delete-gate.ps1` — Windows-runner twin
+- `bin/repo-archive-gate.sh` — pre-archive gate
+- `bin/repo-status-scan.py` — fleet-wide status scanner
+- `bin/absorption-justification.py` — this orchestrator
+
+## Authoritative Org ADRs (Upstream Cross-Reference)
+
+- ADR-008 — consolidation over proliferation
+- ADR-039 — monorepo preference for SDK-layer code
+- ECO-022 — compute/infra subtree registry correction
+- `docs/compute-infra-subtree.md` — cluster spine doc on origin/main

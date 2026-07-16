@@ -1,0 +1,133 @@
+"""Tier-3 #2 minimal scorer tests for Tracera.
+
+Pillar-A spine contract: every :class:`ScorerPort` strategy must return
+a :class:`ScoreResult` whose ``score`` is in ``[0.0, 1.0]``, whose
+``strategy`` equals the scorer's ``name``, and whose ``rationale`` is
+non-empty for any non-empty input.
+
+The jaccard strategy has the closed-form contract:
+
+    score = |req ∩ art| / |req ∪ art|   (intersection over union)
+
+These tests pin that contract AND lock the baseline (jaccard is the
+dependency-free reference impl) so future embedding/VLM scorers
+(``FR-TRC-020``) can be added behind the same :class:`ScorerPort`
+without changing callers.
+
+Run:  python tests/test_scorers.py
+"""
+
+from __future__ import annotations
+
+import importlib
+import sys
+from pathlib import Path
+
+# Make src/ importable without an editable install.
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+
+def _import_scorer_module():
+    """Import the scorer module by its filename (handles 'scorer-' ambiguity)."""
+    candidates = list((REPO_ROOT / "src" / "tracertm" / "scoring").glob("*.py"))
+    assert candidates, "no scorer modules found in src/tracertm/scoring/"
+    # Prefer the first scorer alphabetically (the port/protocol module).
+    for c in candidates:
+        mod_name = f"tracertm.scoring.{c.stem}"
+        try:
+            mod = importlib.import_module(mod_name)
+            if hasattr(mod, "ScorerPort") and hasattr(mod, "JaccardScorer"):
+                return mod
+        except Exception:
+            continue
+    raise AssertionError("could not import a module containing ScorerPort+JaccardScorer")
+
+
+MOD = _import_scorer_module()
+print(f"loaded scorer module: tracertm.scoring.{MOD.__name__.split('.')[-1]}")
+
+
+def test_scorer_port_protocol() -> None:
+    """ScorerPort must be runtime-checkable AND JaccardScorer must satisfy it."""
+    ScorerPort = MOD.ScorerPort
+    JaccardScorer = MOD.JaccardScorer
+    assert hasattr(ScorerPort, "score"), "ScorerPort must declare a score() method"
+    assert isinstance(JaccardScorer(), ScorerPort), "JaccardScorer must satisfy ScorerPort (Protocol)"
+
+
+def test_jaccard_identical_text_is_1() -> None:
+    """Identical input ⟹ score=1.0, rationale mentions 'shared tokens'."""
+    JaccardScorer = MOD.JaccardScorer
+    s = JaccardScorer()
+    r = s.score("the quick brown fox", "the quick brown fox")
+    assert r.score == 1.0, f"expected 1.0, got {r.score}"
+    assert r.strategy == "jaccard"
+    assert r.rationale  # non-empty
+
+
+def test_jaccard_disjoint_text_is_0() -> None:
+    """Disjoint input ⟹ score=0.0, rationale 'no shared tokens'."""
+    JaccardScorer = MOD.JaccardScorer
+    s = JaccardScorer()
+    r = s.score("alpha beta", "gamma delta")
+    assert r.score == 0.0, f"expected 0.0, got {r.score}"
+    assert "no shared" in r.rationale
+
+
+def test_jaccard_partial_overlap() -> None:
+    """req={a,b,c}, art={b,c,d} ⟹ inter=2, union=4 ⟹ score=0.5."""
+    JaccardScorer = MOD.JaccardScorer
+    s = JaccardScorer()
+    r = s.score("a b c", "b c d")
+    assert abs(r.score - 0.5) < 1e-6, f"expected 0.5, got {r.score}"
+    assert r.strategy == "jaccard"
+
+
+def test_jaccard_empty_inputs() -> None:
+    """Empty input ⟹ score=0.0, rationale mentions 'empty' or 'no tokens'."""
+    JaccardScorer = MOD.JaccardScorer
+    s = JaccardScorer()
+    r = s.score("", "")
+    assert r.score == 0.0
+    assert r.strategy == "jaccard"
+
+
+def test_score_result_validates_range() -> None:
+    """ScoreResult.__post_init__ must reject out-of-[0,1] scores."""
+    ScoreResult = MOD.ScoreResult
+    try:
+        ScoreResult(score=1.5, rationale="bad", strategy="test")
+    except ValueError:
+        return
+    raise AssertionError("ScoreResult(1.5) should have raised ValueError")
+
+
+def main() -> int:
+    tests = [
+        test_scorer_port_protocol,
+        test_jaccard_identical_text_is_1,
+        test_jaccard_disjoint_text_is_0,
+        test_jaccard_partial_overlap,
+        test_jaccard_empty_inputs,
+        test_score_result_validates_range,
+    ]
+    passed = 0
+    for t in tests:
+        try:
+            t()
+        except AssertionError as e:
+            print(f"  FAIL  {t.__name__}: {e}")
+            continue
+        except Exception as e:
+            print(f"  ERROR {t.__name__}: {type(e).__name__}: {e}")
+            continue
+        print(f"  PASS  {t.__name__}")
+        passed += 1
+    total = len(tests)
+    print(f"\n{passed}/{total} scorer tests passed")
+    return 0 if passed == total else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

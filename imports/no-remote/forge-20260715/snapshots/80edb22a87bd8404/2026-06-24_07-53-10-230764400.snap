@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+echo "Test C:/Users path:"
+ls -la "C:/Users/koosh/_sample_audit.md" 2>&1 || true
+echo "---"
+echo "Try stat:"
+stat "C:/Users/koosh/_sample_audit.md" 2>&1 || true

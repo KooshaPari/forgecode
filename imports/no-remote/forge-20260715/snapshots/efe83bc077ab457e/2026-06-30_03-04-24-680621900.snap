@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""Regenerate SECURITY_DEPS_LEDGER.md from `cargo audit` output + GitHub dependabot alerts."""
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+LEDGER_PATH = REPO_ROOT / "SECURITY_DEPS_LEDGER.md"
+
+OPEN_BEGIN = "<!-- BEGIN ledger: open -->"
+OPEN_END = "<!-- END ledger: open -->"
+RES_BEGIN = "<!-- BEGIN ledger: resolved -->"
+RES_END = "<!-- END ledger: resolved -->"
+
+SEVERITY_TO_TIER = {
+    "critical": "P0",
+    "high": "P1",
+    "moderate": "P2",
+    "low": "P3",
+}
+
+
+def _normalize_severity(value: str | None) -> str:
+    if not value:
+        return "moderate"
+    v = value.lower().strip()
+    if v in SEVERITY_TO_TIER:
+        return v
+    return "moderate"
+
+
+def _tier_for(sev: str) -> str:
+    return SEVERITY_TO_TIER.get(sev, "P2")
+
+
+def _render_entry(entry: dict[str, str | None]) -> str:
+    lines = ["  -"]
+    for key in (
+        "advisory_id",
+        "package",
+        "severity",
+        "reachable",
+        "fix_version",
+        "owner",
+        "sla_tier",
+        "status",
+        "opened_at",
+        "closed_at",
+        "pr_url",
+    ):
+        val = entry.get(key)
+        if val is None or val == "":
+            continue
+        lines.append(f"      {key}: {val}")
+    return "\n".join(lines)
+
+
+def _short_owner(obo: str | None) -> str:
+    if not obo:
+        return "@KooshaPari"
+    obo = obo.strip()
+    return obo if obo.startswith("@") else f"@{obo}"
+
+
+def collect_from_cargo_audit() -> list[dict[str, str | None]]:
+    try:
+        out = subprocess.run(
+            ["cargo", "audit", "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=REPO_ROOT,
+        )
+    except FileNotFoundError:
+        print("cargo-audit not installed; skipping cargo audit", file=sys.stderr)
+        return []
+    if out.returncode not in (0, 1):
+        print(f"cargo audit returned {out.returncode}: {out.stderr[:200]}", file=sys.stderr)
+        return []
+    if not (out.stdout or "").strip():
+        return []
+    try:
+        payload = json.loads(out.stdout)
+    except json.JSONDecodeError:
+        return []
+
+    vulns = payload.get("vulnerabilities", {})
+    entries: list[dict[str, str | None]] = []
+    for name, list_or_meta in vulns.items():
+        if isinstance(list_or_meta, list):
+            for v in list_or_meta:
+                entries.append(_cargo_to_entry(name, v))
+        else:
+            entries.append(_cargo_to_entry(name, list_or_meta))
+    return entries
+
+
+def collect_from_dependabot(token: str | None) -> list[dict[str, str | None]]:
+    if not token:
+        return []
+    try:
+        import urllib.request  # noqa: F401
+    except ImportError:
+        return []
+
+    # Optional: hit the GitHub Dependabot Alerts API. We keep this resilient to
+    # network failure; network outages should not block ledger generation.
+    repo = os.environ.get("GITHUB_REPOSITORY", "KooshaPari/phenotype-tooling")
+    url = f"https://api.github.com/repos/{repo}/dependabot/alerts?state=open&per_page=100"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:  # pragma: no cover
+        print(f"dependabot api unreachable: {e}", file=sys.stderr)
+        return []
+
+    out: list[dict[str, str | None]] = []
+    for a in data:
+        sev = _normalize_severity((a.get("severity") or {}).get("severity"))
+        pkg = (a.get("package") or {}).get("name") or ""
+        version = (a.get("package") or {}).get("ecosystem") and (a.get("dependency") or {}).get("package_version") or ""
+        fix = (a.get("fixed_in") or [""])[0]
+        out.append(
+            {
+                "advisory_id": a.get("number") and f"GHSA-{a['number']}",
+                "package": f"{pkg}:{version}".rstrip(":"),
+                "severity": sev,
+                "reachable": "false",  # GitHub API does not expose this; default conservative
+                "fix_version": fix or "N/A",
+                "owner": _short_owner(None),
+                "sla_tier": _tier_for(sev),
+                "status": "open",
+                "opened_at": (a.get("created_at") or "")[:10],
+            }
+        )
+    return out
+
+
+def _cargo_to_entry(name: str, v: dict) -> dict[str, str | None]:
+    sev = _normalize_severity(v.get("severity") or v.get("alert", {}).get("severity"))
+    fix_versions = v.get("versions", {}).get("patched") or []
+    fix_version = ",".join(fix_versions) if fix_versions else "N/A"
+    return {
+        "advisory_id": v.get("id") or v.get("advisory", {}).get("id"),
+        "package": f"{name}:{v.get('package', {}).get('version', '')}",
+        "severity": sev,
+        "reachable": str(bool(v.get("informational") is None)).lower(),
+        "fix_version": fix_version,
+        "owner": _short_owner(None),
+        "sla_tier": _tier_for(sev),
+        "status": "open",
+        "opened_at": _dt.date.today().isoformat(),
+    }
+
+
+def render_ledger(ledger: Path, open_entries: list[dict[str, str | None]], resolved: list[dict[str, str | None]]) -> None:
+    text = ledger.read_text(encoding="utf-8") if ledger.exists() else ""
+    open_block = "\n".join(_render_entry(e) for e in open_entries) or "(none)"
+    res_block = "\n".join(_render_entry(e) for e in resolved) or "(none)"
+    if OPEN_BEGIN in text and OPEN_END in text:
+        text = re.sub(
+            re.escape(OPEN_BEGIN) + r".*?" + re.escape(OPEN_END),
+            f"{OPEN_BEGIN}\n{open_block}\n{OPEN_END}",
+            text,
+            count=1,
+            flags=re.DOTALL,
+        )
+    else:
+        text += f"\n\n{OPEN_BEGIN}\n{open_block}\n{OPEN_END}"
+    if RES_BEGIN in text and RES_END in text:
+        text = re.sub(
+            re.escape(RES_BEGIN) + r".*?" + re.escape(RES_END),
+            f"{RES_BEGIN}\n{res_block}\n{RES_END}",
+            text,
+            count=1,
+            flags=re.DOTALL,
+        )
+    else:
+        text += f"\n\n{RES_BEGIN}\n{res_block}\n{RES_END}"
+    ledger.write_text(text, encoding="utf-8")
+
+
+def main() -> int:
+    print("DEBUG: main() enter", file=sys.stderr)
+    ap = argparse.ArgumentParser(description="Regenerate SECURITY_DEPS_LEDGER.md")
+    ap.add_argument("--token", default=os.environ.get("GITHUB_TOKEN"), help="GitHub PAT for Dependabot API")
+    args = ap.parse_args()
+    print(f"DEBUG: token={args.token!r} GITHUB_TOKEN env={os.environ.get('GITHUB_TOKEN')!r}", file=sys.stderr)
+
+    open_entries = collect_from_cargo_audit()
+    print(f"DEBUG: after cargo_audit: {len(open_entries)}", file=sys.stderr)
+    dep = collect_from_dependabot(args.token)
+    print(f"DEBUG: after dependabot: {len(dep)}", file=sys.stderr)
+    open_entries.extend(dep)
+    print(f"DEBUG: total: {len(open_entries)}", file=sys.stderr)
+    if not open_entries:
+        # Render an empty-but-honest ledger on a clean audit so the ledger never
+        # drifts; downstream consumers see "no entries" instead of stale data.
+        render_ledger(LEDGER_PATH, [], [])
+        print(f"ledger: {LEDGER_PATH} (no alerts)")
+        return 0
+
+    render_ledger(LEDGER_PATH, open_entries, [])
+    print(f"ledger: {LEDGER_PATH} ({len(open_entries)} entries)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

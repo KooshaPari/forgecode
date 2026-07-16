@@ -1,0 +1,45 @@
+$repos = @('eyetracker','eventra','configra','benchora','authvault','quillr')
+
+function Get-GhJson {
+    param([string]$Path)
+    $tmpOut = [System.IO.Path]::GetTempFileName()
+    $tmpErr = [System.IO.Path]::GetTempFileName()
+    gh api $Path > $tmpOut 2> $tmpErr
+    $rc = $LASTEXITCODE
+    if ($rc -ne 0) {
+        $err = Get-Content $tmpErr -Raw
+        Remove-Item $tmpOut,$tmpErr -ErrorAction SilentlyContinue
+        return [pscustomobject]@{ ok=$false; err=$err }
+    }
+    $raw = Get-Content $tmpOut -Raw
+    Remove-Item $tmpOut,$tmpErr -ErrorAction SilentlyContinue
+    try {
+        $obj = $raw | ConvertFrom-Json
+        return [pscustomobject]@{ ok=$true; data=$obj }
+    } catch {
+        return [pscustomobject]@{ ok=$false; err="parse: $_" }
+    }
+}
+
+foreach ($r in $repos) {
+    Write-Host ""
+    Write-Host "### $r ###"
+    $wf = Get-GhJson "/repos/KooshaPari/$r/contents/.github/workflows"
+    if ($wf.ok -and $wf.data) {
+        Write-Host "  workflows:"
+        foreach ($w in $wf.data) {
+            if ($w.type -eq 'file') {
+                Write-Host "    - $($w.name) ($($w.size)B)"
+            }
+        }
+    } else {
+        Write-Host "  workflows: NONE or error"
+    }
+    foreach ($f in @('Cargo.toml','Cargo.lock','package.json','package-lock.json','yarn.lock','pnpm-lock.yaml','deny.toml','rust-toolchain.toml','rust-toolchain')) {
+        $res = Get-GhJson "/repos/KooshaPari/$r/contents/$f"
+        if ($res.ok) {
+            $size = if ($res.data.size) { $res.data.size } else { '?' }
+            Write-Host "  HAS $f (size=$size)"
+        }
+    }
+}

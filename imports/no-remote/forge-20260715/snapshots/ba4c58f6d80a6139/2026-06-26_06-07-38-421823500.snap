@@ -1,0 +1,388 @@
+//! ORM (Occlusion-Roughness-Metallic) channel packer.
+//!
+//! Per `FR-CIV-PBR-002`, the engine MAY combine separate occlusion, roughness,
+//! and metallic images into a single RGBA buffer where `R=Occlusion`,
+//! `G=Roughness`, `B=Metallic`, `A=0`.  This module implements the packing
+//! logic, operating on raw single-channel u8 buffers (no `image` crate dependency).
+//!
+//! ## glTF ORM channel wiring
+//!
+//! The packed layout matches the glTF 2.0 specification for
+//! occlusion-roughness-metallic packing (glTF TRS §3.9.7):
+//!
+//! | Channel | Value        |
+//! |---------|--------------|
+//! | R       | Occlusion    |
+//! | G       | Roughness    |
+//! | B       | Metallic     |
+//! | A       | 0 (unused)   |
+
+use std::fmt;
+
+// ---------------------------------------------------------------------------
+// FR-CIV-PBR-002 — ORM channel packing
+// ---------------------------------------------------------------------------
+
+/// The output of [`MdlOrmPacker::pack`]: a single RGBA32 buffer carrying
+/// occlusion, roughness, and metallic in the R, G, B channels respectively.
+///
+/// See `FR-CIV-PBR-002`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackedOrm {
+    /// Packed RGBA32 data (u8 × 4 per pixel).
+    /// R=Occlusion, G=Roughness, B=Metallic, A=0.
+    pub buffer: Vec<u8>,
+    /// Width of the packed image in pixels.
+    pub width: u32,
+    /// Height of the packed image in pixels.
+    pub height: u32,
+}
+
+/// Errors produced by [`MdlOrmPacker::pack`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OrmPackError {
+    /// Two (or more) input channels have different pixel dimensions.
+    MismatchedDimensions {
+        /// Name of the channel that did not match.
+        channel: &'static str,
+        /// Width that was expected (from the first-set channel).
+        expected_w: u32,
+        /// Height that was expected (from the first-set channel).
+        expected_h: u32,
+        /// Actual width of the mismatched channel.
+        actual_w: u32,
+        /// Actual height of the mismatched channel.
+        actual_h: u32,
+    },
+    /// A required channel was never set before calling [`MdlOrmPacker::pack`].
+    MissingChannel(&'static str),
+    /// A channel's data buffer is empty (zero-length).
+    EmptyData(&'static str),
+}
+
+impl fmt::Display for OrmPackError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            OrmPackError::MismatchedDimensions {
+                channel,
+                expected_w,
+                expected_h,
+                actual_w,
+                actual_h,
+            } => {
+                write!(
+                    f,
+                    "ORM channel '{channel}' has dimensions {actual_w}×{actual_h}, \
+                     expected {expected_w}×{expected_h}"
+                )
+            }
+            OrmPackError::MissingChannel(name) => {
+                write!(f, "ORM pack missing required channel '{name}'")
+            }
+            OrmPackError::EmptyData(name) => {
+                write!(f, "ORM channel '{name}' data is empty")
+            }
+        }
+    }
+}
+
+impl std::error::Error for OrmPackError {}
+
+/// Single-use builder that combines three separate single-channel
+/// (R-only, 8-bit) occlusion / roughness / metallic images into a
+/// single packed ORM buffer.
+///
+/// # glTF ORM channel wiring
+///
+/// The output uses `R=Occlusion`, `G=Roughness`, `B=Metallic`, `A=0`,
+/// matching the glTF 2.0 spec (§3.9.7). This satisfies
+/// `FR-CIV-PBR-002`'s requirement that ORM-packed textures "fan into
+/// both metallic-roughness and ambient-occlusion slots without repacking."
+///
+/// # Example
+///
+/// ```ignore
+/// use civ_voxel::orm_packer::MdlOrmPacker;
+///
+/// let occ = vec![255u8; 4];  // 2×2
+/// let rgh = vec![128u8; 4];
+/// let met = vec![64u8; 4];
+///
+/// let packed = MdlOrmPacker::new()
+///     .set_occlusion(occ, 2, 2)
+///     .set_roughness(rgh, 2, 2)
+///     .set_metallic(met, 2, 2)
+///     .pack()
+///     .expect("valid ORM pack");
+/// assert_eq!(packed.width, 2);
+/// assert_eq!(packed.height, 2);
+/// assert_eq!(packed.buffer.len(), 2 * 2 * 4);
+/// ```
+#[derive(Debug)]
+pub struct MdlOrmPacker {
+    occlusion: Option<ChannelData>,
+    roughness: Option<ChannelData>,
+    metallic: Option<ChannelData>,
+}
+
+#[derive(Debug)]
+struct ChannelData {
+    data: Vec<u8>,
+    width: u32,
+    height: u32,
+}
+
+impl MdlOrmPacker {
+    /// Create a new empty packer with no channels set.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            occlusion: None,
+            roughness: None,
+            metallic: None,
+        }
+    }
+
+    /// Set the occlusion (ambient occlusion) channel data.
+    ///
+    /// `data` must be a single-channel (R only, 8-bit) buffer containing
+    /// exactly `width × height` bytes.
+    pub fn set_occlusion(&mut self, data: Vec<u8>, width: u32, height: u32) -> &mut Self {
+        self.occlusion = Some(ChannelData { data, width, height });
+        self
+    }
+
+    /// Set the roughness channel data.
+    ///
+    /// `data` must be a single-channel (R only, 8-bit) buffer containing
+    /// exactly `width × height` bytes.
+    pub fn set_roughness(&mut self, data: Vec<u8>, width: u32, height: u32) -> &mut Self {
+        self.roughness = Some(ChannelData { data, width, height });
+        self
+    }
+
+    /// Set the metallic channel data.
+    ///
+    /// `data` must be a single-channel (R only, 8-bit) buffer containing
+    /// exactly `width × height` bytes.
+    pub fn set_metallic(&mut self, data: Vec<u8>, width: u32, height: u32) -> &mut Self {
+        self.metallic = Some(ChannelData { data, width, height });
+        self
+    }
+
+    /// Consume the builder and produce a packed ORM buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OrmPackError::MissingChannel`] if any channel was not set,
+    /// [`OrmPackError::EmptyData`] if a channel's data buffer is empty,
+    /// or [`OrmPackError::MismatchedDimensions`] if the channels have
+    /// differing pixel dimensions.
+    pub fn pack(self) -> Result<PackedOrm, OrmPackError> {
+        let occlusion = self
+            .occlusion
+            .ok_or(OrmPackError::MissingChannel("occlusion"))?;
+        let roughness = self
+            .roughness
+            .ok_or(OrmPackError::MissingChannel("roughness"))?;
+        let metallic = self
+            .metallic
+            .ok_or(OrmPackError::MissingChannel("metallic"))?;
+
+        // --- validation ---
+
+        let width = occlusion.width;
+        let height = occlusion.height;
+
+        if occlusion.data.is_empty() {
+            return Err(OrmPackError::EmptyData("occlusion"));
+        }
+        if roughness.data.is_empty() {
+            return Err(OrmPackError::EmptyData("roughness"));
+        }
+        if metallic.data.is_empty() {
+            return Err(OrmPackError::EmptyData("metallic"));
+        }
+
+        if roughness.width != width || roughness.height != height {
+            return Err(OrmPackError::MismatchedDimensions {
+                channel: "roughness",
+                expected_w: width,
+                expected_h: height,
+                actual_w: roughness.width,
+                actual_h: roughness.height,
+            });
+        }
+
+        if metallic.width != width || metallic.height != height {
+            return Err(OrmPackError::MismatchedDimensions {
+                channel: "metallic",
+                expected_w: width,
+                expected_h: height,
+                actual_w: metallic.width,
+                actual_h: metallic.height,
+            });
+        }
+
+        // --- pack ---
+
+        let pixel_count = (width * height) as usize;
+        let mut buffer = Vec::with_capacity(pixel_count * 4);
+
+        for i in 0..pixel_count {
+            buffer.push(occlusion.data[i]); // R
+            buffer.push(roughness.data[i]); // G
+            buffer.push(metallic.data[i]); // B
+            buffer.push(0u8); // A (unused)
+        }
+
+        Ok(PackedOrm {
+            buffer,
+            width,
+            height,
+        })
+    }
+}
+
+impl Default for MdlOrmPacker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// FR-CIV-PBR-002 — pack three separate 2×2 single-channel images into
+    /// a single ORM buffer and verify the RGBA layout matches the glTF
+    /// channel wiring (R=Occlusion, G=Roughness, B=Metallic, A=0).
+    #[test]
+    fn pack_basic_orm() {
+        // 2×2 test data
+        let occ = vec![200u8, 180u8, 160u8, 140u8];
+        let rgh = vec![100u8, 110u8, 120u8, 130u8];
+        let met = vec![50u8, 60u8, 70u8, 80u8];
+
+        let packed = MdlOrmPacker::new()
+            .set_occlusion(occ.clone(), 2, 2)
+            .set_roughness(rgh.clone(), 2, 2)
+            .set_metallic(met.clone(), 2, 2)
+            .pack()
+            .expect("2×2 pack should succeed");
+
+        assert_eq!(packed.width, 2);
+        assert_eq!(packed.height, 2);
+        assert_eq!(packed.buffer.len(), 2 * 2 * 4);
+
+        // pixel 0: (200, 100, 50, 0)
+        assert_eq!(packed.buffer[0], 200);
+        assert_eq!(packed.buffer[1], 100);
+        assert_eq!(packed.buffer[2], 50);
+        assert_eq!(packed.buffer[3], 0);
+
+        // pixel 1: (180, 110, 60, 0)
+        assert_eq!(packed.buffer[4], 180);
+        assert_eq!(packed.buffer[5], 110);
+        assert_eq!(packed.buffer[6], 60);
+        assert_eq!(packed.buffer[7], 0);
+
+        // pixel 2: (160, 120, 70, 0)
+        assert_eq!(packed.buffer[8], 160);
+        assert_eq!(packed.buffer[9], 120);
+        assert_eq!(packed.buffer[10], 70);
+        assert_eq!(packed.buffer[11], 0);
+
+        // pixel 3: (140, 130, 80, 0)
+        assert_eq!(packed.buffer[12], 140);
+        assert_eq!(packed.buffer[13], 130);
+        assert_eq!(packed.buffer[14], 80);
+        assert_eq!(packed.buffer[15], 0);
+    }
+
+    /// Mismatched dimensions between channels should produce
+    /// [`OrmPackError::MismatchedDimensions`].
+    #[test]
+    fn pack_mismatched_dimensions_returns_error() {
+        let occ = vec![0u8; 4]; // 2×2
+        let rgh = vec![0u8; 16]; // 4×4
+        let met = vec![0u8; 4]; // 2×2
+
+        let result = MdlOrmPacker::new()
+            .set_occlusion(occ, 2, 2)
+            .set_roughness(rgh, 4, 4)
+            .set_metallic(met, 2, 2)
+            .pack();
+
+        match result {
+            Err(OrmPackError::MismatchedDimensions {
+                channel, ..
+            }) => {
+                assert_eq!(channel, "roughness");
+            }
+            other => panic!("expected MismatchedDimensions error, got {other:?}"),
+        }
+    }
+
+    /// Packing without setting all three channels should produce
+    /// [`OrmPackError::MissingChannel`].
+    #[test]
+    fn pack_missing_channel_returns_error() {
+        let occ = vec![0u8; 4];
+
+        let result = MdlOrmPacker::new().set_occlusion(occ, 2, 2).pack();
+
+        match result {
+            Err(OrmPackError::MissingChannel(name)) => {
+                assert_eq!(name, "roughness");
+            }
+            other => panic!("expected MissingChannel error, got {other:?}"),
+        }
+    }
+
+    /// Empty data buffer should produce [`OrmPackError::EmptyData`].
+    #[test]
+    fn pack_empty_data_returns_error() {
+        let result = MdlOrmPacker::new()
+            .set_occlusion(vec![], 0, 0)
+            .set_roughness(vec![0u8; 4], 2, 2)
+            .set_metallic(vec![0u8; 4], 2, 2)
+            .pack();
+
+        match result {
+            Err(OrmPackError::EmptyData(name)) => {
+                assert_eq!(name, "occlusion");
+            }
+            other => panic!("expected EmptyData error, got {other:?}"),
+        }
+    }
+
+    /// [`Display`] impl covers all three error variants.
+    #[test]
+    fn display_impl_covers_all_variants() {
+        let err = OrmPackError::MissingChannel("occlusion");
+        let msg = err.to_string();
+        assert!(!msg.is_empty());
+        assert!(msg.contains("occlusion"));
+
+        let err = OrmPackError::EmptyData("roughness");
+        let msg = err.to_string();
+        assert!(!msg.is_empty());
+        assert!(msg.contains("roughness"));
+
+        let err = OrmPackError::MismatchedDimensions {
+            channel: "metallic",
+            expected_w: 2,
+            expected_h: 2,
+            actual_w: 4,
+            actual_h: 4,
+        };
+        let msg = err.to_string();
+        assert!(!msg.is_empty());
+        assert!(msg.contains("metallic"));
+    }
+}

@@ -1,0 +1,20 @@
+$log = 'C:\Users\koosh\_wsm3d_audit\ws3d_build_latest.txt'
+$content = Get-Content $log -Raw
+$errors = $content -split "`n" | Where-Object { $_ -match 'error CS' }
+$total = $errors.Count
+Write-Host "TOTAL ERRORS: $total"
+Write-Host ""
+$byCode = $errors | ForEach-Object {
+    if ($_ -match 'error (CS\d+)') { $matches[1] }
+} | Group-Object | Sort-Object Count -Descending
+Write-Host "BY ERROR CODE:"
+$byCode | Select-Object -First 20 | Format-Table Count, Name -AutoSize | Out-String | Write-Host
+Write-Host ""
+$byFile = $errors | ForEach-Object {
+    if ($_ -match 'E:\\Dev\\WorldSphereMod\\(.+?)\(\d+,\d+:') { $matches[1] }
+} | Group-Object | Sort-Object Count -Descending
+Write-Host "BY FILE:"
+$byFile | Select-Object -First 20 | Format-Table Count, Name -AutoSize | Out-String | Write-Host
+Write-Host ""
+Write-Host "FIRST 30 ERRORS:"
+$errors | Select-Object -First 30 | ForEach-Object { Write-Host $_ }

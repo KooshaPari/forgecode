@@ -1,0 +1,241 @@
+/**
+ * otel.test.ts — tests for the OTel SDK bootstrap (./otel.ts).
+ *
+ * These tests run with telemetry DISABLED (the default — no OTLP endpoint
+ * set), so they verify the no-op paths + the synchronous span helpers.
+ * Booting the real exporter would require an HTTP server and is covered
+ * by integration tests elsewhere.
+ *
+ * @see src/lib/observability/otel.ts
+ */
+
+import { describe, test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  resolveTelemetryConfig,
+  initTelemetry,
+  shutdownTelemetry,
+  isTelemetryEnabled,
+  getTracer,
+  startSpan,
+  withSpan,
+  currentTraceId,
+  currentSpanId,
+  currentTraceParent,
+  recordException,
+} from "../../../src/lib/observability/otel";
+
+describe("resolveTelemetryConfig — env vars", () => {
+  test("default config has telemetry disabled (no endpoint)", () => {
+    const cfg = resolveTelemetryConfig();
+    assert.equal(cfg.enabled, false);
+    assert.equal(cfg.endpoint, null);
+    assert.equal(cfg.protocol, "none");
+    assert.equal(cfg.serviceName, "omniroute");
+    assert.equal(cfg.maxQueueSize, 2048);
+    assert.equal(cfg.flushIntervalMs, 5000);
+    assert.equal(cfg.sampleRatio, 1);
+  });
+
+  test("honours OTEL_SDK_DISABLED=true", () => {
+    const prev = process.env.OTEL_SDK_DISABLED;
+    process.env.OTEL_SDK_DISABLED = "true";
+    try {
+      const cfg = resolveTelemetryConfig();
+      assert.equal(cfg.enabled, false);
+    } finally {
+      if (prev === undefined) delete process.env.OTEL_SDK_DISABLED;
+      else process.env.OTEL_SDK_DISABLED = prev;
+    }
+  });
+
+  test("enables when OTEL_EXPORTER_OTLP_ENDPOINT is set", () => {
+    const prev = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://collector:4318";
+    try {
+      const cfg = resolveTelemetryConfig();
+      assert.equal(cfg.enabled, true);
+      assert.equal(cfg.endpoint, "http://collector:4318");
+      assert.equal(cfg.protocol, "http/json");
+    } finally {
+      if (prev === undefined) delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+      else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = prev;
+    }
+  });
+
+  test("respects OTEL_SERVICE_NAME override", () => {
+    const prev = process.env.OTEL_SERVICE_NAME;
+    process.env.OTEL_SERVICE_NAME = "my-svc";
+    try {
+      const cfg = resolveTelemetryConfig();
+      assert.equal(cfg.serviceName, "my-svc");
+    } finally {
+      if (prev === undefined) delete process.env.OTEL_SERVICE_NAME;
+      else process.env.OTEL_SERVICE_NAME = prev;
+    }
+  });
+
+  test("clamps OTEL_TRACES_SAMPLER_ARG to [0, 1]", () => {
+    const prev = process.env.OTEL_TRACES_SAMPLER_ARG;
+    try {
+      process.env.OTEL_TRACES_SAMPLER_ARG = "2.5";
+      assert.equal(resolveTelemetryConfig().sampleRatio, 1);
+      process.env.OTEL_TRACES_SAMPLER_ARG = "-1";
+      assert.equal(resolveTelemetryConfig().sampleRatio, 0);
+    } finally {
+      if (prev === undefined) delete process.env.OTEL_TRACES_SAMPLER_ARG;
+      else process.env.OTEL_TRACES_SAMPLER_ARG = prev;
+    }
+  });
+
+  test("parses OTEL_EXPORTER_OTLP_HEADERS as comma-separated key=value", () => {
+    const prev = process.env.OTEL_EXPORTER_OTLP_HEADERS;
+    try {
+      process.env.OTEL_EXPORTER_OTLP_HEADERS = "x-api-key=abc, x-tenant=42";
+      const cfg = resolveTelemetryConfig();
+      assert.equal(cfg.headers["x-api-key"], "abc");
+      assert.equal(cfg.headers["x-tenant"], "42");
+    } finally {
+      if (prev === undefined) delete process.env.OTEL_EXPORTER_OTLP_HEADERS;
+      else process.env.OTEL_EXPORTER_OTLP_HEADERS = prev;
+    }
+  });
+
+  test("grpc protocol is detected but the resolver falls back to http/json", () => {
+    const prev = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    const prevP = process.env.OTEL_EXPORTER_OTLP_PROTOCOL;
+    try {
+      process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://collector:4317";
+      process.env.OTEL_EXPORTER_OTLP_PROTOCOL = "grpc";
+      const cfg = resolveTelemetryConfig();
+      assert.equal(cfg.enabled, true);
+      // The resolver reports the user's choice; the runtime warns + falls back.
+      assert.equal(cfg.protocol, "grpc");
+    } finally {
+      if (prev === undefined) delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+      else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = prev;
+      if (prevP === undefined) delete process.env.OTEL_EXPORTER_OTLP_PROTOCOL;
+      else process.env.OTEL_EXPORTER_OTLP_PROTOCOL = prevP;
+    }
+  });
+});
+
+describe("initTelemetry / shutdownTelemetry — idempotency", () => {
+  test("initTelemetry is idempotent (second call is no-op)", async () => {
+    // Save state.
+    await shutdownTelemetry();
+    await initTelemetry();
+    const enabledAfter1 = isTelemetryEnabled();
+    await initTelemetry();
+    const enabledAfter2 = isTelemetryEnabled();
+    assert.equal(enabledAfter1, enabledAfter2);
+    await shutdownTelemetry();
+  });
+
+  test("initTelemetry without endpoint leaves telemetry disabled", async () => {
+    const prev = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    try {
+      await shutdownTelemetry();
+      await initTelemetry();
+      assert.equal(isTelemetryEnabled(), false);
+      await shutdownTelemetry();
+    } finally {
+      if (prev !== undefined) process.env.OTEL_EXPORTER_OTLP_ENDPOINT = prev;
+    }
+  });
+});
+
+describe("getTracer / startSpan / withSpan", () => {
+  test("getTracer returns the same instance for the same name", () => {
+    const a = getTracer("tracer-a");
+    const b = getTracer("tracer-a");
+    assert.equal(a, b);
+  });
+
+  test("getTracer returns different instances for different names", () => {
+    const a = getTracer("tracer-x");
+    const b = getTracer("tracer-y");
+    assert.notEqual(a, b);
+  });
+
+  test("startSpan returns a stub span when telemetry is disabled", async () => {
+    await shutdownTelemetry();
+    const span = startSpan("test-span", { kind: "INTERNAL" });
+    assert.equal(span.kind, "INTERNAL");
+    assert.equal(typeof span.traceId, "string");
+    assert.equal(typeof span.spanId, "string");
+  });
+
+  test("withSpan awaits the fn and resolves with its value", async () => {
+    await shutdownTelemetry();
+    const result = await withSpan("outer", async (span) => {
+      span.setAttribute("x", "1");
+      return 42;
+    });
+    assert.equal(result, 42);
+  });
+
+  test("withSpan records exception + rethrows on rejection", async () => {
+    await shutdownTelemetry();
+    await assert.rejects(
+      withSpan("failing", async () => {
+        throw new Error("boom");
+      }),
+      /boom/,
+    );
+  });
+});
+
+describe("currentTraceId / currentSpanId / currentTraceParent", () => {
+  test("returns undefined outside a span", async () => {
+    await shutdownTelemetry();
+    assert.equal(currentTraceId(), undefined);
+    assert.equal(currentSpanId(), undefined);
+    assert.equal(currentTraceParent(), undefined);
+  });
+
+  test("returns a non-zero traceId inside a span", async () => {
+    await shutdownTelemetry();
+    await withSpan("outer", async () => {
+      const id = currentTraceId();
+      assert.ok(id && id !== "00000000000000000000000000000000", `got ${id}`);
+    });
+  });
+
+  test("currentTraceParent returns the W3C header string when telemetry is on", async () => {
+    const prev = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    process.env.OTEL_EXPORTER_OTLP_ENDPOINT = "http://collector:4318";
+    try {
+      await shutdownTelemetry();
+      await initTelemetry();
+      await withSpan("tp", async () => {
+        const tp = currentTraceParent();
+        assert.ok(tp);
+        // Format: 00-{32hex}-{16hex}-01
+        assert.match(tp!, /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+      });
+      await shutdownTelemetry();
+    } finally {
+      if (prev === undefined) delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+      else process.env.OTEL_EXPORTER_OTLP_ENDPOINT = prev;
+    }
+  });
+});
+
+describe("recordException", () => {
+  test("attaches an exception event + ERROR status", () => {
+    const span = startSpan("err-span");
+    const err = new Error("kaboom");
+    recordException(span, err);
+    assert.equal(span.status.code, "ERROR");
+    assert.equal((span.events ?? []).length, 1);
+    assert.equal((span.events ?? [])[0].name, "exception");
+  });
+
+  test("accepts a non-Error value", () => {
+    const span = startSpan("non-err");
+    recordException(span, "string-error");
+    assert.equal(span.status.code, "ERROR");
+  });
+});

@@ -1,0 +1,311 @@
+/**
+ * Co-located unit tests for `streamingResponseAssembly` (PR #21).
+ *
+ * These run with Node's built-in test runner (see package.json `test` script).
+ * All tests use Web Streams API primitives only — no test fixtures beyond
+ * `ReadableStream` / `TextEncoder` — so the module is exercised in isolation
+ * from chatCore, the response pipeline, and the executor layer.
+ */
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  addStreamingHeartbeat,
+  assembleStreamingResponse,
+  buildHeartbeatPayload,
+  finalizeStreamingResponse,
+  injectSseHeaders,
+  wrapStreamWithSseFraming,
+} from "./streamingResponseAssembly.ts";
+import { HEARTBEAT_SHAPES } from "../../utils/sseHeartbeat.ts";
+
+/** Read a ReadableStream<Uint8Array> to a single string. */
+async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let out = "";
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) out += decoder.decode(value, { stream: true });
+  }
+  out += decoder.decode();
+  return out;
+}
+
+function streamFromString(s: string): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(s));
+      controller.close();
+    },
+  });
+}
+
+test("injectSseHeaders: sets the default SSE headers and forwards upstream headers", () => {
+  const headers = injectSseHeaders({
+    requestId: "req-1",
+    provider: "openai",
+    model: "gpt-4o-mini",
+    contentType: "text/event-stream",
+    usage: { prompt_tokens: 10, completion_tokens: 5 },
+  });
+
+  assert.equal(headers["Content-Type"], "text/event-stream");
+  assert.equal(headers["Cache-Control"], "no-cache, no-transform");
+  assert.equal(headers["Connection"], "keep-alive");
+  assert.equal(headers["X-Accel-Buffering"], "no");
+  assert.equal(headers[":X-OmniRoute-Cache"], undefined, "cache header is X-OmniRoute-Cache not :X-OmniRoute-Cache");
+  // The cache header is the "MISS" marker (semantic cache hit path is separate).
+  assert.equal(headers["X-OmniRoute-Cache"], "MISS");
+  // X-OmniRoute-* meta attached:
+  assert.equal(headers["X-OmniRoute-Provider"], "openai");
+  assert.equal(headers["X-OmniRoute-Model"], "gpt-4o-mini");
+  assert.equal(headers["X-OmniRoute-Request-Id"], "req-1");
+  assert.equal(headers["X-OmniRoute-Tokens-In"], "10");
+  assert.equal(headers["X-OmniRoute-Tokens-Out"], "5");
+});
+
+test("injectSseHeaders: forwards non-denylisted upstream Headers and skips the SSE denylist", () => {
+  const upstream = new Headers({
+    "Content-Type": "application/json", // denylisted — must NOT win
+    "Content-Length": "999", // denylisted
+    "Transfer-Encoding": "chunked", // denylisted
+    "Content-Encoding": "gzip", // denylisted
+    "x-custom": "keep-me",
+    "X-Request-Id": "abc-123",
+  });
+
+  const headers = injectSseHeaders(
+    {
+      requestId: "req-2",
+      provider: "anthropic",
+      model: "claude-3-5-sonnet",
+    },
+    upstream
+  );
+
+  // The denylisted headers must not have survived.
+  assert.equal(headers["Content-Length"], undefined);
+  assert.equal(headers["Transfer-Encoding"], undefined);
+  assert.equal(headers["Content-Encoding"], undefined);
+  // Our own Content-Type wins over the upstream's JSON.
+  assert.equal(headers["Content-Type"], "text/event-stream");
+  // Non-denylisted headers forwarded. Note: the `Headers` API normalizes
+  // header names to lowercase on iteration, which matches how fetch itself
+  // carries them on the wire — case-insensitive at the HTTP layer.
+  assert.equal(headers["x-custom"], "keep-me");
+  assert.equal(headers["x-request-id"], "abc-123");
+});
+
+test("injectSseHeaders: accepts a plain-object header bag (string values only)", () => {
+  const headers = injectSseHeaders(
+    {
+      requestId: "req-3",
+      provider: "openai",
+      model: "gpt-4o-mini",
+    },
+    { "X-Trace-Id": "trace-1", "X-Numeric": "42", "X-Bad": 7 as unknown as string }
+  );
+
+  assert.equal(headers["X-Trace-Id"], "trace-1");
+  assert.equal(headers["X-Numeric"], "42");
+  // Non-string values are dropped — no implicit coercion.
+  assert.equal(headers["X-Bad"], undefined);
+});
+
+test("injectSseHeaders: caller-provided context.headers override default values", () => {
+  const headers = injectSseHeaders({
+    requestId: "req-4",
+    provider: "openai",
+    model: "gpt-4o-mini",
+    contentType: "text/event-stream",
+    headers: { "X-OmniRoute-Progress": "enabled" },
+  });
+
+  assert.equal(headers["X-OmniRoute-Progress"], "enabled");
+});
+
+test("buildHeartbeatPayload: openai-chunk shape is a valid SSE chunk", () => {
+  const payload = buildHeartbeatPayload(HEARTBEAT_SHAPES.OPENAI_CHUNK, {
+    chunkId: "chunk-1",
+    chunkModel: "gpt-4o-mini",
+  });
+  assert.match(payload, /^data: \{.*\}\n\n$/);
+  const body = payload.replace(/^data: /, "").replace(/\n\n$/, "");
+  const parsed = JSON.parse(body);
+  assert.equal(parsed.id, "chunk-1");
+  assert.equal(parsed.model, "gpt-4o-mini");
+  assert.equal(parsed.object, "chat.completion.chunk");
+  assert.deepEqual(parsed.choices, [{ index: 0, delta: {}, finish_reason: null }]);
+});
+
+test("buildHeartbeatPayload: anthropic-ping shape is `event: ping`", () => {
+  assert.equal(buildHeartbeatPayload(HEARTBEAT_SHAPES.ANTHROPIC_PING), "event: ping\ndata: {}\n\n");
+});
+
+test("buildHeartbeatPayload: openai-responses-in_progress shape", () => {
+  assert.equal(
+    buildHeartbeatPayload(HEARTBEAT_SHAPES.OPENAI_RESPONSES_IN_PROGRESS),
+    'data: {"type":"response.in_progress"}\n\n'
+  );
+});
+
+test("buildHeartbeatPayload: default comment shape starts with `:`", () => {
+  const payload = buildHeartbeatPayload(HEARTBEAT_SHAPES.COMMENT);
+  assert.match(payload, /^: keepalive /);
+  assert.match(payload, /\n\n$/);
+});
+
+test("addStreamingHeartbeat: intervalMs <= 0 returns the source stream unchanged", async () => {
+  const src = streamFromString("data: hello\n\n");
+  const out = addStreamingHeartbeat(src, { intervalMs: 0 });
+  assert.equal(await readStream(out), "data: hello\n\n");
+});
+
+test("addStreamingHeartbeat: emits the heartbeat payload at the requested interval", async () => {
+  const src = streamFromString("data: a\n\n");
+  const controller = new AbortController();
+  const out = addStreamingHeartbeat(src, {
+    intervalMs: 25,
+    shape: HEARTBEAT_SHAPES.COMMENT,
+    signal: controller.signal,
+  });
+
+  const reader = out.getReader();
+  const decoder = new TextDecoder();
+  const collected: string[] = [];
+
+  // Read the initial chunk + at least one heartbeat.
+  const first = await reader.read();
+  assert.equal(first.done, false);
+  collected.push(decoder.decode(first.value, { stream: true }));
+
+  // Wait for at least one heartbeat tick.
+  await new Promise((r) => setTimeout(r, 80));
+  controller.abort();
+
+  // Drain any remaining queued chunks.
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const next = await reader.read();
+    if (next.done) break;
+    if (next.value) collected.push(decoder.decode(next.value, { stream: true }));
+  }
+  collected.push(decoder.decode());
+
+  const combined = collected.join("");
+  assert.match(combined, /^data: a\n\n/, "upstream chunk first");
+  assert.match(combined, /: keepalive /, "at least one heartbeat emitted");
+});
+
+test("addStreamingHeartbeat: signal.abort stops the timer", async () => {
+  const src = streamFromString("");
+  const controller = new AbortController();
+  const out = addStreamingHeartbeat(src, {
+    intervalMs: 10,
+    shape: HEARTBEAT_SHAPES.COMMENT,
+    signal: controller.signal,
+  });
+  // Trigger the start() of the transform by reading.
+  const reader = out.getReader();
+  await reader.read();
+  controller.abort();
+  // Subsequent reads shouldn't throw — the timer must have been cleared.
+  const { done } = await reader.read();
+  assert.equal(done, true);
+});
+
+test("finalizeStreamingResponse: extracts tokens and formats cost", () => {
+  const result = finalizeStreamingResponse({
+    usage: { prompt_tokens: 100, completion_tokens: 50 },
+    cost: 0.001234,
+  });
+  assert.deepEqual(result.tokens, { input: 100, output: 50 });
+  assert.equal(result.costUsd, "0.0012340000");
+  // X-OmniRoute-Response-Cost set from the formatted cost
+  assert.equal(result.metaHeaders["X-OmniRoute-Response-Cost"], "0.0012340000");
+  assert.equal(result.metaHeaders["X-OmniRoute-Tokens-In"], "100");
+  assert.equal(result.metaHeaders["X-OmniRoute-Tokens-Out"], "50");
+});
+
+test("finalizeStreamingResponse: missing usage defaults to zero tokens and 0 cost", () => {
+  const result = finalizeStreamingResponse({});
+  assert.deepEqual(result.tokens, { input: 0, output: 0 });
+  assert.equal(result.costUsd, "0.0000000000");
+});
+
+test("wrapStreamWithSseFraming: returns matching headers and the input stream identity (no transforms)", async () => {
+  const src = streamFromString("data: ok\n\n");
+  const { stream, headers } = wrapStreamWithSseFraming(src, {
+    headers: {},
+    context: {
+      requestId: "req-wrap-1",
+      provider: "openai",
+      model: "gpt-4o-mini",
+      contentType: "text/event-stream",
+    },
+    heartbeatEnabled: false,
+  });
+
+  assert.equal(headers["Content-Type"], "text/event-stream");
+  assert.equal(headers["X-OmniRoute-Request-Id"], "req-wrap-1");
+  assert.equal(await readStream(stream), "data: ok\n\n");
+});
+
+test("wrapStreamWithSseFraming: chains upstreamTransform when provided", async () => {
+  const src = streamFromString("hello world");
+  // Identity transform: bytes pass through unchanged. The presence of
+  // the transform is what we want to assert.
+  const passthrough = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      controller.enqueue(chunk);
+    },
+  });
+
+  const { stream } = wrapStreamWithSseFraming(src, {
+    headers: {},
+    context: {
+      requestId: "req-wrap-2",
+      provider: "openai",
+      model: "gpt-4o-mini",
+      contentType: "text/event-stream",
+    },
+    upstreamTransform: passthrough,
+    heartbeatEnabled: false,
+  });
+
+  assert.equal(await readStream(stream), "hello world");
+});
+
+test("assembleStreamingResponse: backward-compat façade returns matching headers and passthrough bytes", async () => {
+  const src = streamFromString("data: hi\n\n");
+  const { stream, headers } = assembleStreamingResponse({
+    sseStream: src,
+    requestId: "req-façade-1",
+    provider: "openai",
+    model: "gpt-4o-mini",
+    heartbeatEnabled: false,
+  });
+
+  assert.equal(headers["Content-Type"], "text/event-stream");
+  assert.equal(headers["X-OmniRoute-Request-Id"], "req-façade-1");
+  assert.equal(headers["X-OmniRoute-Provider"], "openai");
+  assert.equal(headers["X-OmniRoute-Model"], "gpt-4o-mini");
+  assert.equal(await readStream(stream), "data: hi\n\n");
+});
+
+test("assembleStreamingResponse: caller-supplied Content-Type flows through to headers", () => {
+  const src = streamFromString("");
+  const { headers } = assembleStreamingResponse({
+    sseStream: src,
+    requestId: "req-façade-2",
+    provider: "openai",
+    model: "gpt-4o-mini",
+    contentType: "application/x-ndjson",
+    heartbeatEnabled: false,
+  });
+  // Content-Type override wins over the SSE default.
+  assert.equal(headers["Content-Type"], "application/x-ndjson");
+});

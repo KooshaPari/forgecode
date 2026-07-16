@@ -1,0 +1,157 @@
+"""
+Build final test_coverage.json from _tc_progress.json (per-repo raw data)
+and _all_repos.json (metadata).
+
+Final shape:
+{
+  "generated_at": ISO-8601,
+  "org": "KooshaPari",
+  "totals": { "repos": N, "with_tests": N, "without_tests": N, ... },
+  "score_distribution": { "0-20": N, "21-40": N, ... },
+  "repos": [ {repo, has_tests, test_files_count, test_dirs, sample_test_file, sample_test_description, ci, confidence_score, confidence_rationale, error}, ... ],
+  "methodology": "...",
+  "caveats": [...]
+}
+"""
+import json
+import re
+import os
+from datetime import datetime, timezone
+from collections import Counter
+
+ROOT = r"C:\Users\koosh"
+OUT = os.path.join(ROOT, "ecosystem", "test_coverage.json")
+
+# Strip ANSI from the all_repos file (it was a gh CLI output)
+def strip_ansi(s):
+    return re.sub(r"\x1b\[[0-9;]*m", "", s)
+
+with open(os.path.join(ROOT, "_all_repos.json"), "r", encoding="utf-8") as f:
+    raw = strip_ansi(f.read())
+all_repos_meta = json.loads(raw)
+
+# Build metadata map keyed by repo name
+meta = {}
+for r in all_repos_meta:
+    meta[r["name"]] = {
+        "full_name": r.get("full_name"),
+        "description": r.get("description"),
+        "language": r.get("language"),
+        "default_branch": r.get("default_branch"),
+        "archived": r.get("archived", False),
+        "disabled": r.get("disabled", False),
+        "private": r.get("private", False),
+        "fork": r.get("fork", False),
+        "size_kb": r.get("size", 0),
+        "stars": r.get("stargazers_count", 0),
+        "open_issues": r.get("open_issues_count", 0),
+        "pushed_at": r.get("pushed_at"),
+        "updated_at": r.get("updated_at"),
+        "html_url": r.get("html_url"),
+        "topics": r.get("topics", []) or [],
+    }
+
+with open(os.path.join(ROOT, "_tc_progress.json"), "r", encoding="utf-8") as f:
+    progress = json.load(f)
+
+# Merge metadata into per-repo records and compute summary stats
+out_repos = []
+score_buckets = Counter()
+totals = Counter()
+
+for entry in progress:
+    repo = entry["repo"]
+    m = meta.get(repo, {})
+    rec = dict(entry)
+    rec["metadata"] = m
+    out_repos.append(rec)
+    sc = entry.get("confidence_score", 0)
+    if sc <= 20:
+        score_buckets["0-20"] += 1
+    elif sc <= 40:
+        score_buckets["21-40"] += 1
+    elif sc <= 60:
+        score_buckets["41-60"] += 1
+    elif sc <= 80:
+        score_buckets["61-80"] += 1
+    else:
+        score_buckets["81-100"] += 1
+    totals["repos"] += 1
+    if entry.get("has_tests"):
+        totals["with_tests"] += 1
+        totals["test_files_total"] += entry.get("test_files_count", 0) or 0
+    else:
+        totals["without_tests"] += 1
+    if entry.get("ci", {}).get("ci_present"):
+        totals["with_ci"] += 1
+        if entry["ci"].get("last_success"):
+            totals["ci_last_success"] += 1
+        if entry["ci"].get("last_failure"):
+            totals["ci_last_failure"] += 1
+    else:
+        totals["without_ci"] += 1
+    if entry.get("error"):
+        totals["errors"] += 1
+    if m.get("archived"):
+        totals["archived"] += 1
+
+# Top-level summary
+out = {
+    "generated_at": datetime.now(timezone.utc).isoformat(),
+    "org": "KooshaPari",
+    "methodology": (
+        "Per repo, the GitHub contents API was used to walk the default branch tree "
+        "(recursive=true) and collect paths matching: tests/, __tests__/, tests.rs, "
+        "or *.{test,spec}.{py,ts,tsx,js,jsx,go,rs,scala,kt,swift,mjs,cjs} (plus Pytest "
+        "test_*.py and Go *_test.go). Test files were counted and one sample was "
+        "fetched raw; the first ~3KB was analyzed for a short description of what the "
+        "sample tests. CI status was cross-referenced via the Actions runs API (latest 5 "
+        "runs): we recorded total runs, the most recent run, the most recent success, "
+        "and the most recent failure, plus a count-by-conclusion. A 0-100 confidence "
+        "score was computed from (a) presence of test files, (b) test-file count, (c) "
+        "existence of a CI workflow, (d) recency and recency-mix of CI outcomes, and "
+        "(e) whether the sample test file's content was non-empty/meaningful. Errors "
+        "(404, 403, timeouts) are recorded per repo and excluded from scoring where "
+        "appropriate. Repos with no matching test paths default to score 5; repos that "
+        "are private/disabled/error fall back to score 0-10 with explicit rationale."
+    ),
+    "scoring_formula": (
+        "confidence = round( base(presence) + log_scale(count, cap=25) "
+        "+ ci_present_bonus + ci_recent_success_bonus + ci_no_failure_bonus "
+        "+ sample_meaningful_bonus + error_penalty ), clamped to [0, 100]"
+    ),
+    "totals": dict(totals),
+    "score_distribution": dict(score_buckets),
+    "caveats": [
+        "Private / disabled repos may return 404 from the contents API and are scored "
+        "from the public metadata only.",
+        "Recursive tree on a monorepo can be slow or 502; where the tree fetch failed, "
+        "we fell back to listing the root and known conventional test directories.",
+        "Sample test file description is a brief heuristic from the first ~3KB of file "
+        "content; large test suites are not summarized exhaustively.",
+        "CI is read from the Actions API; repos that gate on external CI "
+        "(Jenkins, Buildkite) will show 'ci_present=false' even when CI exists.",
+        "An empty 'confidence_rationale' array means the repo hit an API error and "
+        "the score defaulted to 0-10.",
+    ],
+    "repos": out_repos,
+}
+
+with open(OUT, "w", encoding="utf-8") as f:
+    json.dump(out, f, indent=2, ensure_ascii=False)
+
+# Print a tiny summary
+print("wrote", OUT, "size", os.path.getsize(OUT), "bytes")
+print("repos:", totals["repos"], "with_tests:", totals["with_tests"],
+      "without_tests:", totals["without_tests"], "with_ci:", totals["with_ci"],
+      "errors:", totals["errors"])
+print("score_distribution:", dict(score_buckets))
+print("top 5 highest scores:")
+for r in sorted(out_repos, key=lambda x: x.get("confidence_score", 0), reverse=True)[:5]:
+    print(f"  {r['repo']:30s}  {r['confidence_score']:3d}  "
+          f"tests={r['test_files_count']:3d}  ci={r['ci'].get('ci_present')}")
+print("top 5 lowest scores (excluding errors):")
+non_err = [r for r in out_repos if not r.get("error")]
+for r in sorted(non_err, key=lambda x: x.get("confidence_score", 0))[:5]:
+    print(f"  {r['repo']:30s}  {r['confidence_score']:3d}  "
+          f"tests={r['test_files_count']:3d}  ci={r['ci'].get('ci_present')}")

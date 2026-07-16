@@ -1,0 +1,6 @@
+@echo off
+cd /d "C:\Users\koosh\.claude\lanes\Eventra-ci-eventra"
+set CARGO_TARGET_DIR=E:\cargo-target\eventra-ci
+set CARGO_NET_OFFLINE=true
+cargo clippy --all-targets --all-features --offline -- -D warnings 1> clippy.out 2> clippy.err
+echo CLIPPY_EXIT=%ERRORLEVEL%

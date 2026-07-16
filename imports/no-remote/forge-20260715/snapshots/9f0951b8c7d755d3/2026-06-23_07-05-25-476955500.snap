@@ -1,0 +1,14 @@
+import json
+d = json.load(open(r'C:\Users\koosh\_inventory_branches.json'))
+print('NAME'.ljust(40) + 'BRANCH'.ljust(24) + 'BRS RMT STASH WT DIRTY AHEAD BEHIND HEAD')
+for r in sorted(d, key=lambda x: (x['branches_total'] + x['stashes']*10 + x['worktrees']*20), reverse=True):
+    line = (r['name'][:38].ljust(40) + r['current_branch'][:22].ljust(24) +
+            str(r['branches_total']).rjust(3) + ' ' +
+            str(r.get('branches_remote', 0)).rjust(3) + ' ' +
+            str(r['stashes']).rjust(4) + ' ' +
+            str(r['worktrees']).rjust(2) + ' ' +
+            str(r['dirty_files']).rjust(5) + ' ' +
+            str(r['ahead_of_origin']).rjust(5) + ' ' +
+            str(r['behind_of_origin']).rjust(6) + '  ' +
+            r['head_sha'][:8])
+    print(line)

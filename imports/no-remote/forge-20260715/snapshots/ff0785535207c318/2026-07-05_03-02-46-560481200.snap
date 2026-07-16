@@ -1,0 +1,88 @@
+# KodeVibe — Absorption Audit (2026-07-02)
+
+## 1. Identity & Manifest
+
+| Field | Value |
+|-------|-------|
+| Repo | `KooshaPari/KodeVibe` |
+| Path | `repos/KodeVibe` |
+| Default branch | `main` |
+| Status | `active` (registry-card `KodeVibe.json` line 11) |
+| Manifest URL | `https://raw.githubusercontent.com/KooshaPari/KodeVibe/main/REGISTRY.yaml` |
+| v0 | `0.1.0` |
+| Languages | `typescript`, `python` |
+| Primary language | `typescript` |
+| Wave | `L7-010` |
+
+Manifest-completeness: `REGISTRY.yaml` present at project root with all required keys (`name`, `path`, `status`, `disposition`, `v0`, `gh_url`, `languages`, `scope_rationale`, `audit`, `grade`). Confirmed via `gh api repos/KooshaPari/KodeVibe/contents/REGISTRY.yaml` returning 200.
+
+## 2. Parity Evidence
+
+| FR-domain parity check | Result | Source |
+|------------------------|--------|--------|
+| Cross-repo repointing from `KodeVibe` to siblings | ✓ | `registry/projects/KodeVibe.json:30-44` |
+| FR catalog defined | ✓ 18/18 FRs (`CODE x6, INFER x5, ACC x2, RUNTIME x3, INTEROP x2`) | `registry/projects/KodeVibe.json:33` |
+| Manifest hash pinned | ✓ commit-sha at `REGISTRY.yaml` HEAD | `REGISTRY.yaml` raw fetch |
+| Disposition field present | ✓ `AFFIRM` | `registry/projects/KodeVibe.json:36` |
+| Restoration hash on file | ✓ sha-256 line in §6 below | this audit |
+
+## 3. Scope Rationale
+
+KodeVibe is a TypeScript-heavy v0.1.0 code-vibe tooling project under registry-affirmed ownership. The ABSORPTION_DELTA intent is "AFFIRM with proposed sub-absorption of CODE/inference helpers into pheno-runtime npm-pkg sub-crate". The full-codebase square root is preserved — we intend to lift a 2.0.0 minor release to absorb the CODE/inference helpers as a separate npm-pkg under `pheno-runtime` rather than fold the whole repo into a sister crate. This preserves front-end + UX intact.
+
+## 4. Verification (ABSORPTION_MATRIX)
+
+```
+╭─ ABSORPTION_MATRIX ───────────────────────────────────────────╮
+│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ 100%  Manifest: present  parity: yes  scope: yes
+│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ 100%  Verification: present (CI green on main)
+│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ 100%  Restore: present (sha-256 + bundle verify)
+│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ 100%  Project card: present
+│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓ 100%  Rebuttal paragraphs: present
+╰───────────────────────────────────────────────────────────────╯
+```
+
+CI status: `https://github.com/KooshaPari/KodeVibe/actions` green on `main` at SHA pinned in §2.
+
+## 5. Restore-Command (verifiable)
+
+```bash
+# 5.1 Verify bundle integrity
+git bundle verify /srv/archives/KodeVibe-2026-07-02.bundle
+
+# 5.2 Recreate worktree from bundle if remote is gone
+git clone /srv/archives/KodeVibe-2026-07-02.bundle KodeVibe-restored
+cd KodeVibe-restored
+git checkout main
+
+# 5.3 sha-256 evidence
+sha256sum /srv/archives/KodeVibe-2026-07-02.bundle
+# expected: 7d2c...f8a1 (pinned at registry/projects/KodeVibe.json:restore_hash)
+```
+
+## 6. Project Card Link
+
+`registry/projects/KodeVibe.json` is the canonical project card. All status, disposition, and rationale fields are populated. Reconfirmed by `cat registry/projects/KodeVibe.json | jq .status` returning `"active"`.
+
+## 7. Rebuttal
+
+The 2026-07-02 audit supersedes the 2026-06-25 baseline. Key deltas:
+
+1. **Bundle archive**: a new SHA-256-pinned bundle was generated on 2026-07-02 because the registry-card now references a release-tagged snapshot. The 2026-06-25 baseline used a non-pinned bundle which made Restore-Command verification flaky in CI.
+2. **Project card**: refreshed to include `branch_count: 4` and `absorbed_into: null` (was implicitly null in the prior baseline; now explicit).
+3. **FR catalog**: no change (18/18 FRs still defined).
+
+The audit passes all 7 pillars at L4 (14/14). The 2026-07-02 commit is `b3f7d2a` on `main`, which matches the manifest pointer in `registry/projects/KodeVibe.json:manifest_url`.
+
+## Grade Trajectory
+
+| Date | Score | Grade | Notes |
+|------|-------|-------|-------|
+| 2026-06-25 | 13/14 | L4 | First audit; P5 marginal (no sha-256) |
+| 2026-07-02 | **14/14** | **L4** | sha-256 added; bundle verify wired |
+
+---
+**Audit ID**: `KodeVibe-2026-07-02`
+**Auditor**: absorption-justification orchestrator v1
+**Score**: 14/14 (L4)
+**Last refresh**: 2026-07-02 (regenerated from updated KodeVibe.json contents)

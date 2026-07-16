@@ -1,0 +1,13 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  validateResponseQuality,
+  extractReasoningTokens,
+  toRetryAfterDisplayValue,
+} from "./_target.js";
+
+test("import path smoke", () => {
+  assert.equal(typeof validateResponseQuality, "function");
+  assert.equal(typeof extractReasoningTokens, "function");
+  assert.equal(typeof toRetryAfterDisplayValue, "function");
+});

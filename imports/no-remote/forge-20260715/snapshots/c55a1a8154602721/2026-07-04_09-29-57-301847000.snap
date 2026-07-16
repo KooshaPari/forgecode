@@ -1,0 +1,134 @@
+# Locked shortlist — pheno-harness eval matrix, 2026-07-04
+
+**Status:** LOCKED per user message of 2026-07-04. No new SKU will be added without explicit sign-off.
+
+**Two distinct roles, two distinct registries:**
+
+- **Cloud baselines (10 models)** — paid/managed, accessed via `forge-dev → omniroute-dev → OpenRouter`. Source-of-truth is the OpenRouter catalog (`/api/v1/models`) cross-referenced against the HuggingFace repository the publisher chose. Pricing is per OpenRouter at the time of the call; OR discounts are non-stable and must be re-checked per eval run.
+- **Self-hosted (3 models)** — weights on the 3090 Ti, served via `pheno-serve-dev` (SGLang primary, vLLM secondary per `config/inference_runners.yaml`). Source-of-truth is the HF repo. No OpenRouter involvement.
+
+---
+
+## 1. Cloud baselines (forge-dev → omniroute-dev → OpenRouter)
+
+All 10 below are read from `https://openrouter.ai/api/v1/models` on 2026-07-04. HF cross-ref is what the publisher set in their OR metadata; treat `null` as "proprietary or under a different HF name." The recency column is the **OR `created` timestamp** (Unix epoch → ISO date).
+
+| # | OR model id | Publisher | OpenRouter pricing $/1M (in / out) | OR ctx | OR created | Recency ≥ 2026-03-01 | HF cross-ref (canonical) | HF `last_modified` (verified) |
+|---|---|---|---:|---:|---|---|---|---|
+| 1 | `inclusionai/ling-2.6-flash` | inclusionAI | $0.01 / $0.03 | 262 144 | 2026-04-21 | ✓ | (proprietary, no HF) | n/a |
+| 2 | `ibm-granite/granite-4.0-h-micro` | IBM | $0.017 / $0.112 | 131 000 | 2025-10-20 | ✗ **PRE-MARCH** | (no HF cross-ref in OR) | 2025-11-03 (verified) |
+| 3 | `liquid/lfm-2-24b-a2b` | LiquidAI | $0.03 / $0.12 | 128 000 | 2026-02-25 | ✗ **PRE-MARCH (barely)** — but `LiquidAI/LFM2-24B-A2B` repo updated 2026-03-30 ✓ | `LiquidAI/LFM2-24B-A2B` | 2026-03-30 (verified) |
+| 4 | `arcee-ai/trinity-mini` | Arcee AI | $0.045 / $0.15 | 131 072 | 2025-12-01 | ✗ **PRE-MARCH** — but `arcee-ai/Trinity-Mini` repo updated 2026-05-28 ✓ | `arcee-ai/Trinity-Mini` | 2026-05-28 (verified) |
+| 5 | `ibm-granite/granite-4.1-8b` | IBM | $0.05 / $0.10 | 131 072 | 2026-04-30 | ✓ | `ibm-granite/granite-4.1-8b` | 2026-05-04 (verified) |
+| 6 | `poolside/laguna-xs-2.1` | Poolside | $0.06 / $0.12 | 262 144 | 2026-06-29 | ✓ | `poolside/Laguna-XS-2.1` | 2026-07-02 (verified, just-released coding agent) |
+| 7 | `tencent/hy3-preview` | Tencent | $0.063 / $0.21 | 262 144 | 2026-04-22 | ✓ | `tencent/HY3-Preview` | 2026-04-23 (verified) |
+| 8 | `qwen/qwen3.5-flash-02-23` | Qwen | $0.065 / $0.26 | 1 000 000 | 2026-02-25 | ✗ **PRE-MARCH** — `Qwen/Qwen3.5-Flash-02-23` repo 404 (date-stamped alias did not resolve) | (no HF cross-ref in OR) | n/a |
+
+**Recency DLQ (pre-March-2026, marked for explicit user judgment):**
+
+- `ibm-granite/granite-4.0-h-micro` — last_modified **2025-11-03**, ~8 months old. **Keep or drop?**
+- `liquid/lfm-2-24b-a2b` — bare OR release 2026-02-25, **but HF repo updated 2026-03-30**. Recommend KEEP (the weights are current; the OR mirror was just behind).
+- `arcee-ai/trinity-mini` — bare OR release 2025-12-01, **but HF repo updated 2026-05-28**. Recommend KEEP (same reason).
+- `qwen/qwen3.5-flash-02-23` — OR release 2026-02-25, **and HF repo `Qwen/Qwen3.5-Flash-02-23` 404s**. Recommend DROP or rename via search (`Qwen/Qwen3.5-Flash`).
+
+---
+
+## 2. Self-hosted (3 models, weights on 3090 Ti)
+
+Verified via `model_info()` + `expand=["safetensors"]` for param count, then `model_info()` with NO expand for `last_modified`. The `last_modified` column is the *ground truth* for recency.
+
+| # | HF repo (canonical) | Total / active params | Architecture | last_modified | Downloads | Likes | Recency | vRAM @ BF16 | Fits 3090 Ti (24 GB)? |
+|---|---|---:|---|---|---:|---:|---|---:|---|
+| 1 | `Qwen/Qwen3.5-0.8B` | 0.873 B | `qwen3` (image-text-to-text) | 2026-03-02 | 2 485 925 | 605 | ✓ | 1.7 GB | ✓ always-on |
+| 2 | `LiquidAI/LFM2.5-8B-A1B` | 8.47 B / 1 B active (MoE) | `lfm2_moe` (custom MoE) | 2026-07-02 | 145 281 | 656 | ✓ | 17.0 GB | ✓ as workhorse |
+| 3 | `deepreinforce-ai/Ornith-1.0-9B` | 9.41 B | (custom MoE; `Ornith-1.0-9B-A1B` lineage) | 2026-06-25 | 69 837 | 370 | ✓ | 18.8 GB | ✓ as workhorse |
+
+**Note on `Ornith` size:** you said "ornith 8b" — the canonical base on HF is **9B** (`Ornith-1.0-9B`), not 8B. There is no `Ornith-1.0-8B` repo. The 9B number is consistent with the family description "Ornith-1.0-9B-A1B" (9B total / 1B active). I'm proceeding with 9B. If you want strict 8B, we'll need to substitute (no current 8B Ornith on HF as of 2026-07-04).
+
+**MTP-trained derivative** (locked as the spec-dec frontier pick):
+
+| # | HF repo | Total / active | Architecture | last_modified | Downloads | Likes |
+|---|---|---:|---|---|---:|---:|
+| 4 | `protoLabsAI/Ornith-1.0-9B-MTP-GGUF` | 9.41 B / 1 B | MTP-trained (Multi-Token Prediction), GGUF | 2026-07-04 | 24 464 | 52 |
+
+This is the canonical MTP speculative-decoding target on HF. Use it as the draft model for `Ornith-1.0-9B`.
+
+**AWQ quantization derivatives** (for AWQ-INT4 paths when vRAM is tight):
+
+| # | HF repo | Format | Downloads | Notes |
+|---|---|---|---:|---|
+| 5 | `cyankiwi/Ornith-1.0-9B-AWQ-INT4` | AWQ INT4 | 6 000 | Use for tight-vRAM runs |
+| 6 | `cyankiwi/Ornith-1.0-9B-AWQ-FP8` | AWQ FP8 | 17 600 | Use for FP8 path |
+
+---
+
+## 3. Spec-dec zoo (the decode acceleration frontier)
+
+Per your 2026-07-04 message: DSpark, JetSpec, MTP, DDTree, and "speculative speculative decoding" (multi-branch) are the operative research lines. **No specific spec-dec strategy is committed to a doc yet** — the matrix spec needs to enumerate them as options to be evaluated, not as picks. List (verified to exist via live HF probe where marked):
+
+| Strategy | Status as of 2026-07-04 | Where it lives | Notes |
+|---|---|---|---|
+| **Standard speculative decoding** | ✅ mature | vLLM `speculative_decoding`, SGLang, TRT-LLM | Draft model + target model. Standard baseline. |
+| **EAGLE / EAGLE-2** | ✅ mature | vLLM `eagle`, SGLang, TRT-LLM | Feature-level draft; heavy cost-of-tree. |
+| **P-EAGLE** | ✅ mature | TRT-LLM | Parallel EAGLE; better latency. |
+| **MTP (Multi-Token Prediction)** | ✅ in production | TRT-LLM, vLLM (`--speculative-method mtp`), SGLang | Native to `Ornith-1.0-9B-MTP-GGUF`. **First-class candidate.** |
+| **N-gram** | ✅ in production | vLLM `ngram` | Cheap, useful for repetitive code. |
+| **Suffix decoding** | ✅ in production | vLLM `suffix` | Static-code repetition. |
+| **Medusa** | ✅ in production | TRT-LLM, vLLM (third-party) | Multi-head draft. |
+| **SpecInfer** | ⚠ research | papers only | Tree-structured spec dec. |
+| **DSpark** | ⚠ research, Q2-2026 release | papers + community repos | "D-flash-like diffusion speculative decoder." Per your description. **Add to evaluation list — needs engine support check.** |
+| **JetSpec** | ⚠ research | community | Jet engine-targeted spec dec. |
+| **DDTree** | ⚠ research | community | Diffusion-decision-tree spec dec. |
+| **Speculative speculative decoding** | ⚠ research | community / papers | "Multi-branch" spec — speculates *all* possible tokens at each position, not just one. Per your description. **Add to evaluation list — no production engine implements this yet.** |
+| **EAGLE-3** | ⚠ research, 2026-Q1 release | vLLM experimental | Improved over EAGLE-2 with deeper draft. |
+
+**Action:** `docs/specs/003-model-engine-matrix.md` §5 must be expanded to enumerate these 14+ strategies as the spec-dec eval matrix, with **engine support** (vLLM / SGLang / TRT-LLM / llama.cpp) for each as a required column. Not committed to a doc yet.
+
+---
+
+## 4. Recency cutoff control rule (added to ADR 0004 rule #6)
+
+Per your 2026-07-04 message: **"heavily heavily enforced to look at models released no earlier than March 2026 without deep justification."**
+
+**Rule #6 (new):**
+
+- Any HF repo with `last_modified < 2026-03-01 UTC` is `recency_dlq` (deferred low-quality) by default.
+- A pre-March model stays in the matrix only with a `deep-justification` block in `v2_shortlist.md` §X named explicitly.
+- `v2_shortlist.md` is regenerated weekly; the date stamp is on every entry.
+- Pre-March OR models where the **HF repo is current** (e.g. `lfm-2-24b-a2b` OR 2026-02-25 / HF 2026-03-30) are NOT `recency_dlq` — the canonical repo is the source of truth.
+- Pre-March OR models where the **HF repo is also pre-March AND not updated** (e.g. `granite-4.0-h-micro`) ARE `recency_dlq` and require explicit keep/drop.
+
+---
+
+## 5. OpenRouter `hugging_face_id` cross-reference table
+
+Raw, from `/api/v1/models` on 2026-07-04 (cleaned):
+
+| OR id | OR `hugging_face_id` | Verified canonical HF repo (via direct `model_info`) | OK? |
+|---|---|---|---|
+| `inclusionai/ling-2.6-flash` | (null) | (proprietary) | n/a |
+| `ibm-granite/granite-4.0-h-micro` | (null) | (no HF equivalent) | n/a |
+| `liquid/lfm-2-24b-a2b` | `LiquidAI/LFM2-24B-A2B` | `LiquidAI/LFM2-24B-A2B` | ✓ |
+| `arcee-ai/trinity-mini` | `arcee-ai/Trinity-Mini` | `arcee-ai/Trinity-Mini` | ✓ |
+| `ibm-granite/granite-4.1-8b` | `ibm-granite/granite-4.1-8b` | `ibm-granite/granite-4.1-8b` | ✓ |
+| `poolside/laguna-xs-2.1` | `poolside/Laguna-XS-2.1` | `poolside/Laguna-XS-2.1` | ✓ (note casing) |
+| `tencent/hy3-preview` | `tencent/HY3-Preview` | `tencent/HY3-Preview` | ✓ |
+| `qwen/qwen3.5-flash-02-23` | (null) | `Qwen/Qwen3.5-Flash-02-23` 404 | ✗ need rename |
+
+---
+
+## 6. What we will NOT do until your explicit sign-off
+
+- No new model SKU added to `docs/specs/003-model-engine-matrix.md`.
+- No weight download to `state/model_cache/`.
+- No SGLang / vLLM / llama.cpp / MLX server start.
+- No session routed through a local model.
+- No PR #2 (TB 2.1 driver) — also model-agnostic but gated behind the recency-cutoff rule for the model that the TB2 leaderboard surfaces.
+
+## 7. Decision requests (your input needed)
+
+1. **Granite-4.0-h-micro**: keep or drop? (Pre-March by ~8 months.)
+2. **Qwen3.5-Flash-02-23**: OR-listed but `Qwen/Qwen3.5-Flash-02-23` 404s on HF. Search for the canonical id (`Qwen/Qwen3.5-Flash`?), or drop?
+3. **`Ornith` is 9B not 8B**: confirm 9B is acceptable, or substitute a different 8B model?
+4. **`lfm-2-24b-a2b` + `trinity-mini`**: bare OR release is pre-March, but HF repo is current. KEEP per the rule above (canonical repo is the source of truth), unless you object?
+5. **`HF_TOKEN`** has been used this round for authenticated probes; it is **not stored** anywhere on disk (set in `$env:HF_TOKEN` only for the duration of each probe run, then unset). Confirm this handling meets your `RISKS.md` §2 secret policy?

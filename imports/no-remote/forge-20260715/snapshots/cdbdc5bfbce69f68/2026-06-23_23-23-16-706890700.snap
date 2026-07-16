@@ -1,0 +1,23 @@
+[package]
+name = "engine-agentapi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "EnginePort HTTP client + child-process manager for agentapi-plusplus (multi-agent HTTP gateway over PTY)."
+
+[dependencies]
+substrate-core = { path = "../substrate-core" }
+engine-spec = { path = "../engine-spec" }
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["process", "io-util", "net", "sync", "time", "macros", "rt-multi-thread"] }
+uuid = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true, features = ["multipart", "stream"] }
+futures-util = "0.3"
+chrono = { workspace = true }
+
+[dev-dependencies]
+engine-conformance = { path = "../engine-conformance" }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }

@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+# absorption-justification.py
+# ----------------------------------------------------------------------------
+# Orchestrator that drives the absorption-justification audit pipeline for a
+# list of repos. For each repo it:
+#   1. Collects source metadata (visibility, archived, default_branch, size_kb)
+#   2. Collects branch inventory (count + list of unique-branch names)
+#   3. Builds an audit markdown file from `bin/ABSORPTION_TEMPLATE.md` filling
+#      in the Source, Target, Status, Branch Inventory sections automatically
+#   4. Runs `registry/audit-absorption-justification/grade.sh` (if reachable)
+#      to score the produced audit and record the pillar breakdown
+#   5. Appends an entry to the disposition-index.json rows array
+#
+# Usage
+#   python bin/absorption-justification.py --repos KooshaPari/foo,KooshaPari/bar
+#                                          [--registry-root PATH]
+#                                          [--audits-dir PATH]
+#                                          [--template PATH]
+#                                          [--disposition PATH]
+#                                          [--dry-run] [--verbose]
+#
+# Exits 0 on full success, 1 on partial success, 2 on full failure.
+# ----------------------------------------------------------------------------
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import subprocess
+import sys
+from typing import Any
+
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
+
+def gh_api(path: str, paginate: bool = True) -> Any:
+    cmd = ["gh", "api", path]
+    if paginate:
+        cmd.append("--paginate")
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        sys.stderr.write(f"[absorption-justification][ERROR] gh api {path} failed: {proc.stderr.strip()}\n")
+        return None
+    cleaned = _strip_ansi(proc.stdout).strip()
+    return json.loads(cleaned) if cleaned else []
+
+
+def today_iso() -> str:
+    return dt.datetime.utcnow().strftime("%Y-%m-%d")
+
+
+def collect_metadata(repo: str) -> dict | None:
+    meta = gh_api(f"/repos/{repo}", paginate=False)
+    if not isinstance(meta, dict):
+        return None
+    return {
+        "id": meta.get("id"),
+        "full_name": meta.get("full_name"),
+        "private": meta.get("private", False),
+        "archived": meta.get("archived", False),
+        "default_branch": meta.get("default_branch", "main"),
+        "size_kb": meta.get("size", 0),
+        "pushed_at": meta.get("pushed_at"),
+        "open_issues": meta.get("open_issues_count", 0),
+        "description": meta.get("description") or "",
+        "stargazers": meta.get("stargazers_count", 0),
+    }
+
+
+def collect_branches(repo: str) -> list[str]:
+    branches = gh_api(f"/repos/{repo}/branches?per_page=100")
+    if not isinstance(branches, list):
+        return []
+    return [b.get("name", "?") for b in branches]
+
+
+def load_template(template_path: str) -> str:
+    with open(template_path, "r", encoding="utf-8") as fh:
+        return fh.read()
+
+
+def render_audit(template: str, meta: dict, branches: list[str], date: str) -> str:
+    branch_table = "\n".join(f"| {b} | remote | n/a | verified {date} |" for b in branches) or "| (no remote branches) | n/a | n/a | n/a |"
+    if not meta:
+        head = f"# Absorption-Justification Audit: {date} — {repo_name}\n\n> Source repo was unreachable via `gh api` on {date}. Audit is provisional.\n\n"
+        return head + template
+
+    src = meta["full_name"]
+    body = template
+    body = body.replace("{{SOURCE}}", src)
+    body = body.replace("{{DATE}}", date)
+    body = body.replace("{{VISIBILITY}}", "private" if meta["private"] else "public")
+    body = body.replace("{{ARCHIVED}}", "yes" if meta["archived"] else "no")
+    body = body.replace("{{DEFAULT_BRANCH}}", meta["default_branch"] or "main")
+    body = body.replace("{{SIZE_KB}}", str(meta["size_kb"]))
+    body = body.replace("{{PUSHED_AT}}", (meta["pushed_at"] or "")[:10])
+    body = body.replace("{{OPEN_ISSUES}}", str(meta["open_issues"]))
+    body = body.replace("{{BRANCH_COUNT}}", str(len(branches)))
+    body = body.replace("{{BRANCH_TABLE}}", branch_table)
+    body = body.replace("{{DESCRIPTION}}", meta["description"])
+    return body
+
+
+def write_audit(audits_dir: str, repo: str, date: str, body: str) -> str:
+    name = repo.split("/")[-1]
+    out = os.path.join(audits_dir, f"{name}-{date}.md")
+    os.makedirs(audits_dir, exist_ok=True)
+    with open(out, "w", encoding="utf-8") as fh:
+        fh.write(body)
+    return out
+
+
+def grade_audit(registry_root: str, audit_path: str) -> dict | None:
+    """Locate grade.sh relative to the registry root (preferred) and fall back
+    to the orchestrator's own directory (this script lives in
+    phenotype-tooling/bin, but the registry grader is the canonical location)."""
+    candidates = [
+        os.path.join(registry_root, "registry", "audit-absorption-justification", "grade.sh"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "grade.sh"),
+    ]
+    grader = next((c for c in candidates if os.path.exists(c)), None)
+    if not grader:
+        return None
+    proc = subprocess.run(["bash", grader, audit_path], capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.stderr.write(f"[absorption-justification][WARN] grade.sh failed for {audit_path}: {proc.stderr.strip()}\n")
+        return None
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return None
+
+
+def append_disposition(disposition_path: str, repo: str, meta: dict, branches: list[str], grade: dict | None) -> None:
+    if not os.path.exists(disposition_path):
+        return
+    with open(disposition_path, "r", encoding="utf-8") as fh:
+        doc = json.load(fh)
+    name = repo.split("/")[-1]
+    rid = f"repo-{name}-absorption-{today_iso()}"
+    row = {
+        "id": rid,
+        "path": repo,
+        "disposition": "ARCHIVE_ONLY" if (meta and meta.get("archived")) else "AFFIRM",
+        "fsm": "archived" if (meta and meta.get("archived")) else "active",
+        "size_kb": (meta or {}).get("size_kb", 0),
+        "remote_branch_count": len(branches),
+        "last_push": (meta or {}).get("pushed_at"),
+        "grade_score": (grade or {}).get("score"),
+        "grade_percentage": (grade or {}).get("percentage"),
+        "audit_artifact": f"audits/absorption-justifications/{name}-{today_iso()}.md",
+        "source_artifact": f"automated:{__name__}:{today_iso()}",
+        "added_at": dt.datetime.utcnow().isoformat() + "Z",
+    }
+    doc.setdefault("rows", []).append(row)
+    with open(disposition_path, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=2, sort_keys=False)
+        fh.write("\n")
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="Drive absorption-justification audits for a list of repos.")
+    p.add_argument("--repos", required=True, help="comma-separated repo full_names (KooshaPari/foo,KooshaPari/bar)")
+    p.add_argument("--registry-root", default=".", help="path to phenotype-registry checkout")
+    p.add_argument("--audits-dir", default=None, help="where to write audit markdown files (default: <registry-root>/audits/absorption-justifications)")
+    p.add_argument("--template", default=None, help="path to ABSORPTION_TEMPLATE.md (default: <registry-root>/../phenotype-tooling/bin/ABSORPTION_TEMPLATE.md)")
+    p.add_argument("--disposition", default=None, help="path to disposition-index.json (default: <registry-root>/registry/disposition-index.json)")
+    p.add_argument("--dry-run", action="store_true", help="do not write any files")
+    p.add_argument("--verbose", action="store_true")
+    args = p.parse_args()
+
+    date = today_iso()
+    # Resolve all paths against the orchestrator's own directory first (this
+    # script lives in phenotype-tooling/bin), then fall back to user-supplied
+    # locations. This way the tool is self-contained and works regardless of
+    # how phenotype-registry and phenotype-tooling are laid out on disk.
+    orchestrator_dir = os.path.dirname(os.path.abspath(__file__))
+    audits_dir = args.audits_dir or os.path.join(args.registry_root, "audits", "absorption-justifications")
+    template_path = (
+        args.template
+        or os.path.join(orchestrator_dir, "ABSORPTION_TEMPLATE.md")
+    )
+    disposition_path = args.disposition or os.path.join(args.registry_root, "registry", "disposition-index.json")
+
+    template = load_template(template_path)
+
+    repos = [r.strip() for r in args.repos.split(",") if r.strip()]
+    succeeded, failed = 0, 0
+
+    for repo in repos:
+        if args.verbose:
+            sys.stderr.write(f"[absorption-justification] {repo}: collecting metadata\n")
+        meta = collect_metadata(repo)
+        branches = collect_branches(repo)
+        body = render_audit(template, meta, branches, date)
+        audit_path = os.path.join(audits_dir, f"{repo.split('/')[-1]}-{date}.md")
+
+        if args.dry_run:
+            sys.stdout.write(f"[DRY-RUN] would write {audit_path}\n")
+            continue
+
+        try:
+            write_audit(audits_dir, repo, date, body)
+        except Exception as exc:
+            sys.stderr.write(f"[absorption-justification][ERROR] failed to write {audit_path}: {exc}\n")
+            failed += 1
+            continue
+
+        grade = grade_audit(args.registry_root, audit_path)
+        append_disposition(disposition_path, repo, meta, branches, grade)
+        if args.verbose:
+            sys.stderr.write(f"[absorption-justification] {repo}: wrote {audit_path} grade={grade.get('percentage') if grade else 'n/a'}\n")
+        succeeded += 1
+
+    sys.stderr.write(f"[absorption-justification] succeeded={succeeded} failed={failed}\n")
+    return 0 if failed == 0 else (1 if succeeded else 2)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

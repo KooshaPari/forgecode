@@ -1,0 +1,7 @@
+import json
+with open(r'C:\Users\koosh\_189clean.txt', 'r', encoding='utf-8') as f:
+    d = json.load(f)
+print(f"Total check_runs: {d['total_count']}")
+for c in d['check_runs']:
+    if c.get('conclusion') == 'failure':
+        print(f"FAIL: {c['name']} -> {c['html_url']}")

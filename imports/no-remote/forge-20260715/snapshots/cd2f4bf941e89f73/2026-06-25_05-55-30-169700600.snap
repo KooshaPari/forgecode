@@ -1,0 +1,48 @@
+$ErrorActionPreference = 'SilentlyContinue'
+$repos = Get-ChildItem -Path C:\Users\koosh -Directory -Force -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName '.git') }
+$keywords = @('secret', 'token', 'key', 'cve')
+$rows = @()
+foreach ($r in $repos) {
+  $stashList = & git -C $r.FullName stash list 2>$null
+  if ($stashList) {
+    foreach ($line in $stashList) {
+      # Extract stash ref (stash@{N})
+      if ($line -match '^(stash@\{\d+\})') { $ref = $matches[1] } else { $ref = '' }
+      # Get size of stash patch only (do NOT show contents)
+      $sizeOutput = & git -C $r.FullName stash show --stat $ref 2>$null
+      $files = 0
+      $lines = 0
+      if ($sizeOutput) {
+        # Number of changed files = line with file count summary
+        $filesLine = $sizeOutput | Select-String -Pattern '(\d+) files? changed'
+        if ($filesLine) { $files = [int]$matches[1] }
+        $insLine = $sizeOutput | Select-String -Pattern '(\d+) insertions?\(\+\)'
+        if ($insLine) { $lines += [int]$matches[1] }
+        $delLine = $sizeOutput | Select-String -Pattern '(\d+) deletions?\(-\)'
+        if ($delLine) { $lines += [int]$matches[1] }
+      }
+      $lower = $line.ToLower()
+      $matched = $false
+      $matchedKw = ''
+      foreach ($kw in $keywords) {
+        if ($lower.Contains($kw)) { $matched = $true; $matchedKw = $kw; break }
+      }
+      $rows += [PSCustomObject]@{
+        Repo       = $r.Name
+        StashRef   = $ref
+        Flag       = if ($matched) { "YES ($matchedKw)" } else { '-' }
+        Files      = $files
+        Ins+Del    = $lines
+        Message    = $line
+      }
+    }
+  }
+}
+if ($rows.Count -eq 0) {
+  Write-Output "NO_STASHES_FOUND"
+} else {
+  $rows | Format-Table -AutoSize -Wrap
+  $flagged = $rows | Where-Object { $_.Flag -ne '-' }
+  Write-Output ""
+  Write-Output "=== FLAGGED COUNT: $($flagged.Count) of $($rows.Count) ==="
+}

@@ -1,0 +1,43 @@
+import fs from "node:fs";
+
+const data = JSON.parse(fs.readFileSync("C:/Users/koosh/AppData/Local/Temp/zizmor.out.json", "utf16"));
+
+// Group by audit + workflow
+const byAudit = {};
+for (const d of data) {
+  const audit = d.ident || "?";
+  if (!byAudit[audit]) byAudit[audit] = {};
+  const locs = d.locations || [];
+  for (const loc of locs) {
+    let wf = "?";
+    try {
+      const sym = loc.symbol || "";
+      const concrete = loc.concrete || {};
+      // pull workflow filename from the symbolic path
+      const key = concrete.key || "";
+      // extract wf from location path if available
+      if (sym && sym.startsWith("workflow")) {
+        // try to get file name from locations
+      }
+      if (concrete.location_path) {
+        wf = concrete.location_path.split("/").pop();
+      } else if (key && key.includes("/")) {
+        wf = key.split(":")[0].split("/").pop();
+      }
+    } catch (_) {}
+    byAudit[audit][wf] = (byAudit[audit][wf] || 0) + 1;
+  }
+}
+
+for (const audit of Object.keys(byAudit).sort((a, b) => Object.keys(byAudit[b]).length - Object.keys(byAudit[a]).length)) {
+  const wfs = byAudit[audit];
+  const total = Object.values(wfs).reduce((s, n) => s + n, 0);
+  console.log(`\n${audit} (${total} findings, ${Object.keys(wfs).length} workflows):`);
+  const sorted = Object.entries(wfs).sort((a, b) => b[1] - a[1]);
+  for (const [wf, n] of sorted.slice(0, 25)) {
+    console.log(`  ${n.toString().padStart(4)}  ${wf}`);
+  }
+  if (sorted.length > 25) {
+    console.log(`  ... and ${sorted.length - 25} more`);
+  }
+}

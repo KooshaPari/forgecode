@@ -1,0 +1,243 @@
+/**
+ * omniroute setup remote — Aggregator that wires the existing connect /
+ * tokens / contexts commands into a single guided flow.
+ *
+ * Why a separate command:
+ *   - Users coming from "I want remote mode" land on `omniroute setup`
+ *     first. A dedicated `setup remote` subcommand that dispatches to the
+ *     correct underlying primitive (connect, tokens add/rotate, contexts
+ *     list/use) means nobody has to know the command tree in advance.
+ *   - The aggregator is intentionally idempotent and additive: it never
+ *     rewrites existing contexts, only surfaces the right next action.
+ *
+ * Subcommands:
+ *   - (none) / status → summarise current context(s) and print next step
+ *   - connect <host>  → delegates to runConnectCommand (registerConnect)
+ *   - tokens <add|rotate|list|revoke>  → thin wrapper around runTokensCommand
+ *   - contexts <list|use|show|delete>  → thin wrapper around runContextsCommand
+ *
+ * The wrappers re-export the existing runners, so we don't duplicate any
+ * auth or storage logic.
+ */
+
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { printHeading, printInfo, printSuccess, printError } from "../io.mjs";
+import { loadContexts, saveContexts } from "../contexts.mjs";
+import { runConnectCommand } from "./connect.mjs";
+import { runTokensCommand } from "./tokens.mjs";
+import { runContextsCommand } from "./contexts.mjs";
+import { t } from "../i18n.mjs";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const _unused = resolve(__dirname, "..", "..", ".."); // REPO_ROOT, kept for parity with siblings
+
+export const REMOTE_SUBCOMMANDS = ["status", "connect", "tokens", "contexts"];
+
+/**
+ * Summarise the current context config. Used by `setup remote status`
+ * and as the no-arg default.
+ *
+ * @returns {{ current: string|null, contexts: Array<{name:string, baseUrl:string, scope?:string}> }}
+ */
+export function summariseRemoteState() {
+  const cfg = loadContexts();
+  const contexts = cfg?.contexts || {};
+  const current = cfg?.currentContext || null;
+  const list = Object.entries(contexts).map(([name, c]) => ({
+    name,
+    baseUrl: c?.baseUrl || "",
+    scope: c?.scope || (c?.accessToken ? "token" : "unknown"),
+  }));
+  return { current, contexts: list };
+}
+
+/**
+ * Inner action runner. Pure (no Commander coupling).
+ *
+ * @param {{ sub?: string, args?: string[], json?: boolean, output?: string, runSetupCommandRef?: Function }} opts
+ * @returns {Promise<{ exitCode: number, payload?: object }>}
+ */
+export async function runSetupRemoteCommand(opts = {}) {
+  const wantsJson = Boolean(opts.json || opts.output === "json");
+  const sub = opts.sub || "status";
+  const rest = Array.isArray(opts.args) ? opts.args : [];
+
+  if (!REMOTE_SUBCOMMANDS.includes(sub)) {
+    const msg = `Unknown subcommand '${sub}'. Valid: ${REMOTE_SUBCOMMANDS.join(", ")}`;
+    if (wantsJson) return { exitCode: 2, payload: { error: msg, valid: REMOTE_SUBCOMMANDS } };
+    printError(msg);
+    return { exitCode: 2 };
+  }
+
+  if (sub === "status") {
+    const { current, contexts } = summariseRemoteState();
+    const payload = { current, contexts };
+    if (wantsJson) {
+      console.log(JSON.stringify(payload, null, 2));
+      return { exitCode: 0, payload };
+    }
+    printHeading("OmniRoute → Remote mode");
+    if (contexts.length === 0) {
+      printInfo("No contexts saved yet.");
+      printInfo("Next: omniroute setup remote connect <host>");
+      return { exitCode: 0 };
+    }
+    console.log("Saved contexts:");
+    for (const c of contexts) {
+      const marker = c.name === current ? "*" : " ";
+      console.log(`  ${marker} ${c.name.padEnd(20)} ${c.baseUrl}  (scope: ${c.scope})`);
+    }
+    console.log("");
+    if (current) {
+      printInfo(`Active context: ${current}`);
+      printInfo("Next: omniroute tokens list  (rotate, revoke, or add tokens)");
+    } else {
+      printInfo("No active context. Set one with:");
+      printInfo("  omniroute contexts use <name>");
+    }
+    return { exitCode: 0 };
+  }
+
+  if (sub === "connect") {
+    const [host, ...connectRest] = rest;
+    if (!host) {
+      const msg = "connect requires a host. Example: omniroute setup remote connect 192.168.0.15";
+      if (wantsJson) return { exitCode: 2, payload: { error: msg } };
+      printError(msg);
+      return { exitCode: 2 };
+    }
+    // Translate --key/--name/--port/--scope from the trailing argv into
+    // the runner's opts object. Mirrors registerConnect's flag set.
+    const connectOpts = parseFlags(connectRest);
+    const code = await runConnectCommand(host, connectOpts);
+    return { exitCode: code };
+  }
+
+  if (sub === "tokens") {
+    const [action, ...tokensRest] = rest;
+    if (!action) {
+      const msg = "tokens requires an action: add | rotate | list | revoke";
+      if (wantsJson) return { exitCode: 2, payload: { error: msg } };
+      printError(msg);
+      return { exitCode: 2 };
+    }
+    const tokensOpts = parseFlags(tokensRest);
+    const code = await runTokensCommand(action, tokensOpts);
+    return { exitCode: code };
+  }
+
+  if (sub === "contexts") {
+    const [action, ...ctxRest] = rest;
+    if (!action) {
+      const msg = "contexts requires an action: list | use | show | delete";
+      if (wantsJson) return { exitCode: 2, payload: { error: msg } };
+      printError(msg);
+      return { exitCode: 2 };
+    }
+    const ctxOpts = parseFlags(ctxRest);
+    const code = await runContextsCommand(action, ctxOpts);
+    return { exitCode: code };
+  }
+
+  // Should never reach here because of the includes() check above.
+  return { exitCode: 1 };
+}
+
+/**
+ * Parse a flag-only argv tail into an options object. Accepts the flag
+ * forms used by connect / tokens / contexts (--foo <bar>, --baz, --name=x).
+ * Values are kept as strings — the underlying runners validate.
+ *
+ * @param {string[]} argv
+ * @returns {Record<string,string|boolean>}
+ */
+export function parseFlags(argv) {
+  const out = {};
+  for (let i = 0; i < argv.length; i++) {
+    const tok = argv[i];
+    if (!tok.startsWith("--")) continue;
+    const eq = tok.indexOf("=");
+    let key, value;
+    if (eq >= 0) {
+      key = tok.slice(2, eq);
+      value = tok.slice(eq + 1);
+    } else {
+      key = tok.slice(2);
+      const next = argv[i + 1];
+      if (next && !next.startsWith("--")) {
+        value = next;
+        i++;
+      } else {
+        value = true;
+      }
+    }
+    // Commander convention: --api-key → apiKey
+    out[camelCase(key)] = value;
+  }
+  return out;
+}
+
+function camelCase(s) {
+  return s.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+/**
+ * Register the `omniroute setup remote` subcommand on the parent setup
+ * command.
+ *
+ * @param {import("commander").Command} setupCommand
+ */
+export function registerSetupRemote(setupCommand) {
+  const cmd = setupCommand
+    .command("remote [sub...]")
+    .description(
+      t("setup.remote") ||
+        "Aggregated remote-mode setup: status (default) | connect | tokens | contexts — wires the existing connect/tokens/contexts primitives together"
+    )
+    .option("--json", "Emit a structured JSON payload and exit", false)
+    .addHelpText(
+      "after",
+      `\nSubcommands:\n` +
+        REMOTE_SUBCOMMANDS.map((s) => `  ${s.padEnd(10)} → ${describeRemoteSub(s)}`).join("\n") +
+        `\n\nExamples:\n` +
+        `  omniroute setup remote                                # show current state\n` +
+        `  omniroute setup remote connect 192.168.0.15 --port 20128\n` +
+        `  omniroute setup remote tokens add --scope write --name ci\n` +
+        `  omniroute setup remote contexts list\n` +
+        `  omniroute setup remote contexts use vps\n`
+    );
+
+  // Commander parses variadic args via the `[sub...]` syntax; we extract
+  // the sub name + remaining argv in the action handler.
+  cmd.action(async (subArgs, opts, cmdObj) => {
+    const globalOpts = cmdObj.parent?.parent?.optsWithGlobals?.() ?? {};
+    const arr = Array.isArray(subArgs) ? subArgs : subArgs ? [subArgs] : [];
+    const merged = {
+      ...opts,
+      sub: arr[0] || "status",
+      args: arr.slice(1),
+      output: globalOpts.output,
+      json: Boolean(opts.json || globalOpts.output === "json"),
+    };
+    const { exitCode } = await runSetupRemoteCommand(merged);
+    if (exitCode !== 0) process.exit(exitCode);
+  });
+}
+
+function describeRemoteSub(s) {
+  switch (s) {
+    case "status":
+      return "summarise saved contexts + suggest next step";
+    case "connect":
+      return "connect to a host and save as the active context";
+    case "tokens":
+      return "add / rotate / list / revoke scoped access tokens";
+    case "contexts":
+      return "list / use / show / delete saved server contexts";
+    default:
+      return "";
+  }
+}

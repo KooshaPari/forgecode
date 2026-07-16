@@ -1,0 +1,122 @@
+/**
+ * Adaptive Context Budget Dashboard — Persistent alert store.
+ *
+ * Stores deduped `BudgetAlertRecord`s in the `key_value` table so the
+ * dashboard can show "this alert has been firing for 3h" instead of
+ * "1 second". The merge is done by the alert engine; this file is
+ * responsible for I/O.
+ *
+ * Schema:
+ *   namespace = "compression"
+ *   key       = "contextBudgetAlerts"
+ *   value     = JSON-serialised `BudgetAlertRecord[]`
+ *
+ * The store is deliberately small — alerts aren't big, and the
+ * `BudgetAlertConfig.alertTtlMs` cap means we never store more than a
+ * few hundred rows in practice.
+ */
+
+import type { BudgetAlertConfig, BudgetAlertRecord } from "./alertEngine";
+import { DEFAULT_BUDGET_ALERT_CONFIG } from "./alertEngine";
+import { getDbInstance } from "@/lib/db/core";
+
+const NAMESPACE = "compression";
+const ALERTS_KEY = "contextBudgetAlerts";
+const CONFIG_KEY = "contextBudgetAlertConfig";
+const MAX_STORED_RECORDS = 200;
+
+function isValidRecord(value: unknown): value is BudgetAlertRecord {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.ruleId === "string" &&
+    typeof v.key === "string" &&
+    (v.severity === "info" ||
+      v.severity === "warning" ||
+      v.severity === "critical") &&
+    typeof v.firedAt === "number" &&
+    typeof v.firstSeenAt === "number" &&
+    typeof v.lastSeenAt === "number" &&
+    typeof v.count === "number"
+  );
+}
+
+/**
+ * Read the persisted alert records. Returns an empty array when no row
+ * exists or when the stored value is malformed (does not throw).
+ */
+export async function readBudgetAlertRecords(): Promise<BudgetAlertRecord[]> {
+  const db = getDbInstance();
+  const row = db
+    .prepare("SELECT value FROM key_value WHERE namespace = ? AND key = ?")
+    .get(NAMESPACE, ALERTS_KEY) as { value: string } | undefined;
+  if (!row?.value) return [];
+  try {
+    const parsed = JSON.parse(row.value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isValidRecord);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Persist a fresh list of records, trimming to `MAX_STORED_RECORDS` (most
+ * recently seen first).
+ */
+export async function writeBudgetAlertRecords(
+  records: ReadonlyArray<BudgetAlertRecord>,
+): Promise<void> {
+  const db = getDbInstance();
+  const sorted = [...records]
+    .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+    .slice(0, MAX_STORED_RECORDS);
+  db.prepare(
+    "INSERT OR REPLACE INTO key_value (namespace, key, value) VALUES (?, ?, ?)",
+  ).run(NAMESPACE, KEY, JSON.stringify(sorted));
+}
+
+/**
+ * Wipe the persisted alert records. Used by the "Clear alerts" button.
+ */
+export async function clearBudgetAlertRecords(): Promise<void> {
+  const db = getDbInstance();
+  db.prepare("DELETE FROM key_value WHERE namespace = ? AND key = ?").run(
+    NAMESPACE,
+    KEY,
+  );
+}
+
+/**
+ * Read the alert config from the `key_value` table, falling back to the
+ * module defaults.
+ */
+export async function readBudgetAlertConfig(): Promise<
+  import("./alertEngine").BudgetAlertConfig
+> {
+  const db = getDbInstance();
+  const row = db
+    .prepare("SELECT value FROM key_value WHERE namespace = ? AND key = ?")
+    .get(NAMESPACE, "contextBudgetAlertConfig") as { value: string } | undefined;
+  if (!row?.value) return { ...DEFAULT_BUDGET_ALERT_CONFIG };
+  try {
+    const parsed = JSON.parse(row.value) as unknown;
+    if (!parsed || typeof parsed !== "object") {
+      return { ...DEFAULT_BUDGET_ALERT_CONFIG };
+    }
+    // Defer the normalise implementation to the caller to keep this file
+    // dependency-light.
+    return parsed as import("./alertEngine").BudgetAlertConfig;
+  } catch {
+    return { ...DEFAULT_BUDGET_ALERT_CONFIG };
+  }
+}
+
+export async function writeBudgetAlertConfig(
+  config: import("./alertEngine").BudgetAlertConfig,
+): Promise<void> {
+  const db = getDbInstance();
+  db.prepare(
+    "INSERT OR REPLACE INTO key_value (namespace, key, value) VALUES (?, ?, ?)",
+  ).run(NAMESPACE, "contextBudgetAlertConfig", JSON.stringify(config));
+}

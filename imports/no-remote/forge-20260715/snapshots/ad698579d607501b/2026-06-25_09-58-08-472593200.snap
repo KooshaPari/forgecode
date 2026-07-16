@@ -1,0 +1,8 @@
+==== cargo clippy -p a2a -- -D warnings ====
+[1m[92m    Blocking[0m waiting for file lock on build directory
+[1m[92m    Checking[0m chrono v0.4.45
+[1m[92m    Checking[0m a2a v0.1.0 (C:\Users\koosh\.claude\lanes\substrate\crates\a2a)
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`dev` profile [unoptimized + debuginfo]]8;;\ target(s) in 4m 56s
+EXIT_CODE:0
+==== cargo clippy -p gateway -- -D warnings ====
+[1m[92m    Blocking[0m waiting for file lock on build directory

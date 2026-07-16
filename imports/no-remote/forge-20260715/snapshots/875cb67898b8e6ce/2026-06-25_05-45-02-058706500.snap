@@ -1,0 +1,454 @@
+import json
+
+data = {
+  "report_metadata": {
+    "title": "Compute/Infra + Observability — Aggregated Audit State",
+    "generated": "2026-06-22",
+    "scope": "All compute/infra and observability repos under C:\\Users\\koosh\\ plus the 010-compute-infra DAG spec and phenotype-registry 30-pillar grading system",
+    "sources": [
+      "C:\\Users\\koosh\\_infra_recon.json",
+      "C:\\Users\\koosh\\_infra_recon_summary.md",
+      "C:\\Users\\koosh\\_plan_compute_infra_observ.md",
+      "C:\\Users\\koosh\\_infrastructure_inventory.md",
+      "C:\\Users\\koosh\\_compute_infra_audit\\pillar_L0.md",
+      "C:\\Users\\koosh\\_compute_infra_audit\\pillar_L11.md",
+      "C:\\Users\\koosh\\_compute_infra_audit\\compute_infra_dag.md",
+      "C:\\Users\\koosh\\_compute_infra_audit\\dags\\compute_infra_dag.yaml",
+      "C:\\Users\\koosh\\_compute_infra_audit\\spine_audit.json",
+      "C:\\Users\\koosh\\_compute_infra_audit\\status.json",
+      "C:\\Users\\koosh\\_compute_infra_audit\\validate.json",
+      "C:\\Users\\koosh\\_compute_infra_audit\\topo.json"
+    ],
+    "markdown_report": "C:\\Users\\koosh\\_audit\\compute_infra_observ_state_2026-06-22.md"
+  },
+
+  "executive_summary": {
+    "compute_repos_audited": 10,
+    "compute_repos_git_present": 9,
+    "repos_clean_tree": 9,
+    "repos_with_dirty_files": 1,
+    "repos_ahead_of_origin": 2,
+    "repos_with_branch_protection_ok": 9,
+    "dag_total_units_planned": 349,
+    "dag_pillars_covered": 30,
+    "dag_pillars_target": 30,
+    "dag_epic_count": 8,
+    "dag_phase1_nodes_enumerated": 95,
+    "dag_nodes_complete": 0,
+    "dag_nodes_pending": 95,
+    "dag_cycle_check": "null (healthy)",
+    "pillar_reports_on_disk": 21,
+    "pillar_reports_target": 30,
+    "pillar_reports_missing": ["L22", "L23", "L24", "L25", "L26", "L27", "L28", "L29"]
+  },
+
+  "compute_infra_repos": [
+    {
+      "name": "phenotype-infra",
+      "path": "C:\\Users\\koosh\\phenotype-infra",
+      "head_sha": "a41ca5c",
+      "current_branch": "master",
+      "upstream_branch": "origin/master",
+      "remote_origin_url": "https://github.com/KooshaPari/phenotype-infra.git",
+      "dirty_count": 0,
+      "local_branches_count": 2,
+      "stashes_count": 0,
+      "worktrees_count": 1,
+      "branches_ahead_of_origin": 0,
+      "primary_language": "Markdown",
+      "packages": {"Cargo.toml": True, "package.json": False, "pyproject.toml": False, "go.mod": False},
+      "default_branch": "main",
+      "branch_protection": {"ok": True, "checks": 0, "reviews": 0, "enforce_admins": True},
+      "last_commit_ts": "2026-06-23 20:19:29 -0700",
+      "last_commit_subject": "Merge remote-tracking branch 'origin/main'",
+      "recent_commits": [
+        {"sha": "a41ca5c", "subject": "Merge remote-tracking branch 'origin/main'"},
+        {"sha": "e4f486a", "subject": "chore(t17,t18): strict lint configs + Tier-2 coverage gate (#86)"},
+        {"sha": "d528c9a", "subject": "C-05: Master aggregate scorecard + remediation plan"},
+        {"sha": "12c416b", "subject": "A-10: fix L0-L2 violations from scorecard"},
+        {"sha": "bc1db9a", "subject": "A-09: 71+ audit scorecard for compute/infra repos"}
+      ],
+      "anomalies": ["local branch 'master' vs GitHub default 'main'"]
+    },
+    {
+      "name": "nanovms",
+      "path": "C:\\Users\\koosh\\nanovms",
+      "head_sha": "e9d87c8",
+      "current_branch": "main",
+      "upstream_branch": "origin/main",
+      "remote_origin_url": "https://github.com/KooshaPari/nanovms.git",
+      "dirty_count": 0,
+      "local_branches_count": 1,
+      "stashes_count": 0,
+      "worktrees_count": 1,
+      "branches_ahead_of_origin": 1,
+      "primary_language": "Go",
+      "packages": {"Cargo.toml": False, "package.json": True, "pyproject.toml": False, "go.mod": True},
+      "default_branch": "main",
+      "branch_protection": {"ok": True, "checks": 0, "reviews": 0, "enforce_admins": False},
+      "last_commit_ts": "2026-06-23 19:39:32 -0700",
+      "last_commit_subject": "C-02: 71+ audit scorecard for nanovms (L2: 3.3/9.0 classification)",
+      "anomalies": ["1 commit ahead of origin; not pushed"]
+    },
+    {
+      "name": "PhenoCompose",
+      "path": "C:\\Users\\koosh\\PhenoCompose",
+      "head_sha": "d960bde",
+      "current_branch": "main",
+      "upstream_branch": "origin/main",
+      "remote_origin_url": "https://github.com/KooshaPari/PhenoCompose.git",
+      "dirty_count": 0,
+      "local_branches_count": 1,
+      "stashes_count": 0,
+      "worktrees_count": 1,
+      "branches_ahead_of_origin": 0,
+      "primary_language": "Markdown",
+      "packages": {"Cargo.toml": True, "package.json": True, "pyproject.toml": False, "go.mod": False},
+      "default_branch": "main",
+      "branch_protection": {"ok": True, "checks": 0, "reviews": 0, "enforce_admins": False},
+      "last_commit_ts": "2026-06-23 19:39:34 -0700",
+      "last_commit_subject": "C-03: 71+ audit scorecard for PhenoCompose (L2: 2.7/9.0)",
+      "anomalies": []
+    },
+    {
+      "name": "BytePort",
+      "path": "C:\\Users\\koosh\\BytePort",
+      "head_sha": "8612f3a4",
+      "current_branch": "main",
+      "upstream_branch": "origin/main",
+      "remote_origin_url": "https://github.com/KooshaPari/BytePort.git",
+      "dirty_count": 0,
+      "local_branches_count": 1,
+      "stashes_count": 0,
+      "worktrees_count": 1,
+      "branches_ahead_of_origin": 0,
+      "primary_language": "Go",
+      "packages": {"Cargo.toml": True, "package.json": False, "pyproject.toml": False, "go.mod": False},
+      "default_branch": "main",
+      "branch_protection": {"ok": True, "checks": 0, "reviews": 0, "enforce_admins": False},
+      "last_commit_ts": "2026-06-23 19:39:36 -0700",
+      "last_commit_subject": "C-04: 71+ audit scorecard for BytePort (L1: 1.6/9.0)",
+      "anomalies": []
+    },
+    {
+      "name": "heliosBench",
+      "path": "C:\\Users\\koosh\\heliosBench",
+      "head_sha": "c4427c4",
+      "current_branch": "main",
+      "upstream_branch": "origin/main",
+      "remote_origin_url": "https://github.com/KooshaPari/heliosBench.git",
+      "dirty_count": 0,
+      "local_branches_count": 1,
+      "stashes_count": 0,
+      "worktrees_count": 1,
+      "branches_ahead_of_origin": 1,
+      "primary_language": "svg",
+      "packages": {"Cargo.toml": False, "package.json": True, "pyproject.toml": True, "go.mod": False},
+      "default_branch": "main",
+      "branch_protection": {"ok": True, "checks": 0, "reviews": 0, "enforce_admins": True},
+      "last_commit_ts": "2026-06-23 17:25:07 -0700",
+      "last_commit_subject": "docs(heliosbench): move Work Status block below H1 heading for proper markdown rendering",
+      "anomalies": ["1 commit ahead of origin; not pushed"]
+    },
+    {
+      "name": "helioslab-bootstrap",
+      "path": "C:\\Users\\koosh\\helioslab-bootstrap",
+      "head_sha": "08a03588",
+      "current_branch": "main",
+      "upstream_branch": None,
+      "remote_origin_url": "https://github.com/KooshaPari/helioslab.git",
+      "dirty_count": 0,
+      "local_branches_count": 3,
+      "stashes_count": 0,
+      "worktrees_count": 1,
+      "branches_ahead_of_origin": 0,
+      "primary_language": "TypeScript",
+      "packages": {"Cargo.toml": False, "package.json": True, "pyproject.toml": False, "go.mod": False},
+      "default_branch": "main",
+      "branch_protection": {"ok": True, "checks": 0, "reviews": 0, "enforce_admins": True},
+      "last_commit_ts": "2026-06-12 16:19:08 -0700",
+      "last_commit_subject": "ci: pin all 27 heliosApp workflows to ubuntu-24.04 (#491)",
+      "local_branches": ["main", "imports/integration-consolidate", "imports/phase3-spec-test-trace"],
+      "anomalies": []
+    },
+    {
+      "name": "phenotype-journeys",
+      "path": "C:\\Users\\koosh\\phenotype-journeys",
+      "head_sha": "8010ca9",
+      "current_branch": "main",
+      "upstream_branch": "origin/main",
+      "remote_origin_url": "https://github.com/KooshaPari/phenotype-journeys.git",
+      "dirty_count": 1,
+      "dirty_files_sample": ["?? Cargo.lock"],
+      "local_branches_count": 2,
+      "stashes_count": 0,
+      "worktrees_count": 1,
+      "branches_ahead_of_origin": 0,
+      "primary_language": "Markdown",
+      "packages": {"Cargo.toml": True, "package.json": False, "pyproject.toml": False, "go.mod": False},
+      "default_branch": "main",
+      "branch_protection": {"ok": True, "checks": 0, "reviews": 0, "enforce_admins": True},
+      "last_commit_ts": "2026-05-30 17:01:23 -0700",
+      "last_commit_subject": "feat(remotion/doc-embeds): promote shared Remotion rich-embed pipeline (#70)",
+      "anomalies": ["1 dirty file (Cargo.lock untracked)"]
+    },
+    {
+      "name": "phenotype-registry",
+      "path": "C:\\Users\\koosh\\phenotype-registry",
+      "head_sha": "0620539",
+      "current_branch": "wip/2026-06-23-owned-scope-registry-sync",
+      "upstream_branch": None,
+      "remote_origin_url": "https://github.com/KooshaPari/phenotype-registry.git",
+      "dirty_count": 0,
+      "local_branches_count": 2,
+      "stashes_count": 0,
+      "worktrees_count": 1,
+      "branches_ahead_of_origin": 0,
+      "primary_language": "Markdown",
+      "packages": {"Cargo.toml": True, "package.json": True, "pyproject.toml": False, "go.mod": False},
+      "default_branch": "main",
+      "branch_protection": {"ok": True, "checks": 0, "reviews": 0, "enforce_admins": True},
+      "last_commit_ts": "2026-06-23 19:05:17 -0700",
+      "last_commit_subject": "chore: untrack .grade-reports/* (now gitignored per line 34 of .gitignore; these are audit-tool ephemeral output)",
+      "local_branches": ["main", "wip/2026-06-23-owned-scope-registry-sync"],
+      "anomalies": ["HEAD on local-only WIP branch with no upstream tracking"]
+    },
+    {
+      "name": "phenotype-voxel",
+      "path": "C:\\Users\\koosh\\phenotype-voxel",
+      "head_sha": None,
+      "current_branch": None,
+      "upstream_branch": None,
+      "remote_origin_url": None,
+      "dirty_count": 0,
+      "local_branches_count": 0,
+      "stashes_count": 0,
+      "worktrees_count": 0,
+      "branches_ahead_of_origin": 0,
+      "primary_language": "TOML",
+      "packages": {"Cargo.toml": True, "package.json": False, "pyproject.toml": False, "go.mod": False},
+      "default_branch": None,
+      "branch_protection": {"ok": False, "error": "not a git repo"},
+      "anomalies": ["NOT A GIT REPO", "branch protection API errored"]
+    },
+    {
+      "name": "phenotype-infra-ci-fix",
+      "path": "C:\\Users\\koosh\\phenotype-infra-ci-fix",
+      "head_sha": "98ed810",
+      "current_branch": "main",
+      "upstream_branch": "origin/main",
+      "remote_origin_url": "https://github.com/KooshaPari/phenotype-infra.git",
+      "dirty_count": 0,
+      "local_branches_count": 1,
+      "stashes_count": 0,
+      "worktrees_count": 1,
+      "branches_ahead_of_origin": 0,
+      "primary_language": "Markdown",
+      "packages": {"Cargo.toml": False, "package.json": False, "pyproject.toml": False, "go.mod": False},
+      "default_branch": "main",
+      "branch_protection": {"ok": True, "checks": 0, "reviews": 0, "enforce_admins": True},
+      "last_commit_ts": "2026-06-01 18:30:35 -0700",
+      "last_commit_subject": "build(deps): bump the iac-rust-deps group across 1 directory with 2 updates (#65)",
+      "anomalies": []
+    }
+  ],
+
+  "observability_fleet": [
+    {"name": "phenotype-infra-ci-fix", "type": "worktree", "markers": "T,T,T,F,F,F", "branches": 19, "hypothesis": "CI workflow fixes; quality-gate edits."},
+    {"name": "PhenoObservability", "type": "main", "markers": "T,T,T,T,F,T", "branches": 55, "hypothesis": "Canonical observability stack (OTel, dashboards, SLO)."},
+    {"name": "PhenoObservability-pr178", "type": "worktree", "markers": "T,T,T,T,F,T", "branches": 55, "hypothesis": "Pre-merge capture of PR #178."},
+    {"name": "PhenoObservability-cve-openssl-0.10.80", "type": "worktree", "markers": "T,T,T,T,F,T", "branches": 19, "hypothesis": "openssl 0.10.80 CVE remediation audit."},
+    {"name": "PhenoMCP-main", "type": "main", "markers": "T,T,T,T,T,T", "branches": 2, "hypothesis": "Main checkout of a Pheno MCP server (Rust/TS)."},
+    {"name": "PhenoMCPServers", "type": "main", "markers": "T,F,F,F,F,F", "branches": 3, "hypothesis": "Multi-server MCP monorepo (collection of pheno MCP services)."},
+    {"name": "PhenoFastMCP-rust", "type": "main", "markers": "T,T,F,F,F,F", "branches": 12, "hypothesis": "FastMCP Rust implementation; high-perf MCP server."},
+    {"name": "phenoproc-fix", "type": "worktree", "markers": "T,T,T,T,T,F", "branches": 23, "hypothesis": "Process manager/handler fixes."},
+    {"name": "phenoroutermonitor-fix", "type": "worktree", "markers": "T,T,T,F,F,F", "branches": 14, "hypothesis": "Router-monitor (health/probe) component fixes."},
+    {"name": "phenodocs-fix", "type": "worktree", "markers": "T,T,T,T,T,F", "branches": 3, "hypothesis": "Docs-site fixes."},
+    {"name": "phenokits-fix", "type": "worktree", "markers": "F,F,F,F,F,F", "branches": 0, "hypothesis": "Kit/superset crate fixes. N/A upstream."},
+    {"name": "phenokits-deny-fix", "type": "worktree", "markers": "F,F,F,F,F,F", "branches": 0, "hypothesis": "cargo-deny policy fixes in kits. N/A upstream."},
+    {"name": "sidekick-deny-fix", "type": "worktree", "markers": "T,T,T,F,F,T", "branches": 16, "hypothesis": "cargo-deny fixes in sidekick crate."},
+    {"name": "hwledger-deny-fix", "type": "worktree", "markers": "T,T,T,F,F,F", "branches": 27, "hypothesis": "cargo-deny fixes in hwledger crate."},
+    {"name": "authvault-cve-13RjMo", "type": "non-git", "markers": "F,F,F,F,F,F", "branches": None, "hypothesis": "CVE patch in authvault (not a git repo)."},
+    {"name": "pheno-port-adapter", "type": "missing", "markers": "—", "branches": None, "hypothesis": "MISSING — not present on disk."},
+    {"name": "pheno-mcp-router", "type": "missing", "markers": "—", "branches": None, "hypothesis": "MISSING — not present on disk."},
+    {"name": "pheno-harness", "type": "non-git", "markers": "T,T,F,F,F,F", "branches": None, "hypothesis": "Integration test harness. NOT A GIT REPO."}
+  ],
+
+  "dag_spec_010_compute_infra": {
+    "spec_id": "010-compute-infra",
+    "spec_path": "C:\\Users\\koosh\\_compute_infra_audit\\010-compute-infra",
+    "total_units": 349,
+    "epic_count": 8,
+    "repos_in_scope": ["phenotype-infra", "PhenoCompose", "BytePort", "phenotype-registry", "agileplus"],
+    "grading_system": "phenotype-registry 30-pillar audit (L0-L29)",
+    "supersedes": "spec #008-nanovms-completion",
+    "pillars_covered": 30,
+    "pillars_target": 30,
+    "pillar_units": {
+      "L0":  {"name": "Architecture",          "units": 29},
+      "L1":  {"name": "Boundaries",            "units": 4},
+      "L2":  {"name": "Testing",               "units": 22},
+      "L3":  {"name": "CI",                    "units": 26},
+      "L4":  {"name": "Security",              "units": 16},
+      "L5":  {"name": "Docs",                  "units": 41},
+      "L6":  {"name": "Repo hygiene",          "units": 17},
+      "L7":  {"name": "Coverage",              "units": 4},
+      "L8":  {"name": "Performance",           "units": 30},
+      "L9":  {"name": "Build",                 "units": 4},
+      "L10": {"name": "Type safety",           "units": 5},
+      "L11": {"name": "Observability",         "units": 19},
+      "L12": {"name": "SBOM/SLSA",             "units": 9},
+      "L13": {"name": "Reproducibility",       "units": 6},
+      "L14": {"name": "Modularity",            "units": 12},
+      "L15": {"name": "API stability",         "units": 8},
+      "L16": {"name": "Error model",           "units": 7},
+      "L17": {"name": "Config",                "units": 3},
+      "L18": {"name": "State",                 "units": 3},
+      "L19": {"name": "Concurrency",           "units": 1},
+      "L20": {"name": "I/O",                   "units": 4},
+      "L21": {"name": "Networking",            "units": 1},
+      "L22": {"name": "Cost",                  "units": 8},
+      "L23": {"name": "Carbon",                "units": 3},
+      "L24": {"name": "Compliance",            "units": 11},
+      "L25": {"name": "Release",               "units": 16},
+      "L26": {"name": "Onboarding",            "units": 5},
+      "L27": {"name": "Internal cross-repo",   "units": 23},
+      "L28": {"name": "External diff",         "units": 9},
+      "L29": {"name": "Future-proofing",       "units": 3}
+    },
+    "epics": [
+      {"id": "A", "title": "Hygiene garden & branch slim",                  "units": 35, "focus": "Branch TTL on phenotype-infra/PhenoCompose/BytePort; shared editorconfig/gitignore/gitattributes; cursor/wip/recover branch fate; pre-commit 30-pillar hook."},
+      {"id": "B", "title": "Cross-repo consolidation & 30-pillar grading", "units": 45, "focus": "Run phenoregistry 30-pillar audit on all 4 repos; de-dup hexagonal helpers; tier-0/1/2/3 gates; phenoregistry-cli in pre-merge."},
+      {"id": "C", "title": "phenotype-infra: IaC + runbooks hardening",     "units": 51, "focus": "terraform validate across 4 clouds; module lifecycle; Railway backend (PR #88); OCI acquire hooks; pheno-tracing OTLP; ADRs per module; cost dashboards; multi-cloud failover."},
+      {"id": "D", "title": "PhenoCompose: NVMS, Mojo, Zig FFI, multi-driver", "units": 61, "focus": "Resolve fix/nanovms-module-conflict; Mojo kernel promotion; Zig FFI bindgen 0.72; process-compose canonicalization; vitest 4.x; NVMS API v1; 3-tier isolation (Wasmtime/gVisor/Firecracker); L7 decomposition."},
+      {"id": "E", "title": "BytePort: terminal UI, tools CLI, otel, governance", "units": 51, "focus": "Recover terminal UI + tools CLI from worktrees; OTel instrumentation; clap-ext wave-2; CLI distribution hub (homebrew/scoop/apt/choco/cargo-dist); SLSA L3; CVE sweep."},
+      {"id": "F", "title": "DAG foundation + automation",                   "units": 36, "focus": "Complete bp-dag-foundation-2026-06-12; extract pheno-dag crate; artifact-aware parallel scheduler; auditor to auto-DAG extension; Web UI in BytePort dashboard."},
+      {"id": "G", "title": "SOTA polish & external differentiation",        "units": 45, "focus": "SLSA L3; reproducible builds; WASM smoke for NVMS; SBOM (CycloneDX + SPDX); eBPF observability; cost-aware + carbon-aware scheduler; multi-tenant isolation tests."},
+      {"id": "H", "title": "Stakeholder docs & external outcomes",          "units": 25, "focus": "docs.phenotype-org site; ADRs published to registry; per-quarter public roadmap; comparative benchmarks; Why phenosystem pitch."}
+    ],
+    "execution_state": {
+      "phase": 1,
+      "node_count": 95,
+      "by_status": {"pending": 95, "in_progress": 0, "complete": 0, "failed": 0},
+      "by_epic":   {"A": 35, "B": 45, "F": 15},
+      "cycle": None,
+      "validation": "healthy"
+    },
+    "acceptance_gates": {
+      "tier_0": ["build green", "test-unit green", "fmt/clippy/lint green", "typecheck green"],
+      "tier_1": ["security scan (cargo audit / npm audit / trufflehog)", "SBOM produced (CycloneDX)", "LICENSE present (Apache-2.0 OR MIT)", "CHANGELOG updated"],
+      "tier_2": ["coverage >= 71% lib/framework/service (per ADR-040)", "SOTA.md refreshed", "ADR exists if architectural change"],
+      "cross_repo": ["phenotype-registry entry updated (projects/<repo>.json)", "DOMAIN_ROLES alignment verified", "LANGUAGE_PLACEMENT tier justified"]
+    },
+    "owners": {
+      "spec_owner": "koosh",
+      "schema": "agileplus-v1-work-unit",
+      "standards_authority": "phenotype-registry",
+      "audit_system": "grade.sh (71-pillar fleet grader)"
+    }
+  },
+
+  "pillar_grading_system": {
+    "grader_repo": "phenotype-registry",
+    "grader_script": "grade.sh",
+    "script_lines": "1-198",
+    "stacks": ["Rust", "Node", "Python", "Go"],
+    "weighted_checks": {
+      "build": 2, "test-unit": 3, "fmt": 2, "lint": 2, "typecheck": 2,
+      "deny_audit": 1, "doc": 1, "coverage": 2, "fuzz": 1, "bench": 1,
+      "install": 1, "e2e": 2, "mutation": 1, "security": 1, "race": 2, "snapshot": 1
+    },
+    "letter_grades": {"A+": ">=95%", "A": ">=90%", "A-": ">=85%", "B+": ">=80%", "B": ">=75%", "B-": ">=70%", "C+": ">=65%", "C": ">=60%", "F": "<60%"},
+    "non_zero_exit_threshold": 85,
+    "output_formats": {"text": "default", "json": ".grade-reports/grade.json", "html": ".grade-reports/grade.html"},
+    "fast_mode": "--fast skips heavy checks",
+    "ecosystem_validator": "scripts/validate-ecosystem.sh (lines 78-92)",
+    "catalog_validator": "scripts/validate-catalog.py",
+    "pillar_reports_present": 21,
+    "pillar_reports_target": 30,
+    "pillar_reports_files": ["L0","L1","L2","L3","L4","L5","L6","L7","L8","L9","L10","L11","L12","L13","L14","L15","L16","L17","L18","L19","L20","L21"],
+    "pillar_reports_missing": ["L22","L23","L24","L25","L26","L27","L28","L29"]
+  },
+
+  "owned_graded_repos": [
+    {"name": "Dev/Authvault",  "stack": "Rust workspace (authn/token ledger)", "grade": "A-", "file": "_grade_owned_authvault.txt",  "headline": "Production-shape; CI green; CVE-fix branches active."},
+    {"name": "Dev/Benchora",   "stack": "Rust benches (perf/criterion)",       "grade": "A-", "file": "_grade_owned_benchora.txt",   "headline": "Benches compile, no published reports."},
+    {"name": "Dev/Configra",   "stack": "Rust config crate (typed env)",       "grade": "A",  "file": "_grade_owned_configra.txt",   "headline": "Clean, minimal, fast."},
+    {"name": "Dev/Eventra",    "stack": "Rust event-bus crate",                 "grade": "A-", "file": "_grade_owned_eventra.txt",    "headline": "Core solid; example/docs thin."},
+    {"name": "Dev/Eyetracker", "stack": "Rust (gaze/eye-tracker)",              "grade": "B+", "file": "_grade_owned_eyetracker.txt", "headline": "Compiles + lints; coverage and e2e gaps."},
+    {"name": "Dev/Quillr",     "stack": "Rust (rich-text/parser)",              "grade": "B+", "file": "_grade_owned_quillr.txt",     "headline": "Parses OK; coverage/doc thin."}
+  ],
+
+  "audit_dump_files": [
+    {"file": "_audit_dump.txt",      "scope": "Fleet-wide audit dump (likely merged from 13 canonical repos)"},
+    {"file": "_audit_out.txt",       "scope": "Raw output of a single audit run"},
+    {"file": "_audit_reg_dump.txt",  "scope": "Registry-specific dump"},
+    {"file": "_audit_summary.txt",   "scope": "Human-readable summary across the fleet"}
+  ],
+
+  "audit_infrastructure_systems": [
+    {"name": "agileplus",            "purpose": "Spec-driven dev substrate (V3), 22-crate workspace; origin of grade.sh"},
+    {"name": "phenotype-registry",   "purpose": "Org-wide fleet grader + audit system; index of 13 canonical KooshaPari repos"},
+    {"name": "phenotype-org-audits", "purpose": "Org-wide audit/justification documentation repo"}
+  ],
+
+  "pillar_L0_architecture_sample": {
+    "scope": "4-repo bloc (AgilePlus, thegent, Tracely, Tracera)",
+    "workspace_topology": {
+      "AgilePlus": "45-crate Cargo workspace; resolver=3; edition=2021; rust-version=1.88",
+      "thegent":   "26-crate Rust sub-workspace + Python pyproject (hybrid)",
+      "Tracely":   "5-crate workspace (2 empty stubs: zerokit, pheno-logging-zig)",
+      "Tracera":   "single-crate tracera-core + Python/Go/TS polyglot shells"
+    },
+    "patterns_in_use": [
+      "Hexagonal (Ports & Adapters)",
+      "Use-Case Per-Module",
+      "Event-Sourcing Engine",
+      "Adapter / Plugin layer",
+      "Microkernel / Hex kernel + agent shells"
+    ],
+    "gaps": [
+      "agileplus-subcmds is a stub workspace member",
+      "Tracely/zerokit/ and pheno-logging-zig/ have empty src/",
+      "thegent hybrid Rust-Python boundary undocumented",
+      "Tracera matrix.rs is Phase-2 stub",
+      "No agileplus-subcmds <-> tracera-core link wired",
+      "No machine-checkable spec-first guard"
+    ]
+  },
+
+  "pillar_L11_coverage_sample": {
+    "scope": "Test coverage & quality gates (4-repo bloc)",
+    "per_repo": [
+      {"repo": "AgilePlus", "coverage_tooling": "tarpaulin (soft)", "gate": "Codecov 80% on 3/45 crates", "mutation": False, "property_based": False, "fuzz": False, "snapshot": "partial (cucumber)"},
+      {"repo": "thegent",   "coverage_tooling": "pytest-cov",        "gate": "Codecov 85% (configured not enforced)", "mutation": "pilot", "property_based": True, "fuzz": False, "snapshot": "custom"},
+      {"repo": "Tracely",   "coverage_tooling": "tarpaulin (local)", "gate": "none", "mutation": False, "property_based": False, "fuzz": "half-wired", "snapshot": False},
+      {"repo": "Tracera",   "coverage_tooling": "enabled",          "gate": "via reusable workflow", "mutation": "partial", "property_based": "partial", "fuzz": False, "snapshot": "partial"}
+    ]
+  },
+
+  "open_items": [
+    "Push ahead branches: nanovms (+1) and heliosBench (+1) have unpushed local commits",
+    "Resolve phenotype-voxel — not a git repo; either git init or delete",
+    "Decide fate of marker-less worktrees: phenokits-fix, phenokits-deny-fix, authvault-cve-13RjMo, pheno-harness",
+    "Investigate missing repos: pheno-port-adapter, pheno-mcp-router",
+    "Clean phenotype-journeys — 1 dirty file (Cargo.lock)",
+    "Merge phenotype-registry WIP — wip/2026-06-23-owned-scope-registry-sync has no upstream",
+    "Reconcile phenotype-infra branch — local master vs GitHub main",
+    "Start DAG phase-2 — 250 nodes (epics C/D/E/G/H) not yet enumerated",
+    "Generate pillars L22-L29 — only 21 of 30 pillar reports on disk",
+    "Run phenotype-registry 30-pillar audit on each of the 4 compute repos (DAG units B-01, B-02, B-03)"
+  ]
+}
+
+# write JSON
+out_path = r"C:\Users\koosh\_audit\compute_infra_observ_state_2026-06-22.json"
+with open(out_path, "w") as f:
+    json.dump(data, f, indent=2)
+
+print(f"Wrote {out_path}")
+print(f"Top-level keys: {list(data.keys())}")
+print(f"compute_infra_repos: {len(data['compute_infra_repos'])}")
+print(f"observability_fleet: {len(data['observability_fleet'])}")
+print(f"dag epics: {len(data['dag_spec_010_compute_infra']['epics'])}")
+print(f"dag pillars: {len(data['dag_spec_010_compute_infra']['pillar_units'])}")

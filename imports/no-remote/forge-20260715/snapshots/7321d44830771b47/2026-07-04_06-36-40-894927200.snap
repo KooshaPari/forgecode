@@ -1,0 +1,73 @@
+[workspace.metadata.release-groups.core]
+members = [
+  "phenotype-config",
+  "phenotype-diff",
+  "phenotype-ontology",
+  "phenotype-pdk",
+  "phenotype-platform",
+  "phenotype-resilience",
+  "phenotype-service-registry",
+  "pheno-tracing-stub",
+  "pheno-type-stub",
+  "pheno-rules",
+  "dag-scheduler",
+  "agent-orchestrator",
+  "agent-forecast",
+  "anthropic-usage-poll",
+  "byteport",
+  "heliosbench",
+  "nanovms",
+  "policystack",
+  "policy-engine",
+  "perf",
+]
+bump = "minor"
+
+[workspace.metadata.release-groups.cli]
+members = [
+  "phenotype-cli",
+  "acceptance-contract",
+  "audit-implementation",
+  "audit-privacy",
+  "bench-guard",
+  "commit-msg-check",
+  "doc-link-check",
+  "docs-health",
+  "fr-coverage",
+  "fr-trace",
+  "legacy-scan",
+  "quality-gate",
+  "release-cut",
+  "worktree-manager",
+  "hook-entry",
+]
+bump = "minor"
+
+[workspace.metadata.release-groups.observability]
+members = [
+  "phenotype-tooling-observability",
+  "fuzz-setup",
+  "perfharness",
+]
+bump = "minor"
+
+[workspace.metadata.release-groups.release]
+members = [
+  "ptx",
+  "sbom-gen",
+]
+bump = "patch"
+
+[workspace.metadata.release-groups.standalone]
+members = [
+  "absorb-kits",
+  "pheno-mcp",
+  "pheno-mcp-router",
+  "pheno-port-adapter",
+  "pheno-events",
+  "pheno-otel",
+  "phenodag",
+  "portage",
+  "absorb",
+]
+bump = "patch"

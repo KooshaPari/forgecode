@@ -1,0 +1,48 @@
+"""Database connection module for TracerTM."""
+from typing import Optional
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
+
+from typing import Generator
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from tracertm.models.base import Base
+
+
+class DatabaseConnection:
+    """Simple database connection manager."""
+
+    _engine = None
+    _session_factory = None
+
+    @classmethod
+    def initialize(cls, database_url: str, **kwargs):
+        """Initialize the database connection."""
+        cls._engine = create_engine(database_url, **kwargs)
+        cls._session_factory = sessionmaker(bind=cls._engine)
+
+    @classmethod
+    def get_session(cls) -> Session:
+        """Get a new database session."""
+        if cls._session_factory is None:
+            # Return a dummy session for testing
+            return None
+        return cls._session_factory()
+
+    @classmethod
+    def reset(cls):
+        """Reset the connection."""
+        cls._engine = None
+        cls._session_factory = None
+
+
+def get_session() -> Optional[Session]:
+    """Get a database session."""
+    return DatabaseConnection.get_session()
+
+
+def get_engine():
+    """Get the database engine."""
+    return DatabaseConnection._engine

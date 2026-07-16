@@ -1,0 +1,74 @@
+# docs/
+
+Living documentation for PhenoLM (the LLM policy, eval, trace, reward,
+and self-improvement layer owned by `pheno-harness`).
+
+## Reading order for a new agent
+
+1. `../SPEC.md`
+2. `../DESIGN.md`
+3. `ARCHITECTURE_LAYERS.md` — layer contract: `forge-dev`,
+   `omniroute-dev`, `pheno-serve-dev`, `PhenoLM`, engines, `bifrost`.
+4. `GARDEN_LOOP.md` — managed self-improvement policy.
+5. `PHENOLM_MIGRATION.md` — `pheno-specs` → `PhenoLM` migration,
+   `agileplus-specs/` submodule handling.
+6. `PUBLISHING.md` — split-repo publishing protocol.
+7. `adrs/0001-current-state-audit.md` — read-only state snapshot,
+   citations, unknowns.
+8. `adrs/0003-local-serving-bootstrap.md` — local model workstream
+   decision + bootstrap commands.
+9. `specs/001-eval-architecture.md` — eval suite taxonomy, metric
+   taxonomy, reproducibility contract, intent-graph design.
+10. `specs/002-trace-evalset.md` — per-role trace-derived eval pipeline.
+11. `specs/003-model-engine-matrix.md` — local 0.8B–35B × engine
+    matrix, 3090 Ti vRAM budget, M1 Pro fallback, spec-dec zoo.
+12. `specs/004-implementation-plan.md` — staged plan, ordered PRs,
+    weekly roll-out.
+
+## adrs/ — Architecture Decision Records
+
+| ADR | Topic | Status |
+|---|---|---|
+| `0001-current-state-audit.md` | Read-only state snapshot, primary-source verification, gap analysis, unknowns. | accepted, last refresh 2026-07-03 |
+| `0002-risks-register.md` | 20 named risks with detection + mitigation. | living |
+| `0003-local-serving-bootstrap.md` | Local-first workstream **decision + bootstrap commands**. **No model SKUs asserted in this ADR** — picks live in `state/hf_scrape/2026-07-03/v2_shortlist.md` and are sign-off-gated by user. | revised |
+| `0004-stale-sku-retrospective.md` | Root-cause analysis of the stale-Qwen-2.5 / stale-Qwen3-8B / missed-Gemma-4 chain. Lessons + 5 control rules for future model picks. | accepted |
+
+## specs/ — Specifications
+
+| Spec | Topic |
+|---|---|
+| `001-eval-architecture.md` | Eval suites, metric taxonomy, reproducibility contract, intent-graph layers A–E. |
+| `002-trace-evalset.md` | Trace-derived per-role eval set, spec schema, replay executor. |
+| `003-model-engine-matrix.md` | Model × engine matrix, vRAM budget, parallel sweep targets. **No model SKUs asserted** — see `state/hf_scrape/2026-07-03/v2_shortlist.md` for the live pick set. |
+| `004-implementation-plan.md` | Stages, ordered PRs, weekly roll-out. |
+
+## Top-level canonicals
+
+- `../SPEC.md` — single-page specification.
+- `../DESIGN.md` — single-page design intent.
+
+## Live data sources (NOT docs, but referenced from the docs above)
+
+- `../state/hf_scrape/2026-07-03/v2_shortlist.md` — capability-first
+  shortlist of current (2026-07-04) HF models by tier. **Single source of
+  truth for model SKUs** until the user signs off.
+- `../state/hf_scrape/2026-07-03/author_flagships.json` — machine-readable
+  flagship-per-author snapshot.
+- `../state/hf_scrape/2026-07-03/models.jsonl` — 260-model baseline
+  corpus (kept records from the 2026-07-03 sweep).
+- `../state/hf_scrape/2026-07-03/scripts/` — `hf_scrape_2026_07_03.py`,
+  `hf_probe_families.py`, `hf_list_families.py`, `hf_author_flagships.py`,
+  `build_v2_shortlist.py` — re-runnable scrape + probe pipeline.
+
+These files are referenced from the docs and the live eval loop, but
+they are **state, not docs**.
+
+## Conventions
+
+- ADRs are immutable once accepted; corrections go in a follow-up ADR.
+- Specs are versioned by spec number; v2 of a spec supersedes v1.
+- Docs never embed secrets. Any secret reference uses an env-var name
+  only, never a value.
+- `*.manifest.json` files (from `../specs/001-eval-architecture.md`
+  §6) are committed; result JSONs are gitignored.

@@ -1,0 +1,250 @@
+//! DAG manifest types — mirrors `compute_infra_dag.yaml` schema.
+//!
+//! These types deserialise the full DAG YAML file produced by the
+//! compute/infra epic planning pipeline.  Only the fields needed by
+//! the agileplus dispatch phase are mandatory.
+
+use serde::{Deserialize, Serialize};
+
+// ---------------------------------------------------------------------------
+// Top-level manifest
+// ---------------------------------------------------------------------------
+
+/// The root DAG document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DagManifest {
+    pub meta: ManifestMeta,
+
+    #[serde(default)]
+    pub gates: ManifestGates,
+
+    /// Epic blocks — keyed by epic id (e.g. `"epic_A"`, `"epic_F"`).
+    #[serde(flatten)]
+    pub epics: std::collections::HashMap<String, EpicDef>,
+
+    #[serde(default)]
+    pub auditor_loop: Option<AuditorLoop>,
+
+    #[serde(default)]
+    pub parallelism: ParallelismModel,
+
+    #[serde(default)]
+    pub risks: Vec<RiskItem>,
+}
+
+// ---------------------------------------------------------------------------
+// Meta
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestMeta {
+    pub id: String,
+    pub title: String,
+    pub owner: String,
+    pub generated: String,
+    pub schema: String,
+    #[serde(default)]
+    pub standards_authority: String,
+    #[serde(default)]
+    pub audit_system: String,
+}
+
+// ---------------------------------------------------------------------------
+// Gates
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ManifestGates {
+    #[serde(default)]
+    pub tier_0: Vec<String>,
+    #[serde(default)]
+    pub tier_1: Vec<String>,
+    #[serde(default)]
+    pub tier_2: Vec<String>,
+    #[serde(default)]
+    pub cross_repo: Vec<String>,
+}
+
+impl Default for ManifestGates {
+    fn default() -> Self {
+        Self {
+            tier_0: vec![
+                "build green".into(),
+                "test-unit green".into(),
+                "fmt / clippy / lint green".into(),
+                "typecheck green".into(),
+            ],
+            tier_1: vec![
+                "security scan (cargo audit / npm audit / trufflehog)".into(),
+                "SBOM produced (CycloneDX)".into(),
+                "LICENSE present (Apache-2.0 OR MIT)".into(),
+                "CHANGELOG updated".into(),
+            ],
+            tier_2: vec![
+                "coverage >= 71% lib / framework / service".into(),
+                "SOTA.md refreshed".into(),
+                "ADR exists if architectural change".into(),
+            ],
+            cross_repo: vec![
+                "phenotype-registry entry updated (projects/<repo>.json)".into(),
+                "DOMAIN_ROLES alignment verified".into(),
+                "LANGUAGE_PLACEMENT tier justified".into(),
+            ],
+        }
+    }
+}
+
+/// Convenience alias.
+pub type GateLevel = ManifestGates;
+
+// ---------------------------------------------------------------------------
+// Epic definition
+// ---------------------------------------------------------------------------
+
+/// An epic block from the DAG YAML.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpicDef {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub motivation: String,
+
+    #[serde(default)]
+    pub units: Vec<UnitEntry>,
+}
+
+/// A single YAML-based unit entry inside an epic.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnitEntry {
+    pub id: String,
+    pub repo: String,
+    #[serde(rename = "type")]
+    pub unit_type: String,
+    pub title: String,
+}
+
+// ---------------------------------------------------------------------------
+// Auditor loop
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditorLoop {
+    pub schedule: String,
+    pub steps: Vec<String>,
+    pub invariants: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Parallelism
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParallelismModel {
+    #[serde(default = "default_parallel_model")]
+    pub model: String,
+    #[serde(default)]
+    pub pools: Vec<ParallelPool>,
+    #[serde(default = "default_max_conc")]
+    pub total_concurrent_agents: usize,
+    #[serde(default = "default_ceiling")]
+    pub ceiling: String,
+    #[serde(default)]
+    pub strategy: String,
+}
+
+fn default_parallel_model() -> String {
+    "artifact-aware topological".into()
+}
+fn default_max_conc() -> usize {
+    17
+}
+fn default_ceiling() -> String {
+    "20".into()
+}
+
+impl Default for ParallelismModel {
+    fn default() -> Self {
+        Self {
+            model: default_parallel_model(),
+            pools: vec![],
+            total_concurrent_agents: default_max_conc(),
+            ceiling: default_ceiling(),
+            strategy: String::new(),
+        }
+    }
+}
+
+/// A named worker pool that targets specific repos.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParallelPool {
+    pub name: String,
+    pub size: usize,
+    pub repos: Vec<String>,
+    #[serde(default)]
+    pub role: String,
+}
+
+// ---------------------------------------------------------------------------
+// Risk register
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RiskItem {
+    pub id: String,
+    pub name: String,
+    pub mitigation: String,
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+impl DagManifest {
+    /// Load a DAG manifest from a YAML file path.
+    pub fn from_yaml_path(path: &std::path::Path) -> Result<Self, crate::unit::DagError> {
+        let content =
+            std::fs::read_to_string(path).map_err(|e| crate::unit::DagError::Io(e.to_string()))?;
+        Self::from_yaml_str(&content)
+    }
+
+    /// Load a DAG manifest from a YAML string.
+    pub fn from_yaml_str(yaml: &str) -> Result<Self, crate::unit::DagError> {
+        serde_yaml::from_str(yaml).map_err(|e| crate::unit::DagError::Parse(e.to_string()))
+    }
+
+    /// Return all epic blocks that match a given epic ID (e.g. `"F"`).
+    ///
+    /// The map keys use the `epic_` prefix convention (e.g. `"epic_F"`).
+    pub fn epics_by_id(&self, epic_id: &str) -> Vec<&EpicDef> {
+        self.epics
+            .values()
+            .filter(|e| e.id == epic_id || e.id == format!("epic_{}", epic_id))
+            .collect()
+    }
+
+    /// Return all epic blocks whose id is in the given list.
+    pub fn epics_by_ids(&self, ids: &[&str]) -> Vec<&EpicDef> {
+        let set: std::collections::HashSet<&str> = ids.iter().copied().collect();
+        self.epics.values().filter(|e| set.contains(e.id.as_str())).collect()
+    }
+
+    /// Gather units from a specific epic, returning `DagUnit` values that
+    /// match the agileplus dispatch model.
+    pub fn units_for_epic(&self, epic_id: &str) -> Vec<crate::unit::DagUnit> {
+        let mut out = Vec::new();
+        for epic in self.epics_by_id(epic_id) {
+            for (i, entry) in epic.units.iter().enumerate() {
+                out.push(crate::unit::DagUnit {
+                    id: entry.id.clone(),
+                    epic: epic.id.clone(),
+                    repo: entry.repo.clone(),
+                    title: entry.title.clone(),
+                    unit_type: entry.unit_type.clone(),
+                    sequence: i as u32,
+                    status: crate::unit::UnitStatus::Pending,
+                });
+            }
+        }
+        out
+    }
+}

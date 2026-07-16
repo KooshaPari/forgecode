@@ -1,0 +1,203 @@
+/**
+ * PR #36 — TPROXY decrypt complete: SNI-based TLS inspection selector.
+ *
+ * Given a TLS ClientHello (or an SNI hint already extracted from one), this
+ * module picks the correct inspection strategy for the requested host:
+ *
+ *   - **Bypass**: hosts the operator has explicitly opted out of (e.g. a
+ *     bank, a CI registry with HPKP pinning, or `update.microsoft.com`).
+ *     We raw-tunnel them through without touching bytes.
+ *
+ *   - **Force-intercept**: hosts we MUST inspect even if they would otherwise
+ *     match a bypass pattern (e.g. an internal `*.internal` wildcard matched
+ *     `gateway.internal` but the IDE talks to `gateway-staging.internal`).
+ *
+ *   - **Inspect** (default): terminate TLS, capture the request/response,
+ *     re-encrypt to upstream.
+ *
+ * The selector is also responsible for resolving the actual hostname when the
+ * SNI is missing or misleading (some clients omit SNI; some pin an IP).
+ *
+ * Pattern matching supports:
+ *   - exact match (`api.example.com`)
+ *   - leading wildcard (`*.example.com` matches `a.example.com` but NOT
+ *     `example.com` itself, per RFC 6125 §6.4.3)
+ *   - suffix wildcard (`.example.com` matches `a.example.com` AND `example.com`,
+ *     the older "any subdomain" form seen in real bypass configs)
+ *
+ * It does NOT support `**` or arbitrary globs — the spec for bypass lists is
+ * narrow on purpose: every entry should be deliberate.
+ */
+import { sanitizeErrorMessage } from "@omniroute/open-sse/utils/error";
+import type {
+  CertManagerLike,
+  InterceptedForwarder,
+  TlsInterceptLogger,
+} from "./types.ts";
+import { silentLogger } from "./types.ts";
+
+/** Strategy the inspector will apply to a connection. */
+export type InspectDecision =
+  | { kind: "inspect"; host: string }
+  | { kind: "bypass"; host: string; reason: string }
+  | { kind: "force-intercept"; host: string };
+
+/**
+ * Check whether `hostname` matches any pattern in `patterns`. Patterns are
+ * matched case-insensitively. Supported forms:
+ *
+ *   - `api.example.com` — exact match
+ *   - `*.example.com` — RFC 6125: matches exactly one left-most label
+ *   - `.example.com`   — match the apex OR any left-most label
+ *   - empty / null     — ignored (no pattern to match)
+ */
+export function hostMatches(hostname: string, patterns: ReadonlyArray<string>): boolean {
+  if (!hostname) return false;
+  const host = hostname.toLowerCase();
+  for (const raw of patterns) {
+    if (!raw) continue;
+    const pattern = raw.trim().toLowerCase();
+    if (!pattern) continue;
+    if (pattern.startsWith("*.")) {
+      const suffix = pattern.slice(1); // ".example.com"
+      if (host.endsWith(suffix) && host.length > suffix.length) return true;
+    } else if (pattern.startsWith(".")) {
+      const suffix = pattern; // ".example.com"
+      if (host === suffix.slice(1) || host.endsWith(suffix)) return true;
+    } else if (pattern === host) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Resolve the inspector decision for a given (possibly missing) SNI + hint.
+ * `forceInterceptHosts` overrides `bypassHosts` (explicit wins). When both
+ * SNI and hint are absent, we cannot decide safely — default to inspect on
+ * the hint and let the upstream error out if the host is unreachable.
+ */
+export function decideInspection(
+  sni: string | undefined,
+  hint: string | undefined,
+  bypassHosts: ReadonlyArray<string>,
+  forceInterceptHosts: ReadonlyArray<string>
+): InspectDecision {
+  const host = (sni || hint || "").trim();
+  if (!host) {
+    return { kind: "inspect", host: "" };
+  }
+  // force first (explicit wins).
+  if (hostMatches(host, forceInterceptHosts)) {
+    return { kind: "force-intercept", host };
+  }
+  if (hostMatches(host, bypassHosts)) {
+    return { kind: "bypass", host, reason: "host in bypass list" };
+  }
+  return { kind: "inspect", host };
+}
+
+export interface TlsInspectorDeps {
+  certManager: CertManagerLike;
+  forward: InterceptedForwarder;
+  bypassHosts?: ReadonlyArray<string>;
+  forceInterceptHosts?: ReadonlyArray<string>;
+  logger?: TlsInterceptLogger;
+}
+
+/**
+ * Stateful inspector that:
+ *   1. picks an inspection strategy for an incoming SNI,
+ *   2. lazily fetches the matching SecureContext for inspect decisions,
+ *   3. runs the forwarder on inspect hits,
+ *   4. records every decision so the proxy can audit / surface stats.
+ */
+export class TlsInspector {
+  private readonly certManager: CertManagerLike;
+  private readonly forward: InterceptedForwarder;
+  private readonly bypassHosts: ReadonlyArray<string>;
+  private readonly forceInterceptHosts: ReadonlyArray<string>;
+  private readonly logger: TlsInterceptLogger;
+  private readonly decisions: InspectDecision[] = [];
+  private static readonly MAX_DECISION_HISTORY = 256;
+
+  constructor(deps: TlsInspectorDeps) {
+    this.certManager = deps.certManager;
+    this.forward = deps.forward;
+    this.bypassHosts = deps.bypassHosts ?? [];
+    this.forceInterceptHosts = deps.forceInterceptHosts ?? [];
+    this.logger = deps.logger ?? silentLogger;
+  }
+
+  /** Decide what to do for an incoming connection. Caches recent decisions. */
+  decide(sni: string | undefined, hint?: string): InspectDecision {
+    const decision = decideInspection(
+      sni,
+      hint,
+      this.bypassHosts,
+      this.forceInterceptHosts
+    );
+    this.recordDecision(decision);
+    return decision;
+  }
+
+  /**
+   * Get the `tls.SecureContext` to present to the client for an inspect
+   * decision. Async because cert issuance may require RSA keygen.
+   */
+  async getContextForDecision(
+    decision: InspectDecision
+  ): Promise<import("node:tls").SecureContext | null> {
+    if (decision.kind === "bypass") return null;
+    if (!decision.host) {
+      throw new Error("Cannot issue cert for empty SNI");
+    }
+    try {
+      return await this.certManager.getSecureContext(decision.host);
+    } catch (err) {
+      this.logger.error("cert issuance failed", {
+        host: decision.host,
+        error: sanitizeErrorMessage(err),
+      });
+      throw err;
+    }
+  }
+
+  /**
+   * Forward an already-decrypted request to its upstream. Wraps the configured
+   * forwarder with HSTS stripping + try/catch so the proxy never sees an
+   * unhandled rejection from the upstream TLS layer.
+   */
+  async forwardDecrypted(req: Parameters<InterceptedForwarder>[0]): ReturnType<InterceptedForwarder> {
+    return this.forward(req);
+  }
+
+  /** Recent decisions (FIFO, capped). Useful for the status endpoint. */
+  recentDecisions(): ReadonlyArray<InspectDecision> {
+    return this.decisions.slice();
+  }
+
+  /** Count of decisions grouped by kind. */
+  decisionStats(): { inspect: number; bypass: number; forceIntercept: number } {
+    let inspect = 0;
+    let bypass = 0;
+    let forceIntercept = 0;
+    for (const d of this.decisions) {
+      if (d.kind === "inspect") inspect++;
+      else if (d.kind === "bypass") bypass++;
+      else forceIntercept++;
+    }
+    return { inspect, bypass, forceIntercept };
+  }
+
+  private recordDecision(decision: InspectDecision): void {
+    this.decisions.push(decision);
+    if (this.decisions.length > TlsInspector.MAX_DECISION_HISTORY) {
+      this.decisions.splice(0, this.decisions.length - TlsInspector.MAX_DECISION_HISTORY);
+    }
+    this.logger.debug("tls inspection decision", {
+      kind: decision.kind,
+      host: decision.kind === "bypass" ? decision.host : decision.host,
+    });
+  }
+}

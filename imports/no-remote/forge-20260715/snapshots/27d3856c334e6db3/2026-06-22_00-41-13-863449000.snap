@@ -1,0 +1,99 @@
+# phenotype-python-sdk — root uv workspace (consolidated kits)
+#
+# Absorbed top-level packages (formerly standalone repos), each added as a
+# history-preserving git subtree under packages/:
+#   - packages/auth-kit            (AuthKit)
+#   - packages/data-kit            (DataKit)
+#   - packages/mcp-kit             (McpKit)
+#   - packages/observability-kit   (ObservabilityKit)
+#   - packages/resilience-kit      (ResilienceKit)
+#   - packages/testing-kit         (TestingKit)
+#
+# De-nested 2026-06-02: the PhenoKits org-governance/artifact umbrella was
+# extracted out of this SDK (it is not a Python SDK kit). Its 7 publishable
+# Python packages were hoisted up to packages/ directly:
+#   pheno-cli-builder, pheno-cli-kit, phenotype-id, phenotype-logging,
+#   phenotype-py-kit, phenotype-testing, phenotype-config
+# The umbrella remainder (Rust workspace stub, hexagon docs, governance,
+# libs/{go,typescript}, schemas, templates) was removed; preserved as an
+# extraction bundle pending its own home (escalated to domain steward).
+#
+# Python publishable sub-projects live under each kit's python/ tree.
+# Namespace convention: phenotype.<kit>.* (see each package's own pyproject).
+
+[project]
+name = 'phenotype-python-sdk'
+version = '0.1.0'
+description = 'Phenotype org Python SDK monorepo workspace'
+readme = 'README.md'
+license = { text = 'MIT' }
+requires-python = '>=3.10'
+
+[tool.uv]
+package = false
+
+# Map every intra-workspace package name to its local member so cross-kit
+# path dependencies (e.g. phenotype-testing -> phenotype-config) resolve.
+[tool.uv.sources]
+agentmcp = { workspace = true }
+agentmcp-hex = { workspace = true }
+ci-cd-kit = { workspace = true }
+mcp-qa = { workspace = true }
+performance-kit = { workspace = true }
+pheno-analysis-cli = { workspace = true }
+pheno-cli-builder = { workspace = true }
+pheno-cli-kit = { workspace = true }
+pheno-db-kit = { workspace = true }
+pheno-deploy = { workspace = true }
+pheno-quality-cli = { workspace = true }
+pheno-quality-tools = { workspace = true }
+pheno-testing-cli = { workspace = true }
+phenotype-config = { workspace = true }
+phenotype-id = { workspace = true }
+phenotype-logging = { workspace = true }
+phenotype-py-kit = { workspace = true }
+phenotype-testing = { workspace = true }
+qa-kit = { workspace = true }
+
+[tool.uv.workspace]
+# Real library packages. Template scaffolds and test-fixture pyprojects under
+# */templates/*, */tests/*, and rust integrationtests are intentionally excluded.
+members = [
+  # NOTE: auth-kit & mcp-kit ship Poetry umbrella pyprojects with empty
+  # `packages = []` (no installable Python module), so they are not uv
+  # workspace members. Their non-Python assets remain absorbed under packages/.
+  # agentmcp-hex: extracted from KooshaPari/McpKit (archived 2026-06-17).
+  # Hexagonal DDD adapter layer; see packages/agentmcp-hex/ORIGIN.md.
+  'mcp/agentmcp',
+  'packages/agentmcp-hex',
+  'packages/data-kit/python/db_kit',
+  'packages/observability-kit/python',
+  'packages/resilience-kit/python/ci-cd-kit',
+  # deploy-kit (pheno-deploy-kit) excluded: its [full] extra requires
+  # vercel>=0.10.0 but PyPI only has vercel<=0.5.9 (unrelated stale package),
+  # making the workspace unsatisfiable. Absorbed but not a uv member; needs
+  # dependency fix upstream in ResilienceKit before inclusion.
+  'packages/resilience-kit/python/pheno-deploy',
+  'packages/testing-kit/python/mcp-qa',
+  'packages/testing-kit/python/pheno-analysis-cli',
+  'packages/testing-kit/python/pheno-quality-cli',
+  'packages/testing-kit/python/pheno-quality-tools',
+  'packages/testing-kit/python/pheno-testing-cli',
+  'packages/testing-kit/python/qa-kit',
+  # Hoisted out of the de-nested pheno-kits umbrella (2026-06-02):
+  'packages/pheno-cli-builder',
+  'packages/pheno-cli-kit',
+  'packages/phenotype-id',
+  'packages/phenotype-logging',
+  'packages/phenotype-py-kit',
+  'packages/phenotype-testing',
+  'packages/phenotype-config',
+]
+exclude = [
+  'packages/auth-kit',
+  'packages/mcp-kit',
+  'packages/**/templates/**',
+  'packages/**/tests/**',
+  'packages/**/integrationtests/**',
+  'packages/resilience-kit/python/deploy-kit',
+]

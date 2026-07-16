@@ -1,0 +1,31 @@
+fix(server): block path-traversal in sim.save_replay / sim.load_replay
+
+The `sim.save_replay` and `sim.load_replay` JSON-RPC handlers previously
+forwarded the wire `path` straight to `Simulation::save_replay` /
+`Simulation::load_replay_from_file`, both of which resolve any path the
+caller provides. An authenticated JSON-RPC client could therefore read
+or overwrite arbitrary files outside the bridge `saves/` directory (e.g.
+`../../etc/passwd`), and `sim.load_replay` additionally replaced the live
+simulation state.
+
+Two layers of defense:
+
+1. `parse_replay_path` in `jsonrpc.rs` now rejects every traversal
+   primitive we can detect from the string alone: empty, length > 255,
+   `/`, `\`, `..`, NUL / LF / CR, and any extension other than
+   `.civreplay`. All rejections surface as JSON-RPC `-32602 INVALID_PARAMS`
+   so legitimate clients see a clear contract violation rather than an
+   opaque I/O error.
+
+2. `replay_path_under` in `ws_bridge.rs` is the defense-in-depth: it
+   canonicalizes the candidate path against a fixed `saves/` root and
+   rejects anything that escapes (including symlinks) before the engine
+   touches the filesystem. Both `SaveReplay` and `LoadReplay` dispatch
+   arms now route through it; if a future refactor loosens the parser,
+   the containment check still holds.
+
+Regression tests cover both layers: traversal patterns, NUL smuggling,
+wrong extensions, pathological length, symlink escape (Unix), and the
+happy path. The previous `parse_replay_path` test fixture
+`saves/x.civreplay` is replaced with `replay-20260623.civreplay` since
+subdirectory paths are no longer accepted.

@@ -1,0 +1,58 @@
+## Summary
+Add deterministic query-response caching to Bifrost with normalized cache key derivation, reducing upstream latency for identical requests.
+
+## Context
+The Bifrost relay currently forwards every request to upstream providers, even when the exact same request (model, messages, parameters) was just processed. This wastes TPS quota and adds latency for repeated queries. We need a caching layer that:
+- Derives a stable, deterministic cache key from semantically meaningful request properties
+- Strips volatile/runtime-only fields so the same logical request produces the same key
+- Supports tenant and API-key isolation to prevent cross-tenant cache pollution
+- Can be disabled per-request via `Cache-Control: no-cache` header
+- Only caches non-streaming successful responses (status 200)
+
+## Changes
+- **`src/lib/cache/normalise.ts`** — Cache key derivation module
+  - `deriveCacheKey()`: SHA-256 digest of normalized request payload (model, messages, temperature, top_p, max_tokens, stop, tools, presence_penalty, frequency_penalty, tool_choice, response_format, seed)
+  - `stableStringify()`: Recursive JSON serialization with deterministically sorted keys at every nesting level — unlike `JSON.stringify(obj, arrayReplacer)` which strips nested fields
+  - `normaliseMessages()`: Strips ephemeral fields (e.g., `id`, `logprobs`, `metadata`) while preserving `role`, `content`, `tool_calls`, `name`, `function_call`, `prefix`
+  - `normaliseTools()`: Keeps only canonical `name` + `parameters` inside function descriptors; omits advisory `description`
+  - Isolation prefixes via `apiKeyId`, `tenantId`, `namespace` — visible as plain-text prefix before the hash
+  - `hashPrompt()`: Shorter SHA-256 prefix for prompt-only lookups
+  - `parseCacheKeyPrefix()`: Extracts isolation prefix from a cache key
+
+- **`src/lib/cache/queryResponseCache.ts`** — In-memory query-response cache
+  - LRU-like Map with configurable max entries (default 10,000)
+  - `keyFromBody()`: Derives cache key from raw request body with optional isolation prefixes
+  - `isCacheableRequest()`: Returns true only when `temperature === 0` and no `Cache-Control: no-cache` header
+  - `isCacheableResponse()`: Returns true only for status 200 responses
+  - `getCachedResponse()` / `setCachedResponse()`: Get/set with metadata (hit count, last access)
+  - `invalidateByKey()` / `clearCache()`: Single-key eviction or full reset
+  - `getCacheStats()`: Returns entries, hits, misses, hit rate for observability
+
+- **`src/lib/cache/index.ts`** — Barrel export
+
+- **`src/app/api/v1/relay/chat/completions/bifrost/route.ts`** — Wiring
+  - After body validation: attempt cache lookup and return cached response on hit (with `X-Cache: HIT` header)
+  - Before returning non-streaming 200 response: store in cache with key
+
+- **`tests/unit/cache-pr037.test.ts`** — 64 tests across 9 suites
+  - deriveCacheKey — determinism, normalization, edge cases (23 tests)
+  - deriveCacheKey — isolation prefixes (8 tests)
+  - hashPrompt (3 tests)
+  - keyFromBody (5 tests)
+  - isCacheableRequest (9 tests)
+  - isCacheableResponse (6 tests)
+  - queryResponseCache — memory roundtrip (4 tests)
+  - queryResponseCache — stats (3 tests)
+  - queryResponseCache — invalidation (3 tests)
+
+## Testing
+```bash
+# Run the cache-specific tests
+cd <repo-root>
+node --import tsx --import ./open-sse/utils/setupPolyfill.ts --import ./tests/_setup/isolateDataDir.ts --test --test-force-exit tests/unit/cache-pr037.test.ts
+
+# Expected: 64 passing, 0 failing
+
+# Run the full test suite to verify no regressions
+npm test
+```

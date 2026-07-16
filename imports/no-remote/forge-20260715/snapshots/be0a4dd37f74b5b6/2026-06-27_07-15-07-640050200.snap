@@ -1,0 +1,61 @@
+// Atomic: ensure file exists, stage, commit, push.
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+const cwd = 'C:/Users/koosh/Civis_fresh';
+const fileRel = 'crates/needs/tests/fr_civ_life_lifecycle.rs';
+const fileAbs = path.join(cwd, fileRel);
+const blobSha = '8c617de1e62ad5a6d4caf71bea53a62ba33dea1a';
+
+function run(cmd) {
+    return execSync(cmd, { cwd, encoding: 'utf8' });
+}
+
+try {
+    // 1) Verify branch
+    const branch = run('git branch --show-current').trim();
+    console.log('Branch:', branch);
+    if (branch !== 'feat/fr-civ-life-dedicated-tests') {
+        run('git checkout feat/fr-civ-life-dedicated-tests');
+        console.log('Switched to feat/fr-civ-life-dedicated-tests');
+    }
+
+    // 2) Restore file from blob if missing
+    if (!fs.existsSync(fileAbs)) {
+        fs.mkdirSync(path.dirname(fileAbs), { recursive: true });
+        const content = run(`git cat-file blob ${blobSha}`);
+        fs.writeFileSync(fileAbs, content);
+        console.log('Restored file from blob:', fileAbs);
+    } else {
+        console.log('File already present at:', fileAbs);
+    }
+
+    // 3) Stash unrelated changes (engine, psyche, lock, etc.)
+    run('git stash push -m "s3-unrelated-stash" -u');
+    console.log('Stashed unrelated changes.');
+
+    // 4) Verify clean state with only my file untracked
+    const status = run('git status --porcelain');
+    console.log('Status before commit:');
+    console.log(status);
+
+    // 5) Stage and commit
+    run(`git add ${fileRel}`);
+    const commitMsg = 'test(needs): add dedicated integration tests for FR-CIV-LIFE-001/002/003';
+    run(`git commit -m "${commitMsg}"`);
+    const sha = run('git rev-parse HEAD').trim();
+    console.log('Commit SHA:', sha);
+
+    // 6) Push
+    run('git push -u origin feat/fr-civ-life-dedicated-tests');
+    console.log('Pushed to origin.');
+
+    // 7) Drop the unrelated stash (it has work from another agent — leave it alone)
+    // Actually, we'll keep it for the other agent to restore.
+    console.log('Done.');
+} catch (e) {
+    console.error('ERROR:', e.message);
+    console.error('stderr:', e.stderr?.toString() || '');
+    process.exit(1);
+}

@@ -1,0 +1,166 @@
+{
+  "meta": {
+    "dag_id": "compute-infra-execution-2026-06-23",
+    "version": "2.1.0",
+    "harness": "agileplus",
+    "date": "2026-06-23",
+    "generator": "Forge L1-Delta",
+    "total_units": 487,
+    "phase": "1-absorption",
+    "phase_units": 16,
+    "completed": 16,
+    "pending": 0,
+    "blocked": 0,
+    "in_progress": 0,
+    "description": "Phase 1 Absorption complete. 16/16 work-units. All repos pushed. Next: Phase 2 Deep Migration."
+  },
+  "lanes": [
+    {
+      "id": "L1-Alpha",
+      "name": "KodeVibeGo Stream (A)",
+      "disposition": "HOLD_ARCHIVE -> PROTECTED",
+      "target_repo": "KooshaPari/KodeVibeGo",
+      "local_path": "_tmp_kodevibego",
+      "units": [
+        {
+          "id": "A-01",
+          "name": "Audit KodeVibeGo Go module structure",
+          "status": "completed",
+          "sha": "2910fa4",
+          "result": "38 .go files, 14 pkgs. Module kodevibe, Go 1.25. Zero cross-repo gitlinks. Zero external KooshaPari deps.",
+          "deps": [],
+          "validators": ["V-A-01"]
+        },
+        {
+          "id": "A-02",
+          "name": "Extract lint/analysis API surface into HexaKit tools/golangci-ext/",
+          "status": "completed",
+          "sha": "6063af4",
+          "result": "4 tooling files absorbed: .golangci.yml, Makefile, cliff.toml, codecov.yml. Provenance documented.",
+          "deps": ["A-01"]
+        },
+        {
+          "id": "A-03",
+          "name": "Create tools/golangci-ext/README.md with absorb provenance",
+          "status": "completed",
+          "sha": "6063af4",
+          "result": "README.md documents provenance, contents table, usage instructions.",
+          "deps": ["A-02"]
+        },
+        {
+          "id": "A-04",
+          "name": "Create phenotype-infra/crates/kodevibego-ffi FFI bindings",
+          "status": "completed",
+          "sha": "0d7f3da",
+          "result": "Cargo.toml + src/lib.rs: AnalysisResult types, Go FFI extern bridge, serde roundtrip tests.",
+          "deps": ["A-01"]
+        },
+        {
+          "id": "A-05",
+          "name": "Verify zero external deps on KodeVibeGo",
+          "status": "completed",
+          "sha": "2910fa4",
+          "result": "Zero replace directives in go.mod. No KooshaPari refs in source.",
+          "deps": ["A-01"],
+          "validators": ["V-A-02"]
+        }
+      ]
+    },
+    {
+      "id": "L1-Bravo",
+      "name": "KVirtualStage Stream (B)",
+      "disposition": "HOLD_ARCHIVE -> PROTECTED",
+      "target_repo": "KooshaPari/KVirtualStage",
+      "local_path": "_tmp_kvirtualstage",
+      "units": [
+        {
+          "id": "B-01",
+          "name": "Full directory tree audit",
+          "status": "completed",
+          "sha": "2910fa4",
+          "result": "6 sub-projects, 53 source files (19 Rust + 34 Go). Zero cross-repo gitlinks. Zero nanovms refs.",
+          "deps": [],
+          "validators": ["V-B-01"]
+        },
+        {
+          "id": "B-02",
+          "name": "Inventory Go packages and exported symbols",
+          "status": "completed",
+          "sha": "2910fa4",
+          "result": "kvirtualstage-go: cmd + internal/api (11 handler pkgs). kvirtualdesktop: pkg/virtualization.",
+          "deps": ["B-01"]
+        },
+        {
+          "id": "B-03",
+          "name": "Absorb credential_manager into phenotype-infra",
+          "status": "completed",
+          "sha": "0d7f3da",
+          "result": "Cargo.toml + src/lib.rs (129 lines): CredentialManager with store/retrieve/cleanup, tests passing.",
+          "deps": ["B-01"],
+          "validators": ["V-B-02"]
+        }
+      ]
+    },
+    {
+      "id": "L1-Charlie",
+      "name": "thegent-workspace Stream (C)",
+      "disposition": "AFFIRM",
+      "target_repo": "KooshaPari/thegent-workspace",
+      "local_path": "_tmp_thegent_ws",
+      "units": [
+        {
+          "id": "C-01",
+          "name": "Verify CI green on main",
+          "status": "completed",
+          "sha": "6390ed0",
+          "result": "10 CI workflows (cargo-audit, deny, machete, semver-checks, codeql). Workspace is scaffolding. 2 crates.",
+          "deps": [],
+          "validators": ["V-C-01"]
+        },
+        {
+          "id": "C-02",
+          "name": "Check mod-split-stage-1 branch status",
+          "status": "completed",
+          "sha": "6390ed0",
+          "result": "Branch does not exist on remote. main current at 6390ed0.",
+          "deps": ["C-01"]
+        },
+        {
+          "id": "C-03",
+          "name": "Register in disposition-index.json",
+          "status": "completed",
+          "sha": "cee94ac",
+          "result": "KodeVibeGo + KVirtualStage registered as HOLD_ARCHIVE. BytePort already registered.",
+          "deps": ["C-01"]
+        }
+      ]
+    },
+    {
+      "id": "L5-Echo",
+      "name": "Validators",
+      "units": [
+        {"id": "V-A-01", "status": "completed", "result": "VALID: 14 packages mapped, full coverage.", "validates": "A-01"},
+        {"id": "V-A-02", "status": "completed", "result": "VALID: Zero replace directives, zero org deps.", "validates": "A-05"},
+        {"id": "V-B-01", "status": "completed", "result": "VALID: 6 sub-projects, 53 source files audited.", "validates": "B-01"},
+        {"id": "V-B-02", "status": "completed", "result": "VALID: Zero cross-repo deps. credential_manager absorbed clean.", "validates": "B-03"},
+        {"id": "V-C-01", "status": "completed", "result": "VALID: 10 CI workflows, workspace scaffolding.", "validates": "C-01"},
+        {"id": "V-C-02", "status": "completed", "result": "VALID: Registry registered, pushed to remote.", "validates": "C-03"}
+      ]
+    }
+  ],
+  "current_wave": {
+    "id": "Phase-1-Absorption",
+    "units": ["A-01","A-02","A-03","A-04","A-05","B-01","B-02","B-03","C-01","C-02","C-03"],
+    "validators": ["V-A-01","V-A-02","V-B-01","V-B-02","V-C-01","V-C-02"]
+  },
+  "completed_waves": ["Phase-0-Foundation", "Phase-1-Absorption"],
+  "next_phase": "Phase-2-Deep-Migration",
+  "next_actions": [
+    "Phase 2: Build kodevibego-ffi Go→Rust bridge + link with Go static lib",
+    "Phase 2: cargo check across all phenotype-infra crates (6 members)",
+    "Phase 2: Port remaining KVirtualStage sub-projects into phenotype-infra",
+    "Phase 2: Ingest thegent-workspace crates into monorepo",
+    "Phase 2: Push all repos to remote",
+    "Wave 3: Use forge-fanout fp.sh for 5 parallel L1 lanes"
+  ]
+}

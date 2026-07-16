@@ -1,0 +1,23 @@
+[package]
+name = "kvirtualdesktop-core"
+version = "0.1.0"
+edition = "2021"
+description = "Core MCP protocol types and schema definitions for KVirtualDesktop — absorbed from _tmp_kvirtualstage/kvirtualdesktop-core"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KooshaPari/phenotype-infra"
+publish = false
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+url = { version = "2", features = ["serde"] }
+async-trait = { workspace = true }
+jsonwebtoken = { workspace = true }
+oauth2 = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true }

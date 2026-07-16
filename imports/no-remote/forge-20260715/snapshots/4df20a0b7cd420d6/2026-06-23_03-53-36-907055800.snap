@@ -1,0 +1,87 @@
+"""Batch 1: Rebase 7 easiest conflicting PR branches (4-12 commits ahead)"""
+import subprocess, sys, time
+
+REPO = "C:\\Users\\koosh\\Civis"
+BRANCHES = [
+    ("chore/reconcile-main-divergence", 4),
+    ("feat/language-emergence", 8),
+    ("chore/ci-workflow-fix", 8),
+    ("feat/religion-emergence", 8),
+    ("feat/voxel-bridge", 9),
+    ("feat/diplomacy-engine-v2", 12),
+    ("chore/fog-coverage", 12),
+]
+
+def safe_name(b):
+    return b.replace("/", "-").replace("_", "-")[:50]
+
+def run(cmd, timeout=180):
+    try:
+        r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, timeout=timeout, shell=True)
+        out = r.stdout + "\n" + r.stderr
+        out = "\n".join(l for l in out.split("\n") if "trace:" not in l and "exec-cmd" not in l and "run-command" not in l and "start_command" not in l and "built-in" not in l)
+        return r.returncode, out.strip()
+    except subprocess.TimeoutExpired:
+        return -1, "TIMEOUT"
+    except Exception as e:
+        return -2, str(e)
+
+successes = []
+conflicts = []
+errors = []
+
+for branch, ahead in BRANCHES:
+    safe = safe_name(branch)
+    print(f"\n--- [{branch}] (ahead={ahead}) ---")
+    sys.stdout.flush()
+
+    # Fetch
+    rc, o = run(f'git fetch origin {branch} --depth=50')
+    if rc != 0:
+        print(f"  FETCH FAILED")
+        errors.append(branch)
+        continue
+    
+    # Create local branch
+    run(f'git branch -D rebase-{safe}')
+    rc, o = run(f'git checkout -b rebase-{safe} origin/{branch}')
+    if rc != 0:
+        print(f"  CHECKOUT FAILED")
+        errors.append(branch)
+        run('git checkout main')
+        continue
+
+    # Rebase
+    print(f"  Rebasing...")
+    rc, o = run(f'git rebase main', timeout=300)
+    if rc == 0:
+        print(f"  SUCCESS! Pushing...")
+        rc2, o2 = run(f'git push origin rebase-{safe}:{branch} --force-with-lease')
+        if rc2 == 0:
+            print(f"  PUSHED!")
+            successes.append((branch, ahead))
+        else:
+            print(f"  PUSH FAILED")
+            errors.append(branch)
+    elif 'CONFLICT' in o:
+        n_conflicts = o.count("CONFLICT")
+        print(f"  CONFLICTS ({n_conflicts})")
+        conflicts.append((branch, ahead, n_conflicts))
+        run('git rebase --abort')
+    else:
+        print(f"  FAILED (rc={rc})")
+        errors.append(branch)
+        run('git rebase --abort')
+
+    # Cleanup
+    run(f'git branch -D rebase-{safe}')
+    run('git checkout main')
+
+print("\n\n=== BATCH 1 RESULTS ===")
+print(f"Success: {len(successes)} | Conflicts: {len(conflicts)} | Errors: {len(errors)}")
+for b, a in successes:
+    print(f"  OK: {b}")
+for b, a, n in conflicts:
+    print(f"  CONFLICT: {b} ({n} files)")
+for b in errors:
+    print(f"  ERROR: {b}")

@@ -1,0 +1,165 @@
+/**
+ * Structured logger backed by the OpenTelemetry log pipeline.
+ *
+ * Wraps the OTel logger (when telemetry is enabled) and falls back to
+ * `console.*` when it is not. The logger is intentionally tiny — it adds
+ * the four standard levels and supports attribute passing. It does NOT
+ * replace `pino` or the existing `consoleInterceptor`; it augments them.
+ *
+ * @module observability/logger
+ */
+
+import type { Logger } from "./otel.ts";
+import { getPreboundMetrics } from "./metrics.ts";
+
+/** Canonical log level used across OmniRoute. */
+export type LogLevel = "debug" | "info" | "warn" | "error" | "silent";
+
+const VALID_LEVELS: ReadonlySet<LogLevel> = new Set<LogLevel>(["debug", "info", "warn", "error", "silent"]);
+
+type Level = Exclude<LogLevel, "silent">;
+
+let BOUND_LOGGER: Logger | null = null;
+let CURRENT_LEVEL: LogLevel = "info";
+
+/**
+ * Bind the logger used by the rest of the codebase. Re-binding replaces the
+ * existing handle (useful in tests).
+ *
+ * @param logger - The OTel logger (or null to detach).
+ */
+export function bindLogger(logger: Logger | null): void {
+  BOUND_LOGGER = logger;
+}
+
+/**
+ * Set the current minimum log level. Calls below this level are dropped.
+ *
+ * @param level - One of `debug` | `info` | `warn` | `error` | `silent`.
+ */
+export function setLogLevel(level: LogLevel): void {
+  CURRENT_LEVEL = VALID_LEVELS.has(level) ? level : "info";
+}
+
+/** Read the current log level. */
+export function getLogLevel(): LogLevel {
+  return CURRENT_LEVEL;
+}
+
+/**
+ * Create a named child logger. Backed by `console.*` when telemetry is
+ * not enabled; otherwise delegates to the bound OTel logger.
+ *
+ * @param name - Logical logger name (e.g. module or component).
+ * @returns A logger-shaped object with `info`/`warn`/`error`/`debug`/`child`.
+ */
+export function createLogger(name: string): Logger & { child: (suffix: string) => Logger & { child: (s: string) => unknown }; name: string } {
+  const base: Logger = {
+    info: (msg, attrs) => emit("info", name, msg, attrs),
+    warn: (msg, attrs) => emit("warn", name, msg, attrs),
+    error: (msg, attrs) => emit("error", name, msg, attrs),
+    debug: (msg, attrs) => emit("debug", name, msg, attrs),
+  };
+  function child(suffix: string) {
+    return createLogger(`${name}:${suffix}`);
+  }
+  return Object.assign(base, { name, child });
+}
+
+/**
+ * Create a logger bound to the given attribute context. The returned
+ * object exposes `info`/`warn`/`error`/`debug` and attaches the context
+ * attrs to every record. The callback form returned by the older API is
+ * preserved for callers that expect a function-shaped result.
+ *
+ * @param context - Attribute map merged into every log call.
+ * @returns A logger-shaped object (with `info`/`warn`/`error`/`debug`).
+ */
+export function withLogContext(context: Record<string, unknown>): Logger & { child: (s: string) => unknown } {
+  const merged = { ...context };
+  return {
+    info: (msg, attrs) => emit("info", "ctx", msg, { ...merged, ...(attrs ?? {}) }),
+    warn: (msg, attrs) => emit("warn", "ctx", msg, { ...merged, ...(attrs ?? {}) }),
+    error: (msg, attrs) => emit("error", "ctx", msg, { ...merged, ...(attrs ?? {}) }),
+    debug: (msg, attrs) => emit("debug", "ctx", msg, { ...merged, ...(attrs ?? {}) }),
+    child: (suffix: string) => withLogContext({ ...merged, sub: suffix }),
+  };
+}
+
+/**
+ * Emit a structured log at the info level. Falls back to `console.info`
+ * when telemetry is not bound.
+ */
+export function logInfo(message: string, attrs?: Record<string, unknown>): void {
+  emit("info", "omniroute", message, attrs);
+}
+
+/** Emit a warn-level log. Falls back to `console.warn`. */
+export function logWarn(message: string, attrs?: Record<string, unknown>): void {
+  emit("warn", "omniroute", message, attrs);
+}
+
+/** Emit an error-level log. Falls back to `console.error`. */
+export function logError(message: string, attrs?: Record<string, unknown>): void {
+  emit("error", "omniroute", message, attrs);
+}
+
+/** Emit a debug-level log. Falls back to `console.debug`. */
+export function logDebug(message: string, attrs?: Record<string, unknown>): void {
+  emit("debug", "omniroute", message, attrs);
+}
+
+function shouldEmit(level: Level): boolean {
+  if (CURRENT_LEVEL === "silent") return false;
+  const order: Record<Level, number> = { error: 0, warn: 1, info: 2, debug: 3 };
+  return order[level] <= order[CURRENT_LEVEL as Level];
+}
+
+function emit(level: Level, name: string, message: string, attrs?: Record<string, unknown>): void {
+  if (!shouldEmit(level)) return;
+  if (BOUND_LOGGER) {
+    BOUND_LOGGER[level](message, { logger: name, ...(attrs ?? {}) } as never);
+    return;
+  }
+  const msg = formatLine(level, name, message, attrs);
+  const fn = level === "error" ? console.error : level === "warn" ? console.warn : level === "debug" ? console.debug : console.info;
+  try {
+    fn(msg);
+  } catch {
+    /* never throw out of logging */
+  }
+}
+
+/**
+ * Read the current logger (or null when not bound). Test-only — production
+ * code should call `logInfo`/`logWarn`/etc directly.
+ */
+export function getBoundLogger(): Logger | null {
+  return BOUND_LOGGER;
+}
+
+/**
+ * Format a log line as `<ISO-timestamp> [<level>] [<name>] <message> {attrs-json}`.
+ * Used for the console fallback path so logs stay grep-friendly even when
+ * telemetry is disabled.
+ */
+function formatLine(level: Level, name: string, message: string, attrs?: Record<string, unknown>): string {
+  const ts = new Date().toISOString();
+  const attrStr = attrs && Object.keys(attrs).length > 0 ? " " + JSON.stringify(attrs) : "";
+  return `${ts} [${level.toUpperCase()}] [${name}] ${message}${attrStr}`;
+}
+
+/**
+ * Convenience wrapper: increment the `errors` counter and emit a structured
+ * error log in a single call. Returns the formatted message so callers can
+ * re-throw it if they want.
+ *
+ * @param message - Human-readable error description.
+ * @param attrs - Attribute map (typically includes `error.type`).
+ * @returns The formatted message.
+ */
+export function reportError(message: string, attrs?: Record<string, unknown>): string {
+  getPreboundMetrics().errors.add(1, attrs ?? {});
+  logError(message, attrs);
+  return message;
+}

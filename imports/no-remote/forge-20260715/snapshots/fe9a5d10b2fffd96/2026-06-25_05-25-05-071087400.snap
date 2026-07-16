@@ -1,0 +1,12 @@
+@echo off
+REM commit-cargo-deny.bat <repo-path> <repo-name>
+REM Creates/uses branch hygiene/cargo-deny-block-release-20260624, adds the workflow, commits.
+setlocal
+set "REPO=%~1"
+set "NAME=%~2"
+cd /d "%REPO%" || exit /b 1
+git checkout -B hygiene/cargo-deny-block-release-20260624 || exit /b 1
+git add .github\workflows\cargo-deny.yml || exit /b 1
+git commit --no-verify -F "%REPO%\.commit-msg-cargo-deny.txt" || exit /b 1
+git rev-parse HEAD
+endlocal

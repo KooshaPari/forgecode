@@ -1,0 +1,25 @@
+$ErrorActionPreference = 'Stop'
+$logPath = 'C:\Users\koosh\_wsm3d_audit\ws3d_build_latest.txt'
+if (-not (Test-Path $logPath)) {
+    Write-Host "MISSING: $logPath"
+    exit 1
+}
+$lines = Get-Content $logPath
+$errLines = $lines | Where-Object { $_ -match 'error CS' }
+Write-Host "TOTAL_ERRORS: $($errLines.Count)"
+Write-Host ""
+$byFile = $errLines | ForEach-Object {
+    if ($_ -match '^E:\\Dev\\WorldSphereMod\\(.+?)\(\d+,\d+:') {
+        $matches[1]
+    }
+} | Group-Object | Sort-Object Count -Descending
+Write-Host "=== BY FILE ==="
+$byFile | Format-Table Count, Name -AutoSize
+Write-Host ""
+Write-Host "=== BY ERROR CODE ==="
+$byCode = $errLines | ForEach-Object {
+    if ($_ -match 'error (CS\d+):') {
+        $matches[1]
+    }
+} | Group-Object | Sort-Object Count -Descending
+$byCode | Format-Table Count, Name -AutoSize

@@ -1,0 +1,30 @@
+# A-01 VALIDATION — Create phenotype-infra monorepo shell
+
+**Date:** 2026-06-23
+**Status:** ✅ PASS
+
+## Checklist
+
+| Item | Status |
+|------|--------|
+| `C:\Users\koosh\phenotype-infra\Cargo.toml` exists | ✅ |
+| `C:\Users\koosh\phenotype-infra\README.md` exists | ✅ |
+| `C:\Users\koosh\phenotype-infra\AGENTS.md` exists | ✅ |
+| `C:\Users\koosh\phenotype-infra\CLAUDE.md` exists | ✅ |
+| `C:\Users\koosh\phenotype-infra\.gitignore` exists | ✅ |
+| `C:\Users\koosh\phenotype-infra\.gitleaks.toml` exists | ✅ |
+| `C:\Users\koosh\phenotype-infra\.editorconfig` exists | ✅ |
+| `C:\Users\koosh\phenotype-infra\.pre-commit-config.yaml` exists | ✅ |
+| `crates/` directory exists | ✅ |
+| `tools/` directory exists | ✅ |
+| `docs/adr/` directory exists | ✅ |
+| `docs/specs/` directory exists | ✅ |
+| `docs/governance/` directory exists | ✅ |
+| `docs/audit/` directory exists | ✅ |
+| `.github/workflows/` directory exists | ✅ |
+| Git repo initialized with commit | ✅ |
+| Cargo.toml is valid TOML | ✅ |
+| No errors on creation | ✅ |
+
+## Git SHA
+`7ed716e` — A-01: create phenotype-infra monorepo shell

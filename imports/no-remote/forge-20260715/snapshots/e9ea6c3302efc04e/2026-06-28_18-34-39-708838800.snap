@@ -1,0 +1,69 @@
+## Summary
+
+Drop the deprecated `local_shell` hosted tool type from the Codex executor before forwarding requests to OpenAI's Responses API. This resolves the omni-combo `400 "The local_shell tool is no longer supported."` spike on `POST /v1/chat/completions` routed through the `codex` provider.
+
+## Context
+
+OpenAI removed the `local_shell` hosted tool type from the Responses API. When Codex CLI injects `{ type: "local_shell" }` into `body.tools` (or sets `body.tool_choice = { type: "local_shell" }`), OpenAI's Responses API now returns `400` with the error message:
+
+> The local_shell tool is no longer supported.
+
+The Codex executor in OmniRoute whitelists a set of hosted tool types in `CODEX_HOSTED_TOOL_TYPES` (file: `open-sse/executors/codex.ts:399`) so that the `normalizeCodexTools` preprocessor preserves them instead of stripping them. The set previously included `local_shell`. Because `local_shell` was whitelisted, the executor forwarded the now-rejected type unchanged and the request 400'd.
+
+There is already a precedent in this file for handling tools that are in the whitelist but no longer accepted by upstream — `#2980` adds a `dropImageGeneration` option for free-plan accounts that can't run `image_generation`. The cleanest, least-invasive fix is to remove `local_shell` from the whitelist entirely (it is rejected regardless of account plan) and add a defensive branch in the `tool_choice` cleanup so a `local_shell` request-level tool choice is dropped instead of forwarded.
+
+## Changes
+
+- **`open-sse/executors/codex.ts`**
+  - Remove `"local_shell"` from the `CODEX_HOSTED_TOOL_TYPES` set. `normalizeCodexTools` will now route it to the existing `console.debug("dropping unknown hosted tool type: ...")` branch and filter it from `body.tools` before the request reaches OpenAI.
+  - Add a `toolChoice.type === "local_shell"` branch in `normalizeCodexTools` that deletes `body.tool_choice`, mirroring the existing handling of stale `tool_choice = { type: "function", name: <unknown> }`.
+  - Add a comment above the whitelist explaining why `local_shell` is intentionally absent so future contributors don't accidentally re-add it.
+
+- **`tests/unit/executor-codex.test.ts`**
+  - New regression test `CodexExecutor.transformRequest drops Codex local_shell tool (no longer supported upstream)` that asserts both:
+    1. `body.tools` entries with `type: "local_shell"` are dropped while sibling tools are preserved.
+    2. `body.tool_choice = { type: "local_shell" }` is dropped rather than forwarded.
+
+### Key Implementation Details
+
+- The fix is symmetric to the existing `dropImageGeneration` pattern (`#2980`) but does not introduce a new option/flag — `local_shell` is universally rejected by upstream, so there is no per-account gating needed.
+- The `console.debug` branch in `normalizeCodexTools` (`[Codex] dropping unknown hosted tool type: local_shell`) gives operators visibility when the fix is exercised.
+- No new exports or API surface changes; this is a strictly behavior-preserving fix for a specific upstream-incompatible tool type.
+- `OmniRoute-clean`'s pre-commit hooks (prettier, eslint, docs-sync, `check:any-budget:t11`, `check-tracked-artifacts`) all pass on the commit.
+
+## Use Cases
+
+- Restores `/v1/chat/completions` routing through the `codex` executor that currently fails with `400` whenever Codex CLI is on the request path. Before this fix, **most** codex calls were failing (per the observed metrics); after this fix, they succeed.
+- Closes the gap for users on `codex/gpt-5.4-mini` and other Codex-CLI-spawned requests that automatically inject `local_shell`.
+
+## Testing
+
+The change was developed and validated against `OmniRoute-fresh2` (which has the same executor), then cherry-picked cleanly onto `OmniRoute-clean` at the `Release v3.8.34` base so the PR diff is minimal.
+
+```bash
+# Run the new regression test (and the existing hosted-tools test for regression):
+node --import tsx \
+  --import ./open-sse/utils/setupPolyfill.ts \
+  --import ./tests/_setup/isolateDataDir.ts \
+  --test --test-name-pattern="drops Codex local_shell|preserves namespace MCP tools" \
+  tests/unit/executor-codex.test.ts
+```
+
+Expected output:
+
+```
+[Codex] dropping unknown hosted tool type: local_shell
+[Codex] dropping unknown hosted tool type: unknown_hosted_tool
+✔ CodexExecutor.transformRequest drops Codex local_shell tool (no longer supported upstream)
+✔ CodexExecutor.transformRequest preserves namespace MCP tools and hosted tool types
+ℹ tests 2
+ℹ pass 2
+ℹ fail 0
+```
+
+To smoke-test end-to-end against a live Codex account, send any request that would have Codex CLI inject `local_shell` (e.g. a tool-using prompt through Codex CLI routed via `omni-combo` / codex combo) and verify it returns `200` instead of `400`.
+
+## Links
+
+- Related upstream signal: Codex CLI currently injects `{ type: "local_shell" }` into every Responses request regardless of plan; OpenAI has removed it from the Responses API and now 400s on it.
+- Mirrors the `dropImageGeneration` pattern introduced in `#2980` for `image_generation` on free-plan Codex accounts.

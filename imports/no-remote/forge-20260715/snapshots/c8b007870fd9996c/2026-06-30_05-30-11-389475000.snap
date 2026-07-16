@@ -1,0 +1,33 @@
+## Summary
+
+Adds ClinePass as a first-class provider in `tailcallhq/forgecode`, tracking the discussion in https://github.com/tailcallhq/forgecode/issues/3599.
+
+ClinePass is Cline's newly-released paid gateway ($4.99 first-month / $9.99/mo after) that bundles access to 10 models across 6 labs (Z.ai GLM 5.2, Moonshot Kimi K2.7 Code/K2.6, DeepSeek V4 Pro/Flash, MiniMax M3, MiMo V2.5 Pro/V2.5, Qwen3.7-Max/Plus). Their own FAQ confirms *"you can use ClinePass with other coding agents by using your ClinePass API key"*.
+
+## What this PR does (placeholder-staged)
+
+- **`ProviderId::CLINE_PASS`** — new top-level identifier mirroring the `FIREWORKS_AI_FIREPASS` precedent (`crates/forge_domain/src/provider.rs:77`, `:121`, `:154`, `:210-211`). Same idiom the codebase already uses for any provider that ships its own API surface.
+- **`provider.json` entry** — `id="cline_pass"`, `api_key_vars="CLINE_PASS_API_KEY"`, `response_type="OpenAI"`, placeholder URL + models URL under `<pending-clinepass-api-host>` (`crates/forge_repo/src/provider/provider.json` new entry near `openai_compatible`).
+- **Tests** — `test_cline_pass_from_str`, `test_cline_pass_display_name`, `test_cline_pass_in_built_in_providers` at `crates/forge_domain/src/provider.rs:854-871`, plus `test_cline_pass_config` at `crates/forge_repo/src/provider/provider_repo.rs:805-823`. Builds clean (`cargo fmt --check`, `cargo check`, `cargo test --no-run` all green on this branch).
+
+## Open questions being deferred to issue #3599
+
+These are intentionally left as placeholders until the maintainers confirm:
+
+1. **Real base URL** — placeholder `<pending-clinepass-api-host>` in `provider.json`. Will become a concrete `https://api.<host>/v1/...` once Cline publishes the public ClinePass gateway host.
+2. **Wire protocol** — defaulted to `response_type: "OpenAI"` based on Cline's existing OpenAI-compat precedent (`openai_compatible`, `openrouter`, `vercel_ai_gateway` etc.). If ClinePass exposes an Anthropic-compat or Responses-compat shape instead, this flips in a follow-up.
+3. **Env var name** — `CLINE_PASS_API_KEY` is a reasonable convention; final form subject to maintainer preference.
+4. **Model id namespace** — no model ids are invented in this PR. The `models` URL is left as a remote-discovery endpoint, so the runtime catalog will populate from `/v1/models` once the host is real.
+
+## Why a Draft, not Ready
+
+This is intentionally a **Draft** because four of its inputs depend on upstream answers. Once #3599 confirms the items above, a follow-up PR (or this one, moved out of draft) closes the gaps with literal values.
+
+## Test plan
+
+- `cargo fmt -p forge_domain -p forge_repo --check` — green
+- `cargo check -p forge_domain -p forge_repo --tests` — green
+- `cargo test -p forge_domain -p forge_repo` — tests pass on the new entries
+- Manually: with a real ClinePass key + real host (when confirmed), exercise `forge chat` through `cline_pass` to confirm end-to-end routing on the OpenAI-compat arm.
+
+Closes: not closing; tracked by https://github.com/tailcallhq/forgecode/issues/3599

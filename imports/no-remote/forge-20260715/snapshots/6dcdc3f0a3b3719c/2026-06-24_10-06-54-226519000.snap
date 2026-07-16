@@ -1,0 +1,72 @@
+# Deploy the VitePress site under docs/ to GitHub Pages.
+#
+# Triggers on every push to main and on manual dispatch. The job uses the
+# official actions/configure-pages + upload-pages-artifact + deploy-pages
+# trio (v5 / v3 / v4), which is the supported, GHE-compatible Pages pipeline
+# for static sites as of 2026.
+name: Deploy Docs to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+
+# Avoid two concurrent deploys stomping on each other. cancel-in-progress
+# is set to false so an in-flight build is allowed to finish and publish
+# rather than being aborted halfway through.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+# Least-privilege permissions: only what's needed to build + publish the
+# site. pages: write and id-token: write are required by the official
+# Pages actions; everything else is explicitly denied.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build VitePress site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build documentation
+        run: npm run docs:build
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/.vitepress-dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

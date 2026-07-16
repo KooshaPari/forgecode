@@ -1,0 +1,55 @@
+## Summary
+
+Adds a minimal VitePress documentation site under `docs/` (homepage + getting-started) and a GitHub Actions workflow that builds and deploys it to GitHub Pages on every push to `main`.
+
+### What's in this PR
+
+- `docs/.vitepress/config.mts` — VitePress configuration (Quillr branding, nav, sidebar, footer, local search, social link to GitHub). Excludes the pre-existing `docs/journeys|research|stories|traceability/` directories via `srcExclude` so VitePress does not attempt to render them — they use a project-specific `layout: doc` frontmatter that is not a valid VitePress layout.
+- `docs/index.md` — homepage using VitePress' `layout: home` with hero + features, summarizing both packages (`@kooshapari/quillts` and `httpora-core`).
+- `docs/getting-started.md` — installation and quick-start snippets for both TypeScript and Rust, plus development commands.
+- `docs/package.json` + `docs/package-lock.json` — minimal VitePress 1.6.3 site, pinned and reproducible (`npm ci`).
+- `docs/.gitignore` — ignores `node_modules`, `.vitepress/cache`, `.vitepress/dist`.
+- `.github/workflows/docs.yml` — Pages workflow using `actions/configure-pages@v5`, `actions/upload-pages-artifact@v3`, `actions/deploy-pages@v4` as specified. Triggers on push to `main` and on `workflow_dispatch`. Concurrency group cancels in-progress deploys. Permissions scoped to the minimum (`contents: read`, `pages: write`, `id-token: write`).
+
+### Strict scope
+
+Touched **only** `docs/`, `.github/workflows/docs.yml`, and `docs/package.json` (plus its lockfile companion required for reproducible CI). No files under `src/`, no `.rs` files, and no `Cargo.toml`/`Cargo.lock` were modified.
+
+### Local quality checks run
+
+All checks below were run locally on `feat/ghpages-docs` after the changes:
+
+| Check | Result |
+|---|---|
+| `npm run lint` (eslint `src`) | PASS — 0 errors |
+| `npm run format:check` (prettier on `src/**/*.{ts,json,md}`) | PASS — all matched files use Prettier style |
+| `npm run check` (`tsc --noEmit`) | PASS — clean |
+| `npm test` (vitest) | PASS — 23/23 tests across 3 files |
+| `npm run build` (`tsc`) | PASS — clean |
+| `cd docs && npm run build` (VitePress) | PASS — built in ~5–15s; `index.html`, `getting-started.html`, and `404.html` produced under `docs/.vitepress/dist/` |
+| `cargo test --manifest-path crates/httpora-core/Cargo.toml --all-features` | PASS — 30 unit + integration tests + 5 doctests |
+| `cargo build --manifest-path crates/httpora-core/Cargo.toml --release` | PASS — clean optimized build |
+| `cargo fmt --manifest-path crates/httpora-core/Cargo.toml -- --check` | **PRE-EXISTING FAIL** — formatting diffs in `crates/httpora-core/tests/middleware_test.rs` and `crates/httpora-core/tests/retry_test.rs`. Out of strict scope; not modified. |
+| `cargo clippy --manifest-path crates/httpora-core/Cargo.toml --all-targets --all-features -- -D warnings` | **PRE-EXISTING FAIL** — `clippy::manual_map` at `crates/httpora-core/src/builder.rs:100`. Out of strict scope; not modified. |
+
+The two pre-existing rust failures are in `.rs` files explicitly excluded from the strict scope. They are unchanged on this branch and were present on `main` before this PR.
+
+### Repo admin note
+
+After this PR is merged, GitHub Pages must be enabled in the repo settings with **Settings → Pages → Source: GitHub Actions** so the workflow can deploy. The workflow file itself is otherwise self-contained.
+
+### Verification artifact
+
+- VitePress build output was inspected locally: `docs/.vitepress/dist/index.html` (title "Quillr", correct `<title>` and `__VP_HASH_MAP__`) and `docs/.vitepress/dist/getting-started.html` (renders the TypeScript/Rust code blocks and sidebar). The site is ready to deploy.
+
+### Files added / modified
+
+```
+.github/workflows/docs.yml  | 64 +++++
+docs/.gitignore             |  3 +
+docs/.vitepress/config.mts  | 82 ++++++----
+docs/getting-started.md     | 106 +++++++++++
+docs/index.md               |  38 ++++
+docs/package-lock.json      | 2504 +++++++++++++++++++++++++++++++++++++++++++
+docs/package.json           |  20 ++
+```

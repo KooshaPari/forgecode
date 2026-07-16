@@ -1,0 +1,628 @@
+"""
+DAG unit generator for owned scope:
+  eyetracker, eventra, configra, benchora, authvault, quillr
+
+Outputs:
+  - C:\Users\koosh\_owned_dag.json   (machine-readable)
+  - C:\Users\koosh\_owned_dag.md     (human-readable summary)
+
+Per-repo DAG unit categories (~30 units each, no shrinking):
+  REGISTRY  : registry SSOT sync (project entry, role mapping, docs/intent, docs/boundary, AGENTS, ADR)
+  AUDIT     : 71+ grade pass + remediation + grade-reports artifact
+  GIT       : git hygiene (stash reconcile, branch prune, push wip, worktree cleanup, dirty clean)
+  CI        : L5-104.9 standard workflow set (ci/deny/sbom/trufflehog) + workflow sweep
+  SPEC      : AgilePlus specify work-unit for non-trivial work (one per repo)
+  SOTA      : SOTA feature work units (5-10 per repo, domain-specific)
+  PERF      : performance hardening (2-4 per repo)
+  SECURITY  : threat-model + secret-scan hardening
+  DOCS      : README/SPEC/llms polish + boundary doc + intent doc + slsa
+  XREPO     : cross-repo overlap / re-pointer / absorption-note
+
+Spine-level (~30):
+  REG        : registry SSOT maintain (tools/check-ecosystom drift, validate-ecosystem.sh)
+  AUDIT      : fleet-grade sweep
+  DAG        : ECOSYSTEM_DAG lane updates, SESSION_ARTIFACT_PROTOCOL compliance
+  STDLIB     : phenokits-commons updates (CI templates, governance workflows)
+  AGILEPLUS  : agileplus spec templates / work-unit protocol enhancements
+"""
+
+import json, os
+from datetime import datetime
+
+OWNED = [
+    {"key": "eyetracker", "display": "Eyetracker", "stack": "rust+uniffi",
+     "desc": "Phenotype eye-tracking framework — Rust core + UniFFI bindings",
+     "domain": "eye-tracking", "boundary": "interaction",
+     "audit_l5": "L7-010", "main_sha": "d04d25d", "open_iss": 4, "open_pr": 10,
+     "ci_state": "failing", "v0": "0.1.0-alpha"},
+    {"key": "eventra", "display": "Eventra", "stack": "rust",
+     "desc": "Event-driven architecture framework with CQRS and Event Sourcing",
+     "domain": "event-bus", "boundary": "event-bus-runtime",
+     "audit_l5": "L5-120", "main_sha": "ccd773b", "open_iss": 3, "open_pr": 3,
+     "ci_state": "failing", "v0": "active"},
+    {"key": "configra", "display": "Configra", "stack": "rust",
+     "desc": "Phenotype-org configuration framework (Rust)",
+     "domain": "config", "boundary": "config-runtime",
+     "audit_l5": "L5-110", "main_sha": "1fd6a59", "open_iss": 0, "open_pr": 3,
+     "ci_state": "red->green", "v0": "0.4.0"},
+    {"key": "benchora", "display": "Benchora", "stack": "rust",
+     "desc": "Rust benchmarking framework — criterion-based load testing + regression tracking",
+     "domain": "benchmark", "boundary": "perf-harness",
+     "audit_l5": "L7-001", "main_sha": "83c2a23", "open_iss": 0, "open_pr": 1,
+     "ci_state": "failing", "v0": "0.2.0"},
+    {"key": "authvault", "display": "Authvault", "stack": "rust",
+     "desc": "Authentication + authorization framework — OAuth2/JWT/RBAC/ABAC, multi-tenant",
+     "domain": "auth", "boundary": "auth-runtime",
+     "audit_l5": "FR-AUTHV-*", "main_sha": "6ae25a5", "open_iss": 4, "open_pr": 0,
+     "ci_state": "partial", "v0": "0.1.0"},
+    {"key": "quillr", "display": "Quillr", "stack": "rust+ts",
+     "desc": "HTTP toolkit (Rust httpora-core + TS @kooshapari/quillts)",
+     "domain": "http-toolkit", "boundary": "http-middleware",
+     "audit_l5": "n/a", "main_sha": "18491ea", "open_iss": 4, "open_pr": 1,
+     "ci_state": "red->green", "v0": "0.1.0"},
+]
+
+# Standard work-unit protocol fields
+def WU(uid, repo, lane, title, deps=None, est="M", cat="SOTA", notes="", spec_id=None):
+    return {
+        "id": uid,
+        "repo": repo,
+        "lane": lane,         # planned | in_progress | done | nb
+        "category": cat,      # REGISTRY | AUDIT | GIT | CI | SPEC | SOTA | PERF | SECURITY | DOCS | XREPO | SPINE
+        "title": title,
+        "deps": deps or [],
+        "est": est,           # S | M | L | XL
+        "spec_id": spec_id,
+        "notes": notes,
+    }
+
+dag = []
+
+# ============================================================================
+# Per-repo DAG units (eyetracker, eventra, configra, benchora, authvault, quillr)
+# ============================================================================
+
+# -------------------- eyetracker --------------------
+R = "eyetracker"
+EYE = [
+    # SPEC
+    WU("EYE-SPEC-001", R, "planned", "agileplus specify EYE-001: cross-platform eye-tracking substrate", cat="SPEC",
+       est="L", spec_id="EYE-001",
+       notes="supersedes single-platform scope; binds FRs to Win/macOS/Linux/iOS/Android/Web lanes"),
+    WU("EYE-SPEC-002", R, "planned", "agileplus specify EYE-002: model interchange + GPU inference", cat="SPEC",
+       est="L", spec_id="EYE-002",
+       notes="ONNX/CoreML/TFLite dynamic shapes; wgpu/Vulkan/Metal/CUDA paths"),
+    # REGISTRY
+    WU("EYE-REG-001", R, "planned", "create projects/Eyetracker.json registry entry", cat="REGISTRY", est="S",
+       notes="name,languages=[rust,uniffi,kotlin,swift],primary=rust,status=active,type=shared-lib,path=repos/eyetracker,role=interaction"),
+    WU("EYE-REG-002", R, "planned", "add to registry/domain-roles.json (interaction domain)", cat="REGISTRY", est="S",
+       notes="id=interaction, repo=eyetracker, core_lang=rust, edge_langs=[kotlin,swift,wasm]"),
+    WU("EYE-REG-003", R, "planned", "register disposition-row AFFIRM in registry/disposition-index.json", cat="REGISTRY", est="S"),
+    WU("EYE-REG-004", R, "planned", "add BOUNDARY_OWNERS.md section: eyetracker owns interaction boundary", cat="REGISTRY", est="S"),
+    WU("EYE-REG-005", R, "planned", "update registry/tools/check-ecosystem.ts CANONICAL_REPOS add eyetracker", cat="REGISTRY", est="S"),
+    # AUDIT
+    WU("EYE-AUD-001", R, "planned", "run grade.sh --fast; capture .grade-reports/grade.json + grade.html", cat="AUDIT", est="S",
+       notes="set BASH env, run from repo root; commit artefacts to phenotype-registry/.grade-reports/eyetracker/"),
+    WU("EYE-AUD-002", R, "planned", "fix fmt drift in crates/eyetracker-inference/tests/fr_eye_integration.rs lines 853-858", cat="AUDIT", est="S"),
+    WU("EYE-AUD-003", R, "planned", "diagnose + re-enable clippy (HTTP2 registry fetch blocker)", cat="AUDIT", est="M",
+       notes="may need CARGO_NET_RETRY or net-rework in ci runner"),
+    WU("EYE-AUD-004", R, "planned", "re-run 9 dependabot PRs (#65..#73) once clippy unblocked", cat="AUDIT", est="M"),
+    WU("EYE-AUD-005", R, "planned", "triage + close kilo-duplicate welcome issues #43..#46", cat="AUDIT", est="S"),
+    WU("EYE-AUD-006", R, "planned", "add CODEOWNERS contents (currently 14B placeholder)", cat="AUDIT", est="S"),
+    # GIT
+    WU("EYE-GIT-001", R, "planned", "reconcile 30+ remote branches — close/merge stale wip/snapshot/cursor branches", cat="GIT", est="M"),
+    WU("EYE-GIT-002", R, "planned", "preserve remote intent-snapshot/wip branches per worklog protocol", cat="GIT", est="S"),
+    # CI
+    WU("EYE-CI-001", R, "planned", "add L5-104.9 standard workflow set (ci/deny/sbom/trufflehog)", cat="CI", est="M",
+       notes="copy from Configra; pin to template @ L5-104.9 SHA"),
+    WU("EYE-CI-002", R, "planned", "add codeql.yml + journey-gate.yml if missing (configra has only 4 workflows)", cat="CI", est="S"),
+    WU("EYE-CI-003", R, "planned", "add format/clippy/coverage/release/release-attest workflows to reach parity", cat="CI", est="M"),
+    WU("EYE-CI-004", R, "planned", "wire shared reusable workflows (phenokits-commons/governance/...)", cat="CI", est="M",
+       deps=["EYE-CI-001"]),
+    # DOCS
+    WU("EYE-DOC-001", R, "planned", "rewrite README to include all 7 workspace crates (currently shows 4)", cat="DOCS", est="S"),
+    WU("EYE-DOC-002", R, "planned", "fill docs/boundary/eyetracker.md In/Out/Crossings (currently stubbed)", cat="DOCS", est="S"),
+    WU("EYE-DOC-003", R, "planned", "fill docs/intent/eyetracker.md bound prompts+plans", cat="DOCS", est="S"),
+    WU("EYE-DOC-004", R, "planned", "refresh STATUS.md: FUNCTIONAL_REQUIREMENTS line-up + bench numbers", cat="DOCS", est="S"),
+    # SOTA
+    WU("EYE-SOTA-001", R, "planned", "Win platform layer: Tobii Stream Engine + GazeSDK bindings", cat="SOTA", est="L",
+       deps=["EYE-SPEC-001"], spec_id="EYE-001"),
+    WU("EYE-SOTA-002", R, "planned", "Linux platform layer: libusb HID + Pupil Core/Neon protocol", cat="SOTA", est="L",
+       deps=["EYE-SPEC-001"], spec_id="EYE-001"),
+    WU("EYE-SOTA-003", R, "planned", "iOS platform layer: ARKit Face Tracking + Vision VNDetectFaceLandmarks", cat="SOTA", est="L",
+       deps=["EYE-SPEC-001"], spec_id="EYE-001"),
+    WU("EYE-SOTA-004", R, "planned", "Android platform layer: CameraX + MLKit Face Detection", cat="SOTA", est="L",
+       deps=["EYE-SPEC-001"], spec_id="EYE-001"),
+    WU("EYE-SOTA-005", R, "planned", "Web platform layer: WASM binding + MediaPipe Face Mesh (wasm-bindgen)", cat="SOTA", est="L",
+       deps=["EYE-SPEC-001"], spec_id="EYE-001"),
+    WU("EYE-SOTA-006", R, "planned", "model interchange: ONNX dynamic shapes + CoreML/TFLite loaders", cat="SOTA", est="L",
+       deps=["EYE-SPEC-002"], spec_id="EYE-002"),
+    WU("EYE-SOTA-007", R, "planned", "calibration robustness: 5/12-pt + Helmert + 2nd-order + recal-on-glasses", cat="SOTA", est="M"),
+    WU("EYE-SOTA-008", R, "planned", "async-streaming FFI: UniFFI async UDL → Swift AsyncSequence / Kotlin Flow", cat="SOTA", est="M"),
+    WU("EYE-SOTA-009", R, "planned", "real-time streaming sink: gRPC + WebSocket + NDJSON + ZeroMQ", cat="SOTA", est="M"),
+    WU("EYE-SOTA-010", R, "planned", "accessibility depth: TTS hooks + VoiceOver/TalkBack bridges + switch scanning", cat="SOTA", est="L"),
+    # PERF
+    WU("EYE-PERF-001", R, "planned", "add benches/ harness: criterion for FR-INFER-001 ≤30ms latency regression gate", cat="PERF", est="M"),
+    WU("EYE-PERF-002", R, "planned", "threading: dedicated capture thread + inference pool + frame ring buffer", cat="PERF", est="M"),
+    WU("EYE-PERF-003", R, "planned", "GPU offload: wgpu/Metal/Vulkan/CUDA/ANE/NNAPI execution providers", cat="PERF", est="L",
+       deps=["EYE-SPEC-002"], spec_id="EYE-002"),
+    WU("EYE-PERF-004", R, "planned", "smoothing: Huber/RANSAC robust regression + blink-rejection post-filter", cat="PERF", est="M"),
+    # SECURITY
+    WU("EYE-SEC-001", R, "planned", "privacy depth: on-device differential privacy + face-frame redaction", cat="SECURITY", est="M"),
+    # XREPO
+    WU("EYE-XREPO-001", R, "planned", "repoint Authvault SSO binding (subject→tenant_id→consent surface)", cat="XREPO", est="M"),
+    WU("EYE-XREPO-002", R, "planned", "repoint Eventra event bus: gaze_fixation → accessibility_action stream", cat="XREPO", est="M"),
+]
+dag.extend(EYE)
+
+# -------------------- eventra --------------------
+R = "eventra"
+EVT = [
+    WU("EVT-SPEC-001", R, "planned", "agileplus specify EVT-001: production persistence adapters (sqlx/sqlite/postgres/grpc)", cat="SPEC",
+       est="L", spec_id="EVT-001"),
+    WU("EVT-SPEC-002", R, "planned", "agileplus specify EVT-002: outbox + idempotency + exactly-once delivery", cat="SPEC",
+       est="L", spec_id="EVT-002"),
+    WU("EVT-SPEC-003", R, "planned", "agileplus specify EVT-003: schema registry + upcasting chain", cat="SPEC",
+       est="L", spec_id="EVT-003"),
+    WU("EVT-SPEC-004", R, "planned", "agileplus specify EVT-004: multi-tenancy + tenant-isolated streams", cat="SPEC",
+       est="L", spec_id="EVT-004"),
+    WU("EVT-SPEC-005", R, "planned", "agileplus specify EVT-005: observability + OTLP + Prometheus + SLO", cat="SPEC",
+       est="M", spec_id="EVT-005"),
+    WU("EVT-REG-001", R, "planned", "create projects/Eventra.json registry entry", cat="REGISTRY", est="S",
+       notes="already implied as event-bus-runtime owner per disposition-index; make canonical project entry"),
+    WU("EVT-REG-002", R, "planned", "registry/domain-roles.json add eventra as event-bus-runtime canonical", cat="REGISTRY", est="S"),
+    WU("EVT-REG-003", R, "planned", "BOUNDARY_OWNERS.md explicit: Eventra owns rust event-bus runtime", cat="REGISTRY", est="S"),
+    WU("EVT-REG-004", R, "planned", "fill docs/boundary/Eventra.md (currently stubbed In/Out/Crossings)", cat="DOCS", est="S"),
+    WU("EVT-REG-005", R, "planned", "fill docs/intent/Eventra.md bound prompts+plans (currently empty)", cat="DOCS", est="S"),
+    WU("EVT-AUD-001", R, "planned", "fix 100%-CI-failing on all 6 workflows (cargo-test/audit/secret-scan/scorecard/security/release-attest)", cat="AUDIT", est="M",
+       notes="root cause per PR #37: action versions v7->v4, gitleaks v3->v2"),
+    WU("EVT-AUD-002", R, "planned", "close kilo-triaged dup issues #22,#23,#24 once implemented", cat="AUDIT", est="S"),
+    WU("EVT-AUD-003", R, "planned", "run grade.sh --fast; commit .grade-reports/eventra/", cat="AUDIT", est="S"),
+    WU("EVT-AUD-004", R, "planned", "resolve PR #42 + #43 (gitleaks-baseline DRAFT) once audit passes", cat="AUDIT", est="S"),
+    WU("EVT-AUD-005", R, "planned", "merge PR #41 (dependabot group bump)", cat="AUDIT", est="S"),
+    WU("EVT-AUD-006", R, "planned", "drop stale stash@{0} WIP on chore/lane-greenup", cat="GIT", est="S"),
+    WU("EVT-AUD-007", R, "planned", "merge fix/apex-gitleaks branch into main", cat="GIT", est="S"),
+    WU("EVT-AUD-008", R, "planned", "prune 16+ stale wip/dependabot/chore remote branches", cat="GIT", est="M"),
+    WU("EVT-AUD-009", R, "planned", "commit untracked assets/ (audit contents first)", cat="GIT", est="S"),
+    WU("EVT-CI-001", R, "planned", "add L5-104.9 standard workflow set (ci/deny/sbom/trufflehog)", cat="CI", est="M"),
+    WU("EVT-CI-002", R, "planned", "add coverage.yml + format.yml + release-attest.yml", cat="CI", est="M"),
+    WU("EVT-CI-003", R, "planned", "add CODEOWNERS (missing entirely)", cat="CI", est="S"),
+    WU("EVT-CI-004", R, "planned", "add format/clippy/coverage/release/release-attest workflows", cat="CI", est="M"),
+    WU("EVT-CI-005", R, "planned", "wire shared reusable workflows (phenokits-commons/governance/...)", cat="CI", est="M",
+       deps=["EVT-CI-001"]),
+    WU("EVT-DOC-001", R, "planned", "refresh SPEC.md (hexagonal diagram + example)", cat="DOCS", est="S"),
+    WU("EVT-DOC-002", R, "planned", "refresh llms.txt coverage claim (currently 65% from 2026-04)", cat="DOCS", est="S"),
+    WU("EVT-DOC-003", R, "planned", "fill docs/session placeholder per ADR-006 SESSION_ARTIFACT_PROTOCOL", cat="DOCS", est="M"),
+    # SOTA
+    WU("EVT-SOTA-001", R, "planned", "outbox port: transactional inbox + Unit-of-Work on EventStore.append", cat="SOTA", est="L",
+       deps=["EVT-SPEC-002"], spec_id="EVT-002"),
+    WU("EVT-SOTA-002", R, "planned", "idempotency: event-id dedup + consumer-side processed-position checkpoint", cat="SOTA", est="L",
+       deps=["EVT-SPEC-002"], spec_id="EVT-002"),
+    WU("EVT-SOTA-003", R, "planned", "snapshots: SnapshotRepository adapters (sql/sqlite/redis/S3)", cat="SOTA", est="L",
+       deps=["EVT-SPEC-001"], spec_id="EVT-001"),
+    WU("EVT-SOTA-004", R, "planned", "projection rebuilds: reset_from_version + checkpoint API on EventStore", cat="SOTA", est="L"),
+    WU("EVT-SOTA-005", R, "planned", "schema evolution: schema_version field + upcaster chain", cat="SOTA", est="L",
+       deps=["EVT-SPEC-003"], spec_id="EVT-003"),
+    WU("EVT-SOTA-006", R, "planned", "schema registry: Schema + SchemaId types + external-registry client", cat="SOTA", est="L",
+       deps=["EVT-SPEC-003"], spec_id="EVT-003"),
+    WU("EVT-SOTA-007", R, "planned", "multi-tenancy: tenant_id stream-prefix + tenant-scoped JWKS/keys", cat="SOTA", est="M",
+       deps=["EVT-SPEC-004"], spec_id="EVT-004"),
+    WU("EVT-SOTA-008", R, "planned", "exactly-once delivery: ack/nack + offsets + replace mpsc::unbounded_channel", cat="SOTA", est="L",
+       deps=["EVT-SPEC-002"], spec_id="EVT-002"),
+    WU("EVT-SOTA-009", R, "planned", "dead-letter queue: per-consumer DLQ sink + retry policy", cat="SOTA", est="M"),
+    WU("EVT-SOTA-010", R, "planned", "axum/tonic integration: example HTTP + gRPC gateway + prost contracts", cat="SOTA", est="L"),
+    WU("EVT-SOTA-011", R, "planned", "implement missing sqlx.rs + sqlite.rs persistence adapter modules", cat="SOTA", est="M",
+       deps=["EVT-SPEC-001"], spec_id="EVT-001"),
+    WU("EVT-SOTA-012", R, "planned", "consolidate 2 parallel InMemoryEventStore impls (memory.rs + adapters/outbound/inmemory)", cat="SOTA", est="M"),
+    WU("EVT-SOTA-013", R, "planned", "Aggregate trait implementation (currently README example doesn't compile)", cat="SOTA", est="S"),
+    # PERF
+    WU("EVT-PERF-001", R, "planned", "release profile: LTO + codegen-units=1 + panic=abort", cat="PERF", est="S"),
+    WU("EVT-PERF-002", R, "planned", "stream API: Stream<Item=EventEnvelope> + batch cursor + bulk insert", cat="PERF", est="M"),
+    WU("EVT-PERF-003", R, "planned", "backpressure: bounded mpsc + semaphore + slow-consumer isolation", cat="PERF", est="M"),
+    WU("EVT-PERF-004", R, "planned", "swap std::sync::RwLock → parking_lot + read-cache aggregate projections", cat="PERF", est="M"),
+    WU("EVT-PERF-005", R, "planned", "serialize: serde_json::to_vec + Cow/zero-copy paths + double-serialize dedup", cat="PERF", est="M"),
+    # SECURITY
+    WU("EVT-SEC-001", R, "planned", "observability: OTLP exporter + Prometheus metrics + auth SLI/SLO", cat="SECURITY",
+       deps=["EVT-SPEC-005"], spec_id="EVT-005"),
+    WU("EVT-SEC-002", R, "planned", "gitleaks baseline + secret rotation policy", cat="SECURITY", est="S"),
+    WU("EVT-XREPO-001", R, "planned", "repoint Quillr HTTP middlewares (rate-limit/retry/CB) to consume Eventra envelopes", cat="XREPO", est="M"),
+    WU("EVT-XREPO-002", R, "planned", "repoint Authvault AuditSink → Eventra event-store append-only", cat="XREPO", est="M"),
+    WU("EVT-XREPO-003", R, "planned", "repoint eyetracker fixation stream → Eventra topic", cat="XREPO", est="M"),
+]
+dag.extend(EVT)
+
+# -------------------- configra --------------------
+R = "configra"
+CFG = [
+    WU("CFG-SPEC-001", R, "planned", "agileplus specify CFG-001: hot-reload + watcher loop", cat="SPEC", est="L", spec_id="CFG-001"),
+    WU("CFG-SPEC-002", R, "planned", "agileplus specify CFG-002: schema-validation + migration", cat="SPEC", est="L", spec_id="CFG-002"),
+    WU("CFG-SPEC-003", R, "planned", "agileplus specify CFG-003: secrets redaction + at-rest encryption", cat="SPEC", est="M", spec_id="CFG-003"),
+    WU("CFG-SPEC-004", R, "planned", "agileplus specify CFG-004: feature-flags typed registry + rollout %", cat="SPEC", est="M", spec_id="CFG-004"),
+    WU("CFG-SPEC-005", R, "planned", "agileplus specify CFG-005: remote sync (Consul/etcd/S3) + diff/preview", cat="SPEC", est="M", spec_id="CFG-005"),
+    WU("CFG-REG-001", R, "planned", "create projects/Configra.json registry entry (canonical config boundary per ADR-031)", cat="REGISTRY", est="S"),
+    WU("CFG-REG-002", R, "planned", "registry/domain-roles.json config domain → Configra (already implied)", cat="REGISTRY", est="S"),
+    WU("CFG-REG-003", R, "planned", "BOUNDARY_OWNERS.md: Configra owns Rust config (supersedes settly)", cat="REGISTRY", est="S"),
+    WU("CFG-REG-004", R, "planned", "LANGUAGE_STACK.md mention Configra core/edge split", cat="REGISTRY", est="S"),
+    WU("CFG-REG-005", R, "planned", "update registry/tools/check-ecosystem.ts to include Configra", cat="REGISTRY", est="S"),
+    WU("CFG-AUD-001", R, "planned", "merge PR #58 (absorb-okf), #63 (ci-apex), #64 (repin-dead-checkout)", cat="AUDIT", est="M"),
+    WU("CFG-AUD-002", R, "planned", "commit untracked _audit_configra_2026-06-23.json or delete", cat="AUDIT", est="S"),
+    WU("CFG-AUD-003", R, "planned", "reconcile 2 stashes: brand-icon-prep + WIP on chore/lane-greenup", cat="AUDIT", est="S"),
+    WU("CFG-AUD-004", R, "planned", "prune 16+ stale remote branches (chore/pin-actions, cursor/release-workflow, wip-gate-remediation, etc.)", cat="GIT", est="M"),
+    WU("CFG-AUD-005", R, "planned", "run grade.sh --fast; commit .grade-reports/configra/", cat="AUDIT", est="S"),
+    WU("CFG-AUD-006", R, "planned", "add release.yml + audit.yml + coverage.yml (only 4 workflows present)", cat="CI", est="M"),
+    WU("CFG-AUD-007", R, "planned", "add CODEOWNERS (missing)", cat="CI", est="S"),
+    WU("CFG-AUD-008", R, "planned", "add journey-gate + scorecard workflows", cat="CI", est="M"),
+    WU("CFG-DOC-001", R, "planned", "update README: fix oversells (encryption at rest claim, no crypto dep)", cat="DOCS", est="S"),
+    WU("CFG-DOC-002", R, "planned", "add Tier-2 substrate layout refresh (T16 already cited)", cat="DOCS", est="S"),
+    WU("CFG-DOC-003", R, "planned", "fill docs/boundary + docs/intent stubs (zero-loop per ADR-006)", cat="DOCS", est="M"),
+    # SOTA
+    WU("CFG-SOTA-001", R, "planned", "file-watcher: notify + reload channel + watch-bus surface", cat="SOTA", est="M",
+       deps=["CFG-SPEC-001"], spec_id="CFG-001"),
+    WU("CFG-SOTA-002", R, "planned", "layered merge graph: env>file>CLI>remote precedence + per-source profile selectors", cat="SOTA", est="M"),
+    WU("CFG-SOTA-003", R, "planned", "schema-validation: jsonschema/schemars against typed Config", cat="SOTA", est="M",
+       deps=["CFG-SPEC-002"], spec_id="CFG-002"),
+    WU("CFG-SOTA-004", R, "planned", "schema migration: refinery/schemars versioning", cat="SOTA", est="M",
+       deps=["CFG-SPEC-002"], spec_id="CFG-002"),
+    WU("CFG-SOTA-005", R, "planned", "secrets redaction: secrecy/redact wrappers + structured-log scrubber", cat="SOTA", est="S",
+       deps=["CFG-SPEC-003"], spec_id="CFG-003"),
+    WU("CFG-SOTA-006", R, "planned", "encryption at rest: aes-gcm/age/chacha20poly1305 backing for VaultStore", cat="SOTA", est="M",
+       deps=["CFG-SPEC-003"], spec_id="CFG-003"),
+    WU("CFG-SOTA-007", R, "planned", "diff/dry-run preview + time-travel/point-in-time restore (SQLite ledger)", cat="SOTA", est="M",
+       deps=["CFG-SPEC-005"], spec_id="CFG-005"),
+    WU("CFG-SOTA-008", R, "planned", "remote sync: Consul/etcd/S3 fetchers + team sync", cat="SOTA", est="M",
+       deps=["CFG-SPEC-005"], spec_id="CFG-005"),
+    WU("CFG-SOTA-009", R, "planned", "feature-flags typed Flag<T> registry + rollout %", cat="SOTA", est="M",
+       deps=["CFG-SPEC-004"], spec_id="CFG-004"),
+    WU("CFG-SOTA-010", R, "planned", "audit: append-log/CDC + tamper-evident hash chain", cat="SOTA", est="M"),
+    WU("CFG-SOTA-011", R, "planned", "typed-vs-dynamic split: serde(tag='kind') discriminator + dynamic access", cat="SOTA", est="S"),
+    WU("CFG-SOTA-012", R, "planned", "dynamic reconfigure: tokio::sync::watch + ArcSwap hot-reload", cat="SOTA", est="M"),
+    # PERF
+    WU("CFG-PERF-001", R, "planned", "release profile tuning: lto + codegen-units + panic=abort", cat="PERF", est="S"),
+    WU("CFG-PERF-002", R, "planned", "tokio features trim (full→rt-multi-thread+macros+fs+sync)", cat="PERF", est="S"),
+    WU("CFG-PERF-003", R, "planned", "criterion benches: cold-load + hot-reload latency", cat="PERF", est="M"),
+    WU("CFG-PERF-004", R, "planned", "deserialize_in_place + cached Config arc-swap for hot-reload", cat="PERF", est="M"),
+    # SECURITY
+    WU("CFG-SEC-001", R, "planned", "encryption-at-rest fix (claim vs reality)", cat="SECURITY", est="M",
+       deps=["CFG-SOTA-006"]),
+    WU("CFG-XREPO-001", R, "planned", "Conft TS overlay interop (config-schema/config-ts drain)", cat="XREPO", est="M"),
+    WU("CFG-XREPO-002", R, "planned", "repoint Authvault crypto/cert paths to Configra VaultStore", cat="XREPO", est="M"),
+]
+dag.extend(CFG)
+
+# -------------------- benchora --------------------
+R = "benchora"
+BEN = [
+    WU("BEN-SPEC-001", R, "planned", "agileplus specify BEN-001: CI regression gating + statistical confidence", cat="SPEC", est="L", spec_id="BEN-001"),
+    WU("BEN-SPEC-002", R, "planned", "agileplus specify BEN-002: git-SHA baseline pinning + historical trend", cat="SPEC", est="M", spec_id="BEN-002"),
+    WU("BEN-SPEC-003", R, "planned", "agileplus specify BEN-003: allocation tracking + flamegraph + perf.data", cat="SPEC", est="M", spec_id="BEN-003"),
+    WU("BEN-SPEC-004", R, "planned", "agileplus specify BEN-004: micro+macro+fuzz layering + cluster scheduling", cat="SPEC", est="L", spec_id="BEN-004"),
+    WU("BEN-REG-001", R, "planned", "create projects/Benchora.json registry entry", cat="REGISTRY", est="S",
+       notes="name=Benchora, type=shared-lib, role=perf-harness, status=active"),
+    WU("BEN-REG-002", R, "planned", "registry/domain-roles.json add Benchora to perf-harness domain", cat="REGISTRY", est="S"),
+    WU("BEN-REG-003", R, "planned", "BOUNDARY_OWNERS.md: Benchora owns perf-harness boundary", cat="REGISTRY", est="S"),
+    WU("BEN-AUD-001", R, "planned", "merge PR #40 (fix/benchora-wave7 workflow integrity)", cat="AUDIT", est="M"),
+    WU("BEN-AUD-002", R, "planned", "commit .pr-create.json (untracked) or move to .gitignore", cat="AUDIT", est="S"),
+    WU("BEN-AUD-003", R, "planned", "reconcile branch drift: local main behind origin/main by 4 commits", cat="GIT", est="S"),
+    WU("BEN-AUD-004", R, "planned", "prune 12+ stale remote branches (recovery/2026-06-06, intent-snapshot strands)", cat="GIT", est="M"),
+    WU("BEN-AUD-005", R, "planned", "run grade.sh --fast; commit .grade-reports/benchora/", cat="AUDIT", est="S"),
+    WU("BEN-AUD-006", R, "planned", "diagnose + fix fmt/clippy on workspace", cat="AUDIT", est="M"),
+    WU("BEN-CI-001", R, "planned", "add L5-104.9 standard workflow set (ci/deny/sbom/trufflehog) — has 8 workflows already, may add gaps", cat="CI", est="M"),
+    WU("BEN-CI-002", R, "planned", "add benchmark.yml run-on-PR + post-results workflow", cat="CI", est="M"),
+    WU("BEN-CI-003", R, "planned", "add journey-gate + CODEOWNERS (missing)", cat="CI", est="S"),
+    WU("BEN-DOC-001", R, "planned", "rewrite README: trim AI-Agent-Only banner + AI-DD-META + AI-Slop badges", cat="DOCS", est="S"),
+    WU("BEN-DOC-002", R, "planned", "fill docs/boundary + docs/intent stubs", cat="DOCS", est="M"),
+    WU("BEN-DOC-003", R, "planned", "expand SPEC.md: domain model + adapters + regression policy", cat="DOCS", est="M"),
+    # SOTA
+    WU("BEN-SOTA-001", R, "planned", "CI regression gate: bench→PR comment + criterion-table-formatter + github-action-benchmark", cat="SOTA", est="M",
+       deps=["BEN-SPEC-001"], spec_id="BEN-001"),
+    WU("BEN-SOTA-002", R, "planned", "statistical confidence: bootstrap-CI + bencher.dev percentile deltas + p-value/effect-size thresholds", cat="SOTA", est="M",
+       deps=["BEN-SPEC-001"], spec_id="BEN-001"),
+    WU("BEN-SOTA-003", R, "planned", "git-SHA baseline pinning: critcmp/cargo-benchcmp + 'compare against main@HEAD' artifact", cat="SOTA", est="M",
+       deps=["BEN-SPEC-002"], spec_id="BEN-002"),
+    WU("BEN-SOTA-004", R, "planned", "flamegraph/perf.data: cargo-flamegraph + perf + cargo-asm + valgrind --tool=callgrind", cat="SOTA", est="M",
+       deps=["BEN-SPEC-003"], spec_id="BEN-003"),
+    WU("BEN-SOTA-005", R, "planned", "historical trend storage: benches.cafe/track + bencher API + persistent JSON/MD archive", cat="SOTA", est="M",
+       deps=["BEN-SPEC-002"], spec_id="BEN-002"),
+    WU("BEN-SOTA-006", R, "planned", "multi-arch matrix: aarch64 + Apple-silicon + RISC-V runners", cat="SOTA", est="M"),
+    WU("BEN-SOTA-007", R, "planned", "allocation tracking: dhat + heaptrack + bytes counters", cat="SOTA", est="M",
+       deps=["BEN-SPEC-003"], spec_id="BEN-003"),
+    WU("BEN-SOTA-008", R, "planned", "instruction-count: iai-callgrind + iai", cat="SOTA", est="M",
+       deps=["BEN-SPEC-003"], spec_id="BEN-003"),
+    WU("BEN-SOTA-009", R, "planned", "container-isolated hermetic benches + --locked reproducible env", cat="SOTA", est="M",
+       deps=["BEN-SPEC-004"], spec_id="BEN-004"),
+    WU("BEN-SOTA-010", R, "planned", "GPU/SIMD microbenches: wgpu + cudarc + target-feature probes", cat="SOTA", est="L",
+       deps=["BEN-SPEC-004"], spec_id="BEN-004"),
+    WU("BEN-SOTA-011", R, "planned", "cluster scheduling: bencher SaaS or self-hosted fleet + multi-host fan-out", cat="SOTA", est="L",
+       deps=["BEN-SPEC-004"], spec_id="BEN-004"),
+    WU("BEN-SOTA-012", R, "planned", "fuzz: cargo-fuzz + atheris + Honggfuzz + macro/micro separation", cat="SOTA", est="L",
+       deps=["BEN-SPEC-004"], spec_id="BEN-004"),
+    WU("BEN-SOTA-013", R, "planned", "alert routing: Slack/Teams/PagerDuty webhook on regression + --fail-fast policy", cat="SOTA", est="M"),
+    # PERF
+    WU("BEN-PERF-001", R, "planned", "tune criterion: warmup + sample-size + throughput + noise-floor profile", cat="PERF", est="M"),
+    WU("BEN-PERF-002", R, "planned", "allocator shim + target-cpu pinning + flamegraph capture", cat="PERF", est="M"),
+    WU("BEN-SEC-001", R, "planned", "run benchmark.yml in CI + persist results as artifacts", cat="SECURITY", est="M"),
+    WU("BEN-XREPO-001", R, "planned", "adopt gauge as Eyetracker FR-INFER-001 ≤30ms regression gate", cat="XREPO", est="M"),
+    WU("BEN-XREPO-002", R, "planned", "adopt gauge as Eventra projection-throughput baseline", cat="XREPO", est="M"),
+    WU("BEN-XREPO-003", R, "planned", "adopt gauge as Authvault JWT-verify RPS baseline", cat="XREPO", est="M"),
+    WU("BEN-XREPO-004", R, "planned", "adopt gauge as Configra hot-reload latency baseline", cat="XREPO", est="M"),
+    WU("BEN-XREPO-005", R, "planned", "adopt gauge as Quillr httpora-core circuit-breaker latency baseline", cat="XREPO", est="M"),
+]
+dag.extend(BEN)
+
+# -------------------- authvault --------------------
+R = "authvault"
+AUT = [
+    WU("AUT-SPEC-001", R, "planned", "agileplus specify AUT-001: OpenID Connect ID Token + JWKS + Discovery + Dynamic Client Reg", cat="SPEC", est="L", spec_id="AUT-001"),
+    WU("AUT-SPEC-002", R, "planned", "agileplus specify AUT-002: ABAC + ReBAC policy engine (Cedar/Rego/Oso/SpiceDB adapter)", cat="SPEC", est="L", spec_id="AUT-002"),
+    WU("AUT-SPEC-003", R, "planned", "agileplus specify AUT-003: WebAuthn + TOTP + passkey + step-up", cat="SPEC", est="L", spec_id="AUT-003"),
+    WU("AUT-SPEC-004", R, "planned", "agileplus specify AUT-004: KMS adapters (AWS KMS / Vault / HSM)", cat="SPEC", est="M", spec_id="AUT-004"),
+    WU("AUT-SPEC-005", R, "planned", "agileplus specify AUT-005: DPoP + mTLS + PAR + RAR + JAR + CIBA", cat="SPEC", est="L", spec_id="AUT-005"),
+    WU("AUT-SPEC-006", R, "planned", "agileplus specify AUT-006: tenant-isolated JWKS + key rotation + multi-tenancy", cat="SPEC", est="M", spec_id="AUT-006"),
+    WU("AUT-SPEC-007", R, "planned", "agileplus specify AUT-007: audit hash-chain + SIEM forwarder + tamper-evident log", cat="SPEC", est="M", spec_id="AUT-007"),
+    WU("AUT-SPEC-008", R, "planned", "agileplus specify AUT-008: SAML2 + token introspection RFC 7662 + revocation RFC 7009", cat="SPEC", est="L", spec_id="AUT-008"),
+    WU("AUT-REG-001", R, "planned", "create projects/Authvault.json registry entry (canonical Rust auth boundary)", cat="REGISTRY", est="S"),
+    WU("AUT-REG-002", R, "planned", "registry/domain-roles.json: secrets domain → Authvault (already implicit)", cat="REGISTRY", est="S"),
+    WU("AUT-REG-003", R, "planned", "BOUNDARY_OWNERS.md: Authvault owns Rust auth + cipher boundary", cat="REGISTRY", est="S"),
+    WU("AUT-REG-004", R, "planned", "merge 3 GAP worktrees (gap008/009/010) sequentially into main", cat="GIT", est="L",
+       notes="gap008: PKCE state→session binding; gap009: brute-force rate-limit; gap010: middleware adapter docs"),
+    WU("AUT-REG-005", R, "planned", "fast-forward / rebase wip/devclone-rescue-Authvault-20260601 onto main (5 commits behind)", cat="GIT", est="M"),
+    WU("AUT-REG-006", R, "planned", "delete duplicate ci.yaml (keep ci.yml) to remove drift", cat="GIT", est="S"),
+    WU("AUT-REG-007", R, "planned", "delete or gitignore _tmp_frnfr.txt", cat="GIT", est="S"),
+    WU("AUT-REG-008", R, "planned", "prune stale remote branches (codex/fmt-drift, integration/consolidate, wip/*)", cat="GIT", est="M"),
+    WU("AUT-AUD-001", R, "planned", "close kilo-duplicate welcome issues #22..#25", cat="AUDIT", est="S"),
+    WU("AUT-AUD-002", R, "planned", "fill CODEOWNERS (14B placeholder only)", cat="AUDIT", est="S"),
+    WU("AUT-AUD-003", R, "planned", "run grade.sh --fast; commit .grade-reports/authvault/", cat="AUDIT", est="S"),
+    WU("AUT-CI-001", R, "planned", "merge shared reusable workflow adoption (ci/adopt-shared-reusable-workflows)", cat="CI", est="M"),
+    WU("AUT-CI-002", R, "planned", "trim 13 workflows to canonical set (12 present, likely duplicate)", cat="CI", est="M"),
+    WU("AUT-CI-003", R, "planned", "add L5-104.9 standard workflow set if missing (ci/deny/sbom/trufflehog)", cat="CI", est="M"),
+    WU("AUT-CI-004", R, "planned", "wire SHIP evidence collector + attestation workflow", cat="CI", est="M"),
+    WU("AUT-DOC-001", R, "planned", "fix README: title is '# authkit' but repo is Authvault", cat="DOCS", est="S"),
+    WU("AUT-DOC-002", R, "planned", "fill docs/boundary + docs/intent stubs", cat="DOCS", est="M"),
+    WU("AUT-DOC-003", R, "planned", "expand SPEC.md: threat model + STRIDE + OIDC compliance surface", cat="DOCS", est="M"),
+    # SOTA
+    WU("AUT-SOTA-001", R, "planned", "OIDC: ID Token + JWKS endpoint + Discovery + Dynamic Client Registration", cat="SOTA", est="L",
+       deps=["AUT-SPEC-001"], spec_id="AUT-001"),
+    WU("AUT-SOTA-002", R, "planned", "SAML2 protocol + token introspection (RFC 7662) + revocation endpoint (RFC 7009) over HTTP", cat="SOTA", est="L",
+       deps=["AUT-SPEC-008"], spec_id="AUT-008"),
+    WU("AUT-SOTA-003", R, "planned", "DPoP (RFC 9449) sender-constrained tokens + mTLS client-cert binding", cat="SOTA", est="M",
+       deps=["AUT-SPEC-005"], spec_id="AUT-005"),
+    WU("AUT-SOTA-004", R, "planned", "PAR/RAR/JAR/Pushed-Authorization + CIBA flows", cat="SOTA", est="L",
+       deps=["AUT-SPEC-005"], spec_id="AUT-005"),
+    WU("AUT-SOTA-005", R, "planned", "JWE for confidential claim payloads (jsonwebtoken covers only JWS)", cat="SOTA", est="M"),
+    WU("AUT-SOTA-006", R, "planned", "KMS adapter: AWS KMS / Vault / HSM via KeyManagementService port", cat="SOTA", est="M",
+       deps=["AUT-SPEC-004"], spec_id="AUT-004"),
+    WU("AUT-SOTA-007", R, "planned", "policy engine: Cedar/Rego/Oso/SpiceDB adapter for ABAC + ReBAC", cat="SOTA", est="L",
+       deps=["AUT-SPEC-002"], spec_id="AUT-002"),
+    WU("AUT-SOTA-008", R, "planned", "multi-tenancy: tenant-scoped key/issuer/JWKS + tenant-isolated streams", cat="SOTA", est="M",
+       deps=["AUT-SPEC-006"], spec_id="AUT-006"),
+    WU("AUT-SOTA-009", R, "planned", "audit hash-chain + SIEM forwarder (AuditSink already a port)", cat="SOTA", est="M",
+       deps=["AUT-SPEC-007"], spec_id="AUT-007"),
+    WU("AUT-SOTA-010", R, "planned", "WebAuthn + TOTP + passkey + FIDO2 step-up", cat="SOTA", est="L",
+       deps=["AUT-SPEC-003"], spec_id="AUT-003"),
+    WU("AUT-SOTA-011", R, "planned", "bot detection + brute-force telemetry (per-IP + per-tenant sliding window)", cat="SOTA", est="M"),
+    WU("AUT-SOTA-012", R, "planned", "telemetry: OpenTelemetry exporter + Prometheus metrics + auth SLI/SLO", cat="SOTA", est="M"),
+    # PERF
+    WU("AUT-PERF-001", R, "planned", "JWKS cache (moka/in-process LRU) + token-revocation cache", cat="PERF", est="M"),
+    WU("AUT-PERF-002", R, "planned", "connection pool tuning: redis (pipelining) + tokio-postgres", cat="PERF", est="S"),
+    WU("AUT-PERF-003", R, "planned", "argon2id param tuning + front-door cache + rate-limit", cat="PERF", est="M"),
+    WU("AUT-PERF-004", R, "planned", "key rotation latency benchmark + automated rotation hook", cat="PERF", est="M"),
+    # SECURITY
+    WU("AUT-SEC-001", R, "planned", "STRIDE threat model + bot-detection rule set", cat="SECURITY", est="M"),
+    WU("AUT-SEC-002", R, "planned", "session security: refresh-token sliding-window telemetry + device-binding + step-up", cat="SECURITY", est="M"),
+    WU("AUT-XREPO-001", R, "planned", "repoint Eyetracker (calibration consent + tenant binding) → Authvault SSO", cat="XREPO", est="M"),
+    WU("AUT-XREPO-002", R, "planned", "repoint Eventra (tenant-isolated streams) → Authvault tenant_id", cat="XREPO", est="M"),
+    WU("AUT-XREPO-003", R, "planned", "repoint Configra secrets → Authvault VaultStore", cat="XREPO", est="M"),
+    WU("AUT-XREPO-004", R, "planned", "repoint Quillr (Bearer auth helper) → Authvault token introspection", cat="XREPO", est="M"),
+]
+dag.extend(AUT)
+
+# -------------------- quillr --------------------
+R = "quillr"
+QUI = [
+    WU("QUI-SPEC-001", R, "planned", "agileplus specify QUI-001: HTTP/2 + HTTP/3 multiplexing + zero-copy streaming", cat="SPEC", est="L", spec_id="QUI-001"),
+    WU("QUI-SPEC-002", R, "planned", "agileplus specify QUI-002: observability hooks (tracing + OTel middleware)", cat="SPEC", est="M", spec_id="QUI-002"),
+    WU("QUI-SPEC-003", R, "planned", "agileplus specify QUI-003: connection pool + mTLS + auth scheme helpers", cat="SPEC", est="M", spec_id="QUI-003"),
+    WU("QUI-SPEC-004", R, "planned", "agileplus specify QUI-004: distributed token-bucket rate-limit consensus", cat="SPEC", est="M", spec_id="QUI-004"),
+    WU("QUI-SPEC-005", R, "planned", "agileplus specify QUI-005: TS client AbortSignal + streaming body typing + keepalive", cat="SPEC", est="M", spec_id="QUI-005"),
+    WU("QUI-REG-001", R, "planned", "create projects/Quillr.json registry entry (HTTP toolkit boundary)", cat="REGISTRY", est="S"),
+    WU("QUI-REG-002", R, "planned", "registry/domain-roles.json: add Quillr to connect domain (http-middleware)", cat="REGISTRY", est="S"),
+    WU("QUI-REG-003", R, "planned", "BOUNDARY_OWNERS.md: Quillr owns http-middleware boundary", cat="REGISTRY", est="S"),
+    WU("QUI-REG-004", R, "planned", "disposition: Httpora absorbed 2026-06-20 → Quillr httpora-core", cat="REGISTRY", est="S"),
+    WU("QUI-AUD-001", R, "planned", "fast-forward local main to origin/main (4 commits behind)", cat="GIT", est="S"),
+    WU("QUI-AUD-002", R, "planned", "drop stash@{0} brand-icon-prep on feat/landing-site", cat="GIT", est="S"),
+    WU("QUI-AUD-003", R, "planned", "commit untracked assets/ (audit contents first)", cat="GIT", est="S"),
+    WU("QUI-AUD-004", R, "planned", "merge dependabot PR #22 (node 26-slim)", cat="AUDIT", est="S"),
+    WU("QUI-AUD-005", R, "planned", "close kilo-triaged welcome dup issues #18..#21", cat="AUDIT", est="S"),
+    WU("QUI-AUD-006", R, "planned", "trim 12 workflows → L5-104.9 canonical set + absorb httpora-specific flows", cat="CI", est="M"),
+    WU("QUI-AUD-007", R, "planned", "run grade.sh --fast; commit .grade-reports/quillr/", cat="AUDIT", est="S"),
+    WU("QUI-AUD-008", R, "planned", "add CODEOWNERS (missing entirely)", cat="CI", est="S"),
+    WU("QUI-AUD-009", R, "planned", "reconcile pheno/Quillr + pheno-absorb/Quillr clones (drift vs Dev/Quillr)", cat="GIT", est="M"),
+    WU("QUI-DOC-001", R, "planned", "rewrite SPEC.md: drop stale Documentation Generator references", cat="DOCS", est="S"),
+    WU("QUI-DOC-002", R, "planned", "expand README: cover both @kooshapari/quillts + httpora-core + feature-flag matrix", cat="DOCS", est="M"),
+    WU("QUI-DOC-003", R, "planned", "fill docs/boundary + docs/intent stubs", cat="DOCS", est="M"),
+    WU("QUI-DOC-004", R, "planned", "expand llms.txt: feature coverage + crate layout", cat="DOCS", est="S"),
+    # SOTA
+    WU("QUI-SOTA-001", R, "planned", "pluggable transport: hyper/reqwest backend wiring", cat="SOTA", est="M"),
+    WU("QUI-SOTA-002", R, "planned", "HTTP/2 + HTTP/3 (quinn/nghttp2) multiplexing", cat="SOTA", est="L",
+       deps=["QUI-SPEC-001"], spec_id="QUI-001"),
+    WU("QUI-SOTA-003", R, "planned", "zero-copy streaming: bytes integration + hyper body streaming", cat="SOTA", est="M",
+       deps=["QUI-SPEC-001"], spec_id="QUI-001"),
+    WU("QUI-SOTA-004", R, "planned", "observability: tracing + OpenTelemetry middleware layer", cat="SOTA", est="M",
+       deps=["QUI-SPEC-002"], spec_id="QUI-002"),
+    WU("QUI-SOTA-005", R, "planned", "connection pool abstraction + keepalive + request coalescing/dedup", cat="SOTA", est="M"),
+    WU("QUI-SOTA-006", R, "planned", "mTLS + OAuth/JWT/Bearer auth helpers", cat="SOTA", est="M",
+       deps=["QUI-SPEC-003"], spec_id="QUI-003"),
+    WU("QUI-SOTA-007", R, "planned", "OpenAPI generation + typed client codegen", cat="SOTA", est="M"),
+    WU("QUI-SOTA-008", R, "planned", "distributed token-bucket rate-limit consensus (Redis-backed)", cat="SOTA", est="M",
+       deps=["QUI-SPEC-004"], spec_id="QUI-004"),
+    WU("QUI-SOTA-009", R, "planned", "TS client: AbortSignal + timeout/cancellation + streaming body typing", cat="SOTA", est="M",
+       deps=["QUI-SPEC-005"], spec_id="QUI-005"),
+    WU("QUI-SOTA-010", R, "planned", "TS client: undici init + worker-thread offload + connection reuse", cat="SOTA", est="M"),
+    WU("QUI-SOTA-011", R, "planned", "trim default = ['full'] → granular feature toggles", cat="SOTA", est="S"),
+    # PERF
+    WU("QUI-PERF-001", R, "planned", "parking_lot sharded state for rate-limiter (single-CPU contention)", cat="PERF", est="M"),
+    WU("QUI-PERF-002", R, "planned", "ArcSwap for config hot-reload + AtomicU64 typed counters", cat="PERF", est="M"),
+    WU("QUI-PERF-003", R, "planned", "release profile: LTO + codegen-units=1 + panic=abort", cat="PERF", est="S"),
+    WU("QUI-PERF-004", R, "planned", "wire benchmark.yml results to persistent trend store", cat="PERF", est="M"),
+    # SECURITY
+    WU("QUI-SEC-001", R, "planned", "secrets: redact Authorization/Cookie headers in tracing layer", cat="SECURITY", est="S"),
+    WU("QUI-XREPO-001", R, "planned", "repoint Eventra outbox HTTP sink → Quillr httpora-core rate-limit/retry", cat="XREPO", est="M"),
+    WU("QUI-XREPO-002", R, "planned", "repoint Authvault audit-log HTTP forwarder → Quillr", cat="XREPO", est="M"),
+    WU("QUI-XREPO-003", R, "planned", "repoint Configra remote sync fetcher → Quillr", cat="XREPO", est="M"),
+]
+dag.extend(QUI)
+
+# ============================================================================
+# Spine-level DAG units (~30)
+# ============================================================================
+
+SPINE = [
+    WU("SPN-REG-001", "phenotype-registry", "planned", "audit registry/projects/ for owned-repo entries (eyetracker missing)", cat="REGISTRY", est="S"),
+    WU("SPN-REG-002", "phenotype-registry", "planned", "audit registry/domain-roles.json for owned-repo roles", cat="REGISTRY", est="S"),
+    WU("SPN-REG-003", "phenotype-registry", "planned", "audit registry/disposition-index.json for owned-repo dispositions", cat="REGISTRY", est="S"),
+    WU("SPN-REG-004", "phenotype-registry", "planned", "audit BOUNDARY_OWNERS.md sections for owned-repo boundaries", cat="REGISTRY", est="S"),
+    WU("SPN-REG-005", "phenotype-registry", "planned", "sync registry/tools/check-ecosystem.ts CANONICAL_REPOS with owned repos", cat="REGISTRY", est="S"),
+    WU("SPN-REG-006", "phenotype-registry", "planned", "sync scripts/validate-ecosystem.sh REPOS array", cat="REGISTRY", est="S"),
+    WU("SPN-REG-007", "phenotype-registry", "planned", "publish 6 .grade-reports/ artefacts (one per owned repo)", cat="AUDIT", est="M"),
+    WU("SPN-REG-008", "phenotype-registry", "planned", "add JSON Schema validator for projects/*.json shape", cat="REGISTRY", est="M"),
+    WU("SPN-REG-009", "phenotype-registry", "planned", "LANGUAGE_STACK.md refresh: explicit Core/Edge/Deferred for owned", cat="DOCS", est="M"),
+    WU("SPN-REG-010", "phenotype-registry", "planned", "add charter.md addendum: owned-repo boundary guarantees", cat="DOCS", est="M"),
+    WU("SPN-AUD-001", "phenotype-registry", "planned", "run validate-ecosystem.sh on owned scope", cat="AUDIT", est="M"),
+    WU("SPN-AUD-002", "phenotype-registry", "planned", "run fleet grade.sh sweep on owned scope; capture .grade-reports/", cat="AUDIT", est="M"),
+    WU("SPN-AUD-003", "phenotype-registry", "planned", "wire grade-report CI: each owned repo pushes to .grade-reports/ on main", cat="AUDIT", est="L"),
+    WU("SPN-DAG-001", "phenotype-registry", "planned", "update docs/rationalization/ECOSYSTEM_DAG.md lanes for owned repos", cat="SPINE", est="M"),
+    WU("SPN-DAG-002", "phenotype-registry", "planned", "create docs/sessions/20260622-owned-repo-audit/ with 01_RESEARCH + 03_DAG_WBS", cat="SPINE", est="M"),
+    WU("SPN-DAG-003", "phenotype-registry", "planned", "ADR-007: Owned-repo grading cadence (weekly fast, monthly full)", cat="SPINE", est="M"),
+    WU("SPN-DAG-004", "phenotype-registry", "planned", "ADR-008: Cross-repo overlap policy (re-pointing protocol)", cat="SPINE", est="M"),
+    WU("SPN-DAG-005", "phenotype-registry", "planned", "ADR-009: SOTA gap closure cadence per domain", cat="SPINE", est="M"),
+    WU("SPN-STDLIB-001", "phenokits-commons", "planned", "add governance/perf-bench workflow template (Benchora-derive)", cat="SPINE", est="M"),
+    WU("SPN-STDLIB-002", "phenokits-commons", "planned", "add governance/l5-104.9-workflow-set template (already implied)", cat="SPINE", est="M"),
+    WU("SPN-STDLIB-003", "phenokits-commons", "planned", "add governance/sota-gap-rubric template (for 71+ scoring)", cat="SPINE", est="M"),
+    WU("SPN-AGP-001", "agileplus", "planned", "spec template: work-unit protocol for 71+ gap closure", cat="SPINE", est="M"),
+    WU("SPN-AGP-002", "agileplus", "planned", "spec template: cross-repo repointing work-unit", cat="SPINE", est="M"),
+    WU("SPN-AGP-003", "agileplus", "planned", "spec template: git-hygiene work-unit (stash+branch+worktree)", cat="SPINE", est="M"),
+    WU("SPN-AGP-004", "agileplus", "planned", "spec template: SOTA-gap-closure work-unit", cat="SPINE", est="M"),
+    WU("SPN-AGP-005", "agileplus", "planned", "add work-unit YAML schema validator (frontmatter)", cat="SPINE", est="M"),
+    WU("SPN-AUDIT-001", "phenotype-registry", "planned", "implement auditor-validator loop: owned-repo CI failures auto-add DAG units", cat="SPINE", est="L"),
+    WU("SPN-AUDIT-002", "phenotype-registry", "planned", "implement cross-repo dep graph: detect Eventra outbox→Authvault JWT chain breaks", cat="SPINE", est="L"),
+    WU("SPN-AUDIT-003", "phenotype-registry", "planned", "implement weekly audit sweep: gh-action runs grade.sh on owned scope, posts report", cat="SPINE", est="L"),
+]
+dag.extend(SPINE)
+
+# ============================================================================
+# Cross-repo overlap DAG units (~20)
+# ============================================================================
+
+XREPO = [
+    WU("XRP-001", "phenotype-registry", "planned", "re-point matrix: Eyetracker consent → Authvault SSO + Eventra topic", cat="XREPO", est="L"),
+    WU("XRP-002", "phenotype-registry", "planned", "re-point matrix: Eventra outbox → Quillr HTTP sink (rate-limit/retry/CB)", cat="XREPO", est="L"),
+    WU("XRP-003", "phenotype-registry", "planned", "re-point matrix: Authvault AuditSink → Eventra event-store + Quillr forwarder", cat="XREPO", est="L"),
+    WU("XRP-004", "phenotype-registry", "planned", "re-point matrix: Configra VaultStore secrets → Authvault KMS adapters", cat="XREPO", est="L"),
+    WU("XRP-005", "phenotype-registry", "planned", "re-point matrix: Configra remote sync → Quillr fetcher", cat="XREPO", est="L"),
+    WU("XRP-006", "phenotype-registry", "planned", "re-point matrix: Benchora baselines for all 5 owned repos (Eyetracker ≤30ms / Eventra projection / Authvault JWT / Configra hot-reload / Quillr CB)", cat="XREPO", est="L"),
+    WU("XRP-007", "phenotype-registry", "planned", "unified trace: propagate trace_id from Quillr HTTP → Eventra → Authvault → Configra", cat="XREPO", est="L"),
+    WU("XRP-008", "phenotype-registry", "planned", "multi-tenancy model: shared tenant_id across Eventra + Authvault + Configra", cat="XREPO", est="L"),
+    WU("XRP-009", "phenotype-registry", "planned", "config schema: shared tenant-config schema across Configra + Authvault issuer/JWKS", cat="XREPO", est="M"),
+    WU("XRP-010", "phenotype-registry", "planned", "event schema: shared EventEnvelope shape across Eventra + Authvault audit + Configra audit", cat="XREPO", est="M"),
+    WU("XRP-011", "phenotype-registry", "planned", "rate-limit consensus: Quillr httpora-core + Eventra backpressure", cat="XREPO", est="M"),
+    WU("XRP-012", "phenotype-registry", "planned", "ABAC: Authvault policy engine consumes Eventra event-stream for context", cat="XREPO", est="M"),
+    WU("XRP-013", "phenotype-registry", "planned", "telemetry: shared OTel pipeline from Quillr → Eventra → Authvault → Configra → Eyetracker", cat="XREPO", est="L"),
+    WU("XRP-014", "phenotype-registry", "planned", "Benchora baseline matrix: each owned repo publishes perf budget + regression threshold", cat="XREPO", est="M"),
+    WU("XRP-015", "phenotype-registry", "planned", "journey matrix: phenotype-journeys manifest per owned repo (e2e flow)", cat="XREPO", est="M"),
+    WU("XRP-016", "phenotype-registry", "planned", "spec consistency: each owned repo's SPEC.md cross-references boundary + owner", cat="XREPO", est="S"),
+    WU("XRP-017", "phenotype-registry", "planned", "release-attest matrix: each owned repo produces SLSA L3 provenance", cat="XREPO", est="M"),
+    WU("XRP-018", "phenotype-registry", "planned", "security matrix: each owned repo shares gitleaks baseline + secret-rotation cadence", cat="XREPO", est="S"),
+    WU("XRP-019", "phenotype-registry", "planned", "governance matrix: each owned repo adopts L5-104.9 workflow set", cat="XREPO", est="M"),
+    WU("XRP-020", "phenotype-registry", "planned", "license/CODEOWNERS matrix: each owned repo populated", cat="XREPO", est="S"),
+]
+dag.extend(XREPO)
+
+# ============================================================================
+# Output
+# ============================================================================
+out_json = r"C:\Users\koosh\_owned_dag.json"
+with open(out_json, "w") as f:
+    json.dump({
+        "version": "1.0.0",
+        "generated": datetime.utcnow().isoformat() + "Z",
+        "scope": [o["key"] for o in OWNED],
+        "unit_count": len(dag),
+        "categories": sorted(set(d["category"] for d in dag)),
+        "per_repo_counts": {o["key"]: sum(1 for d in dag if d["repo"]==o["key"]) for o in OWNED},
+        "units": dag,
+    }, f, indent=2)
+
+# Markdown summary
+def fmt_md():
+    lines = []
+    lines.append("# Owned-Repo Multi-Hundred DAG — v1.0.0")
+    lines.append("")
+    lines.append(f"**Scope:** {', '.join(o['key'] for o in OWNED)}")
+    lines.append(f"**Generated:** {datetime.utcnow().isoformat()}Z")
+    lines.append(f"**Total units:** {len(dag)}")
+    lines.append("")
+    lines.append("## Per-Repo Counts")
+    lines.append("")
+    lines.append("| Repo | Units |")
+    lines.append("|---|---|")
+    counts = {o["key"]: sum(1 for d in dag if d["repo"]==o["key"]) for o in OWNED}
+    for k, v in counts.items():
+        lines.append(f"| {k} | {v} |")
+    lines.append(f"| spine | {sum(1 for d in dag if d['repo']=='phenotype-registry' or d['repo']=='agileplus' or d['repo']=='phenokits-commons')} |")
+    lines.append(f"| xrepo | {sum(1 for d in dag if d['category']=='XREPO' and d['repo']=='phenotype-registry')} |")
+    lines.append("")
+    lines.append("## Categories")
+    lines.append("")
+    cats = {}
+    for d in dag:
+        cats.setdefault(d["category"], 0)
+        cats[d["category"]] += 1
+    for c, n in sorted(cats.items()):
+        lines.append(f"- **{c}**: {n}")
+    lines.append("")
+    lines.append("## Unit Protocol")
+    lines.append("")
+    lines.append("Each unit has:")
+    lines.append("- `id` — unique work-unit ID")
+    lines.append("- `repo` — target repo (or spine)")
+    lines.append("- `lane` — `planned | in_progress | done | nb`")
+    lines.append("- `category` — REGISTRY | AUDIT | GIT | CI | SPEC | SOTA | PERF | SECURITY | DOCS | XREPO | SPINE")
+    lines.append("- `title` — work-unit title")
+    lines.append("- `deps` — list of upstream unit IDs")
+    lines.append("- `est` — size estimate (S/M/L/XL)")
+    lines.append("- `spec_id` — AgilePlus spec ID (if non-trivial)")
+    lines.append("- `notes` — context / rationale")
+    lines.append("")
+    lines.append("## Top Dependencies (chain roots)")
+    lines.append("")
+    lines.append("- **AUDIT** chains → pre-req for any other category")
+    lines.append("- **GIT** chains → pre-req for CI/REGISTRY")
+    lines.append("- **CI** chains → pre-req for SOTA merging")
+    lines.append("- **REGISTRY** entries → enable XREPO cross-pointing")
+    lines.append("- **SPEC** units → gate large SOTA/PERF work")
+    lines.append("")
+    lines.append("## Validation Strategy (Auditor/Validator Loop)")
+    lines.append("")
+    lines.append("- Weekly `grade.sh --fast` on all owned → results in `.grade-reports/`")
+    lines.append("- CI red on any owned → auto-add new DAG unit (`SPN-AUDIT-001`)")
+    lines.append("- Stale remote branch detection → auto-add prune unit (`*-GIT-*`)")
+    lines.append("- SOTA gap drift detected via search → auto-add gap unit (`*-SOTA-*`)")
+    lines.append("- Open PR age > 7d → auto-add merge-or-close unit (`*-AUD-*`)")
+    lines.append("")
+    lines.append("Full machine-readable: `C:\\Users\\_owned_dag.json`")
+    return "\n".join(lines)
+
+out_md = r"C:\Users\koosh\_owned_dag.md"
+with open(out_md, "w") as f:
+    f.write(fmt_md())
+
+print(f"WROTE {out_json} ({len(dag)} units)")
+print(f"WROTE {out_md}")
+print()
+print("Per-repo counts:")
+counts = {o["key"]: sum(1 for d in dag if d["repo"]==o["key"]) for o in OWNED}
+for k, v in counts.items():
+    print(f"  {k}: {v}")
+print(f"  spine: {sum(1 for d in dag if d['repo']=='phenotype-registry' or d['repo']=='agileplus' or d['repo']=='phenokits-commons')}")
+print(f"  xrepo: {sum(1 for d in dag if d['category']=='XREPO' and d['repo']=='phenotype-registry')}")
+print(f"  TOTAL: {len(dag)}")

@@ -1,0 +1,18 @@
+import os
+clean = r'C:\Users\koosh\OmniRoute-clean\open-sse\executors\codex.ts'
+
+with open(clean, 'r', encoding='utf8', errors='replace') as fh:
+    c = fh.read()
+
+for needle in ['CODEX_HOSTED_TOOL_TYPES', 'normalizeCodexTools', 'local_shell']:
+    print(f'\n=== USES OF [{needle}] ===')
+    idx = 0
+    while True:
+        idx = c.find(needle, idx)
+        if idx < 0: break
+        start = max(0, idx - 80)
+        end = min(len(c), idx + 250)
+        print(f'\n  idx={idx}:')
+        print('  ' + c[start:end].replace('\n', '\n  '))
+        print('  ---')
+        idx += 1

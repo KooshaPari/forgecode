@@ -1,0 +1,174 @@
+/**
+ * POST /api/cli-tools/setup-exec — execute a `setup <area>` command from the
+ * dashboard and stream stdout/stderr back in the response body.
+ *
+ * Wired by `feat/gui-exec-setup` (#5096) so a contributor running `git clone`
+ * can finish setup from the GUI without dropping to a terminal. The CLI
+ * aggregator (#5092) is the source of truth for the actual setup logic; this
+ * route is a thin spawn wrapper.
+ *
+ * The `cli-setup` SkillArea (CLI: Setup & Config) is the only place in the
+ * dashboard that surfaces this endpoint. The button is intentionally absent
+ * from any other area so the surface is narrow and the blast radius of a
+ * mistake is small.
+ *
+ * Security:
+ *   - The route is LOCAL_ONLY (already covered by the `/api/cli-tools/`
+ *     prefix in `routeGuard.ts`). Only loopback callers can reach it.
+ *   - The `area` is whitelisted; user-supplied `args` are split on
+ *     whitespace and filtered to a safe character set (no shell metachars).
+ *   - `--dry-run` is supported end-to-end and is the default for the
+ *     "Preview" button.
+ *   - The route is `runtime.startupProfile === "startup"` (default) only;
+ *     `--no-color` is forced so the output renders cleanly in the modal.
+ *
+ * Spawn model: `execFile` (NOT `exec`) so the argv is passed without a
+ * shell, eliminating command-injection via the `args` field.
+ */
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { NextResponse } from "next/server";
+import { requireCliToolsAuth } from "@/lib/api/requireCliToolsAuth";
+
+const execFileAsync = promisify(execFile);
+
+// Whitelisted areas — keep in sync with `bin/cli/commands/setup.mjs` SETUP_AREAS.
+// Adding an area here means the dashboard will surface a "Run" button for it.
+const SETUP_AREAS = new Set([
+  "electron",
+  "docker",
+  "podman",
+  "vps",
+  "remote",
+  "opencode",
+]);
+
+// Hard cap so a single GUI click can't burn the whole event loop / disk.
+const MAX_DURATION_MS = 5 * 60_000;
+// Hard cap on combined stdout+stderr size (UTF-8 byte length) — 1 MiB.
+const MAX_OUTPUT_BYTES = 1_048_576;
+// Allowed characters in user-supplied args: letters, digits, dash, dot,
+// underscore, equals, slash, colon, comma, plus. Anything else is dropped
+// (e.g. `;`, `|`, `&`, `` ` ``, `$`, `\n`).
+const ARG_CHAR_RE = /^[A-Za-z0-9._\-=/:+,]+$/;
+
+function sanitizeArgs(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const out: string[] = [];
+  for (const raw of input) {
+    if (typeof raw !== "string") continue;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    if (trimmed.length > 256) continue;
+    if (!ARG_CHAR_RE.test(trimmed)) continue;
+    out.push(trimmed);
+  }
+  return out;
+}
+
+interface ExecBody {
+  area?: string;
+  action?: string;
+  args?: unknown;
+  dryRun?: boolean;
+}
+
+export async function POST(request: Request): Promise<Response> {
+  const authError = await requireCliToolsAuth(request);
+  if (authError) return authError;
+
+  let body: ExecBody;
+  try {
+    body = (await request.json()) as ExecBody;
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid JSON body", code: "SETUP_EXEC_001" },
+      { status: 400 }
+    );
+  }
+
+  const area = typeof body.area === "string" ? body.area.trim().toLowerCase() : "";
+  if (!SETUP_AREAS.has(area)) {
+    return NextResponse.json(
+      { error: `Unsupported setup area: ${area}`, code: "SETUP_EXEC_002" },
+      { status: 400 }
+    );
+  }
+
+  // Build the argv. Order: [node, omniroute.mjs, setup, <area>, ...flags, ...args]
+  const repoRoot = process.cwd();
+  const cliEntry = "bin/omniroute.mjs";
+  const argv: string[] = ["setup", area];
+  argv.push("--no-color");
+  // Always render JSON when the GUI is the consumer so the modal can copy
+  // structured output (the underlying setup commands already honor --json).
+  argv.push("--output", "json");
+  if (body.dryRun) argv.push("--dry-run");
+  if (typeof body.action === "string" && body.action.trim()) {
+    const action = body.action.trim();
+    if (ARG_CHAR_RE.test(action) && action.length <= 64) {
+      argv.push(action);
+    }
+  }
+  argv.push(...sanitizeArgs(body.args));
+
+  const startedAt = Date.now();
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      "node",
+      [cliEntry, ...argv],
+      {
+        cwd: repoRoot,
+        timeout: MAX_DURATION_MS,
+        maxBuffer: MAX_OUTPUT_BYTES,
+        env: {
+          ...process.env,
+          // Force the JSON output mode for the child to be predictable
+          // regardless of the GUI parent's `--output` setting.
+          OMNIROUTE_NO_UPDATE_NOTIFIER: "1",
+          CI: "1",
+        },
+        windowsHide: true,
+      }
+    );
+    return NextResponse.json({
+      ok: true,
+      area,
+      action: body.action ?? null,
+      dryRun: Boolean(body.dryRun),
+      command: `node ${cliEntry} ${argv.join(" ")}`,
+      stdout,
+      stderr,
+      exitCode: 0,
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (err) {
+    const e = err as {
+      code?: string;
+      killed?: boolean;
+      signal?: string;
+      stdout?: string;
+      stderr?: string;
+    } & Error;
+    const timedOut = e.killed && e.signal === "SIGTERM";
+    return NextResponse.json(
+      {
+        ok: false,
+        area,
+        action: body.action ?? null,
+        dryRun: Boolean(body.dryRun),
+        command: `node ${cliEntry} ${argv.join(" ")}`,
+        stdout: e.stdout ?? "",
+        stderr: e.stderr ?? "",
+        exitCode: typeof (err as { status?: number }).status === "number"
+          ? (err as { status?: number }).status!
+          : 1,
+        durationMs: Date.now() - startedAt,
+        error: e.message ?? "Unknown error",
+        code: timedOut ? "SETUP_EXEC_003" : "SETUP_EXEC_004",
+        timedOut,
+      },
+      { status: timedOut ? 504 : 500 }
+    );
+  }
+}

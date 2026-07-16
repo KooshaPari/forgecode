@@ -1,0 +1,33 @@
+## Summary
+
+Adds ClinePass as a first-class provider stub in `diegosouzapw/OmniRoute`, tracking https://github.com/diegosouzapw/OmniRoute/issues/5518.
+
+ClinePass is Cline's newly-released paid gateway ($4.99 first-month / $9.99/mo after) that bundles access to 10 models across 6 labs (Z.ai GLM 5.2, Moonshot Kimi K2.7 Code/K2.6, DeepSeek V4 Pro/Flash, MiniMax M3, MiMo V2.5 Pro/V2.5, Qwen3.7-Max/Plus). The OmniRoute README already advertises Cline support, so adding ClinePass as an `apikey` gateway is the natural extension.
+
+## What this PR does (placeholder-staged)
+
+- **`src/shared/constants/providers/apikey/gateways.ts`** — new `clinepass` entry next to `crof` (the canonical OpenAI-compat gateway precedent in this catalog): id `clinepass`, label `ClinePass`, icon `vpn_key`, env-default `CLINEPASS_API_KEY`, base URL placeholder `https://<pending-clinepass-api-host>`.
+- **`open-sse/config/providers/registry/clinepass/index.ts`** (NEW) — `clinepassProvider` modeled line-for-line on `registry/crof/index.ts:1-38` (`RegistryEntry` import, `format: "openai"`, `executor: "default"`, `authType: "apikey"`, `authHeader: "bearer"`, empty seed `models` with `passthroughModels: true` so `/v1/models` discovery fills the catalog later). Base URL placeholder is the same `<pending-clinepass-api-host>`.
+- **`open-sse/config/providers/index.ts:174-345`** — registers `clinepass: clinepassProvider` in the `REGISTRY` map (insertion point right after `crof` at `:258`).
+- **`src/shared/constants/providers.ts`** (`USAGE_SUPPORTED_PROVIDERS`) — adds `"clinepass"` so the consistency-check in `scripts/check/check-provider-consistency.ts` accepts the new entry as a non-orphan.
+
+Total: 4 files, +55 lines. No fabricated model ids.
+
+## Open questions being deferred to issue #5518
+
+1. **Real base URL** — placeholder `<pending-clinepass-api-host>` everywhere. Will become a concrete `https://api.<host>/v1/...` once Cline publishes the public host.
+2. **Auth header convention** — defaulted to `bearer` (mirrors `crof`); if ClinePass uses a custom header we'll adjust.
+3. **`passthroughModels` shape** — enabled so the runtime `/v1/models` discovery fills the catalog once the host is live. If ClinePass mounts under a `provider/model` namespace we'll wire that in.
+4. **Env var name** — `CLINEPASS_API_KEY` follows the gateway-catalog convention; final form subject to maintainer preference.
+
+## Why a Draft
+
+Draft because four inputs depend on upstream answers; once #5518 confirms the placeholders, a follow-up PR (or this one, out of draft) closes the gaps with literal values.
+
+## Test plan
+
+- `pnpm install` then `pnpm typecheck` — green (the new file uses the same imports as `crof` so the only failure modes are import-path and shape mismatches, both of which are mechanically avoided by mirroring `crof`).
+- `pnpm check:provider-consistency` (or whichever canonical gate exists) — confirms `clinepass` is registered across both `REGISTRY` and `USAGE_SUPPORTED_PROVIDERS`.
+- Manually: with a real ClinePass key + real host (when confirmed), point OmniRoute at the new gateway, list models, stream a small chat completion through the OpenAI-compat path.
+
+Tracked by: https://github.com/diegosouzapw/OmniRoute/issues/5518

@@ -1,0 +1,18 @@
+@echo off
+setlocal
+set "CARGO_HOME=E:\Dev\.cargo"
+set "CARGO_TARGET_DIR=E:\civis-target"
+cd /d "C:\Users\koosh\.claude\lanes\substrate-feat-cloud-dispatch"
+
+set MAX_RETRIES=3
+
+:retry_loop
+cargo clippy --all-targets --all-features -- -D warnings > cargo_clippy_output_final.txt 2>&1
+set EXIT_CODE=%ERRORLEVEL%
+echo EXIT_CODE=%EXIT_CODE% >> cargo_clippy_output_final.txt
+echo FINISHED >> cargo_clippy_output_final.txt
+if "%EXIT_CODE%"=="0" exit /b 0
+if "%MAX_RETRIES%"=="0" exit /b %EXIT_CODE%
+set /a MAX_RETRIES=MAX_RETRIES-1
+timeout /t 15 /nobreak >nul
+goto retry_loop

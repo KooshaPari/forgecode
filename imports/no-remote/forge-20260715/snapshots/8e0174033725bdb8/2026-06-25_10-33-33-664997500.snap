@@ -1,0 +1,35 @@
+name: Security Guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - "**"
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Bootstrap legacy tooling scanner
+        run: |
+          mkdir -p tooling/legacy-enforcement/scanner tooling/legacy-enforcement/policy
+          curl -fsSL \
+            https://raw.githubusercontent.com/phenotype/repos/main/tooling/legacy-enforcement/scanner/legacy_tooling_scanner.py \
+            -o tooling/legacy-enforcement/scanner/legacy_tooling_scanner.py
+          curl -fsSL \
+            https://raw.githubusercontent.com/phenotype/repos/main/tooling/legacy-enforcement/policy/rules.yaml \
+            -o tooling/legacy-enforcement/policy/rules.yaml
+
+      - name: Run pre-commit guard checks
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd  # v3.0.1
+        with:
+          extra_args: --hook-stage pre-commit --config .pre-commit-config.yaml --show-diff-on-failure

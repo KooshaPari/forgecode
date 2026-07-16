@@ -1,0 +1,98 @@
+# ADR 0003 — Local Serving Bootstrap (revised)
+
+- **Status:** revised 2026-07-03 (initial proposal was based on stale Qwen 2.5 picks; replaced with live 2026-07-03 HF data).
+- **Decider(s):** forge, on behalf of the PhenoLM maintainer.
+- **Supersedes:** the model-choice sections of the initial 2026-07-03 draft of this ADR (everything else, including rationale and process, still holds).
+- **Source of truth:** `state/hf_scrape/2026-07-03/models.jsonl` (260 kept models from the live `huggingface_hub 1.19.0` API), `state/hf_scrape/2026-07-03/summary.json`, and the shortlist CSV at `state/hf_scrape/2026-07-03/shortlist.csv` produced by `scripts/curate_shortlist.py`.
+- **Linked docs:** `docs/ARCHITECTURE_LAYERS.md` (canonical layer model), `docs/specs/003-model-engine-matrix.md` (tier × engine matrix), `docs/adrs/0001-current-state-audit.md` §5 (env probe), `docs/adrs/0002-risks-register.md` §1, §3, §4, §7.
+
+## 1. Context
+
+Initial draft of this ADR named **Qwen 2.5 7B Instruct AWQ** as the workhorse and **Qwen 2.5 0.5B GGUF** as the drafter. Both picks were based on memory, not live data. The user pointed out: *“2.5 is an old model. it is july 2026. qwen 3.6 is latest public release for example”*. The user offered an HF/library scrape to fix this.
+
+A live scrape was run on 2026-07-03 against `https://huggingface.co` via the unauthenticated `huggingface_hub 1.19.0` API. The scrape found that:
+
+- The **Qwen 2.5 family is still on HF and still useful as a regression baseline**, but the current-generation Qwen in 2026-07-03 is **Qwen3** (8B dense, 4B dense, 30B-A3B MoE, 32B dense), with **Qwen3-Coder** as the coding-specialized family (30B-A3B MoE, 7B dense, 1.5B dense).
+- A handful of **MoE fits for the 3090 Ti** exist: Qwen3-30B-A3B (3 B active), OLMoE-1B-7B-0125 (1 B active), and inclusionAI/LLaDA2.0-mini (16.3 B). MoE does **not** save VRAM here — all 30 B weights must be resident.
+- **FP8 quantization** is now standard on HF for large models (Qwen3-30B-A3B-Instruct-FP8, Qwen3-4B-Instruct-2507-FP8). **AWQ-INT4** is still the 24 GB-VRAM ceiling workhorse.
+- **Hard ceiling** for vRAM at 24 GB is **~32 B AWQ-INT4** (≈ 21 GB weights + ~3 GB KV/activations). Dense 30 B BF16 = 60 GB, FP8 = 30 GB, AWQ-INT4 = 21 GB. **Only AWQ-INT4 fits the 3090 Ti.**
+- The previous draft's **12 B dense ceiling rule** still holds: dense 12 B BF16 = 24 GB, leaves no room for KV cache → must AWQ-INT4 or drop to 8 B.
+
+## 2. Decision
+
+Replace the stale picks with the following **two-track** local loadout, both wired through `pheno-serve-dev` → `omniroute-dev` per `docs/ARCHITECTURE_LAYERS.md`:
+
+### 2.1 Workhorse track (T2 / T3, used for almost every dev-session turn)
+
+| Slot | Model | Params (B) | Quant | Disk | vRAM (24 GB) | Source |
+|---|---|---:|---|---:|---:|---|
+| Main | `Qwen/Qwen3-8B` | 8.19 | AWQ-INT4 | ~6 GB | ~7 GB | `state/hf_scrape/2026-07-03/models.jsonl` |
+| Draft | `Qwen/Qwen3-1.7B` | 2.03 | GGUF-Q4_0 | ~1.2 GB | ~2.1 GB | same |
+
+Rationale:
+- **Qwen3-8B** is the most-downloaded Qwen3 in 2026-07-03 (15.3 M downloads, top of the family) and is **dense**, which avoids the MoE weight-residency problem on a single 24 GB card. AWQ-INT4 keeps it well within budget and leaves ~16 GB of headroom for KV cache + speculative-draft workspace + per-request activations.
+- **Qwen3-1.7B** is the most-downloaded sub-3B Qwen3 model, and beats the previous drafter pick (Qwen 2.5 0.5B) on benchmarks per Qwen’s 2026-Q2 release notes. GGUF-Q4_0 lets it run via `llama.cpp` on CPU or the M1 Pro fallback (see §3) when the 3090 Ti is busy.
+- Both models have **official AWQ and GGUF** releases on HF; no custom quantization needed for the v1 bootstrap.
+
+### 2.2 Heavy track (T4, used for the long-horizon role/lane work)
+
+| Slot | Model | Params (B) | Quant | Disk | vRAM (24 GB) | Source |
+|---|---|---:|---|---:|---:|---|
+| Main | `Qwen/Qwen2.5-Coder-32B-Instruct-AWQ` | 32.76 | AWQ-INT4 | ~21 GB | ~21 GB | same |
+| Draft | reuse Qwen3-1.7B GGUF | 2.03 | GGUF-Q4_0 | ~1.2 GB | ~2.1 GB | same |
+
+Rationale:
+- 32 B AWQ-INT4 is **the single biggest model that fits 24 GB** with KV headroom.
+- Coding-specialized (Qwen2.5-Coder family) is the most useful for the *long-horizon STEM/task completion* work the brief calls out, ahead of the general Qwen3-32B dense.
+- **This track requires unloading T2 first** (`config/inference_runners.yaml` already supports hot-swap via `pheno/model_manager.py`); the swap is ~2 s for the AWQ weights.
+
+### 2.3 Cloud baselines (always available, used for upper-bound comparison)
+
+- `inclusionai/ling-2.6-flash` via OpenRouter (104 B / 7.4 B active MoE, 262 K context, $0.01 / $0.03 per 1M tokens on 2026-07-03). User-confirmed: Ling is the **cloud model**, not the workhorse.
+- `MiniMax M3` (the model that wrote these docs) via the same router. Used for the second cloud baseline per the user’s instruction.
+
+### 2.4 MoE reservation
+
+The MoE plan in `docs/specs/003-model-engine-matrix.md` §2.4 (Qwen3-30B-A3B-Instruct, OLMoE-1B-7B-0125) is **kept on paper** but **not loaded by default**. Reason: the only way to fit a 30 B MoE in 24 GB is AWQ-INT4, and at that point the **dense 32 B AWQ (T4) wins on quality** per the Qwen3-30B-A3B-Instruct model card. MoE comes back into the picture when (a) we have 48 GB-class hardware, or (b) we need to compare dense-vs-MoE on a coding eval. The T4 reservation in `pheno-serve-dev` config is `moe_coder_30b_a3b_awq = {enabled: false, reason: "T4 dense 32B AWQ wins on 24GB"}`.
+
+## 3. Engine choice (unchanged from initial draft)
+
+- **Primary:** SGLang 0.5.2 (already in py3.13, supports AWQ + GGUF-draft + EAGLE-2 + chunked prefill + paged-KV; aligns with `config/inference_runners.yaml`).
+- **Secondary:** vLLM 0.20.0 (already in py3.13; cross-check, divergent-cache KV offload, prefix-cache replay).
+- **Tertiary:** llama.cpp / ik_llama (only if SGLang or vLLM cannot serve a chosen model — not needed for the v1 picks).
+- **Mac fallback:** llama.cpp/MLX (only for Qwen3-1.7B GGUF, on the M1 Pro, per ADR-0001 §3.2).
+- **Not used for now:** TensorRT-LLM (compile overhead on 3090 Ti ≈ 30 min per model per calibration, hits `RISKS.md` §4 invalid-comparisons risk).
+
+## 4. Namespaces (corrected)
+
+Per `docs/ARCHITECTURE_LAYERS.md` §3, the `*-dev` suffix is the bin/path identity for the forks we own. This was wrong in the initial draft:
+
+- ❌ `forgecode-dev` (initial draft)
+- ✅ **`forge-dev`** (correct)
+- ❌ `codex-fork` (initial draft)
+- ✅ **`codex-dev`** (correct)
+- ✅ **`pheno-serve-dev`** — the inference router layer added in this revision, sitting between `omniroute-dev` and the engine processes (SGLang/vLLM/llama.cpp). This is where the model-loadout + engine choices above get wired.
+- ✅ `omniroute-dev` — model-routing layer; unchanged.
+
+`docs/specs/003-model-engine-matrix.md` and `docs/specs/004-implementation-plan.md` are updated to match.
+
+## 5. Consequences
+
+- The T2 workhorse is **dense 8 B AWQ + 1.7 B GGUF draft** — three years fresher than the Qwen 2.5 picks and matches what the HF library actually serves in 2026-07-03.
+- **T4 dense 32 B AWQ is the long-horizon ceiling** on this hardware. MoE is parked, not deleted — see `docs/specs/003-model-engine-matrix.md` §2.4.
+- **No more “stale-SKU” risk** for the local baseline: the `state/hf_scrape/` directory is the canonical source, and the next sweep (planned for 2026-07-10) will diff against this one and update the ADR if anything material moves.
+- The **scrape pipeline is reusable** (`scripts/hf_scrape_2026_07_03.py`) — `pheno-serve-dev` will run it weekly and write a new `state/hf_scrape/<date>/` for diffing.
+
+## 6. Open
+
+- Need an `HF_TOKEN` to also include gated / private models (Mistral-Codestral, Mistral-Small, etc.). The 2026-07-03 sweep was unauthenticated; gated models are missing from `models.jsonl`. Action: ask the user for the token at the next pause point; do not assume it exists.
+- vLLM-vs-SGLang latency/throughput bakeoff on the T2 picks is not yet run. The `kv_bakeoff` script (`scripts/kv_bakeoff.py`) is wired and will be the first thing we run after the weights land. See `docs/specs/004-implementation-plan.md` §4 (PR #2).
+
+## 7. References
+
+- `state/hf_scrape/2026-07-03/models.jsonl` (260 models, param counts from `safetensors.parameters`).
+- `state/hf_scrape/2026-07-03/shortlist.csv` (curated picks + vRAM math).
+- `state/_scrape_smoke.out`, `state/_scrape_2026-07-03.log`, `state/_scrape_2026-07-03.err` — raw scrape traces.
+- `docs/specs/003-model-engine-matrix.md` — full tier × engine × quant table.
+- `docs/specs/004-implementation-plan.md` §4 — PR #2 / PR #4 are the immediate follow-ons.
+- `docs/ARCHITECTURE_LAYERS.md` — `*-dev` naming and layer model.

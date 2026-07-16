@@ -1,0 +1,604 @@
+//! Artifact-aware scheduling for DAG execution.
+//!
+//! Extends the topological parallel-bucket scheduler with file-level
+//! conflict detection.  Two nodes that touch (read or write) the same
+//! file are serialized so that no two units execute concurrently on
+//! overlapping artifacts.
+//!
+//! # Algorithm
+//!
+//! 1. Start with the topological [`Schedule`](crate::scheduler::Schedule)
+//!    produced by [`schedule`](crate::scheduler::schedule).
+//! 2. For every pair of nodes within the same bucket, compare their
+//!    read/write artifact sets.
+//! 3. Record **write–write** and **read–write** conflicts.
+//! 4. Resolve conflicts using a greedy colouring: nodes that conflict
+//!    are assigned to different sub-buckets *within the same rank* so
+//!    that no sub-bucket contains a conflicting pair.
+
+use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
+
+use crate::scheduler::Schedule;
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
+/// The sets of files a DAG node reads and writes.
+///
+/// "Reads" are considered shared access — multiple nodes may read
+/// the same file concurrently.  "Writes" are exclusive — only one
+/// node may write a given file at a time, and no node may read a
+/// file that is being written by another node in the same parallel
+/// bucket.
+#[derive(Debug, Clone, Default)]
+pub struct ArtifactSet {
+    /// File paths the node reads (shared, non-destructive).
+    pub reads: HashSet<String>,
+    /// File paths the node writes (exclusive, destructive).
+    pub writes: HashSet<String>,
+}
+
+/// The kind of artifact conflict between two nodes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConflictKind {
+    /// Both nodes write to the same file(s).
+    WriteWrite,
+    /// One node writes and another reads the same file(s).
+    ReadWrite,
+}
+
+/// A file-level conflict discovered between two DAG nodes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactConflict<K> {
+    /// The first node involved in the conflict.
+    pub node_a: K,
+    /// The second node involved in the conflict.
+    pub node_b: K,
+    /// The kind of conflict.
+    pub kind: ConflictKind,
+    /// The specific file(s) that caused the conflict.
+    pub files: Vec<String>,
+}
+
+/// An artifact-aware execution schedule.
+///
+/// Like [`Schedule`], buckets are ordered: all nodes in bucket *i* must
+/// finish before bucket *i+1* starts.  Unlike the base scheduler, within
+/// a rank groups are further split into sub-buckets so that no two nodes
+/// inside the same sub-bucket conflict on artifacts.
+///
+/// Nodes in *different* sub-buckets of the same rank are still serialized
+/// (they cannot run in parallel because they touch the same files).
+#[derive(Debug, Clone)]
+pub struct ArtifactSchedule<K> {
+    /// Ordered list of sub-buckets.  All nodes in `buckets[i]` can execute
+    /// in parallel (no artifact conflicts).
+    pub buckets: Vec<Vec<K>>,
+    /// The conflicts that were detected and resolved.
+    pub conflicts: Vec<ArtifactConflict<K>>,
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/// Compute an artifact-aware schedule from a topological schedule and an
+/// artifact map.
+///
+/// # Arguments
+///
+/// * `schedule` — The topological schedule produced by
+///   [`scheduler::schedule`](crate::scheduler::schedule).
+/// * `artifacts` — Map from node key to the files it reads / writes.
+///   Nodes not present in this map are assumed to touch no files and
+///   will never conflict.
+///
+/// # Returns
+///
+/// An [`ArtifactSchedule`] where conflicting nodes have been serialized
+/// into separate sub-buckets while maintaining the original rank ordering.
+pub fn schedule_artifact_aware<K>(
+    schedule: &Schedule<K>,
+    artifacts: &HashMap<K, ArtifactSet>,
+) -> ArtifactSchedule<K>
+where
+    K: Eq + Hash + Clone + std::fmt::Debug,
+{
+    let mut resolved_buckets: Vec<Vec<K>> = Vec::new();
+    let mut all_conflicts: Vec<ArtifactConflict<K>> = Vec::new();
+
+    for bucket in &schedule.buckets {
+        // 1. Detect all conflicts within this bucket.
+        let conflicts = detect_conflicts(bucket, artifacts);
+        all_conflicts.extend(conflicts);
+
+        // 2. Resolve conflicts with greedy colouring.
+        let sub_buckets = resolve_bucket(bucket, artifacts);
+        resolved_buckets.extend(sub_buckets);
+    }
+
+    ArtifactSchedule {
+        buckets: resolved_buckets,
+        conflicts: all_conflicts,
+    }
+}
+
+/// Detect all file-level conflicts among a set of nodes.
+///
+/// Returns every pair-wise conflict (ordered by `(node_a, node_b)` where
+/// `node_a` appears before `node_b` in the input slice).
+pub fn detect_conflicts<K>(
+    nodes: &[K],
+    artifacts: &HashMap<K, ArtifactSet>,
+) -> Vec<ArtifactConflict<K>>
+where
+    K: Eq + Hash + Clone + std::fmt::Debug,
+{
+    let mut conflicts = Vec::new();
+
+    for i in 0..nodes.len() {
+        for j in (i + 1)..nodes.len() {
+            let a = &nodes[i];
+            let b = &nodes[j];
+
+            let art_a = match artifacts.get(a) {
+                Some(v) => v,
+                None => continue,
+            };
+            let art_b = match artifacts.get(b) {
+                Some(v) => v,
+                None => continue,
+            };
+
+            // Check write–write conflicts.
+            let ww: Vec<String> = art_a
+                .writes
+                .intersection(&art_b.writes)
+                .cloned()
+                .collect();
+            if !ww.is_empty() {
+                conflicts.push(ArtifactConflict {
+                    node_a: a.clone(),
+                    node_b: b.clone(),
+                    kind: ConflictKind::WriteWrite,
+                    files: ww,
+                });
+                continue; // strongest conflict — no need to check RW
+            }
+
+            // Check read–write conflicts (both directions).
+            let rw_a: Vec<String> = art_a
+                .reads
+                .intersection(&art_b.writes)
+                .cloned()
+                .collect();
+            let rw_b: Vec<String> = art_a
+                .writes
+                .intersection(&art_b.reads)
+                .cloned()
+                .collect();
+
+            let mut rw = Vec::new();
+            rw.extend(rw_a);
+            rw.extend(rw_b);
+            rw.sort();
+            rw.dedup();
+
+            if !rw.is_empty() {
+                conflicts.push(ArtifactConflict {
+                    node_a: a.clone(),
+                    node_b: b.clone(),
+                    kind: ConflictKind::ReadWrite,
+                    files: rw,
+                });
+            }
+        }
+    }
+
+    conflicts
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/// Greedily partition a bucket into conflict-free sub-buckets.
+///
+/// Each sub-bucket contains nodes that have no artifact conflicts with
+/// any other node in the same sub-bucket.
+fn resolve_bucket<K>(
+    bucket: &[K],
+    artifacts: &HashMap<K, ArtifactSet>,
+) -> Vec<Vec<K>>
+where
+    K: Eq + Hash + Clone + std::fmt::Debug,
+{
+    let mut sub_buckets: Vec<Vec<K>> = Vec::new();
+
+    for node in bucket {
+        let mut placed = false;
+
+        for sb in &mut sub_buckets {
+            // Check if `node` conflicts with any node in this sub-bucket.
+            let conflicts_with_sb = sb.iter().any(|existing| {
+                check_pair_conflict(existing, node, artifacts)
+            });
+
+            if !conflicts_with_sb {
+                sb.push(node.clone());
+                placed = true;
+                break;
+            }
+        }
+
+        if !placed {
+            sub_buckets.push(vec![node.clone()]);
+        }
+    }
+
+    sub_buckets
+}
+
+/// Returns `true` if `a` and `b` have any file-level conflict.
+fn check_pair_conflict<K>(
+    a: &K,
+    b: &K,
+    artifacts: &HashMap<K, ArtifactSet>,
+) -> bool
+where
+    K: Eq + Hash + Clone + std::fmt::Debug,
+{
+    let art_a = match artifacts.get(a) {
+        Some(v) => v,
+        None => return false,
+    };
+    let art_b = match artifacts.get(b) {
+        Some(v) => v,
+        None => return false,
+    };
+
+    // Write–write
+    if art_a.writes.intersection(&art_b.writes).next().is_some() {
+        return true;
+    }
+
+    // Read–write (a reads, b writes)
+    if art_a.reads.intersection(&art_b.writes).next().is_some() {
+        return true;
+    }
+
+    // Read–write (b reads, a writes)
+    if art_b.reads.intersection(&art_a.writes).next().is_some() {
+        return true;
+    }
+
+    false
+}
+
+/// Format an artifact schedule as a human-readable string.
+pub fn format_artifact_schedule<K>(schedule: &ArtifactSchedule<K>) -> String
+where
+    K: std::fmt::Debug,
+{
+    let mut out = String::new();
+    out.push_str(&format!(
+        "Artifact-aware schedule ({} sub-buckets, {} conflicts)\n",
+        schedule.buckets.len(),
+        schedule.conflicts.len(),
+    ));
+    for (i, bucket) in schedule.buckets.iter().enumerate() {
+        out.push_str(&format!("  Sub-bucket {}: {:?}\n", i, bucket));
+    }
+
+    if !schedule.conflicts.is_empty() {
+        out.push_str("\nConflicts resolved:\n");
+        for (i, c) in schedule.conflicts.iter().enumerate() {
+            out.push_str(&format!(
+                "  {}. {:?} vs {:?} [{:?}]: {:?}\n",
+                i + 1,
+                c.node_a,
+                c.node_b,
+                c.kind,
+                c.files,
+            ));
+        }
+    }
+
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dag::Dag;
+    use crate::scheduler;
+
+    // Helper: shortcut to build an ArtifactSet.
+    fn arts(reads: &[&str], writes: &[&str]) -> ArtifactSet {
+        ArtifactSet {
+            reads: reads.iter().map(|s| s.to_string()).collect(),
+            writes: writes.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    // Helper: create a simple linear DAG with artifact annotations.
+    fn linear_dag_with_artifacts()
+        -> (Schedule<&'static str>, HashMap<&'static str, ArtifactSet>)
+    {
+        let mut dag: Dag<&str> = Dag::new();
+        for n in &["checkout", "build", "test", "deploy"] {
+            dag.add_node(n).unwrap();
+        }
+        dag.add_edge("checkout", "build").unwrap();
+        dag.add_edge("build", "test").unwrap();
+        dag.add_edge("test", "deploy").unwrap();
+
+        let sched = scheduler::schedule(&dag).unwrap();
+
+        let mut artifacts = HashMap::new();
+        artifacts.insert("checkout", arts(&[], &["src/"]));
+        artifacts.insert("build", arts(&["src/"], &["out/binary"]));
+        artifacts.insert("test", arts(&["out/binary"], &["out/test-report"]));
+        artifacts.insert("deploy", arts(&["out/binary"], &[]));
+
+        (sched, artifacts)
+    }
+
+    #[test]
+    fn no_conflicts_linear_pipeline() {
+        let (sched, artifacts) = linear_dag_with_artifacts();
+        let result = schedule_artifact_aware(&sched, &artifacts);
+        // Linear chain has one node per bucket — no intra-bucket conflicts.
+        assert!(result.conflicts.is_empty());
+        assert_eq!(result.buckets.len(), 4);
+    }
+
+    #[test]
+    fn write_write_conflict_detected() {
+        let mut dag: Dag<&str> = Dag::new();
+        for n in &["a", "b", "c"] {
+            dag.add_node(n).unwrap();
+        }
+        dag.add_edge("a", "c").unwrap();
+        dag.add_edge("b", "c").unwrap();
+
+        let sched = scheduler::schedule(&dag).unwrap();
+        assert_eq!(sched.buckets.len(), 2); // [a,b], [c]
+        assert_eq!(sched.max_concurrency, 2); // a and b are parallel
+
+        let mut artifacts = HashMap::new();
+        artifacts.insert("a", arts(&[], &["output.log"]));
+        artifacts.insert("b", arts(&[], &["output.log"])); // conflict!
+        artifacts.insert("c", arts(&["output.log"], &[]));
+
+        let result = schedule_artifact_aware(&sched, &artifacts);
+
+        // a and b both write output.log → they should be serialized.
+        assert!(!result.conflicts.is_empty());
+        let has_ww = result.conflicts.iter().any(|c| c.kind == ConflictKind::WriteWrite);
+        assert!(has_ww, "Expected write–write conflict");
+
+        // The result should have 3 sub-buckets: [a], [b], [c]  (or [b], [a], [c]).
+        assert_eq!(result.buckets.len(), 3);
+        // a and b must be in different sub-buckets.
+        let pos_a = result.buckets.iter().position(|b| b.contains(&"a")).unwrap();
+        let pos_b = result.buckets.iter().position(|b| b.contains(&"b")).unwrap();
+        assert_ne!(pos_a, pos_b, "a and b must not share a sub-bucket");
+    }
+
+    #[test]
+    fn read_write_conflict_detected() {
+        let mut dag: Dag<&str> = Dag::new();
+        for n in &["reader", "writer", "sink"] {
+            dag.add_node(n).unwrap();
+        }
+        dag.add_edge("reader", "sink").unwrap();
+        dag.add_edge("writer", "sink").unwrap();
+
+        let sched = scheduler::schedule(&dag).unwrap();
+        // Buckets: [reader, writer], [sink]
+        assert_eq!(sched.buckets.len(), 2);
+
+        let mut artifacts = HashMap::new();
+        artifacts.insert("reader", arts(&["data.txt"], &[]));
+        artifacts.insert("writer", arts(&[], &["data.txt"])); // RW conflict!
+        artifacts.insert("sink", arts(&["data.txt"], &[]));
+
+        let result = schedule_artifact_aware(&sched, &artifacts);
+
+        assert!(!result.conflicts.is_empty(), "Expected at least one conflict");
+        let has_rw = result.conflicts.iter().any(|c| c.kind == ConflictKind::ReadWrite);
+        assert!(has_rw, "Expected read–write conflict");
+
+        // reader and writer must be serialized.
+        let pos_reader = result.buckets.iter().position(|b| b.contains(&"reader")).unwrap();
+        let pos_writer = result.buckets.iter().position(|b| b.contains(&"writer")).unwrap();
+        assert_ne!(pos_reader, pos_writer);
+    }
+
+    #[test]
+    fn shared_read_allows_parallelism() {
+        let mut dag: Dag<&str> = Dag::new();
+        for n in &["a", "b"] {
+            dag.add_node(n).unwrap();
+        }
+        let sched = scheduler::schedule(&dag).unwrap();
+        assert_eq!(sched.buckets.len(), 1); // [a, b] — parallel
+
+        let mut artifacts = HashMap::new();
+        artifacts.insert("a", arts(&["shared.txt"], &[]));
+        artifacts.insert("b", arts(&["shared.txt"], &[]));
+
+        let result = schedule_artifact_aware(&sched, &artifacts);
+        // Both only read → no conflict, stay in the same sub-bucket.
+        assert!(result.conflicts.is_empty());
+        assert_eq!(result.buckets.len(), 1);
+        assert_eq!(result.buckets[0].len(), 2);
+    }
+
+    #[test]
+    fn three_way_write_conflict_resolved() {
+        let mut dag: Dag<&str> = Dag::new();
+        for n in &["x", "y", "z"] {
+            dag.add_node(n).unwrap();
+        }
+        let sched = scheduler::schedule(&dag).unwrap();
+        assert_eq!(sched.buckets.len(), 1);
+
+        let mut artifacts = HashMap::new();
+        artifacts.insert("x", arts(&[], &["out.log"]));
+        artifacts.insert("y", arts(&[], &["out.log"]));
+        artifacts.insert("z", arts(&[], &["out.log"]));
+
+        let result = schedule_artifact_aware(&sched, &artifacts);
+
+        // All three write the same file — must be fully serialized.
+        assert_eq!(result.conflicts.len(), 3, "expected 3 pair-wise conflicts");
+        assert_eq!(result.buckets.len(), 3, "all three must be serialized");
+
+        // Verify all three are in different sub-buckets.
+        let mut positions: Vec<usize> = ["x", "y", "z"]
+            .iter()
+            .map(|n| result.buckets.iter().position(|b| b.contains(n)).unwrap())
+            .collect();
+        positions.sort();
+        positions.dedup();
+        assert_eq!(positions.len(), 3);
+    }
+
+    #[test]
+    fn node_without_artifacts_never_conflicts() {
+        let mut dag: Dag<&str> = Dag::new();
+        for n in &["a", "b"] {
+            dag.add_node(n).unwrap();
+        }
+        let sched = scheduler::schedule(&dag).unwrap();
+
+        // Only "a" has artifacts; "b" has none.
+        let mut artifacts = HashMap::new();
+        artifacts.insert("a", arts(&[], &["file.txt"]));
+
+        let result = schedule_artifact_aware(&sched, &artifacts);
+        assert!(result.conflicts.is_empty());
+        assert_eq!(result.buckets.len(), 1);
+        assert_eq!(result.buckets[0].len(), 2);
+    }
+
+    #[test]
+    fn empty_schedule() {
+        let schedule: Schedule<u32> = Schedule {
+            buckets: vec![],
+            max_concurrency: 0,
+        };
+        let artifacts = HashMap::new();
+        let result = schedule_artifact_aware(&schedule, &artifacts);
+        assert!(result.buckets.is_empty());
+        assert!(result.conflicts.is_empty());
+    }
+
+    #[test]
+    fn detect_conflicts_finds_ww() {
+        let mut artifacts = HashMap::new();
+        artifacts.insert("a", arts(&[], &["f1"]));
+        artifacts.insert("b", arts(&[], &["f1"]));
+
+        let conflicts = detect_conflicts(&["a", "b"], &artifacts);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].kind, ConflictKind::WriteWrite);
+        assert_eq!(conflicts[0].files, vec!["f1"]);
+    }
+
+    #[test]
+    fn detect_conflicts_finds_rw() {
+        let mut artifacts = HashMap::new();
+        artifacts.insert("a", arts(&["f1"], &[]));
+        artifacts.insert("b", arts(&[], &["f1"]));
+
+        let conflicts = detect_conflicts(&["a", "b"], &artifacts);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].kind, ConflictKind::ReadWrite);
+    }
+
+    #[test]
+    fn detect_conflicts_no_conflict_on_disjoint_sets() {
+        let mut artifacts = HashMap::new();
+        artifacts.insert("a", arts(&["f1"], &["f2"]));
+        artifacts.insert("b", arts(&["f3"], &["f4"]));
+
+        let conflicts = detect_conflicts(&["a", "b"], &artifacts);
+        assert!(conflicts.is_empty());
+    }
+
+    #[test]
+    fn format_artifact_schedule_output() {
+        let mut dag: Dag<&str> = Dag::new();
+        for n in &["a", "b"] {
+            dag.add_node(n).unwrap();
+        }
+        let sched = scheduler::schedule(&dag).unwrap();
+
+        let mut artifacts = HashMap::new();
+        artifacts.insert("a", arts(&[], &["out"]));
+        artifacts.insert("b", arts(&[], &["out"]));
+
+        let result = schedule_artifact_aware(&sched, &artifacts);
+        let formatted = format_artifact_schedule(&result);
+        assert!(formatted.contains("Conflicts resolved"));
+        assert!(formatted.contains("WriteWrite"));
+    }
+
+    #[test]
+    fn detect_conflicts_ignores_missing_artifact() {
+        let mut artifacts = HashMap::new();
+        artifacts.insert("a", arts(&[], &["f1"]));
+        // "b" is not in the map — should be ignored.
+        let conflicts = detect_conflicts(&["a", "b"], &artifacts);
+        assert!(conflicts.is_empty());
+    }
+
+    #[test]
+    fn two_level_conflict_propagation() {
+        // Build a DAG where bucket 0 has two parallel nodes that conflict,
+        // and bucket 1 has two that also conflict.
+        let mut dag: Dag<&str> = Dag::new();
+        for n in &["a", "b", "c", "d"] {
+            dag.add_node(n).unwrap();
+        }
+        dag.add_edge("a", "c").unwrap();
+        dag.add_edge("b", "d").unwrap();
+
+        let sched = scheduler::schedule(&dag).unwrap();
+        assert_eq!(sched.buckets.len(), 2);
+        assert_eq!(sched.buckets[0].len(), 2); // [a, b]
+        assert_eq!(sched.buckets[1].len(), 2); // [c, d]
+
+        let mut artifacts = HashMap::new();
+        artifacts.insert("a", arts(&[], &["shared.log"]));
+        artifacts.insert("b", arts(&[], &["shared.log"])); // conflicts with a
+        artifacts.insert("c", arts(&[], &["report.txt"]));
+        artifacts.insert("d", arts(&[], &["report.txt"])); // conflicts with c
+
+        let result = schedule_artifact_aware(&sched, &artifacts);
+
+        // 2 conflicts in bucket 0 + 2 conflicts in bucket 1.
+        assert_eq!(result.conflicts.len(), 2);
+        // Each original bucket becomes 2 sub-buckets → 4 total.
+        assert_eq!(result.buckets.len(), 4);
+
+        // a and b must be in different sub-buckets.
+        let pa = result.buckets.iter().position(|b| b.contains(&"a")).unwrap();
+        let pb = result.buckets.iter().position(|b| b.contains(&"b")).unwrap();
+        assert_ne!(pa, pb);
+
+        // c and d must be in different sub-buckets.
+        let pc = result.buckets.iter().position(|b| b.contains(&"c")).unwrap();
+        let pd = result.buckets.iter().position(|b| b.contains(&"d")).unwrap();
+        assert_ne!(pc, pd);
+    }
+}

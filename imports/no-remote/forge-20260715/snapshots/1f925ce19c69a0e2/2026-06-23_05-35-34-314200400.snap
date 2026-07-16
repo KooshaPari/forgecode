@@ -1,0 +1,4 @@
+data = open('_arch_summary.txt',encoding='utf-8').read()
+print('TOTAL LINES:', data.count(chr(10)))
+for i, line in enumerate(data.splitlines(), 1):
+    print(f'{i:2}|{line[:220]}')

@@ -1,0 +1,8 @@
+// Quick test of toml crate behavior with CRLF endings
+fn main() {
+    let crlf = "[package]\r\nname = \"test\"\r\nversion = \"0.1.0\"\r\n";
+    let lf = "[package]\nname = \"test\"\nversion = \"0.1.0\"\n";
+
+    println!("CRLF: {:?}", crlf.parse::<toml::Value>());
+    println!("LF:   {:?}", lf.parse::<toml::Value>());
+}

@@ -1,0 +1,283 @@
+/**
+ * Tests for the auto-instrumentation wrappers (PR-002).
+ *
+ * Coverage:
+ *   - instrumentFetch wraps a fetch call in a CLIENT span and feeds
+ *     httpMetricsMiddleware.
+ *   - instrumentDb wraps a query and reports span attributes.
+ *   - instrumentCache records hit/miss metrics and emits a span with
+ *     cache.layer / cache.hit attributes.
+ *   - instrumentProvider emits a CLIENT span and records
+ *     recordProviderAttempt + recordProviderDuration.
+ *   - withRootSpan starts a SERVER span and clears after fn returns.
+ *
+ * Stub spans (telemetry disabled) still receive the attributes we set
+ * because otel.ts propagates opts.attributes to the stub.
+ */
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  instrumentFetch,
+  instrumentDb,
+  instrumentCache,
+  instrumentProvider,
+  withRootSpan,
+} from "@/lib/observability/auto";
+import {
+  metricsRegistry,
+  recordProviderAttempt,
+  recordProviderDuration,
+  recordCacheHit,
+  recordCacheMiss,
+  httpMetricsMiddleware,
+} from "@/lib/observability/metrics";
+import { currentSpanId, currentTraceId, type Span } from "@/lib/observability/otel";
+import { resetServiceResourceForTests } from "@/lib/observability/resource";
+
+function withCleanEnv<T>(fn: () => T | Promise<T>): Promise<T> {
+  const prev = { ...process.env };
+  delete process.env.OTEL_SDK_DISABLED;
+  resetServiceResourceForTests();
+  metricsRegistry.reset();
+  return Promise.resolve(fn()).finally(() => {
+    process.env = prev;
+    resetServiceResourceForTests();
+    metricsRegistry.reset();
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// instrumentFetch
+// ─────────────────────────────────────────────────────────────────────────
+
+test("auto: instrumentFetch wraps fetch in a CLIENT span with http attributes", async () => {
+  await withCleanEnv(async () => {
+    const originalFetch = globalThis.fetch;
+    let calledUrl: string | undefined;
+    let calledInit: RequestInit | undefined;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      calledUrl = typeof input === "string" ? input : input.toString();
+      calledInit = init ?? undefined;
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    try {
+      const res = await instrumentFetch(
+        { name: "http.client.test" },
+        "https://api.example.com/v1/chat",
+        { method: "POST" }
+      );
+      assert.equal(res.status, 200);
+      assert.equal(calledUrl, "https://api.example.com/v1/chat");
+      assert.equal(calledInit?.method, "POST");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("auto: instrumentFetch records the response status code as a span attribute (stub)", async () => {
+  await withCleanEnv(async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response("", { status: 418 })) as typeof fetch;
+    try {
+      // Stub mode means the span attributes are inspected directly via
+      // the closure in withSpan. We verify the metric side-effect by
+      // checking the http metrics output instead, since stub spans
+      // throw away the attributes after the fn returns.
+      const res = await instrumentFetch(
+        { name: "http.client.teapot" },
+        "https://example.com/coffee",
+      );
+      assert.equal(res.status, 418);
+      const rendered = metricsRegistry.render();
+      // httpMetricsMiddleware emits http_requests_total{route,method,status}
+      assert.match(rendered, /omniroute_http_requests_total/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// instrumentDb
+// ─────────────────────────────────────────────────────────────────────────
+
+test("auto: instrumentDb returns the underlying fn result", async () => {
+  await withCleanEnv(async () => {
+    const row = await instrumentDb({ name: "db.combo.findById" }, async () => ({
+      id: "abc",
+      name: "test",
+    }));
+    assert.deepEqual(row, { id: "abc", name: "test" });
+  });
+});
+
+test("auto: instrumentDb rethrows errors so caller can handle", async () => {
+  await withCleanEnv(async () => {
+    await assert.rejects(
+      () =>
+        instrumentDb({ name: "db.fail" }, async () => {
+          throw new Error("sql syntax");
+        }),
+      /sql syntax/
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// instrumentCache
+// ─────────────────────────────────────────────────────────────────────────
+
+test("auto: instrumentCache records hit on cache hit", async () => {
+  await withCleanEnv(async () => {
+    const result = await instrumentCache("memory", async () => ({
+      hit: true,
+      value: "cached-value",
+    }));
+    assert.equal(result.hit, true);
+    assert.equal(result.value, "cached-value");
+    const rendered = metricsRegistry.render();
+    assert.match(rendered, /omniroute_cache_hits_total\{layer="memory"\}/);
+  });
+});
+
+test("auto: instrumentCache records miss on cache miss", async () => {
+  await withCleanEnv(async () => {
+    const result = await instrumentCache("disk", async () => ({ hit: false }));
+    assert.equal(result.hit, false);
+    const rendered = metricsRegistry.render();
+    assert.match(rendered, /omniroute_cache_misses_total\{layer="disk"\}/);
+  });
+});
+
+test("auto: instrumentCache rejects unknown layer", async () => {
+  await withCleanEnv(async () => {
+    // Type system would normally prevent this; cast to bypass for runtime check.
+    await assert.rejects(
+      () =>
+        instrumentCache(
+          "bogus-layer" as never,
+          async () => ({ hit: true, value: 1 })
+        ),
+      /unknown cache layer/
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// instrumentProvider
+// ─────────────────────────────────────────────────────────────────────────
+
+test("auto: instrumentProvider records success on resolve", async () => {
+  await withCleanEnv(async () => {
+    const result = await instrumentProvider(
+      { name: "provider.openai.chat", provider: "openai", model: "gpt-4o" },
+      async () => ({ id: "chatcmpl-1", choices: [] })
+    );
+    assert.ok(result);
+    const rendered = metricsRegistry.render();
+    assert.match(
+      rendered,
+      /omniroute_provider_attempts_total\{provider="openai",model="gpt-4o",outcome="success"\}/
+    );
+    assert.match(
+      rendered,
+      /omniroute_provider_duration_seconds_count\{provider="openai",model="gpt-4o",outcome="success"\}/
+    );
+  });
+});
+
+test("auto: instrumentProvider records error on throw", async () => {
+  await withCleanEnv(async () => {
+    await assert.rejects(
+      () =>
+        instrumentProvider(
+          { name: "provider.anthropic", provider: "anthropic", model: "claude-3-5-sonnet" },
+          async () => {
+            throw new Error("rate limit exceeded");
+          }
+        ),
+      /rate limit/
+    );
+    const rendered = metricsRegistry.render();
+    assert.match(
+      rendered,
+      /omniroute_provider_attempts_total\{provider="anthropic",model="claude-3-5-sonnet",outcome="rate_limit"\}/
+    );
+  });
+});
+
+test("auto: instrumentProvider classifies timeout errors", async () => {
+  await withCleanEnv(async () => {
+    await assert.rejects(
+      () =>
+        instrumentProvider(
+          { name: "provider.test", provider: "p", model: "m" },
+          async () => {
+            throw new Error("request timed out after 30s");
+          }
+        ),
+      /timed out/
+    );
+    const rendered = metricsRegistry.render();
+    assert.match(
+      rendered,
+      /outcome="timeout"/
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// withRootSpan
+// ─────────────────────────────────────────────────────────────────────────
+
+test("auto: withRootSpan starts a SERVER span and clears after fn", async () => {
+  await withCleanEnv(async () => {
+    const seen: Array<{ traceId?: string; spanId?: string }> = [];
+    await withRootSpan("server.root", async (span) => {
+      seen.push({ traceId: span.traceId, spanId: span.spanId });
+      // Within the span the active trace/span id should match.
+      assert.equal(currentTraceId(), span.traceId);
+      assert.equal(currentSpanId(), span.spanId);
+    });
+    assert.equal(seen.length, 1);
+    // After fn returns the active context should be cleared.
+    assert.equal(currentTraceId(), undefined);
+    assert.equal(currentSpanId(), undefined);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// direct metric helpers (smoke test that the wrapper imports wire through)
+// ─────────────────────────────────────────────────────────────────────────
+
+test("auto: re-exports work and don't throw on call", async () => {
+  await withCleanEnv(() => {
+    // Just touch the re-exports so a future refactor that drops them
+    // fails this test.
+    recordProviderAttempt({ provider: "x", model: "y", outcome: "success" });
+    recordProviderDuration({
+      provider: "x",
+      model: "y",
+      outcome: "success",
+      durationSeconds: 0.001,
+    });
+    recordCacheHit("prompt");
+    recordCacheMiss("prompt");
+    httpMetricsMiddleware({
+      req: new Request("http://test/"),
+      res: new Response("", { status: 200 }),
+      durationSeconds: 0.001,
+      routeName: "/",
+    });
+    // Span typecheck via the type-only import — the import path itself
+    // is the assertion.
+    const _spanType: Span | null = null;
+    void _spanType;
+  });
+});

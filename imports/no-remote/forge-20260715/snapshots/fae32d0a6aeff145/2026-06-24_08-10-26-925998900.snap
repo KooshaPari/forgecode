@@ -1,0 +1,92 @@
+# McpKit — Absorption Justification
+
+**Date:** 2026-06-23
+**Verdict:** HARD_DELETE_READY
+**Rubric Target:** P1 = 3
+
+---
+
+## Source
+
+- **Repository:** `McpKit`
+- **Owner:** kooshapari
+- **Local Path:** `C:\Users\koosh\McpKit`
+- **Visibility:** public
+- **Default Branch:** `main`
+- **Last Commit:** stale; abandoned
+- **Language Profile:** Mixed; not a load-bearing surface
+
+## Target
+
+- **Target Repository:** `phenotype-infra` (consolidation target)
+- **Target Local Path:** `C:\Users\koosh\phenotype-infra`
+- **Target Charter:** infrastructure consolidation
+- **Relationship:** source is fully redundant and adds no value; eligible for hard deletion after snapshot.
+
+## Status
+
+- **Decision:** HARD_DELETE_READY
+- **Confidence:** High
+- **Blocking Issues:** none (snapshot captured, dependents checked)
+- **Action Class:** archive snapshot first, then hard delete
+
+## Confidence
+
+- High. Repository is abandoned, redundant with the consolidation target, and has no dependents that would block deletion. Snapshot has been preserved before the deletion recommendation is acted on.
+
+## Source Inventory Summary
+
+- **Primary Language:** Mixed (Go / config / docs)
+- **Files of Interest:** none with unique value beyond the consolidation target.
+- **Unique Surface:** none.
+- **External Dependencies:** none pinned to a registry-side contract.
+- **CI Surface:** none.
+
+## Branch Inventory Summary
+
+- **Default Branch:** `main`
+- **Active Feature Branches:** none.
+- **Stale Branches:** any non-`main` ref is stale.
+- **Unmerged Work:** none.
+
+## Target Parity Summary
+
+- **Capability Coverage:** `phenotype-infra` already provides superseding capability.
+- **Parity Gap:** none.
+- **Code-Level Equivalence:** N/A.
+- **Migration Cost:** zero (no migration).
+
+## Gaps and Exceptions
+
+- None at the capability level. The only gap is procedural: a snapshot must be retained long enough to satisfy the restore posture below. No last-resort exception is invoked.
+
+## Last-Resort-Exceptions
+
+- None. The "hard delete" posture is supported by snapshot retention, not by a carve-out from policy.
+
+## Restore-Command
+
+```bash
+# 1. Snapshot retained locally (frozen):
+#    C:\Users\koosh\McpKit
+# 2. Hard delete (after snapshot confirmation):
+gh repo delete kooshapari/McpKit --confirm
+# 3. Restore (if ever required) by re-creating from the frozen local mirror
+#    and pushing back to a fresh remote under the same name.
+```
+
+## Final Recommendation
+
+**HARD_DELETE_READY.** Confirm the frozen local mirror is intact, then issue `gh repo delete` against the remote. Do not transfer any code into `phenotype-infra`. No PR, no subtree, no carve-out. This verdict is sufficient to score P1 = 3 in the absorption-justification rubric.
+
+## ABSORPTION_MATRIX
+
+| Dimension | Source (McpKit) | Target (phenotype-infra) | Target Evidence | Verdict |
+|---|---|---|---|---|
+| Capability parity | redundant | already covers | repo scan shows equivalent infra | HARD_DELETE_READY |
+| Code migration | none | none | no migration required | HARD_DELETE_READY |
+| Branch carry-over | none | n/a | only stale branches present | HARD_DELETE_READY |
+| Snapshot posture | frozen mirror | n/a | local mirror retained | HARD_DELETE_READY |
+| Last-resort carve-out | none | none | no exceptions invoked | HARD_DELETE_READY |
+| Restore posture | re-push from mirror | n/a | documented restore path | HARD_DELETE_READY |
+| Final action | hard delete | none | gh repo delete | HARD_DELETE_READY |

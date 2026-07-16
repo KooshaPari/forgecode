@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+package phenointegration
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+)
+
+// newRequestID returns a 16-byte hex-encoded random identifier suitable
+// for use as a per-request correlation ID. It uses crypto/rand to
+// avoid predictability and collisions across processes.
+func newRequestID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand should never fail on a healthy system; if it
+		// does, return a fixed non-empty marker so the middleware
+		// still sets a header and request handlers don't see an
+		// empty ID downstream.
+		return "00000000deadbeef"
+	}
+	return hex.EncodeToString(b[:])
+}

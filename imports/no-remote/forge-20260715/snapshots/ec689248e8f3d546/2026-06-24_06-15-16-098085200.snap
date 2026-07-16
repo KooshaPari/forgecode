@@ -1,0 +1,247 @@
+use civ_physics_substrate::{Field, PhysicsFields, WriteSource};
+use glam::IVec3;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum BeliefConcept {
+    NaturalAgent,
+    MoralOverseer,
+    Afterlife,
+    Taboo { action: String },
+    Ritual { cost: f32 },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Belief {
+    pub concept: BeliefConcept,
+    pub strength: f32,
+    pub social_spread: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Religion {
+    pub beliefs: Vec<Belief>,
+    pub cohesion: f32,
+    pub member_count: u32,
+    pub age_ticks: u64,
+}
+
+fn clamp01(value: f32) -> f32 {
+    if value.is_nan() {
+        0.0
+    } else {
+        value.clamp(0.0, 1.0)
+    }
+}
+
+fn belief_strength(hardship: f32, group_size: u32, agent_detection_bias: f32) -> f32 {
+    let hardship = clamp01(hardship);
+    let group_factor = clamp01(group_size as f32 / 100.0);
+    let bias = clamp01(agent_detection_bias);
+    clamp01(hardship * 0.7 + group_factor * 0.2 + bias * 0.1)
+}
+
+pub fn emerge_belief(hardship: f32, group_size: u32, agent_detection_bias: f32) -> Option<Belief> {
+    let hardship = clamp01(hardship);
+    let bias = clamp01(agent_detection_bias);
+
+    let concept = if group_size > 50 {
+        Some(BeliefConcept::MoralOverseer)
+    } else if hardship > 0.7 {
+        if bias >= 0.5 {
+            Some(BeliefConcept::NaturalAgent)
+        } else {
+            Some(BeliefConcept::Taboo {
+                action: "forbidden_contact".to_string(),
+            })
+        }
+    } else {
+        None
+    }?;
+
+    let social_spread = clamp01((group_size as f32 / 100.0) * 0.6 + hardship * 0.3 + bias * 0.1);
+
+    Some(Belief {
+        concept,
+        strength: belief_strength(hardship, group_size, bias),
+        social_spread,
+    })
+}
+
+pub fn spread_religion(rel: &mut Religion, nearby_agents: u32, tick: u64) {
+    rel.age_ticks = tick;
+
+    if rel.beliefs.is_empty() {
+        return;
+    }
+
+    let nearby_factor =
+        clamp01(nearby_agents as f32 / (rel.member_count.max(1) as f32 + nearby_agents as f32));
+    let ritual_load: f32 = rel
+        .beliefs
+        .iter()
+        .filter_map(|belief| match &belief.concept {
+            BeliefConcept::Ritual { cost } => {
+                Some(cost.max(0.0) * belief.strength * belief.social_spread)
+            }
+            _ => None,
+        })
+        .sum();
+
+    let shared_ritual_performance = clamp01(ritual_load * nearby_factor);
+    let cohesion_gain = shared_ritual_performance * 0.2;
+    rel.cohesion = clamp01(rel.cohesion + cohesion_gain);
+
+    for belief in &mut rel.beliefs {
+        let spread_gain = nearby_factor * 0.05 + shared_ritual_performance * 0.1;
+        belief.social_spread = clamp01(belief.social_spread + spread_gain);
+        belief.strength = clamp01(belief.strength + shared_ritual_performance * 0.03);
+    }
+}
+
+/// Substrate-driven belief emergence (PHASE 1 of
+/// `docs/design/PHYSICS_INTEGRATION_PLAN.md`, edit site S1).
+///
+/// Per substrate doc §2.3 + §3.1 L4 (religion): hardship is **not** a
+/// hand-fed scalar anymore. We sample `|∇T| + |∇B|` at the agent's
+/// position from the shared `PhysicsFields`. The old
+/// `emerge_belief(hardship, group_size, agent_detection_bias)` signature
+/// is retained as a deprecated wrapper for replay compat (substrate
+/// §7.3).
+///
+/// This is the only legitimate *read* path the religion layer has into
+/// world state. There is no `religion.bump(faction)` — factions read the
+/// same gradient independently and discover the correlation themselves.
+pub fn emerge_belief_from_fields(
+    fields: &PhysicsFields,
+    p: IVec3,
+    group_size: u32,
+    agent_detection_bias: f32,
+) -> Option<Belief> {
+    // Hardship = |∇T| + |∇B| at `p` (substrate doc §4.4 ritual-fire
+    // example: "hardship = |∇T|_p + |∇B|_p"). This is the single scalar
+    // that gates whether beliefs emerge, what concept they take, and how
+    // strong they get.
+    let hardship = fields.grad_magnitude(Field::T, p) + fields.grad_magnitude(Field::B, p);
+    // Forward to the legacy function. The hardship scalar is now
+    // field-derived rather than hand-fed.
+    emerge_belief(hardship, group_size, agent_detection_bias)
+}
+
+/// Substrate-driven ritual spread (PHASE 1, edit site S2).
+///
+/// Per substrate doc §2.3 + §4.4, ritual load writes back through the
+/// substrate as **E** (FIRE spawn → CA → E write). The religion layer no
+/// longer carries a private "ritual heat" counter — the substrate is the
+/// source of truth for ritual fire's effect on the world.
+///
+/// We add the ritual's energy to `Field::E` at `temple_p` and a small
+/// `Field::F` (burnt offering mass) at the same point. A downstream layer
+/// (climate, tactics, economy) reads those writes on the next tick and
+/// reacts accordingly. This is the *downward causation* loop the substrate
+/// doc §2.3 prescribes.
+pub fn spread_religion_with_substrate(
+    rel: &mut Religion,
+    nearby_agents: u32,
+    tick: u64,
+    fields: &mut PhysicsFields,
+    temple_p: IVec3,
+) {
+    // First, run the cohesion/spread logic unchanged.
+    spread_religion(rel, nearby_agents, tick);
+
+    if rel.beliefs.is_empty() {
+        return;
+    }
+
+    // Compute total ritual heat (joules). Scale with the belief strength
+    // so a small ritual doesn't write 1e6 J into a single cell. Cap at
+    // RITUAL_HEAT_MAX to honor the substrate's per-cell rate limit.
+    const RITUAL_HEAT_PER_BELIEF: f32 = 5.0e3;
+    const RITUAL_HEAT_MAX: f32 = 1.0e5;
+    const OFFERING_MASS: f32 = 0.5;
+
+    let mut ritual_heat = 0.0_f32;
+    let mut offering_mass = 0.0_f32;
+    for belief in &rel.beliefs {
+        if let BeliefConcept::Ritual { cost } = &belief.concept {
+            ritual_heat += RITUAL_HEAT_PER_BELIEF * cost * belief.strength * belief.social_spread;
+            offering_mass += OFFERING_MASS * cost * belief.strength * belief.social_spread;
+        }
+    }
+    ritual_heat = ritual_heat.min(RITUAL_HEAT_MAX);
+
+    if ritual_heat > 0.0 {
+        // Write E (fire / joules) at the temple site. Substrate clamps +
+        // audits. If `temple_p` is outside the grid, the write fails
+        // silently — the religion still spreads socially.
+        let _ = fields.set(Field::E, temple_p, ritual_heat, WriteSource::ReligionLayer);
+    }
+    if offering_mass > 0.0 {
+        // Burnt offering: a small biomass write (negative — mass leaves B
+        // and enters the substrate's F channel as ash). Per substrate
+        // §3.1 L4, F is "burnt offerings" channel.
+        let _ = fields.set(Field::F, temple_p, offering_mass, WriteSource::ReligionLayer);
+        let _ = fields.set(Field::B, temple_p, -offering_mass, WriteSource::ReligionLayer);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn emerge_belief_uses_high_hardship_agent_detection_bias_for_natural_agent() {
+        let belief = emerge_belief(0.9, 12, 0.8).expect("belief should emerge");
+        assert_eq!(belief.concept, BeliefConcept::NaturalAgent);
+        assert!(belief.strength > 0.0);
+        assert!(belief.social_spread > 0.0);
+    }
+
+    #[test]
+    fn emerge_belief_uses_high_hardship_low_bias_for_taboo() {
+        let belief = emerge_belief(0.95, 12, 0.2).expect("belief should emerge");
+        assert_eq!(
+            belief.concept,
+            BeliefConcept::Taboo {
+                action: "forbidden_contact".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn emerge_belief_promotes_large_groups_to_moral_overseer() {
+        let belief = emerge_belief(0.2, 51, 0.1).expect("belief should emerge");
+        assert_eq!(belief.concept, BeliefConcept::MoralOverseer);
+    }
+
+    #[test]
+    fn spread_religion_grows_cohesion_from_shared_ritual_performance() {
+        let mut religion = Religion {
+            beliefs: vec![
+                Belief {
+                    concept: BeliefConcept::Ritual { cost: 0.8 },
+                    strength: 0.9,
+                    social_spread: 0.7,
+                },
+                Belief {
+                    concept: BeliefConcept::NaturalAgent,
+                    strength: 0.5,
+                    social_spread: 0.4,
+                },
+            ],
+            cohesion: 0.3,
+            member_count: 40,
+            age_ticks: 2,
+        };
+
+        spread_religion(&mut religion, 30, 99);
+
+        assert!(religion.cohesion > 0.3);
+        assert_eq!(religion.age_ticks, 99);
+        assert!(religion
+            .beliefs
+            .iter()
+            .all(|belief| belief.social_spread >= 0.4));
+    }
+}

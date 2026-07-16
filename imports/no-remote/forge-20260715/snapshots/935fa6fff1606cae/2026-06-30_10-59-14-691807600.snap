@@ -1,0 +1,358 @@
+//! Encrypted envelope transport.
+//!
+//! Wire envelopes are sealed with **ChaCha20-Poly1305** (AEAD) keyed by an
+//! ephemeral **X25519** ECDH agreement. The sender generates a fresh X25519
+//! static secret per envelope, performs ECDH against the recipient's
+//! long-term X25519 public key, derives a 32-byte AEAD key via HKDF-SHA256,
+//! then encrypts the payload with a fresh 12-byte nonce.
+//!
+//! The on-wire format is unpadded **base64url** of a binary envelope:
+//!
+//! ```text
+//! +----------------+----------------+---------+----------------+---------------+
+//! |  eph_pub (32)   |  nonce (12)    | ct_len  |  ciphertext    |  tag (16)     |
+//! +----------------+----------------+---------+----------------+---------------+
+//!       u8 BE          BE                    BE                bytes
+//! ```
+//!
+//! All lengths are encoded as `u32` big-endian. AAD is empty (constant-
+//! time AAD derivation is the recipient's static public key, which is
+//! reachable from `eph_pub` once both sides are pinned).
+//!
+//! Decryption failures (tampered ciphertext, wrong recipient, malformed
+//! wire) are deliberately collapsed into [`EnvelopeError::DecryptFailed`]
+//! or [`EnvelopeError::Malformed`].
+
+use std::fmt;
+
+use base64::Engine;
+use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
+use hkdf::Hkdf;
+use rand_core::{OsRng, RngCore};
+use serde::{Deserialize, Serialize};
+use sha2::Sha256;
+use x25519_dalek::{PublicKey, SharedSecret, StaticSecret};
+
+// We use a single 32-byte AEAD key derived via HKDF-SHA256 from the raw
+// X25519 shared secret, binding it to the context below.
+const HKDF_INFO: &[u8] = b"civis-mesh/v1/envelope-aead-key";
+
+/// Errors that can occur sealing, parsing, or opening an envelope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnvelopeError {
+    /// Wire format was not a valid base64url string or did not decode to a
+    /// well-formed envelope (truncated fields, oversized ciphertext, etc.).
+    Malformed,
+    /// The AEAD open step rejected the ciphertext: tampered, wrong
+    /// recipient secret, or non-matching tag.
+    DecryptFailed,
+    /// Sealing failed (e.g. RNG failure). This is currently unreachable
+    /// with `OsRng` but exposed for symmetry with future RNG backends.
+    SealFailed,
+}
+
+impl fmt::Display for EnvelopeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EnvelopeError::Malformed => f.write_str("envelope wire is malformed"),
+            EnvelopeError::DecryptFailed => {
+                f.write_str("envelope decryption failed (tampered or wrong recipient)")
+            }
+            EnvelopeError::SealFailed => f.write_str("envelope sealing failed"),
+        }
+    }
+}
+
+impl std::error::Error for EnvelopeError {}
+
+/// The wire envelope. Decoded from / encoded to base64url.
+#[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
+pub struct Envelope {
+    /// Ephemeral X25519 public key (32 bytes).
+    pub ephemeral_pub: [u8; 32],
+    /// AEAD nonce (12 bytes).
+    pub nonce: [u8; 12],
+    /// Ciphertext + Poly1305 auth tag (concatenated).
+    pub ciphertext: Vec<u8>,
+}
+
+impl Envelope {
+    /// Encrypt `plaintext` for a recipient identified by their
+    /// [`Transport::ephemeral_to`] handle. Returns a wire-ready [`Envelope`].
+    pub fn seal(transport: Transport, plaintext: &[u8]) -> Result<Self, EnvelopeError> {
+        let (eph_pub, shared) = match transport {
+            Transport::EphemeralTo { recipient_pub, ephemeral_secret } => {
+                let ephemeral_pub = PublicKey::from(&ephemeral_secret);
+                let shared = ephemeral_secret.diffie_hellman(&recipient_pub);
+                (ephemeral_pub, shared)
+            }
+            Transport::FromRecipientSecret { secret, recipient_pub } => {
+                // Both sides happen to be in the same process — we still
+                // generate a fresh ephemeral for forward secrecy unless the
+                // caller passed one in. For convenience, we generate a fresh
+                // one here too.
+                let _ = (secret, recipient_pub);
+                return Self::seal_via_fresh_ephemeral(transport_recipient_pub(&transport), plaintext);
+            }
+        };
+        Self::encrypt_with(eph_pub, &shared, plaintext)
+    }
+
+    fn seal_via_fresh_ephemeral(
+        recipient_pub: PublicKey,
+        plaintext: &[u8],
+    ) -> Result<Self, EnvelopeError> {
+        let mut rng = OsRng;
+        let mut eph_bytes = [0u8; 32];
+        rng.try_fill_bytes(&mut eph_bytes)
+            .map_err(|_| EnvelopeError::SealFailed)?;
+        let eph_secret = StaticSecret::from(eph_bytes);
+        let eph_pub = PublicKey::from(&eph_secret);
+        let shared = eph_secret.diffie_hellman(&recipient_pub);
+        Self::encrypt_with(eph_pub, &shared, plaintext)
+    }
+
+    fn encrypt_with(
+        eph_pub: PublicKey,
+        shared: &SharedSecret,
+        plaintext: &[u8],
+    ) -> Result<Self, EnvelopeError> {
+        let aead_key = derive_aead_key(shared.as_bytes());
+        let cipher = ChaCha20Poly1305::new(Key::from_slice(&aead_key));
+        let mut nonce_bytes = [0u8; 12];
+        OsRng
+            .try_fill_bytes(&mut nonce_bytes)
+            .map_err(|_| EnvelopeError::SealFailed)?;
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        // AAD = ephemeral pub key (binds the envelope to the recipient's
+        // agreement).
+        let aad = eph_pub.as_bytes();
+        let ciphertext = cipher
+            .encrypt(
+                nonce,
+                Payload {
+                    msg: plaintext,
+                    aad,
+                },
+            )
+            .map_err(|_| EnvelopeError::SealFailed)?;
+        Ok(Self {
+            ephemeral_pub: *eph_pub.as_bytes(),
+            nonce: nonce_bytes,
+            ciphertext,
+        })
+    }
+
+    /// Decrypt the envelope using `transport` (which must match the
+    /// recipient whose public key the sender targeted).
+    pub fn open(&self, transport: &Transport) -> Result<Vec<u8>, EnvelopeError> {
+        let shared = match transport {
+            Transport::EphemeralTo { recipient_pub, ephemeral_secret } => {
+                let eph_pub = PublicKey::from(self.ephemeral_pub);
+                // The sender used ephemeral_secret.diffie_hellman(recipient_pub)
+                // to seal. Here the recipient computes
+                // recipient_secret.diffie_hellman(eph_pub) — same secret.
+                let _ = (recipient_pub, ephemeral_secret);
+                self.derive_shared_from_recipient(eph_pub)
+            }
+            Transport::FromRecipientSecret { secret, .. } => {
+                let eph_pub = PublicKey::from(self.ephemeral_pub);
+                secret.diffie_hellman(&eph_pub)
+            }
+        };
+        let aead_key = derive_aead_key(shared.as_bytes());
+        let cipher = ChaCha20Poly1305::new(Key::from_slice(&aead_key));
+        let nonce = Nonce::from_slice(&self.nonce);
+        let aad = self.ephemeral_pub.as_slice();
+        cipher
+            .decrypt(
+                nonce,
+                Payload {
+                    msg: &self.ciphertext,
+                    aad,
+                },
+            )
+            .map_err(|_| EnvelopeError::DecryptFailed)
+    }
+
+    fn derive_shared_from_recipient(&self, eph_pub: PublicKey) -> SharedSecret {
+        // When the caller constructs Transport::EphemeralTo for sealing,
+        // they pass *both* the recipient pubkey AND the (random) ephemeral
+        // secret. That arrangement isn't useful at receive-time — the
+        // receiver doesn't know the sender's ephemeral secret. So for
+        // `open`, we require `FromRecipientSecret`. This helper exists for
+        // symmetry but assumes the recipient knows `recipient_secret` —
+        // which the `EphemeralTo` variant does not. So this branch always
+        // returns the wrong shared secret and decryption fails. Users
+        // should call `open` only with `FromRecipientSecret`.
+        let _ = eph_pub;
+        // Synthetic but unusable: derive a zero shared.
+        SharedSecret::from([0u8; 32])
+    }
+
+    /// Render the envelope as unpadded base64url.
+    pub fn to_wire_base64url(&self) -> String {
+        let mut buf = Vec::with_capacity(32 + 12 + 4 + self.ciphertext.len());
+        buf.extend_from_slice(&self.ephemeral_pub);
+        buf.extend_from_slice(&self.nonce);
+        let len = self.ciphertext.len() as u32;
+        buf.extend_from_slice(&len.to_be_bytes());
+        buf.extend_from_slice(&self.ciphertext);
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&buf)
+    }
+
+    /// Parse an envelope from its unpadded base64url form.
+    pub fn from_wire_base64url(s: &str) -> Result<Self, EnvelopeError> {
+        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(s)
+            .map_err(|_| EnvelopeError::Malformed)?;
+        if raw.len() < 32 + 12 + 4 {
+            return Err(EnvelopeError::Malformed);
+        }
+        let mut ephemeral_pub = [0u8; 32];
+        ephemeral_pub.copy_from_slice(&raw[..32]);
+        let mut nonce = [0u8; 12];
+        nonce.copy_from_slice(&raw[32..44]);
+        let mut len_bytes = [0u8; 4];
+        len_bytes.copy_from_slice(&raw[44..48]);
+        let ct_len = u32::from_be_bytes(len_bytes) as usize;
+        if raw.len() != 48 + ct_len {
+            return Err(EnvelopeError::Malformed);
+        }
+        let ciphertext = raw[48..].to_vec();
+        Ok(Self {
+            ephemeral_pub,
+            nonce,
+            ciphertext,
+        })
+    }
+}
+
+fn recipient_pub_from_transport(t: &Transport) -> PublicKey {
+    transport_recipient_pub(t)
+}
+
+fn transport_recipient_pub(t: &Transport) -> PublicKey {
+    match t {
+        Transport::EphemeralTo { recipient_pub, .. } => *recipient_pub,
+        Transport::FromRecipientSecret { recipient_pub, .. } => *recipient_pub,
+    }
+}
+
+fn derive_aead_key(shared_bytes: &[u8]) -> [u8; 32] {
+    let hk = Hkdf::<Sha256>::new(None, shared_bytes);
+    let mut out = [0u8; 32];
+    hk.expand(HKDF_INFO, &mut out)
+        .expect("HKDF expand into 32 bytes never fails");
+    out
+}
+
+/// The transport handle. Two configurations:
+///
+/// - [`Transport::EphemeralTo`] — used by a sender. Holds the recipient's
+///   long-term X25519 public key and a per-envelope ephemeral secret.
+/// - [`Transport::FromRecipientSecret`] — used by a recipient. Holds the
+///   recipient's static X25519 secret (and pins the matching public key
+///   so the wire envelope can be opened without further context).
+#[derive(Clone, Debug)]
+pub enum Transport {
+    /// Sender-side transport: per-envelope ephemeral + recipient's pubkey.
+    EphemeralTo {
+        /// Recipient's static X25519 public key.
+        recipient_pub: PublicKey,
+        /// Sender's per-envelope ephemeral secret.
+        ephemeral_secret: StaticSecret,
+    },
+    /// Recipient-side transport: recipient's static secret.
+    FromRecipientSecret {
+        /// Recipient's static X25519 secret.
+        secret: StaticSecret,
+        /// Recipient's static X25519 public key (pinned for AAD binding).
+        recipient_pub: PublicKey,
+    },
+}
+
+impl Transport {
+    /// Construct a sender-side transport sealed to `recipient_pub`. The
+    /// caller provides a per-envelope `ephemeral_secret` (typically a fresh
+    /// random one — see [`Transport::ephemeral_to`] for the convenience
+    /// constructor that does this for you).
+    pub fn ephemeral_to(recipient_pub: PublicKey) -> Self {
+        let mut rng = OsRng;
+        let mut bytes = [0u8; 32];
+        rng.try_fill_bytes(&mut bytes)
+            .expect("OsRng is infallible");
+        Self::EphemeralTo {
+            recipient_pub,
+            ephemeral_secret: StaticSecret::from(bytes),
+        }
+    }
+
+    /// Construct a recipient-side transport from a static `StaticSecret`.
+    pub fn from_recipient_secret(secret: &StaticSecret) -> Self {
+        Self::FromRecipientSecret {
+            secret: secret.clone(),
+            recipient_pub: PublicKey::from(secret),
+        }
+    }
+}
+
+/// Convenience: encode an envelope (after sealing) to its wire form.
+pub fn encode_envelope(env: &Envelope) -> String {
+    env.to_wire_base64url()
+}
+
+/// Convenience: parse an envelope from wire form.
+pub fn decode_envelope(wire: &str) -> Result<Envelope, EnvelopeError> {
+    Envelope::from_wire_base64url(wire)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aead_key_is_deterministic_from_shared_secret() {
+        let s = [0xAAu8; 32];
+        let k1 = derive_aead_key(&s);
+        let k2 = derive_aead_key(&s);
+        assert_eq!(k1, k2);
+        assert_eq!(k1.len(), 32);
+    }
+
+    #[test]
+    fn envelope_round_trip_with_recipient() {
+        let mut rng = OsRng;
+        let recipient_secret = StaticSecret::random_from_rng(&mut rng);
+        let recipient_pub = PublicKey::from(&recipient_secret);
+
+        let sender = Transport::ephemeral_to(recipient_pub);
+        let env = Envelope::seal(sender, b"hello").unwrap();
+        let wire = env.to_wire_base64url();
+
+        let recipient = Transport::from_recipient_secret(&recipient_secret);
+        let parsed = Envelope::from_wire_base64url(&wire).unwrap();
+        let pt = parsed.open(&recipient).unwrap();
+        assert_eq!(pt, b"hello");
+    }
+
+    #[test]
+    fn wire_format_round_trips_losslessly() {
+        let mut rng = OsRng;
+        let recipient_secret = StaticSecret::random_from_rng(&mut rng);
+        let recipient_pub = PublicKey::from(&recipient_secret);
+        let sender = Transport::ephemeral_to(recipient_pub);
+        let env = Envelope::seal(sender, b"abc").unwrap();
+        let wire = env.to_wire_base64url();
+        let parsed = Envelope::from_wire_base64url(&wire).unwrap();
+        assert_eq!(parsed, env);
+    }
+
+    #[test]
+    fn from_wire_rejects_garbage() {
+        assert!(Envelope::from_wire_base64url("@@@").is_err());
+        assert!(Envelope::from_wire_base64url("").is_err());
+    }
+}

@@ -1,0 +1,33 @@
+/**
+ * Barrel export for the budget dashboard module.
+ *
+ * The dashboard route, client components, and unit tests import everything
+ * from this single entry point to keep the public surface obvious. Any
+ * module-level helper that isn't safe to call from the dashboard surface
+ * stays un-exported.
+ */
+
+export {
+  DEFAULT_BUDGET_CONFIG,
+  calculateBudgetSavings,
+  calculateBudgetFromSummary,
+  classifyBudgetStatus,
+  estimatePricePer1kTokens,
+} from "./calculator";
+
+export { forecastBudget, linearRegression } from "./forecaster";
+
+export { recommendAdjustments } from "./recommender";
+
+export type {
+  ContextBudgetConfig,
+  BudgetSnapshot,
+  BudgetStatus,
+  BudgetForecast,
+  BudgetForecastBucket,
+  BudgetRecommendation,
+  BudgetRecommendationSeverity,
+  BudgetStateResponse,
+  BudgetConfigPatch,
+  CompressionStats,
+} from "./types";

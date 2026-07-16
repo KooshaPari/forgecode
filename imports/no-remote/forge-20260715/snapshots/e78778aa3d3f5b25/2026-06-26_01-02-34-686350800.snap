@@ -1,0 +1,18 @@
+// src/discovery/index.ts — discovery route surface.
+import type { ProviderDescriptor, ProviderReport } from "./types";
+
+import { Hono } from "hono";
+import { runDiscovery } from "./providers.ts";
+
+export const discovery = new Hono();
+
+discovery.get("/providers", async (c) => {
+  const report = await runDiscovery();
+  return c.json(report);
+});
+
+discovery.post("/scan", async (c) => {
+  // Force a fresh scan (clears any 5-min cache)
+  const report = await runDiscovery();
+  return c.json(report);
+});

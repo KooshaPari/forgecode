@@ -1,0 +1,33 @@
+## Summary
+
+Remove dangling `phenotype-errors` local-path workspace dependency and unused workspace deps that break CI once billing is restored.
+
+## Context
+
+Commit 7d22543 cleaned up `sidekick-messaging` by removing its dependency on the archived `phenotype-bus` crate and the `phenotype-errors` crate. However, the workspace `Cargo.toml` still declares `phenotype-errors = { path = "../pheno/crates/phenotype-errors" }` — a dangling local-path dependency that no workspace member references. This path does not exist in CI, so any `cargo check`, `cargo test`, or `cargo clippy` run will fail.
+
+Additionally, all 5 CI runs on main (CodeQL, CI test, cargo-deny, cargo-machete, Scorecard) currently fail with:
+
+> The job was not started because recent account payments have failed or your spending limit needs to be increased.
+
+This is a GitHub billing issue affecting runner provisioning. Once billing is resolved, jobs will start again — but the dangling `phenotype-errors` dep will cause immediate build failures.
+
+## Changes
+
+- **Remove** `phenotype-errors = { path = "../pheno/crates/phenotype-errors" }` from `[workspace.dependencies]` in `Cargo.toml` — the only crate that used it (`sidekick-messaging`) was already cleaned up
+- **Remove** unused workspace dependencies (`tokio`, `serde_json`, `tracing`, `anyhow`, `clap`) that no workspace member references
+- **Keep** `serde` and `thiserror` workspace deps (still used by `sidekick-messaging`)
+- Regenerated `Cargo.lock` reflecting the pruned dependency tree
+
+## Testing
+
+```bash
+cargo verify-project  # success
+cargo metadata --no-deps  # correctly resolves only sidekick-messaging
+# Full cargo check will pass once the workspace resolves without dangling paths
+```
+
+## Links
+
+- Root cause: dangling local path dependency introduced during the sidekick-messaging cleanup (7d22543)
+- Related: #74 (phenotype-bus archival), #71 (SHA-pinned actions)

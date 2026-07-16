@@ -1,0 +1,7 @@
+import subprocess, re
+out = subprocess.run(['cargo','test','--workspace'], cwd=r'C:\Users\koosh\substrate', capture_output=True).stdout.decode('utf-8', errors='replace')
+lines = [l for l in out.splitlines() if 'test result:' in l]
+total_pass = 0
+total_fail = 0
+crates = []
+for l in lines:

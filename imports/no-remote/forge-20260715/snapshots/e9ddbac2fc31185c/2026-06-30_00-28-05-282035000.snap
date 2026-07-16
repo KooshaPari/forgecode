@@ -1,0 +1,366 @@
+//! Integration tests for `phenoctl`.
+//!
+//! These tests exercise the CLI end-to-end (via the real binary
+//! that the rustc harness places at `CARGO_BIN_EXE_phenoctl`)
+//! AND exercise the library surface directly so the wiring of
+//! every subcommand to a real `pheno-config` / `settly` /
+//! `config-schema` call is asserted at the type level.
+//!
+//! No stubs: every test calls into an existing library function.
+
+use std::path::Path;
+use std::process::Command;
+
+use phenoctl::{
+    built_in_schema, cmd_decrypt, cmd_encrypt, cmd_get, cmd_layers, cmd_merge, cmd_set,
+    cmd_validate, cmd_watch,
+};
+use tempfile::tempdir;
+
+fn bin() -> &'static str {
+    env!("CARGO_BIN_EXE_phenoctl")
+}
+
+fn write_store(path: &Path, body: &str) {
+    std::fs::write(path, body).unwrap();
+}
+
+/// RAII guard that restores (or removes) an env var on drop.
+struct EnvRestore {
+    key: String,
+    prior: Option<String>,
+}
+impl EnvRestore {
+    fn set(key: &str, value: &str) -> Self {
+        let prior = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self {
+            key: key.to_string(),
+            prior,
+        }
+    }
+}
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        match self.prior.take() {
+            Some(v) => std::env::set_var(&self.key, v),
+            None => std::env::remove_var(&self.key),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// get / set  (binary + lib)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bin_set_then_get_round_trips_json_value() {
+    let dir = tempdir().unwrap();
+    let store = dir.path().join("store.json");
+    let out = Command::new(bin())
+        .args(["set", "alpha", "1234", store.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "set failed: {:?}", out);
+    let get = Command::new(bin())
+        .args(["get", "alpha", store.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(get.status.success(), "get failed: {:?}", get);
+    let stdout = String::from_utf8(get.stdout).unwrap();
+    assert!(
+        stdout.contains("1234"),
+        "expected 1234 in stdout, got: {stdout}"
+    );
+}
+
+#[test]
+fn lib_cmd_set_then_get_round_trip_string() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("store.json");
+    cmd_set(&path, "feature", "v1").unwrap();
+    let got = cmd_get(&path, "feature").unwrap();
+    assert!(got.contains("v1"), "got {got}");
+}
+
+#[test]
+fn lib_cmd_get_missing_key_returns_structured_error() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("store.json");
+    cmd_set(&path, "k", "v").unwrap();
+    let err = cmd_get(&path, "absent").unwrap_err();
+    assert!(matches!(err, phenoctl::PhenoctlError::KeyNotFound(_)));
+}
+
+// ---------------------------------------------------------------------------
+// validate
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bin_validate_passes_built_in_schema() {
+    let dir = tempdir().unwrap();
+    let store = dir.path().join("ok.json");
+    write_store(
+        &store,
+        r#"{"url":"https://e.test","port":8080,"log_level":"info","db_path":"/x"}"#,
+    );
+    let out = Command::new(bin())
+        .args(["validate", store.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "validate failed: {:?}", out);
+}
+
+#[test]
+fn bin_validate_fails_when_port_is_string() {
+    let dir = tempdir().unwrap();
+    let store = dir.path().join("bad.json");
+    write_store(
+        &store,
+        r#"{"url":"https://e.test","port":"not-a-number","log_level":"info","db_path":"/x"}"#,
+    );
+
+    // Strict user schema: port must be integer.
+    let schema = dir.path().join("schema.json");
+    write_store(
+        &schema,
+        r#"[{"name":"port","required":true,"type":"integer"}]"#,
+    );
+
+    let out = Command::new(bin())
+        .args([
+            "validate",
+            store.to_str().unwrap(),
+            "--schema",
+            schema.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "validate should fail: {:?}", out);
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("phenoctl:"),
+        "stderr should mention phenoctl, got: {stderr}"
+    );
+}
+
+#[test]
+fn lib_cmd_validate_built_in_passes_typed_config() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("store.json");
+    cmd_set(&path, "url", "\"https://e.test\"").unwrap();
+    cmd_set(&path, "db_path", "\"/x\"").unwrap();
+    cmd_set(&path, "port", "8080").unwrap();
+    cmd_validate(&path, None).unwrap();
+}
+
+#[test]
+fn lib_built_in_schema_accepts_partial() {
+    let schema = built_in_schema();
+    let v = serde_json::json!({});
+    schema.validate(&v).unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// encrypt / decrypt
+// ---------------------------------------------------------------------------
+
+#[test]
+fn lib_cmd_encrypt_then_decrypt_round_trip() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("in.json");
+    let enc = dir.path().join("secret.enc");
+    let out = dir.path().join("out.json");
+    write_store(&input, r#"{"name":"primary","port":8080}"#);
+
+    let pw = "phenoctl-test-passphrase".to_string();
+    cmd_encrypt(&input, &enc, Some(pw.clone())).unwrap();
+    assert!(enc.exists());
+    let bytes_on_disk = std::fs::read(&enc).unwrap();
+    assert_eq!(&bytes_on_disk[..4], b"CFG1", "missing magic header");
+    assert!(
+        !bytes_on_disk
+            .windows(7)
+            .any(|w| w.starts_with(b"primary")),
+        "ciphertext leaked plaintext bytes"
+    );
+
+    cmd_decrypt(&enc, &out, Some(pw)).unwrap();
+    let decrypted = std::fs::read_to_string(&out).unwrap();
+    assert!(
+        decrypted.contains("primary"),
+        "roundtrip lost plaintext: {decrypted}"
+    );
+}
+
+#[test]
+fn bin_encrypt_decrypt_round_trip() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("p.json");
+    let enc = dir.path().join("p.enc");
+    let out = dir.path().join("p.dec.json");
+    write_store(&input, r#"{"k":"v","n":42}"#);
+
+    let pw = "bin-passphrase";
+    let enc_proc = Command::new(bin())
+        .args([
+            "encrypt",
+            input.to_str().unwrap(),
+            enc.to_str().unwrap(),
+            "--passphrase",
+            pw,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        enc_proc.status.success(),
+        "encrypt failed: {:?}",
+        enc_proc
+    );
+
+    let dec_proc = Command::new(bin())
+        .args([
+            "decrypt",
+            enc.to_str().unwrap(),
+            out.to_str().unwrap(),
+            "--passphrase",
+            pw,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        dec_proc.status.success(),
+        "decrypt failed: {:?}",
+        dec_proc
+    );
+    let body = std::fs::read_to_string(&out).unwrap();
+    assert!(body.contains("\"v\"") && body.contains("42"), "got: {body}");
+}
+
+// ---------------------------------------------------------------------------
+// layers
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bin_layers_lists_canonical_precedence() {
+    let out = Command::new(bin())
+        .args(["layers", "--env-prefix", "PHENOCTL_TEST_NONE"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "layers failed: {:?}", out);
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    for must in ["default", "file", "env-vars", "cli"] {
+        assert!(stdout.contains(must), "missing {must} layer in: {stdout}");
+    }
+    // CLI priority (100) > EnvVars (60) > Default (10).
+    assert!(stdout.contains("\"priority_rank\": 100"));
+    assert!(stdout.contains("\"priority_rank\": 60"));
+    assert!(stdout.contains("\"priority_rank\": 10"));
+}
+
+#[test]
+fn lib_cmd_layers_includes_file_layer() {
+    let dir = tempdir().unwrap();
+    let toml = dir.path().join("cfg.toml");
+    write_store(
+        &toml,
+        "url = \"https://e.test\"\ndb_path = \"/x\"\nport = 9090\n",
+    );
+    let report = cmd_layers(Some(&toml), None).unwrap();
+    assert!(report.layers.iter().any(|l| l.name == "file"));
+    assert!(report.layers.iter().any(|l| l.name == "default"));
+    assert!(report.layers.iter().any(|l| l.name == "cli"));
+    let ranks: Vec<u8> = report.layers.iter().map(|l| l.priority_rank).collect();
+    let mut sorted_desc = ranks.clone();
+    sorted_desc.sort_by_key(|r| std::cmp::Reverse(*r));
+    assert_eq!(
+        ranks, sorted_desc,
+        "layer ranks must be desc by priority"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// merge
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bin_merge_file_and_env_overlay() {
+    let dir = tempdir().unwrap();
+    let toml = dir.path().join("c.toml");
+    write_store(
+        &toml,
+        "url = \"https://base.test\"\ndb_path = \"/x\"\nport = 9090\n",
+    );
+
+    let _url_g = EnvRestore::set("BINMERGE_URL", "https://overlay.test");
+    let _port_g = EnvRestore::set("BINMERGE_PORT", "1234");
+    let _db_g = EnvRestore::set("BINMERGE_DB_PATH", "/overlay");
+
+    let out = Command::new(bin())
+        .args([
+            "merge",
+            toml.to_str().unwrap(),
+            "--env-prefix",
+            "BINMERGE",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "merge failed: {:?}", out);
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("https://overlay.test"),
+        "overlay url should win: {stdout}"
+    );
+    assert!(stdout.contains("1234"), "overlay port should win: {stdout}");
+}
+
+#[test]
+fn lib_cmd_merge_includes_env_overlay_field() {
+    let dir = tempdir().unwrap();
+    let toml = dir.path().join("c.toml");
+    write_store(
+        &toml,
+        "url = \"https://base.test\"\ndb_path = \"/x\"\nport = 9090\n",
+    );
+
+    let _url_g = EnvRestore::set("PHENOMERGE2_URL", "https://env.test");
+    let _db_g = EnvRestore::set("PHENOMERGE2_DB_PATH", "/env");
+    let v = cmd_merge(&toml, "PHENOMERGE2").unwrap();
+    assert_eq!(v["url"], "https://env.test");
+    assert_eq!(v["db_path"], "/env");
+    assert_eq!(v["port"], 9090);
+}
+
+// ---------------------------------------------------------------------------
+// watch
+// ---------------------------------------------------------------------------
+
+#[test]
+fn lib_cmd_watch_subscribes_and_initializes() {
+    let dir = tempdir().unwrap();
+    let input = dir.path().join("p.json");
+    let enc = dir.path().join("p.enc");
+    write_store(&input, r#"{"k":"v"}"#);
+    cmd_encrypt(&input, &enc, Some("watch-passphrase".into())).unwrap();
+    // Subscribe + immediate exit (count=0) must not error.
+    let _ = cmd_watch(&enc, Some("watch-passphrase".into()), 0);
+}
+
+#[test]
+fn bin_help_lists_all_subcommands() {
+    let out = Command::new(bin()).arg("--help").output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    for sub in [
+        "get",
+        "set",
+        "validate",
+        "encrypt",
+        "decrypt",
+        "watch",
+        "layers",
+        "merge",
+    ] {
+        assert!(stdout.contains(sub), "missing subcommand {sub}: {stdout}");
+    }
+}

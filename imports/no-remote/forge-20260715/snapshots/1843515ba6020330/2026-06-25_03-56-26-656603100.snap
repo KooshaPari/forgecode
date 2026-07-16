@@ -1,0 +1,43 @@
+## Summary
+Add an interactive DAG (Directed Acyclic Graph) renderer page serving as a visualization tool for tracking compute/infra epic work breakdowns in the Phenotype project.
+
+## Context
+The DAG renderer provides a visual way to understand task dependencies, status distribution, and workflow progression across epics. This is the implementation of Epic F unit F24 — a foundational piece for the DAG foundation and automation tooling. The renderer reads a structured JSON definition and produces an interactive SVG graph that supports the full lifecycle of work tracking.
+
+## Changes
+- New `/dag` route in the projects-landing Astro site under `src/pages/dag/index.astro`
+- Vanilla JS client-side DAG renderer implementing longest-path layering, cubic bezier edge routing, and SVG-based rendering
+- Sample DAG data file (`data/dag-data.json`) defining the Epic F work breakdown (15 nodes, 18 edges)
+- Comprehensive test suite (9 tests) covering data integrity, topological correctness, and status distribution
+- Build-time status summary in the page header with per-status counts
+- Interactive info panel showing node dependencies and dependents on click
+
+### Key Implementation Details
+- **Zero external dependencies** — all rendering uses plain DOM APIs and SVG (no D3.js, no React, no canvas libraries)
+- **Automatic layout** implements longest-path layering with centered horizontal positioning per layer
+- **Edge routing** uses cubic bezier curves for smooth, readable connections between layers with SVG arrow markers
+- **Interaction model**: drag on empty SVG area to pan, mouse wheel to zoom (0.2x–5x), click nodes to select with yellow highlight
+- **Status colors**: green (completed), blue (in-progress), gray (pending), red (failed) — with fill/stroke/text variants for readability
+- **Embedded JSON** at build time via Astro's frontmatter; client script reads from a `<script type="application/json">` tag
+
+## Use Cases
+- Track progress across any DAG-structured workflow (epics, projects, task graphs)
+- Visualize dependencies between tasks to identify bottlenecks
+- Present status distribution to stakeholders at a glance
+- Serve as a reusable renderer for future DAG-based tooling (execution engine, CI pipeline visualization)
+
+## Testing
+```bash
+# Run the data integrity and topology tests
+cd sites/projects-landing
+bun test tests/dag-renderer.test.ts
+
+# Build the full site to verify compilation
+bun run build
+
+# Verify the dag page is generated
+ls dist/dag/index.html
+```
+
+## Area
+compute-infra

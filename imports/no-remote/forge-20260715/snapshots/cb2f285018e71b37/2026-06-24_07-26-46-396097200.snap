@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Apply --color=never to all grep -E calls in grade.sh
+SCRIPT="/c/Users/koosh/phenotype-registry/registry/audit-absorption-justification/grade.sh"
+
+# Use sed in-place to replace "grep -E" with 'grep "${GREP_OPTS[@]}" -E'
+# but skip the comment line. We use a different separator: replace only when
+# the line begins with `grep -E` (not `# grep`).
+sed -i -E '
+/^grep -E/ {
+  s/^grep -E /grep "${GREP_OPTS[@]}" -E /
+}
+' "$SCRIPT"
+
+echo "Done."
+grep -n 'grep -E' "$SCRIPT" | head -20

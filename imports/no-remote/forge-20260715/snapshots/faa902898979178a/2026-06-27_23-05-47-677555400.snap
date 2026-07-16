@@ -1,0 +1,14 @@
+name: phase-finish-stack
+
+include:
+  - path:
+      - "../Tracera/process-compose.yml"
+    project_name: tracera-native-exe
+  - path:
+      - "./process-compose.yml"
+    project_name: agileplus-monorepo
+
+variables:
+  data-root: "${PWD}/../.."
+  logs-root: "${PWD}/../../logs"
+  shared-redis: "true"

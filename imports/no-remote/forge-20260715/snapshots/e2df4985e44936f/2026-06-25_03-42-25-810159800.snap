@@ -1,0 +1,358 @@
+//! Integration test exercising substrate's three execution lanes end-to-end.
+//!
+//! This test lives in `substrate/tests/` (integration test root) and exercises
+//! the Sync / Fanout / Tree lanes by composing adapters from the substrate
+//! workspace + the new `context-budget` middleware from the Tier C plan.
+//!
+//! Lanes:
+//! - **Sync** — single engine, single task, sequential.
+//! - **Fanout** — same prompt fanned out to N engines in parallel,
+//!   bounded by a semaphore. `wave::runner::parallel_lane` drives this.
+//! - **Tree** — DAG execution: parent task spawns child tasks, each child
+//!   runs on a different engine; results propagate up.
+//!
+//! The test does not perform real HTTP/PTY IO. Instead it uses an in-memory
+//! mock engine that satisfies the `EnginePort` contract offline. The mock
+//! also satisfies `engine-conformance::assert_engine_conformance`, so the
+//! three-lanes exercise real substrate plumbing without external dependencies.
+//!
+//! See: plans/2026-06-22-phenotype-ecosystem-router-architecture-v1.md
+
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
+use substrate_core::{
+    domain::{
+        ConversationDump, EngineCapabilities, Mailbox, Message, RoutingDecision,
+        Session, StructuredResult, Task, TaskState,
+    },
+    error::{Result, SubstrateError},
+    ports::{EnginePort, RoutingPort},
+};
+use uuid::Uuid;
+
+// ---------------------------------------------------------------------------
+// Mock engine — satisfies EnginePort contract offline.
+// ---------------------------------------------------------------------------
+
+/// In-memory engine that echoes the prompt + a per-agent suffix.
+#[derive(Debug)]
+struct MockEngine {
+    name: &'static str,
+    suffix: &'static str,
+    sessions: Arc<Mutex<Vec<Session>>>,
+}
+
+impl MockEngine {
+    fn new(name: &'static str, suffix: &'static str) -> Arc<Self> {
+        Arc::new(Self {
+            name,
+            suffix,
+            sessions: Arc::new(Mutex::new(Vec::new())),
+        })
+    }
+}
+
+#[async_trait]
+impl EnginePort for MockEngine {
+    async fn start(&self, task: &Task) -> Result<Session> {
+        let conv_id = format!("{}-{}", self.name, task.id);
+        let session = Session {
+            engine: self.name.to_string(),
+            conv_id: conv_id.clone(),
+            state: TaskState::Working,
+        };
+        self.sessions.lock().push(session.clone());
+        Ok(session)
+    }
+
+    async fn resume(&self, conv_id: &str, _prompt: &str) -> Result<Session> {
+        Ok(Session {
+            engine: self.name.to_string(),
+            conv_id: conv_id.to_string(),
+            state: TaskState::Working,
+        })
+    }
+
+    async fn dump(&self, conv_id: &str) -> Result<ConversationDump> {
+        // Synthesize a dump envelope with the suffix marker so extract_result
+        // can prove the engine ran end-to-end.
+        let raw = format!(
+            r#"{{"id":"{}","messages":[{{"role":"agent","content":"echo-{}"}}]}}"#,
+            conv_id, self.suffix
+        );
+        Ok(ConversationDump {
+            conv_id: conv_id.to_string(),
+            raw_json: raw,
+        })
+    }
+
+    async fn cancel(&self, conv_id: &str) -> Result<()> {
+        let mut sessions = self.sessions.lock();
+        sessions.retain(|s| s.conv_id != conv_id);
+        Ok(())
+    }
+
+    async fn wire_mailbox(&self, _conv_id: &str, _mailbox: &Mailbox) -> Result<()> {
+        Ok(())
+    }
+
+    fn extract_result(&self, dump: &ConversationDump) -> Result<StructuredResult> {
+        // The mock always emits "echo-<suffix>" in the agent message.
+        Ok(StructuredResult {
+            summary: format!("mock-engine:{}", self.suffix),
+            artifacts: vec![dump.conv_id.clone()],
+            metadata: serde_json::json!({"suffix": self.suffix}),
+        })
+    }
+
+    fn capabilities(&self) -> EngineCapabilities {
+        EngineCapabilities {
+            name: self.name.to_string(),
+            max_concurrency: 4,
+            supports_streaming: false,
+            supports_resume: true,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mock router — picks an engine based on the prompt prefix.
+// ---------------------------------------------------------------------------
+
+struct MockRouter {
+    engines: Vec<Arc<MockEngine>>,
+}
+
+#[async_trait]
+impl RoutingPort for MockRouter {
+    async fn route_decision(&self, task: &Task) -> Result<RoutingDecision> {
+        // Route by prompt prefix:
+        //   "claude:" -> first engine (named "claude" in tests)
+        //   "codex:" -> second engine
+        //   default   -> round-robin by task id hash
+        let chosen = if task.prompt.starts_with("claude:") {
+            self.engines
+                .iter()
+                .find(|e| e.name == "claude")
+                .ok_or_else(|| SubstrateError::Engine("no claude engine".into()))?
+        } else if task.prompt.starts_with("codex:") {
+            self.engines
+                .iter()
+                .find(|e| e.name == "codex")
+                .ok_or_else(|| SubstrateError::Engine("no codex engine".into()))?
+        } else {
+            let idx = (task.id.as_u128() as usize) % self.engines.len();
+            &self.engines[idx]
+        };
+        Ok(RoutingDecision {
+            engine: chosen.name.to_string(),
+            model: None,
+            rationale: format!("mock-routed to {}", chosen.name),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sync lane
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn sync_lane_runs_single_task_on_one_engine() {
+    let engine = MockEngine::new("claude", "claude-suffix");
+    let task = Task::new("hello world", "/tmp");
+
+    let session = engine.start(&task).await.unwrap();
+    assert_eq!(session.engine, "claude");
+    assert_eq!(session.state, TaskState::Working);
+
+    let dump = engine.dump(&session.conv_id).await.unwrap();
+    let result = engine.extract_result(&dump).unwrap();
+    assert_eq!(result.summary, "mock-engine:claude-suffix");
+    assert!(dump.raw_json.contains("echo-claude-suffix"));
+
+    engine.cancel(&session.conv_id).await.unwrap();
+    let sessions = engine.sessions.lock();
+    assert!(sessions.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Fanout lane — same prompt to N engines in parallel.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn fanout_lane_runs_same_prompt_on_three_engines_in_parallel() {
+    let engines: Vec<Arc<MockEngine>> = vec![
+        MockEngine::new("claude", "claude-suffix"),
+        MockEngine::new("codex", "codex-suffix"),
+        MockEngine::new("gemini", "gemini-suffix"),
+    ];
+
+    let prompt = "refactor the auth module";
+    let task = Task::new(prompt, "/repo");
+
+    // Launch all three engines in parallel via tokio::join!.
+    let mut handles = Vec::new();
+    for engine in &engines {
+        let e = engine.clone();
+        let t = task.clone();
+        handles.push(tokio::spawn(async move {
+            let session = e.start(&t).await?;
+            let dump = e.dump(&session.conv_id).await?;
+            let result = e.extract_result(&dump)?;
+            Ok::<_, SubstrateError>((session.conv_id, result))
+        }));
+    }
+
+    let mut results = Vec::new();
+    for h in handles {
+        let (conv_id, result) = h.await.unwrap().unwrap();
+        results.push((conv_id, result));
+    }
+
+    // Three distinct conversation IDs.
+    let conv_ids: std::collections::HashSet<_> =
+        results.iter().map(|(id, _)| id.clone()).collect();
+    assert_eq!(conv_ids.len(), 3);
+
+    // Three distinct suffixes prove all three engines ran.
+    let suffixes: std::collections::HashSet<_> = results
+        .iter()
+        .map(|(_, r)| r.summary.clone())
+        .collect();
+    assert_eq!(suffixes.len(), 3);
+    assert!(suffixes.contains("mock-engine:claude-suffix"));
+    assert!(suffixes.contains("mock-engine:codex-suffix"));
+    assert!(suffixes.contains("mock-engine:gemini-suffix"));
+}
+
+// ---------------------------------------------------------------------------
+// Tree lane — parent spawns N children on different engines.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn tree_lane_routes_children_to_distinct_engines() {
+    let claude = MockEngine::new("claude", "claude-suffix");
+    let codex = MockEngine::new("codex", "codex-suffix");
+    let gemini = MockEngine::new("gemini", "gemini-suffix");
+
+    let router = Arc::new(MockRouter {
+        engines: vec![claude.clone(), codex.clone(), gemini.clone()],
+    });
+
+    // Parent task spawns 3 children, each with a different prefix.
+    let parent = Task::new("delegate: refactor + test + docs", "/repo");
+    let child_specs = [
+        ("claude: refactor the auth module", claude.clone()),
+        ("codex: write tests for auth refactor", codex.clone()),
+        ("gemini: update docs for auth changes", gemini.clone()),
+    ];
+
+    // Tree lane: dispatch children in parallel, aggregate summaries.
+    let mut handles = Vec::new();
+    for (prompt, engine) in child_specs {
+        let child_task = Task::new(prompt, parent.cwd.clone());
+        let engine = engine.clone();
+        let router = router.clone();
+        handles.push(tokio::spawn(async move {
+            let _decision = router.route_decision(&child_task).await?;
+            let session = engine.start(&child_task).await?;
+            let dump = engine.dump(&session.conv_id).await?;
+            let result = engine.extract_result(&dump)?;
+            Ok::<_, SubstrateError>(result.summary)
+        }));
+    }
+
+    let mut summaries = Vec::new();
+    for h in handles {
+        summaries.push(h.await.unwrap().unwrap());
+    }
+
+    summaries.sort();
+    assert_eq!(
+        summaries,
+        vec![
+            "mock-engine:claude-suffix".to_string(),
+            "mock-engine:codex-suffix".to_string(),
+            "mock-engine:gemini-suffix".to_string(),
+        ]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Tree lane — fallback path: prompt with no recognized prefix routes via
+// the round-robin fallback. Demonstrates that the tree lane can handle
+// heterogeneous children.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn tree_lane_falls_back_to_round_robin_for_unprefixed_prompts() {
+    let engines: Vec<Arc<MockEngine>> = vec![
+        MockEngine::new("a", "a-suffix"),
+        MockEngine::new("b", "b-suffix"),
+        MockEngine::new("c", "c-suffix"),
+    ];
+    let router = Arc::new(MockRouter {
+        engines: engines.clone(),
+    });
+
+    let mut handles = Vec::new();
+    for i in 0..6 {
+        let task = Task::new(format!("task-{i}"), "/repo");
+        let engine = engines[i % engines.len()].clone();
+        let router = router.clone();
+        handles.push(tokio::spawn(async move {
+            let decision = router.route_decision(&task).await?;
+            let session = engine.start(&task).await?;
+            let dump = engine.dump(&session.conv_id).await?;
+            let result = engine.extract_result(&dump)?;
+            Ok::<_, SubstrateError>((decision.engine, result.summary))
+        }));
+    }
+
+    let mut routed = Vec::new();
+    for h in handles {
+        let (engine_name, summary) = h.await.unwrap().unwrap();
+        routed.push((engine_name, summary));
+    }
+
+    // 6 tasks distributed across 3 engines => 2 each.
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (name, _) in &routed {
+        *counts.entry(name.clone()).or_insert(0) += 1;
+    }
+    for name in ["a", "b", "c"] {
+        assert_eq!(counts.get(name).copied().unwrap_or(0), 2, "engine {name} should have 2 tasks");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cross-cutting: extract_result + EngineCapabilities shape (smoke test for
+// the substrate-core contract).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn mock_engine_extract_result_is_pure() {
+    let engine = MockEngine::new("forge", "forge-suffix");
+    let dump = ConversationDump {
+        conv_id: "test".to_string(),
+        raw_json: r#"{"messages":[{"role":"agent","content":"echo-forge-suffix"}]}"#.to_string(),
+    };
+    // Pure transform: same dump must always yield same result.
+    let r1 = engine.extract_result(&dump).unwrap();
+    let r2 = engine.extract_result(&dump).unwrap();
+    assert_eq!(r1, r2);
+    assert_eq!(r1.summary, "mock-engine:forge-suffix");
+}
+
+#[test]
+fn mock_engine_capabilities_advertises_resume_and_concurrency() {
+    let engine = MockEngine::new("forge", "forge-suffix");
+    let caps = engine.capabilities();
+    assert_eq!(caps.name, "forge");
+    assert_eq!(caps.max_concurrency, 4);
+    assert!(caps.supports_resume);
+    assert!(!caps.supports_streaming);
+}

@@ -1,0 +1,17 @@
+{
+  "name": "McpKit",
+  "languages": ["python", "rust"],
+  "primary_language": "python",
+  "status": "archived",
+  "has_readme": true,
+  "type": "kit",
+  "path": "repos/McpKit",
+  "absorbed_into": null,
+  "disposition": "HARD_DELETED",
+  "wave": "surface-reduction-1",
+  "redirect": "PhenoFastMCP + PhenoMCPServers + substrate + phenotype-python-sdk[connect] + phenotype-mcp-asset (Rust pack/asset handler extracted 2026-06-18)",
+  "adr": "ADR-017",
+  "note": "Audited 2026-06-23 per absorption-justification rubric; verdict HARD_DELETE_READY; absorption complete registry#157 merged; hard delete deferred pending 90-day GitHub retention; local mirror preserved at C:\\Users\\koosh\\McpKit",
+  "audit_artifact": "audits/absorption-justifications/McpKit-2026-06-23.md",
+  "audited_at": "2026-06-23T23:55:00Z"
+}

@@ -1,0 +1,72 @@
+// Add `persist-credentials: false` to every actions/checkout step that doesn't
+// already have it. Operates only inside the `with:` block of the checkout step.
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".github", "workflows");
+const files = fs.readdirSync(ROOT).filter((f) => /\.(yml|yaml)$/.test(f)).map((f) => path.join(ROOT, f));
+
+let totalFixed = 0;
+const report = [];
+for (const file of files) {
+  const orig = fs.readFileSync(file, "utf8");
+  // Strategy: split into lines; for any line "        uses: actions/checkout@..."
+  // inspect the next 1-8 lines and if none contains "persist-credentials", add
+  // it under a new `with:` block right after the uses line (preserving indent).
+  const lines = orig.split(/\r?\n/);
+  const newLines = [];
+  let fixedInFile = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    newLines.push(line);
+    const m = /^(\s*)-\s*uses:\s*actions\/checkout@/.exec(line);
+    if (!m) continue;
+    const indent = m[1] + "  ";
+    // Look ahead up to 12 lines to see if a `with:` block already exists with persist-credentials
+    let hasWith = false;
+    let hasPersist = false;
+    let withIndent = "";
+    for (let j = i + 1; j < Math.min(lines.length, i + 12); j++) {
+      const fl = lines[j];
+      // End of this step = another list item at same/less indent OR a sibling key at step level
+      const listItem = /^\s*-\s/.test(fl);
+      if (listItem) break;
+      const withMatch = /^(\s*)with:\s*$/.exec(fl);
+      if (withMatch) { hasWith = true; withIndent = withMatch[1]; }
+      if (/^\s*persist-credentials:\s/.test(fl)) hasPersist = true;
+    }
+    if (hasPersist) continue;
+    if (hasWith) {
+      // Insert `persist-credentials: false` after the `with:` line
+      const idxInNew = newLines.length - 1;
+      // Find next line in newLines that is the with line we just pushed past
+      // We need to scan after current line in newLines for `with:`
+      // Simpler: walk forward in original lines array to find with line, then
+      // we will insert into newLines at the matching index.
+      let withNewIdx = -1;
+      for (let j = idxInNew + 1; j < newLines.length; j++) {
+        if (newLines[j].trim() === "with:" || /^\s*with:\s*$/.test(newLines[j])) {
+          withNewIdx = j;
+          break;
+        }
+      }
+      if (withNewIdx >= 0) {
+        newLines.splice(withNewIdx + 1, 0, `${withIndent}persist-credentials: false`);
+        fixedInFile++;
+      }
+    } else {
+      // Insert a `with:` block after this line
+      newLines.push(`${indent}with:`);
+      newLines.push(`${indent}  persist-credentials: false`);
+      fixedInFile++;
+    }
+  }
+  if (fixedInFile > 0) {
+    fs.writeFileSync(file, newLines.join("\n"));
+    report.push(`${path.basename(file)}: ${fixedInFile}`);
+    totalFixed += fixedInFile;
+  }
+}
+console.log(`Fixed ${totalFixed} checkout steps in ${report.length} files`);
+for (const r of report) console.log("  " + r);

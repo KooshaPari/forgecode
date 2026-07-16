@@ -1,0 +1,103 @@
+//! `pheno-tracing` stub crate — re-exports the canonical `tracing` crate
+//! to unblock offline / CI builds while the real private `pheno-tracing`
+//! git-dep (ADR-012) cannot be resolved.
+//!
+//! ## When to delete
+//!
+//! Delete this stub and the `[patch.crates-io]` redirect in
+//! `Cargo.toml` once `pheno-tracing` v0.4.0 is either:
+//! 1. Published to crates.io, OR
+//! 2. Vendored into `vendor/pheno-tracing` with a `[patch.crates-io]`
+//!    path redirect.
+//!
+//! ## API surface (subset)
+//!
+//! The real `pheno-tracing` crate exposes a fleet-canonical OTLP tracer
+//! plus a `prelude` module. The downstream consumers only `pub use
+//! pheno_tracing::*;` so a flat re-export is sufficient for compilation.
+
+pub use tracing::{debug, error, info, instrument, span, trace, warn, Level, Span};
+
+pub mod prelude {
+    pub use tracing::{debug, error, info, instrument, span, trace, warn, Level, Span};
+    pub use tracing_subscriber::EnvFilter;
+}
+
+/// Process-level tracer initialiser (stub — does nothing).
+pub fn init_tracing() {
+    // No-op: the real pheno-tracing wires an OTLP exporter here.
+}
+
+/// OTLP endpoint configuration (stub).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct OtlpEndpoint {
+    pub url: String,
+}
+
+/// Service name used as a tracer attribute (stub).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ServiceName(pub String);
+
+/// Counter metric (stub — wraps a `tracing::event`).
+#[derive(Debug, Clone, Default)]
+pub struct Counter {
+    pub name: String,
+}
+
+impl Counter {
+    pub fn inc(&self) {
+        tracing::trace!(counter = %self.name, "inc");
+    }
+}
+
+/// Histogram metric (stub).
+#[derive(Debug, Clone, Default)]
+pub struct Histogram {
+    pub name: String,
+}
+
+impl Histogram {
+    pub fn observe(&self, value: f64) {
+        tracing::trace!(histogram = %self.name, value, "observe");
+    }
+}
+
+/// Per-request metrics bundle (stub).
+#[derive(Debug, Clone, Default)]
+pub struct RequestMetrics {
+    pub duration_seconds: f64,
+    pub status_code: u16,
+}
+
+/// Trace port identifier (stub).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct TracePort(pub u16);
+
+/// Result type alias for tracing-port operations.
+pub type TraceResult<T> = Result<T, TraceError>;
+
+/// Stub error type.
+#[derive(Debug, thiserror::Error)]
+pub enum TraceError {
+    #[error("tracing error: {0}")]
+    Other(String),
+}
+
+/// Span guard for `instrument`-style scope tracking (stub).
+pub struct SpanGuard {
+    _span: tracing::Span,
+}
+
+impl SpanGuard {
+    pub fn enter(name: &str) -> Self {
+        Self {
+            _span: tracing::info_span!("guard", name),
+        }
+    }
+}
+
+impl Drop for SpanGuard {
+    fn drop(&mut self) {
+        tracing::trace!("span guard dropped");
+    }
+}

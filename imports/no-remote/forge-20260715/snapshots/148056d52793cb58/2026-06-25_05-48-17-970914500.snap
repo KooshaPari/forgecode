@@ -1,0 +1,124 @@
+import React from 'react';
+import Link from 'next/link';
+import { listJobs, listApiKeys } from '@/lib/supabase';
+
+interface JobRow {
+  id: string;
+  name: string;
+  model: string;
+  status: string;
+  created_at: string;
+}
+
+interface ApiKeyRow {
+  id: string;
+  name: string;
+  created_at: string;
+}
+
+interface DashboardPageProps {
+  /** Authenticated user object (provided by the route layout). */
+  user?: { id: string; email?: string | null } | null;
+}
+
+/**
+ * Dashboard page.
+ *
+ * NOTE: the test (`__tests__/app/dashboard/page.test.tsx`) imports this
+ * function directly and renders its return value, so the component must be
+ * callable as `DashboardPage()` and return JSX.
+ */
+export default async function DashboardPage({
+  user = null,
+}: DashboardPageProps = {}) {
+  if (!user?.id) {
+    return (
+      <div className="container px-4 py-8 mx-auto">
+        <h1 className="text-3xl font-bold">Welcome to your dashboard</h1>
+        <p className="mt-2 text-gray-600">Please sign in to view your data.</p>
+      </div>
+    );
+  }
+
+  const [{ data: jobsData, error: jobsError }, { data: apiKeysData, error: apiKeysError }] =
+    await Promise.all([listJobs(user.id), listApiKeys(user.id)]);
+
+  const jobs: JobRow[] = (jobsData ?? []) as JobRow[];
+  const apiKeys: ApiKeyRow[] = (apiKeysData ?? []) as ApiKeyRow[];
+
+  return (
+    <div className="container px-4 py-8 mx-auto">
+      <h1 className="text-3xl font-bold">Welcome to your dashboard</h1>
+      {user.email && <p className="mt-2 text-gray-600">{user.email}</p>}
+
+      <div className="grid grid-cols-1 gap-6 mt-8 md:grid-cols-2">
+        <div className="p-6 bg-white rounded-lg shadow-md">
+          <h2 className="text-xl font-semibold">Recent Jobs</h2>
+          {jobsError ? (
+            <p className="mt-4 text-red-700">Error loading jobs</p>
+          ) : jobs.length > 0 ? (
+            <ul className="mt-4 space-y-2">
+              {jobs.map((job) => (
+                <li
+                  key={job.id}
+                  className="flex items-center justify-between border-b border-gray-100 pb-2"
+                >
+                  <Link
+                    href={`/jobs/${job.id}`}
+                    className="font-medium text-indigo-600 hover:text-indigo-800"
+                  >
+                    {job.name}
+                  </Link>
+                  <span className="text-sm text-gray-500">{job.status}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-4 text-gray-600">No jobs found</p>
+          )}
+
+          <div className="mt-6">
+            <Link
+              href="/jobs/new"
+              className="inline-block px-4 py-2 text-white bg-indigo-600 rounded-md hover:bg-indigo-700"
+            >
+              Create New Job
+            </Link>
+          </div>
+        </div>
+
+        <div className="p-6 bg-white rounded-lg shadow-md">
+          <h2 className="text-xl font-semibold">API Keys</h2>
+          {apiKeysError ? (
+            <p className="mt-4 text-red-700">Error loading API keys</p>
+          ) : apiKeys.length > 0 ? (
+            <ul className="mt-4 space-y-2">
+              {apiKeys.map((apiKey) => (
+                <li
+                  key={apiKey.id}
+                  className="flex items-center justify-between border-b border-gray-100 pb-2"
+                >
+                  <span className="font-medium text-gray-900">{apiKey.name}</span>
+                  <span className="text-sm text-gray-500">
+                    {new Date(apiKey.created_at).toLocaleDateString()}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-4 text-gray-600">No API keys found</p>
+          )}
+
+          <div className="mt-6">
+            <Link
+              href="/api-keys/new"
+              className="inline-block px-4 py-2 text-white bg-indigo-600 rounded-md hover:bg-indigo-700"
+            >
+              Create API Key
+            </Link>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

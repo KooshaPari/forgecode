@@ -1,0 +1,299 @@
+/**
+ * Tests for DAG cost-to-complete estimation (F28).
+ *
+ * Covers:
+ *  - Cost model constants
+ *  - Effort tier classification
+ *  - Cost summary computation
+ *  - Estimated hours lookup
+ *  - Edge cases (null hours, empty data, missing unit types)
+ *
+ * Uses Bun's built-in test runner (bun test / vitest).
+ */
+
+import { describe, it, expect } from "vitest";
+import {
+  computeCostSummary,
+  effortTier,
+  effortStyle,
+  estimatedHoursFor,
+  DEFAULT_UNIT_TYPES,
+  EFFORT_TIERS,
+  EFFORT_COLORS,
+} from "../src/lib/dag/cost.ts";
+import type { DagData, CostSummary } from "../src/lib/dag/types.ts";
+
+// ── Fixtures ─────────────────────────────────────────────────────────
+
+const SIMPLE_NODES = [
+  { id: "a", label: "A", status: "completed" as const, unitType: "render", estimatedHours: 2, actualHours: 2.5, lastUpdated: "2026-06-24T10:00:00.000Z" },
+  { id: "b", label: "B", status: "in-progress" as const, unitType: "audit", estimatedHours: 4, actualHours: null, lastUpdated: "2026-06-24T12:00:00.000Z" },
+  { id: "c", label: "C", status: "pending" as const, unitType: "spec", estimatedHours: 3, actualHours: null, lastUpdated: null },
+  { id: "d", label: "D", status: "failed" as const, unitType: "render", estimatedHours: 2, actualHours: 1.0, lastUpdated: "2026-06-24T14:00:00.000Z" },
+];
+
+const SIMPLE_DATA: DagData = {
+  title: "Test DAG",
+  description: "Cost estimation fixture",
+  unitTypes: {
+    render: { label: "Implementation", defaultHours: 2 },
+    audit: { label: "Audit/Review", defaultHours: 4 },
+    spec: { label: "Specification", defaultHours: 3 },
+  },
+  nodes: SIMPLE_NODES,
+  edges: [
+    { from: "a", to: "b" },
+    { from: "b", to: "c" },
+    { from: "a", to: "d" },
+  ],
+};
+
+// ── Tests: Cost model constants ───────────────────────────────────────
+
+describe("DEFAULT_UNIT_TYPES", () => {
+  it("includes all expected unit types", () => {
+    expect(DEFAULT_UNIT_TYPES.render).toBeDefined();
+    expect(DEFAULT_UNIT_TYPES.audit).toBeDefined();
+    expect(DEFAULT_UNIT_TYPES.spec).toBeDefined();
+    expect(DEFAULT_UNIT_TYPES.integration).toBeDefined();
+    expect(DEFAULT_UNIT_TYPES.docs).toBeDefined();
+    expect(DEFAULT_UNIT_TYPES.ops).toBeDefined();
+  });
+
+  it("has correct default hours", () => {
+    expect(DEFAULT_UNIT_TYPES.render.defaultHours).toBe(2);
+    expect(DEFAULT_UNIT_TYPES.audit.defaultHours).toBe(4);
+    expect(DEFAULT_UNIT_TYPES.spec.defaultHours).toBe(3);
+    expect(DEFAULT_UNIT_TYPES.integration.defaultHours).toBe(3);
+    expect(DEFAULT_UNIT_TYPES.docs.defaultHours).toBe(2);
+    expect(DEFAULT_UNIT_TYPES.ops.defaultHours).toBe(2);
+  });
+});
+
+describe("EFFORT_TIERS", () => {
+  it("has three tiers: small, medium, large", () => {
+    const labels = EFFORT_TIERS.map((t) => t.tier);
+    expect(labels).toContain("small");
+    expect(labels).toContain("medium");
+    expect(labels).toContain("large");
+  });
+
+  it("tiers have increasing thresholds", () => {
+    for (let i = 1; i < EFFORT_TIERS.length; i++) {
+      expect(EFFORT_TIERS[i - 1].threshold).toBeLessThan(EFFORT_TIERS[i].threshold);
+    }
+  });
+
+  it("EFFORT_COLORS matches EFFORT_TIERS", () => {
+    for (const tier of EFFORT_TIERS) {
+      expect(EFFORT_COLORS[tier.tier]).toBeDefined();
+      expect(EFFORT_COLORS[tier.tier].fill).toBe(tier.fill);
+      expect(EFFORT_COLORS[tier.tier].stroke).toBe(tier.stroke);
+    }
+  });
+});
+
+// ── Tests: effortTier / effortStyle ───────────────────────────────────
+
+describe("effortTier", () => {
+  it('returns "small" for hours ≤ 2', () => {
+    expect(effortTier(0)).toBe("small");
+    expect(effortTier(1)).toBe("small");
+    expect(effortTier(2)).toBe("small");
+  });
+
+  it('returns "medium" for hours > 2 and ≤ 3', () => {
+    expect(effortTier(2.1)).toBe("medium");
+    expect(effortTier(2.5)).toBe("medium");
+    expect(effortTier(3)).toBe("medium");
+  });
+
+  it('returns "large" for hours > 3', () => {
+    expect(effortTier(3.1)).toBe("large");
+    expect(effortTier(4)).toBe("large");
+    expect(effortTier(100)).toBe("large");
+  });
+
+  it("returns null for null/undefined hours", () => {
+    expect(effortTier(null)).toBeNull();
+    expect(effortTier(undefined)).toBeNull();
+  });
+});
+
+describe("effortStyle", () => {
+  it("returns small color def for 1h", () => {
+    const s = effortStyle(1);
+    expect(s).not.toBeNull();
+    expect(s!.tier).toBe("small");
+    expect(s!.fill).toBe("#16a34a");
+  });
+
+  it("returns medium color def for 2.5h", () => {
+    const s = effortStyle(2.5);
+    expect(s).not.toBeNull();
+    expect(s!.tier).toBe("medium");
+    expect(s!.fill).toBe("#eab308");
+  });
+
+  it("returns large color def for 5h", () => {
+    const s = effortStyle(5);
+    expect(s).not.toBeNull();
+    expect(s!.tier).toBe("large");
+    expect(s!.fill).toBe("#ef4444");
+  });
+
+  it("returns null for null/undefined", () => {
+    expect(effortStyle(null)).toBeNull();
+    expect(effortStyle(undefined)).toBeNull();
+  });
+});
+
+// ── Tests: estimatedHoursFor ──────────────────────────────────────────
+
+describe("estimatedHoursFor", () => {
+  it("returns explicit estimatedHours when set", () => {
+    const n = { estimatedHours: 5, unitType: "render" };
+    expect(estimatedHoursFor(n)).toBe(5);
+  });
+
+  it("falls back to unit type default when estimatedHours is null", () => {
+    const n = { estimatedHours: null, unitType: "render" };
+    expect(estimatedHoursFor(n)).toBe(2);
+  });
+
+  it("falls back to provided unitTypes map", () => {
+    const n = { estimatedHours: null, unitType: "custom" };
+    const customTypes = { custom: { defaultHours: 10 } };
+    expect(estimatedHoursFor(n, customTypes)).toBe(10);
+  });
+
+  it("returns null when no estimate and unknown unitType", () => {
+    const n = { estimatedHours: null, unitType: "bogus" };
+    expect(estimatedHoursFor(n)).toBeNull();
+  });
+
+  it("returns null when no estimate and no unitType", () => {
+    const n = { estimatedHours: null };
+    expect(estimatedHoursFor(n)).toBeNull();
+  });
+});
+
+// ── Tests: computeCostSummary ─────────────────────────────────────────
+
+describe("computeCostSummary", () => {
+  it("returns a CostSummary with correct shape", () => {
+    const cs = computeCostSummary(SIMPLE_DATA);
+    expect(cs).toBeDefined();
+    expect(cs.byUnitType).toBeTypeOf("object");
+    expect(cs.byStatus).toBeTypeOf("object");
+    expect(cs.totals).toBeTypeOf("object");
+  });
+
+  it("computes total nodes correctly", () => {
+    const cs = computeCostSummary(SIMPLE_DATA);
+    expect(cs.totals.nodes).toBe(4);
+  });
+
+  it("sums estimated hours across all nodes", () => {
+    const cs = computeCostSummary(SIMPLE_DATA);
+    // 2 + 4 + 3 + 2 = 11
+    expect(cs.totals.totalEstimatedHours).toBe(11);
+  });
+
+  it("sums actual hours across nodes that have them", () => {
+    const cs = computeCostSummary(SIMPLE_DATA);
+    // 2.5 + 1.0 = 3.5
+    expect(cs.totals.totalActualHours).toBe(3.5);
+  });
+
+  it("computes variance correctly", () => {
+    const cs = computeCostSummary(SIMPLE_DATA);
+    // variance = 3.5 - (2+2) = -0.5 (only nodes with actuals)
+    expect(cs.totals.variance).toBeCloseTo(-0.5, 5);
+  });
+
+  it("breaks down by unit type", () => {
+    const cs = computeCostSummary(SIMPLE_DATA);
+    const render = cs.byUnitType["render"];
+    expect(render).toBeDefined();
+    expect(render.count).toBe(2);
+    expect(render.estimatedHours).toBe(4); // 2+2
+    expect(render.actualHours).toBe(3.5); // 2.5+1.0
+    expect(render.label).toBe("Implementation");
+  });
+
+  it("breaks down by status", () => {
+    const cs = computeCostSummary(SIMPLE_DATA);
+    const completed = cs.byStatus["completed"];
+    expect(completed).toBeDefined();
+    expect(completed.count).toBe(1);
+    expect(completed.estimatedHours).toBe(2);
+    expect(completed.actualHours).toBe(2.5);
+  });
+
+  it("returns variance null when no actual hours exist", () => {
+    const data: DagData = {
+      title: "No actuals",
+      description: "Test",
+      nodes: [
+        { id: "x", label: "X", status: "pending", unitType: "render", estimatedHours: 2, actualHours: null, lastUpdated: null },
+      ],
+      edges: [],
+    };
+    const cs = computeCostSummary(data);
+    expect(cs.totals.totalActualHours).toBe(0);
+    expect(cs.totals.variance).toBeNull();
+  });
+
+  it("handles empty node list", () => {
+    const data: DagData = {
+      title: "Empty",
+      description: "No nodes",
+      nodes: [],
+      edges: [],
+    };
+    const cs = computeCostSummary(data);
+    expect(cs.totals.nodes).toBe(0);
+    expect(cs.totals.totalEstimatedHours).toBe(0);
+    expect(cs.totals.totalActualHours).toBe(0);
+    expect(cs.totals.variance).toBeNull();
+    expect(Object.keys(cs.byUnitType)).toHaveLength(0);
+    expect(Object.keys(cs.byStatus)).toHaveLength(0);
+  });
+
+  it("handles nodes without unitType gracefully", () => {
+    const data: DagData = {
+      title: "No type",
+      description: "Nodes missing unitType",
+      nodes: [
+        { id: "x", label: "X", status: "completed", estimatedHours: 3, actualHours: 3, lastUpdated: null },
+      ],
+      edges: [],
+    };
+    const cs = computeCostSummary(data);
+    const unknown = cs.byUnitType["unknown"];
+    expect(unknown).toBeDefined();
+    expect(unknown.count).toBe(1);
+    expect(unknown.estimatedHours).toBe(3);
+  });
+
+  it("uses provided unitTypes for labels and defaults", () => {
+    const data: DagData = {
+      title: "Custom types",
+      description: "Test",
+      unitTypes: {
+        custom: { label: "Custom Work", defaultHours: 5 },
+      },
+      nodes: [
+        { id: "x", label: "X", status: "completed", unitType: "custom", lastUpdated: null },
+      ],
+      edges: [],
+    };
+    const cs = computeCostSummary(data);
+    const ct = cs.byUnitType["custom"];
+    expect(ct.label).toBe("Custom Work");
+    expect(ct.count).toBe(1);
+    // No explicit estimatedHours, so 0 (fallback happens at UI level, not summary)
+    expect(ct.estimatedHours).toBe(0);
+  });
+});

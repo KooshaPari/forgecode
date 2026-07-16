@@ -1,0 +1,102 @@
+/**
+ * Drain an upstream Response body into a string.
+ *
+ * Two modes:
+ *   1. Non-streaming (default): just await response.text() with a
+ *      configurable wall-clock deadline (FETCH_BODY_TIMEOUT_MS).
+ *   2. Streaming SSE / ndjson: drain chunk-by-chunk, decode each
+ *      chunk, and stop as soon as a terminal SSE event is observed
+ *      (so the non-streaming bridge does not block on a long-lived
+ *      upstream). The terminal detection is delegated to
+ *      appendNonStreamingSseTerminalSignal.
+ *
+ * In both modes the body is bounded by FETCH_BODY_TIMEOUT_MS; on
+ * timeout we throw via createBodyTimeoutError(FETCH_BODY_TIMEOUT_MS)
+ * so the upstream caller can map the failure to a clean 504.
+ *
+ * The reader is always released in the finally block, even on
+ * exception paths, so a hung upstream cannot leak handles.
+ *
+ * Lifted verbatim from chatCore.ts so the bifrost relay and the
+ * upcoming imageGen subcommand can re-use the exact same drain
+ * semantics.
+ */
+export async function readNonStreamingResponseBody(
+  response: Response,
+  contentType: string,
+  upstreamStream: boolean,
+  helpers: NonStreamingBodyDrainHelpers,
+): Promise<string> {
+  const { fetchBodyTimeoutMs, withBodyTimeout, readStreamChunkWithTimeout, createBodyTimeoutError, appendNonStreamingSseTerminalSignal } = helpers;
+  if (
+    !upstreamStream ||
+    !response.body ||
+    (!contentType.includes("text/event-stream") && !contentType.includes("application/x-ndjson"))
+  ) {
+    return withBodyTimeout<string>(response.text());
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const terminalState: NonStreamingSseTerminalState = {
+    currentEvent: "",
+    pendingLine: "",
+  };
+  let rawBody = "";
+  const deadline = fetchBodyTimeoutMs > 0 ? Date.now() + fetchBodyTimeoutMs : 0;
+
+  try {
+    while (true) {
+      const timeoutMs = deadline > 0 ? deadline - Date.now() : 0;
+      if (deadline > 0 && timeoutMs <= 0) {
+        throw createBodyTimeoutError(fetchBodyTimeoutMs);
+      }
+
+      const { done, value } = await readStreamChunkWithTimeout(reader, timeoutMs);
+      if (done) break;
+      if (!value) continue;
+
+      const decodedChunk = decoder.decode(value, { stream: true });
+      rawBody += decodedChunk;
+      if (appendNonStreamingSseTerminalSignal(terminalState, decodedChunk)) {
+        await reader.cancel("non-streaming bridge consumed terminal SSE event").catch(() => {});
+        break;
+      }
+    }
+  } catch (error) {
+    await reader.cancel(error).catch(() => {});
+    throw error;
+  } finally {
+    rawBody += decoder.decode();
+    reader.releaseLock();
+  }
+
+  return rawBody;
+}
+
+export interface NonStreamingSseTerminalState {
+  currentEvent: string;
+  pendingLine: string;
+}
+
+/**
+ * Helper bundle injected by the caller so this module does not depend
+ * on the chatCore-private constants (FETCH_BODY_TIMEOUT_MS) and the
+ * sibling helpers that live in chatCore/. The bifrost relay ships its
+ * own (faster) readStreamChunkWithTimeout; the imageGen subcommand
+ * ships its own createBodyTimeoutError. Decoupling via a small struct
+ * means the leaf has zero hard references to chatCore/.
+ */
+export interface NonStreamingBodyDrainHelpers {
+  fetchBodyTimeoutMs: number;
+  withBodyTimeout: <T>(promise: Promise<T>) => Promise<T>;
+  readStreamChunkWithTimeout: (
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    timeoutMs: number
+  ) => Promise<{ done: boolean; value?: Uint8Array }>;
+  createBodyTimeoutError: (timeoutMs: number) => Error;
+  appendNonStreamingSseTerminalSignal: (
+    state: NonStreamingSseTerminalState,
+    decodedChunk: string
+  ) => boolean;
+}

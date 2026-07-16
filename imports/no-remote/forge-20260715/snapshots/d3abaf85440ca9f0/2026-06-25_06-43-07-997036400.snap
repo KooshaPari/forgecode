@@ -1,0 +1,41 @@
+{
+  "title": "Phenotype Epic F — DAG Foundation & Automation",
+  "description": "Interactive DAG showing the work breakdown for the DAG foundation and automation epic.",
+  "nodes": [
+    { "id": "f01", "label": "DAG data model (spec)",        "status": "completed" },
+    { "id": "f02", "label": "DAG schema validation",        "status": "completed" },
+    { "id": "f03", "label": "DAG YAML/JSON parser",         "status": "completed" },
+    { "id": "f04", "label": "DAG topological sort",         "status": "completed" },
+    { "id": "f05", "label": "DAG cycle detection",          "status": "completed" },
+    { "id": "f06", "label": "DAG execution engine",         "status": "in-progress" },
+    { "id": "f07", "label": "DAG state persistence",        "status": "pending" },
+    { "id": "f08", "label": "DAG status reporting",         "status": "pending" },
+    { "id": "f09", "label": "DAG CLI tooling",              "status": "pending" },
+    { "id": "f10", "label": "DAG web renderer (this page)", "status": "in-progress" },
+    { "id": "f11", "label": "DAG CI integration",           "status": "pending" },
+    { "id": "f12", "label": "DAG observability hooks",      "status": "completed" },
+    { "id": "f13", "label": "DAG test suite",               "status": "in-progress" },
+    { "id": "f14", "label": "DAG documentation",            "status": "failed" },
+    { "id": "f15", "label": "DAG deployment pipeline",      "status": "pending" }
+  ],
+  "edges": [
+    { "from": "f01", "to": "f02" },
+    { "from": "f02", "to": "f03" },
+    { "from": "f03", "to": "f04" },
+    { "from": "f03", "to": "f05" },
+    { "from": "f04", "to": "f06" },
+    { "from": "f05", "to": "f06" },
+    { "from": "f06", "to": "f07" },
+    { "from": "f06", "to": "f08" },
+    { "from": "f07", "to": "f09" },
+    { "from": "f08", "to": "f09" },
+    { "from": "f09", "to": "f10" },
+    { "from": "f06", "to": "f11" },
+    { "from": "f10", "to": "f11" },
+    { "from": "f06", "to": "f12" },
+    { "from": "f03", "to": "f13" },
+    { "from": "f10", "to": "f14" },
+    { "from": "f11", "to": "f15" },
+    { "from": "f13", "to": "f14" }
+  ]
+}

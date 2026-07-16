@@ -1,0 +1,32 @@
+## Summary
+Add a Tier-0 enforcement workflow that blocks PRs from merging unless all build, test, fmt, lint, and typecheck gates pass across all three BytePort engines.
+
+## Context
+BytePort's existing CI had gaps in Tier-0 enforcement: the Go `fmt` job ran as advisory (`continue-on-error: true`), Rust (Tauri workspace) had no build/test/fmt/clippy gates, and the SvelteKit frontend had no build/lint/typecheck gates. This meant code style violations or broken builds could land on `main`. This PR consolidates Tier-0 enforcement into a single required workflow that every PR must pass.
+
+## Changes
+- Added `.github/workflows/tier-0-gate.yml` with 11 blocking jobs:
+
+  | Job | Engine | Gate |
+  |-----|--------|------|
+  | `go-build` | Go | `go build ./...` |
+  | `go-test` | Go | `go test ./...` |
+  | `go-vet` | Go | `go vet ./...` |
+  | `go-fmt` | Go | `gofmt -l` (blocking; was advisory) |
+  | `go-lint` | Go | `golangci-lint` |
+  | `rust-build` | Rust | `cargo build --workspace` |
+  | `rust-fmt` | Rust | `cargo fmt --all -- --check` |
+  | `rust-clippy` | Rust | `cargo clippy -- -D warnings` |
+  | `frontend-build` | SvelteKit | `npm run build` |
+  | `frontend-lint` | SvelteKit | `prettier --check` + `eslint` |
+  | `frontend-typecheck` | SvelteKit | `svelte-check` (`npm run check`) |
+
+## Testing
+The workflow runs automatically on every PR and push to `main`/`master`. Verify by:
+1. Opening this PR — all 11 jobs should appear in the status checks.
+2. Confirm each job is required (branch protection must mark `Tier-0 Gate` as required).
+3. All jobs must pass before the PR can merge.
+
+## Links
+- B28: Tier-0 enforcement on PR (compute/infra epic)
+- Branch: `ci/B28-tier0-enforcement-2026-06-25`

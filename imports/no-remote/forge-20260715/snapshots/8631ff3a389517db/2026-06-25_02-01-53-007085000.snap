@@ -1,0 +1,20 @@
+$content = Get-Content -Path 'C:\Users\koosh\_wsm3d_audit\CS3D_BACKUP_README.md' -Raw
+$bytes = [System.Text.Encoding]::UTF8.GetBytes($content)
+$base64 = [Convert]::ToBase64String($bytes)
+$sha = ''
+try {
+  $existingJson = gh api repos/KooshaPari/Compound-Spheres-3D-Backup/contents/README.md 2>$null
+  if ($existingJson) {
+    $existing = $existingJson | ConvertFrom-Json
+    if ($existing.sha) { $sha = $existing.sha }
+  }
+} catch { }
+$msg = 'backup: README explaining Compound-Spheres-3D recovery context'
+if (-not $sha) {
+  $body = '{"message":"' + $msg + '","content":"' + $base64 + '"}'
+} else {
+  $body = '{"message":"' + $msg + '","content":"' + $base64 + '","sha":"' + $sha + '"}'
+}
+$body | Out-File -FilePath 'C:\Users\koosh\_wsm3d_audit\cs3d_readme_payload.json' -Encoding ASCII -NoNewline
+Write-Host ('Payload size: ' + (Get-Item 'C:\Users\koosh\_wsm3d_audit\cs3d_readme_payload.json').Length + ' bytes')
+Write-Host ('SHA: ' + $sha)

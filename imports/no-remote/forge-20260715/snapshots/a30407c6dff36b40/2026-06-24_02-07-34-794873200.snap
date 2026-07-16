@@ -1,0 +1,67 @@
+$ErrorActionPreference = 'SilentlyContinue'
+$exts = @('*.md','*.txt','*.json','*.toml','*.yaml','*.yml')
+$root = 'C:\Users\koosh'
+
+# Shallow scan (depth 0..2) of home root + selected lightweight dirs
+$targets = @(
+  $root,
+  (Join-Path $root 'plans'),
+  (Join-Path $root 'forge'),
+  (Join-Path $root '.forge'),
+  (Join-Path $root '.phenotype'),
+  (Join-Path $root '.thegent'),
+  (Join-Path $root '.mcp'),
+  (Join-Path $root '.output'),
+  (Join-Path $root '.software'),
+  (Join-Path $root '.software-planning-tool'),
+  (Join-Path $root 'Documents'),
+  (Join-Path $root 'Desktop'),
+  (Join-Path $root 'Web'),
+  (Join-Path $root 'Pictures'),
+  (Join-Path $root 'projects'),
+  (Join-Path $root 'repos'),
+  (Join-Path $root 'repo'),
+  (Join-Path $root 'audit-repos'),
+  (Join-Path $root 'audit-tmp'),
+  (Join-Path $root 'audit-content-2026-06-04'),
+  (Join-Path $root '_audit_logs'),
+  (Join-Path $root '_civis_audit_20260622_193526'),
+  (Join-Path $root '_civis_work_20260623_161635'),
+  (Join-Path $root '_civis_work_20260623_161757'),
+  (Join-Path $root '_civis_work_20260623_172456'),
+  (Join-Path $root '_civis_work_20260623_173204'),
+  (Join-Path $root '_compute_infra_audit'),
+  (Join-Path $root '_fold'),
+  (Join-Path $root '_pheno_absorb'),
+  (Join-Path $root '_tc_cache'),
+  (Join-Path $root '_tmp-rk-check'),
+  (Join-Path $root '_vendor_rck'),
+  (Join-Path $root '_wsm3d_audit')
+)
+
+$skip = @('node_modules','.git','.venv','.tox','__pycache__','target','build','dist','vendor','.idea','.vscode','.next','.cache','.gradle','.m2')
+
+$jobs = @()
+foreach ($t in $targets) {
+  if (-not (Test-Path -LiteralPath $t)) { continue }
+  $jobs += Start-Job -ScriptBlock {
+    param($t, $exts, $skip)
+    try {
+      $files = Get-ChildItem -LiteralPath $t -Recurse -Depth 3 -File -Include $exts -Force -ErrorAction SilentlyContinue |
+        Where-Object { $leaf = $_.DirectoryName; $leaf -notmatch ('\\(' + ($skip -join '|') + ')(\\|$)') }
+      if (-not $files) { return @() }
+      return @($files | Select-String -Pattern 'nippon' -CaseSensitive:$false |
+        ForEach-Object { [pscustomobject]@{ Path = $_.Path; Line = $_.LineNumber; Text = $_.Line.Trim() } })
+    } catch { return @() }
+  } -ArgumentList $t, $exts, $skip
+}
+
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+while (($jobs | Where-Object State -eq 'Running').Count -gt 0 -and $sw.Elapsed.TotalMinutes -lt 4) {
+  Start-Sleep -Seconds 4
+}
+foreach ($j in $jobs) {
+  if ($j.State -eq 'Running') { Stop-Job $j }
+  Remove-Job $j -Force
+}
+"=== JOBS DONE in $([int]$sw.Elapsed.TotalSeconds)s ==="

@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Summarize nippon search results: unique files and unique dirs."""
+import os
+from collections import defaultdict
+
+with open(r"C:\Users\koosh\_nippon_search.out", "r", encoding="utf-8", errors="replace") as f:
+    lines = f.read().splitlines()
+
+file_hits = defaultdict(list)  # file -> list of line numbers
+dir_hits = defaultdict(int)
+
+for ln in lines:
+    if not ln or ln.startswith("#"):
+        continue
+    # Format: PATH:LINENO:LINE_CONTENT
+    p1 = ln.find(":")
+    if p1 < 0:
+        continue
+    p2 = ln.find(":", p1 + 1)
+    if p2 < 0:
+        continue
+    path = ln[:p1]
+    try:
+        lineno = int(ln[p1 + 1:p2])
+    except ValueError:
+        continue
+    file_hits[path].append(lineno)
+    dir_hits[os.path.dirname(path)] += 1
+
+print(f"# Total hit lines: {sum(len(v) for v in file_hits.values())}")
+print(f"# Unique files with hits: {len(file_hits)}")
+print(f"# Unique directories with hits: {len(dir_hits)}")
+print()
+print("# === Files with hits (sorted by hit count desc) ===")
+for path in sorted(file_hits.keys(), key=lambda p: (-len(file_hits[p]), p.lower())):
+    cnt = len(file_hits[path])
+    if cnt > 1:
+        print(f"  {cnt:5d} hits  {path}")
+    else:
+        print(f"  {cnt:5d} hit   {path}  (line {file_hits[path][0]})")
+print()
+print("# === Directories with hits ===")
+for d in sorted(dir_hits.keys(), key=lambda p: (-dir_hits[p], p.lower())):
+    print(f"  {dir_hits[d]:5d} hits  {d}")

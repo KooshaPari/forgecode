@@ -1,0 +1,37 @@
+{
+  "//": "WP-17 coverage threshold configuration. Enforced by .github/workflows/coverage.yml.",
+  "//": "Bump these as the workspace stabilises. See docs/WP-17-COVERAGE.md for the rollout plan.",
+  "thresholds": {
+    "line_coverage_min": 80.0,
+    "branch_coverage_min": 70.0,
+    "critical_crate_coverage_min": 90.0,
+    "critical_crates": [
+      "phenotype-cli",
+      "phenotype-config",
+      "phenotype-diff",
+      "phenotype-tooling-observability",
+      "ptx"
+    ]
+  },
+  "exclude": {
+    "//": "Coverage measurement is skipped for these paths.",
+    "paths": [
+      "target/",
+      "crates/*/target/",
+      "crates/*/tests/",
+      "crates/*/benches/",
+      "crates/*/examples/",
+      "**/tests/*.rs",
+      "**/benches/*.rs",
+      "**/examples/*.rs"
+    ],
+    "//2": "Generated code is also excluded.",
+    "generated_paths": [
+      "crates/sbom-gen/docs/security/sbom.json"
+    ]
+  },
+  "tool": "cargo-llvm-cov",
+  "tool_version_min": "0.6.0",
+  "report_format": ["lcov", "html", "json"],
+  "fail_under": "line_coverage_min"
+}

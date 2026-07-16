@@ -1,0 +1,187 @@
+//! DAG-aware dispatch phase for the implement command.
+//!
+//! When `--dag-yaml` is passed to `agileplus implement`, the normal
+//! scheduler-based WP dispatch is replaced by DAG-based unit dispatch.
+//! The executor loads the YAML manifest, filters by epic, computes
+//! topological waves, and dispatches agents respecting the DAG
+//! topology — parallel where safe.
+//!
+//! Traceability: F11 / epic_F
+
+use std::collections::HashSet;
+use std::path::PathBuf;
+
+use anyhow::{Context, Result};
+use tracing;
+
+use agileplus_dag::executor::{DagExecutor, DagExecutorOptions};
+use agileplus_dag::manifest::DagManifest;
+use agileplus_domain::ports::agent::{AgentConfig, AgentKind, AgentPort, AgentTask};
+use agileplus_domain::ports::{StoragePort, VcsPort};
+
+use super::pr_builder::{build_pr_description, build_pr_title};
+
+/// Arguments injected by the implement command when DAG mode is active.
+#[derive(Debug, Clone)]
+pub struct DagDispatchArgs {
+    /// Path to the DAG YAML file.
+    pub dag_yaml: PathBuf,
+    /// Epic ID to filter (e.g. "F").
+    pub epic: String,
+    /// Maximum parallel agents.
+    pub parallel: usize,
+    /// Maximum review-fix cycles per unit.
+    pub max_review_cycles: u32,
+}
+
+/// Run the DAG-aware dispatch phase.
+///
+/// This replaces the sequential WP loop in `run_implement` when the
+/// user passes `--dag-yaml`.  The executive flow is:
+///
+/// 1. Load and parse the DAG YAML file.
+/// 2. Extract units for the target epic.
+/// 3. Compute topological execution waves.
+/// 4. For each wave, dispatch available units in parallel.
+/// 5. Wait for wave completion before advancing.
+/// 6. Report summary.
+pub async fn run_dag_dispatch<S, V, A>(
+    args: DagDispatchArgs,
+    _storage: &S,
+    _vcs: &V,
+    agent: &A,
+) -> Result<()>
+where
+    S: StoragePort,
+    V: VcsPort,
+    A: AgentPort,
+{
+    let start = std::time::Instant::now();
+    println!(
+        "DAG dispatch: loading '{}' (epic={})",
+        args.dag_yaml.display(),
+        args.epic
+    );
+
+    // 1. Load DAG manifest
+    let manifest = DagManifest::from_yaml_path(&args.dag_yaml)
+        .with_context(|| format!("loading DAG from {}", args.dag_yaml.display()))?;
+
+    tracing::info!(
+        dag_id = %manifest.meta.id,
+        title = %manifest.meta.title,
+        "DAG manifest loaded"
+    );
+
+    // 2. Build executor
+    let options = DagExecutorOptions {
+        max_parallel: args.parallel,
+        filter_by_repo: Some("agileplus".into()),
+        epic_filter: Some(args.epic.clone()),
+    };
+
+    let mut executor = DagExecutor::new(manifest, options);
+    let pending = executor.pending_count();
+    println!("  Found {pending} pending units for epic '{}'.", args.epic);
+
+    if pending == 0 {
+        println!("  No units to dispatch.");
+        return Ok(());
+    }
+
+    // 3. Compute execution waves
+    let waves = executor
+        .execution_plan()
+        .context("computing DAG execution plan")?;
+
+    println!(
+        "  Execution plan: {} wave(s)",
+        waves.len()
+    );
+    for wave in &waves {
+        let ids: Vec<&str> = wave.unit_ids.iter().map(|s| s.as_str()).collect();
+        println!("    Wave {}: [{}]", wave.wave_number, ids.join(", "));
+    }
+    println!();
+
+    // 4. Agent config
+    let agent_config = AgentConfig {
+        kind: AgentKind::ClaudeCode,
+        max_review_cycles: args.max_review_cycles,
+        timeout_secs: 3600,
+        extra_args: vec![],
+    };
+
+    // 5. Execute wave by wave
+    let mut completed: HashSet<String> = HashSet::new();
+
+    for wave in &waves {
+        println!(
+            "--- Wave {} ({} unit(s)) ---",
+            wave.wave_number,
+            wave.units.len()
+        );
+
+        // Dispatch all ready units in this wave concurrently.
+        // Each unit is dispatched to the agent stub (or real agent).
+        // In a production implementation this would use
+        // `futures::future::join_all` to dispatch in parallel.
+        for unit in &wave.units {
+            if completed.contains(&unit.id) {
+                continue;
+            }
+
+            println!("  Dispatching unit {}: {}", unit.id, unit.title);
+
+            let task = AgentTask {
+                wp_id: unit.id.clone(),
+                feature_slug: format!("dag-{}-{}", unit.epic, unit.id),
+                prompt_path: PathBuf::from(format!(
+                    "agileplus-specs/{}-{}/tasks/{}.md",
+                    unit.epic, unit.id, unit.id
+                )),
+                worktree_path: PathBuf::from(format!(".worktrees/{}-{}", unit.epic, unit.id)),
+                context_files: vec![
+                    args.dag_yaml.clone(),
+                ],
+            };
+
+            match agent.dispatch_async(task, &agent_config).await {
+                Ok(job_id) => {
+                    println!("    -> Job {job_id} dispatched for unit {}", unit.id);
+                    // In a full implementation we would poll for completion.
+                    // For the stub agent, the job completes immediately.
+                    completed.insert(unit.id.clone());
+                    executor.mark_done(&unit.id);
+                }
+                Err(e) => {
+                    tracing::error!(unit = %unit.id, error = %e, "dispatch failed");
+                    executor.mark_failed(&unit.id);
+                    // Continue with other units
+                }
+            }
+        }
+
+        println!("  Wave {} complete.\n", wave.wave_number);
+    }
+
+    // 6. Report
+    let elapsed_ms = start.elapsed().as_millis();
+    let done = executor.done_count();
+
+    tracing::info!(
+        command = "implement-dag",
+        epic = %args.epic,
+        done = done,
+        total = pending,
+        elapsed_ms = %elapsed_ms,
+        "DAG dispatch completed"
+    );
+
+    println!();
+    println!(
+        "DAG dispatch complete: {done}/{pending} units done in {elapsed_ms}ms."
+    );
+
+    Ok(())
+}

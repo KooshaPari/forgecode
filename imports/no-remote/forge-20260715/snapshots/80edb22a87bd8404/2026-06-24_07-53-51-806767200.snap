@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Run grade.sh from any cwd - it doesn't need a project root for this test
+bash "C:/Users/koosh/phenotype-registry/registry/audit-absorption-justification/grade.sh" "C:/Users/koosh/_sample_audit.md"
+echo "---EXIT_CODE=$?---"

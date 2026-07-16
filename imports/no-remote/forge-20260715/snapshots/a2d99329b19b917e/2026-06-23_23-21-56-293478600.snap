@@ -1,0 +1,70 @@
+//! `phenotype-logging` — re-export of `pheno-tracing` for the phenotype-infra
+//! iac/* daemons.
+//!
+//! This crate exists so the four daemons (`oci-lottery`, `oci-post-acquire`,
+//! `tailscale-keygen`, `observability`) can depend on a single, locally
+//! resolvable name. The actual implementation is in
+//! [`pheno-tracing`](https://github.com/KooshaPari/pheno-tracing) per
+//! ADR-036; we re-export its public API here.
+//!
+//! ## Why a local stub?
+//!
+//! The original path-dependency `../../../phenoShared-wtrees/version-align-latest-tag/crates/phenotype-logging`
+//! only resolves inside a specific worktree layout, breaking the build for any
+//! outside consumer (CI, fresh clone, downstream crates). The stub makes the
+//! dep graph self-contained: a clone of `phenotype-infra` builds without any
+//! sibling worktree present.
+//!
+//! ## Usage
+//!
+//! ```rust
+//! use phenotype_logging::{info, init_tracing};
+//!
+//! init_tracing("oci-lottery", tracing::Level::INFO);
+//! info!(region = "us-ashburn-1", "lottery tick");
+//! ```
+
+#![deny(missing_docs)]
+#![deny(rust_2018_idioms)]
+#![warn(clippy::all)]
+
+/// Re-export the `pheno-tracing` init helpers.
+pub use pheno_tracing::{init_tracing, shutdown_tracing};
+
+/// Re-export `tracing` macros for ergonomic single-import.
+pub use tracing::{debug, error, info, instrument, span, trace, warn, Level};
+
+/// Initialize a default tracing subscriber when `pheno-tracing` is not desired.
+///
+/// This is a convenience wrapper for daemons that don't need the full
+/// `pheno-tracing` OTLP exporter stack. It installs an `env-filter`-driven
+/// `fmt` subscriber with the given service name as the `target` field.
+pub fn init_default_tracing(service_name: &'static str, level: Level) {
+    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(level.as_str()));
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(fmt::Subscriber::builder().with_target(true).finish())
+        .try_init();
+    tracing::info!(service = service_name, "tracing initialized");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exports_tracing_macros() {
+        // Just ensure the symbols are importable; running the subscribers in
+        // tests is anti-social (one-shot global state).
+        let _ = std::any::type_name::<Level>();
+    }
+
+    #[test]
+    fn init_default_tracing_is_idempotent() {
+        // Second call must not panic; we cannot assert success because the
+        // global subscriber may already be installed in test context.
+        init_default_tracing("phenotype-logging-test", Level::INFO);
+    }
+}

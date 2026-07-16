@@ -1,0 +1,5 @@
+@echo off
+set MSYS_NO_PATHCONV=1
+"C:\Program Files\Git\usr\bin\bash.exe" -c "export MSYS_NO_PATHCONV=1 && f=/c/Users/koosh/phenotype-registry/grade.sh && echo testing && which bash && echo \$PATH && echo \"$f\" && stat \"$f\" && echo try direct exec" 1>C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.stdout 2>C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.stderr
+echo exit=%errorlevel%
+type C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.stdout

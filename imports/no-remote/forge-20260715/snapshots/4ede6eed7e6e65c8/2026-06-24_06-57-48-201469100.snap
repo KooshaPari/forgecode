@@ -1,0 +1,39 @@
+//! Multi-source cascade example for pheno-config.
+//!
+//! Demonstrates the 5-layer 12-factor cascade:
+//!   1. Hard-coded defaults (in code)
+//!   2. `defaults.toml` shipped with the binary
+//!   3. `/etc/myapp/config.toml` (system-wide)
+//!   4. `./config.toml` (per-deployment)
+//!   5. Environment variables (highest priority)
+//!
+//! Run with:
+//!   cargo run --example cascade
+//!
+//! Try overrides:
+//!   PHENO_CONFIG__SERVER__PORT=9090 cargo run --example cascade
+
+use pheno_config::{Config, ConfigBuilder, Source};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let config: Config = ConfigBuilder::new()
+        // Layer 1: hard-coded defaults (set in code below)
+        .default()
+        // Layer 2: defaults.toml (next to the binary)
+        .source(Source::Toml("defaults.toml"))
+        // Layer 3: /etc/myapp/config.toml (system-wide; optional)
+        .source(Source::OptionalToml("/etc/myapp/config.toml"))
+        // Layer 4: ./config.toml (per-deployment; optional)
+        .source(Source::OptionalToml("config.toml"))
+        // Layer 5: env vars (highest priority)
+        .source(Source::EnvPrefix("PHENO_CONFIG"))
+        .build()?;
+
+    println!("Resolved config: {:#?}", config);
+
+    // Show which layer won for each field
+    println!("\nField provenance:");
+    println!("  server.port = {} (env overrides > file > default)", config.server.port);
+
+    Ok(())
+}

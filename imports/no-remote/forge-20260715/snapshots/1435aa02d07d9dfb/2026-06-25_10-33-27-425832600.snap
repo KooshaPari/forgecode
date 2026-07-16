@@ -1,0 +1,30 @@
+name: Governance Index
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - "kitty-specs/**"
+      - "tooling/governance_index.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  governance-index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Regenerate governance index
+        run: python3 tooling/governance_index.py
+      - name: Verify committed index
+        run: |
+          if git diff --quiet -- kitty-specs/INDEX.md; then
+            echo "kitty-specs/INDEX.md is up to date."
+          else
+            echo "kitty-specs/INDEX.md is out of date. Run: python3 tooling/governance_index.py"
+            git diff -- kitty-specs/INDEX.md
+            exit 1
+          fi

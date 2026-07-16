@@ -1,0 +1,68 @@
+# SampleRepo — Absorption Justification
+
+**Repository:** `kooshapari/sample-repo`
+
+## Source
+
+Original sample-repo with full history.
+
+## Target
+
+phenotype-registry canonical repo.
+
+## Status
+
+ABSORBED.
+
+## Confidence
+
+High.
+
+## Source Inventory Summary
+
+All branches enumerated below.
+
+## Branch Inventory Summary
+
+Three branches: main, feature/foo, fix/bar.
+
+## Target Parity Summary
+
+All parity verified at path:line citations.
+
+## Gaps and Exceptions
+
+None beyond residual gap noted below.
+
+## Final Recommendation
+
+Archive only.
+
+## ABSORPTION_MATRIX
+
+| Source | Target | Status | Last-Resort-Exceptions | Restore-Command | Target Evidence |
+|---|---|---|---|---|---|
+| `src/main.rs:10` | merged | ABSORBED | None | `mv .archive/sample-repo .` | `crates/foo/src/lib.rs:42 commit 7f3a91b` |
+| `src/util.rs:25-30` | merged | ABSORBED | None | `mv .archive/sample-repo .` | `crates/foo/src/util.rs:8 commit 7f3a91c` |
+| `feature/foo` | merged | ABSORBED | None | `git clone https://example.com/sample-repo` | `feature/foo abc123def` |
+| `fix/bar` | merged | ABSORBED | None | `git clone https://example.com/sample-repo` | `fix/bar def456abc` |
+| `release/v1` | merged | ABSORBED | None | `git bundle verify` | `release/v1 1a2b3c4d` |
+
+## Last-Resort-Exceptions
+
+**Rebuttal 1:** Cannot absorb this branch into target because the target's CI configuration cannot absorb the custom hooks used here. However, archival-not-deletion is insufficient because the residual gap of the hook logic must remain recoverable. We have, nonetheless, verified that the underlying data flows are unaffected.
+
+**Rebuttal 2:** Will not absorb this module: target lacks the runtime dependency. The outstanding gap is the dependency lockfile. Trade-off: re-deriving the lockfile on restore is acceptable. Archival alone is not enough — restore must remain verifiable.
+
+**Rebuttal 3:** Cannot absorb due to license incompatibility. Rebutted: this is why we archive rather than delete. The residual gap is the upstream license header; remains unresolved until upstream relicenses.
+
+## Restore-Command
+
+```bash
+mv .archive/sample-repo .
+# OR
+git clone https://example.com/sample-repo
+sha256: a1b2c3d4e5f6...
+```
+
+bin/repo-delete-gate.sh was invoked before archival. The deletion gate has already 404'd the remote.

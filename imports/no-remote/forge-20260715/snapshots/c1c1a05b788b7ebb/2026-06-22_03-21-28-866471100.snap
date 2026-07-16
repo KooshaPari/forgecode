@@ -1,0 +1,54 @@
+//! Integration tests for the bundled SpanSink adapters.
+
+use pheno_tracing::adapters::{NoopSpanSink, VecSpanSink};
+use pheno_tracing::port::{SpanKind, SpanRecord, SpanSink};
+use std::collections::BTreeMap;
+
+fn rec(name: &str) -> SpanRecord {
+    SpanRecord {
+        name: name.to_string(),
+        kind: SpanKind::Internal,
+        fields: BTreeMap::new(),
+        started_at_ns: 0,
+        ended_at_ns: 1,
+    }
+}
+
+#[test]
+fn vec_sink_new_is_empty() {
+    let sink = VecSpanSink::new();
+    assert!(sink.is_empty());
+}
+
+#[test]
+fn vec_sink_default_is_empty() {
+    let sink = VecSpanSink::default();
+    assert!(sink.is_empty());
+}
+
+#[test]
+fn vec_sink_grows_on_record() {
+    let mut sink = VecSpanSink::new();
+    for i in 0..5 {
+        sink.record(rec(&format!("span-{i}")));
+    }
+    assert_eq!(sink.len(), 5);
+}
+
+#[test]
+fn vec_sink_snapshot_is_independent() {
+    let mut sink = VecSpanSink::new();
+    sink.record(rec("a"));
+    let snap = sink.snapshot();
+    sink.record(rec("b"));
+    // Snapshot taken before second record is unaffected.
+    assert_eq!(snap.len(), 1);
+    assert_eq!(sink.len(), 2);
+}
+
+#[test]
+fn noop_sink_is_zero_sized() {
+    let _ = NoopSpanSink;
+    // Compile-time: NoopSpanSink is a unit struct.
+    assert_eq!(std::mem::size_of::<NoopSpanSink>(), 0);
+}

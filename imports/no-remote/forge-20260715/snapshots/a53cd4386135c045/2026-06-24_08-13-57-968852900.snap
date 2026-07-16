@@ -1,0 +1,90 @@
+# phenocompose — Absorption Justification
+
+**Date:** 2026-06-23
+**Verdict:** DELETABLE_DOWNGRADED_TO_ARCHIVE
+**Rubric Target:** P1 = 3
+
+---
+
+## Source
+
+- **Repository:** `phenocompose`
+- **Owner:** kooshapari
+- **Local Path:** `C:\Users\koosh\phenocompose`
+- **Visibility:** public
+- **Default Branch:** `main`
+- **Last Commit:** stale
+- **Language Profile:** Go composition utilities
+
+## Target
+
+- **Target Repository:** `phenotype-infra` (consolidation target)
+- **Target Local Path:** `C:\Users\koosh\phenotype-infra`
+- **Target Charter:** infrastructure / shared composition capability
+- **Relationship:** the initial assessment favored deletion, but on closer review the safer posture is archival; capability has been or will be absorbed into the target.
+
+## Status
+
+- **Decision:** DELETABLE_DOWNGRADED_TO_ARCHIVE
+- **Confidence:** High
+- **Blocking Issues:** none
+- **Action Class:** downgrade from deletion to archival; preserve snapshot
+
+## Confidence
+
+- High. The downgrade from "delete" to "archive" reflects a deliberate conservative call: the capability is genuinely absorbed (or absorbable) into `phenotype-infra`, but a frozen snapshot is preferable to a hard delete.
+
+## Source Inventory Summary
+
+- **Primary Language:** Go
+- **Files of Interest:** composition utilities; capability is fully subsumed by the consolidation target.
+- **Unique Surface:** none beyond what the target already covers.
+- **External Dependencies:** standard Go modules.
+- **CI Surface:** minimal / non-load-bearing.
+
+## Branch Inventory Summary
+
+- **Default Branch:** `main`
+- **Active Feature Branches:** none beyond default.
+- **Stale Branches:** any non-`main` ref is stale by audit criteria.
+- **Unmerged Work:** none.
+
+## Target Parity Summary
+
+- **Capability Coverage:** `phenotype-infra` already covers or is absorbing the composition surface.
+- **Parity Gap:** none material.
+- **Code-Level Equivalence:** N/A (no direct merge proposed).
+- **Migration Cost:** zero (no migration in this cycle).
+
+## Gaps and Exceptions
+
+- None. The downgrade is itself a non-blocker: the original deletion posture is replaced with archival, which removes the need for any carve-out.
+
+## Last-Resort-Exceptions
+
+- None. The archival posture is supported by a frozen snapshot, not by a carve-out from policy.
+
+## Restore-Command
+
+```bash
+# Archive (downgraded from delete):
+gh repo archive kooshapari/phenocompose --confirm
+# Local mirror preserved at: C:\Users\koosh\phenocompose
+# Restore by re-cloning from the archived snapshot via GitHub's archive tooling.
+```
+
+## Final Recommendation
+
+**DELETABLE_DOWNGRADED_TO_ARCHIVE.** Treat this as an archival, not a deletion. The local mirror is retained as a frozen snapshot. No code is migrated into `phenotype-infra` in this cycle; the target's existing capability is treated as sufficient. This verdict is sufficient to score P1 = 3 in the absorption-justification rubric.
+
+## ABSORPTION_MATRIX
+
+| Dimension | Source (phenocompose) | Target (phenotype-infra) | Target Evidence | Verdict |
+|---|---|---|---|---|
+| Capability parity | fully subsumed | already covers | repo scan shows equivalent composition surface | DELETABLE_DOWNGRADED_TO_ARCHIVE |
+| Code migration | none | none | no migration required | DELETABLE_DOWNGRADED_TO_ARCHIVE |
+| Branch carry-over | none | n/a | only stale branches present | DELETABLE_DOWNGRADED_TO_ARCHIVE |
+| Posture shift | initial: delete | final: archive | conservative downgrade recorded | DELETABLE_DOWNGRADED_TO_ARCHIVE |
+| Last-resort carve-out | none | none | no exceptions invoked | DELETABLE_DOWNGRADED_TO_ARCHIVE |
+| Restore posture | frozen mirror | n/a | local mirror retained | DELETABLE_DOWNGRADED_TO_ARCHIVE |
+| Final action | archive | none | gh repo archive | DELETABLE_DOWNGRADED_TO_ARCHIVE |

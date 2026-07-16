@@ -1,0 +1,106 @@
+/**
+ * Admin endpoint: GET /api/v1/admin/slos/[id]
+ *
+ * Surface a single SLO definition plus its current burn-rate snapshot.
+ * Read-only, gated by the `manage` API-key scope (see
+ * `requireManagementAuth`).
+ *
+ * Response shape (200):
+ *   {
+ *     slo: SloDefinition & { current: ErrorBudgetSnapshot | null },
+ *     alerts: BurnRateAlert[],
+ *     requestId, traceparent
+ *   }
+ *
+ * Response shape (404):
+ *   { error: { code: "slo_not_found", message, requestId, details } }
+ *
+ * `alerts` reflects the live burn-rate alert evaluation. By spec, alerts
+ * are gated on `OTEL_SDK_DISABLED=false` so this endpoint will always
+ * return an empty array when the OTEL SDK is disabled at the process
+ * level (default in test environments).
+ */
+
+import { NextRequest } from "next/server";
+import { requireManagementAuth } from "@/lib/api/requireManagementAuth";
+import {
+  createErrorResponse,
+  createErrorResponseFromUnknown,
+} from "@/lib/api/errorResponse";
+import { withProxySpan } from "@/lib/observability/trace";
+import {
+  listActiveBudgets,
+  type ErrorBudgetSnapshot,
+} from "@/lib/observability/budget";
+import { type SloDefinition } from "@/lib/observability/slo";
+import {
+  evaluateBurnRateAlerts,
+  type BurnRateAlert,
+} from "@/lib/observability/burnRateAlerts";
+import { SLO_CATALOG } from "../../slos/route";
+
+interface SloDetailResponse {
+  readonly slo: SloDefinition & { readonly current: ErrorBudgetSnapshot | null };
+  readonly alerts: BurnRateAlert[];
+  readonly requestId: string;
+  readonly traceparent: string;
+}
+
+function findCatalogEntry(id: string): SloDefinition | null {
+  return SLO_CATALOG.find((s) => s.id === id) ?? null;
+}
+
+export async function GET(
+  request: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+): Promise<Response> {
+  const authError = await requireManagementAuth(request);
+  if (authError) return authError;
+
+  const { id } = await ctx.params;
+
+  return withProxySpan("admin.getSlo", async (span) => {
+    try {
+      const def = findCatalogEntry(id);
+      if (!def) {
+        return createErrorResponse(
+          "slo_not_found",
+          `No SLO with id '${id}' is registered.`,
+          404,
+          { requestId: span.traceId, details: { id } },
+        );
+      }
+
+      const current =
+        listActiveBudgets().find((b) => b.slo_id === def.id) ?? null;
+
+      const alerts: BurnRateAlert[] = current
+        ? evaluateBurnRateAlerts(current)
+        : [];
+
+      const body: SloDetailResponse = {
+        slo: { ...def, current },
+        alerts,
+        requestId: span.traceId,
+        traceparent: span.traceparent,
+      };
+
+      return Response.json(body, {
+        status: 200,
+        headers: {
+          traceparent: span.traceparent,
+          "x-request-id": span.traceId,
+        },
+      });
+    } catch (error) {
+      return createErrorResponseFromUnknown(
+        error,
+        "Failed to load SLO detail",
+        { requestId: span.traceId, details: { id } },
+      );
+    }
+  });
+}
+
+// Test-only export.
+export const __TEST_findCatalogEntry = findCatalogEntry;

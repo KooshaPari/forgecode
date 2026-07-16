@@ -1,0 +1,19 @@
+## Summary
+Harmonize `.editorconfig`, `.gitignore`, and `.gitattributes` with phenotype-org cross-repo standards to ensure consistent editor behavior, ignore patterns, and Git attribute handling across the PhenoCompose language stack (Rust, Go, Zig, Mojo, Python, TypeScript/Node).
+
+## Context
+These three config files had drifted from the phenotype-org canonical standards. The `.editorconfig` had outdated indent rules (Rust set to 2-space instead of 4, missing Go/tab, shell, Makefile, and diff/patch rules). The `.gitignore` was labeled as Node-only despite the repo using Rust, Go, Zig, Mojo, and Python; it was missing many cross-repo hygiene patterns. The `.gitattributes` lacked entries for Zig, Mojo, `.jsonc`, Windows scripting, web binary formats, lockfile diff suppression, and LFS preventive patterns.
+
+This is part of epic_A (Hygiene garden & branch slim) — bringing all repos up to the standard established in phenotype-registry and BytePort.
+
+## Changes
+- **`.editorconfig`**: Replaced with phenotype-org canonical. Adds Go (tabs, indent_size=4), TypeScript/JS (2-space), shell scripts (2-space), Makefile (tabs), and diff/patch (no trailing whitespace trimming). Sets max_line_length=100 for Rust and Python. Uses indent_size=4 as default (was 2).
+- **`.gitignore`**: Replaced with comprehensive cross-repo `.gitignore` covering Rust target dirs, Go build cache, Node/TS artifacts, Python venv/cache, Zig/Mojo caches, IDE dirs, OS files, credentials, registry config files, coverage/profiling artifacts, worktrees, tooling dirs, incident evidence, and Tauri generated files.
+- **`.gitattributes`**: Replaced with canonical version. Adds Zig, Mojo, `.jsonc`, Windows scripting (`.bat`/`.cmd`/`.ps1` eol=crlf), web binary formats (`.webp`, `.zip`, `.tar.gz`, `.woff`, `.woff2`), lockfile `-diff` suppression, `export-ignore` for release archives, and LFS preventive patterns for native binary formats.
+
+## Testing
+```bash
+# Verify the configs parse correctly
+git check-attr text -- *.rs *.py *.ts *.go *.zig *.mojo
+git check-ignore target/ node_modules/ __pycache__/ .env
+```

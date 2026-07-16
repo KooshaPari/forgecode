@@ -1,0 +1,89 @@
+# Subagent prompt template — compute-infra DAG executor
+# =============================================================================
+# This is the per-unit prompt that gets sent to each `forge` subagent.
+# One prompt per DAG unit. Subagent receives: unit spec, repo context, gates,
+# and must emit: branch URL, diffstat, grade.sh output delta, completion report.
+#
+# Usage (when user approves execution):
+#   python launch_phase.py --phase 1 --pool infra-pool --concurrency 4
+# =============================================================================
+
+prompt_template = """
+You are executing DAG unit {unit_id} for the Phenotype compute/infra epic.
+
+## Unit spec
+- ID:           {unit_id}
+- Title:        {title}
+- Type:         {type}
+- Repo:         {repo} (GitHub: KooshaPari/{repo})
+- Epic:         {epic_id} — {epic_title}
+
+## Standards authority
+- Spine:        phenotype-registry (SOTA.md, DOMAIN_ROLES.md, LANGUAGE_PLACEMENT.md)
+- Grader:       bash phenotype-registry/grade.sh --json
+- Workflow:     agileplus 9-phase pipeline (Specify→Plan→Design→Decompose→Dispatch→Review→Verify→Merge→Audit)
+
+## Gates (must pass before claiming done)
+- Tier-0: build / test-unit / fmt (or clippy/rustfmt) / lint / typecheck green
+- Tier-1: cargo audit (or npm audit) / trufflehog / SBOM / LICENSE / CHANGELOG
+- Tier-2: coverage ≥ 71% (lib) / 70% (framework) / 60% (service) per ADR-040
+- Cross-repo: update phenotype-registry/projects/<repo>.json if architecture changed
+
+## Workflow
+1. **Specify** — read existing PR/branch relevant to this unit (look at the
+   open PR list and branch list in the audit report). State in 3 lines what
+   you're doing and why.
+2. **Plan** — write the work as an agileplus-compatible work unit:
+   `agileplus-specs/<NNN>-<slug>/spec.md`, `tasks/WP01.md`, `tasks/WP02.md`...
+   Use `agileplus-specs/005-compute-infra-hardening/` if it doesn't exist.
+3. **Design** — if architectural, write an ADR (PhenoSpecs `adrs/` or repo-local
+   `docs/adr/`). Reference DOMAIN_ROLES for owner.
+4. **Decompose** — break into atomic sub-tasks, each with its own acceptance test.
+5. **Dispatch** — make the change on a new branch:
+   `git checkout -b <type>/<unit-id>-<slug>`
+   Commit in semantic units. Push.
+6. **Review** — open PR with the agileplus PR template. Tag `area:compute-infra`.
+7. **Verify** — run grade.sh on the repo. Capture JSON output. Diff vs main.
+8. **Merge** — if all gates green AND review approval, merge with squash.
+9. **Audit** — append audit entry to phenotype-registry/audits/<date>.json.
+
+## Constraints
+- DO NOT touch `phenotype-sdk` branch state — it has a mid-flight absorb operation.
+- DO NOT rewrite history of shared branches.
+- DO NOT commit secrets, tokens, auth.json.
+- USE UTF-8 ASCII only in markdown (no smart quotes, em-dashes; see agileplus CLAUDE.md rule 2).
+- FOLLOW DOMAIN_ROLES for owner assignment. If your work crosses role boundaries,
+  file the unit under the OWNER's repo, not the consumer's.
+- IF you discover a bug in phenotype-registry / agileplus / pheno-cli / grade.sh,
+  fix it inline (dogfood → fix → extend), then continue.
+
+## Deliverables (emit before claiming done)
+- [ ] Branch name
+- [ ] PR URL (or note "local-only" if not pushable)
+- [ ] grade.sh JSON output (paste full)
+- [ ] Coverage delta vs main (paste)
+- [ ] Files changed (diffstat)
+- [ ] Any dogfood fixes applied (list)
+- [ ] Any new DAG units suggested (auto-add candidates)
+
+## Auditor loop participation
+After your unit is merged, the validator subagent will:
+- Re-run grade.sh on the repo
+- Diff vs your output
+- Auto-add units for any regressed pillars
+
+If you find an issue that the DAG should add a unit for, append it as:
+```yaml
+- {{ id: <next_id>, repo: <repo>, type: <type>, title: "...", source: auditor-loop }}
+```
+to a `auto_added.yaml` file in phenotype-registry/audits/.
+
+## Reference
+- Full DAG:        _compute_infra_audit/dags/compute_infra_dag.yaml
+- Validator:       _compute_infra_audit/verify_deliverables.py
+- Audit report:    _compute_infra_audit/report.txt
+- Standards:       phenotype-registry/{{DOMAIN_ROLES,LANGUAGE_PLACEMENT,SOTA,ECOSYSTEM_MAP}}.md
+- Workflow:        agileplus/{README,CLAUDE.md,agileplus-specs/00X-*}
+
+Begin now. Report back with: branch URL, PR URL, grade.sh output, diffstat.
+"""

@@ -1,0 +1,49 @@
+{
+  "title": "Phenotype Epic F — DAG Foundation & Automation",
+  "description": "Interactive DAG showing the work breakdown for the DAG foundation and automation epic.",
+  "unitTypes": {
+    "render": { "label": "Implementation", "defaultHours": 2 },
+    "audit": { "label": "Audit/Review", "defaultHours": 4 },
+    "spec": { "label": "Specification", "defaultHours": 3 },
+    "integration": { "label": "Integration", "defaultHours": 3 },
+    "docs": { "label": "Documentation", "defaultHours": 2 },
+    "ops": { "label": "Operations", "defaultHours": 2 }
+  },
+  "nodes": [
+    { "id": "f01", "label": "DAG data model (spec)",        "status": "completed", "unitType": "spec", "estimatedHours": 3, "actualHours": 3.5 },
+    { "id": "f02", "label": "DAG schema validation",        "status": "completed", "unitType": "audit", "estimatedHours": 4, "actualHours": 3.0 },
+    { "id": "f03", "label": "DAG YAML/JSON parser",         "status": "completed", "unitType": "render", "estimatedHours": 2, "actualHours": 2.5 },
+    { "id": "f04", "label": "DAG topological sort",         "status": "completed", "unitType": "render", "estimatedHours": 2, "actualHours": 1.5 },
+    { "id": "f05", "label": "DAG cycle detection",          "status": "completed", "unitType": "render", "estimatedHours": 2, "actualHours": 2.0 },
+    { "id": "f06", "label": "DAG execution engine",         "status": "in-progress", "unitType": "render", "estimatedHours": 2, "actualHours": null },
+    { "id": "f07", "label": "DAG state persistence",        "status": "pending", "unitType": "render", "estimatedHours": 2, "actualHours": null },
+    { "id": "f08", "label": "DAG status reporting",         "status": "pending", "unitType": "render", "estimatedHours": 2, "actualHours": null },
+    { "id": "f09", "label": "DAG CLI tooling",              "status": "pending", "unitType": "render", "estimatedHours": 2, "actualHours": null },
+    { "id": "f10", "label": "DAG web renderer (this page)", "status": "in-progress", "unitType": "render", "estimatedHours": 2, "actualHours": null },
+    { "id": "f11", "label": "DAG CI integration",           "status": "pending", "unitType": "integration", "estimatedHours": 3, "actualHours": null },
+    { "id": "f12", "label": "DAG observability hooks",      "status": "completed", "unitType": "render", "estimatedHours": 2, "actualHours": 1.0 },
+    { "id": "f13", "label": "DAG test suite",               "status": "in-progress", "unitType": "audit", "estimatedHours": 4, "actualHours": null },
+    { "id": "f14", "label": "DAG documentation",            "status": "failed", "unitType": "docs", "estimatedHours": 2, "actualHours": 1.0 },
+    { "id": "f15", "label": "DAG deployment pipeline",      "status": "pending", "unitType": "ops", "estimatedHours": 2, "actualHours": null }
+  ],
+  "edges": [
+    { "from": "f01", "to": "f02" },
+    { "from": "f02", "to": "f03" },
+    { "from": "f03", "to": "f04" },
+    { "from": "f03", "to": "f05" },
+    { "from": "f04", "to": "f06" },
+    { "from": "f05", "to": "f06" },
+    { "from": "f06", "to": "f07" },
+    { "from": "f06", "to": "f08" },
+    { "from": "f07", "to": "f09" },
+    { "from": "f08", "to": "f09" },
+    { "from": "f09", "to": "f10" },
+    { "from": "f06", "to": "f11" },
+    { "from": "f10", "to": "f11" },
+    { "from": "f06", "to": "f12" },
+    { "from": "f03", "to": "f13" },
+    { "from": "f10", "to": "f14" },
+    { "from": "f11", "to": "f15" },
+    { "from": "f13", "to": "f14" }
+  ]
+}

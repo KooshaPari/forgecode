@@ -1,0 +1,82 @@
+import { randomUUID } from "crypto";
+
+export type ApiErrorType = "invalid_request" | "not_found" | "conflict" | "server_error";
+
+export interface ApiErrorPayload {
+  status: number;
+  message: string;
+  type?: ApiErrorType;
+  code?: string;
+  details?: unknown;
+}
+
+/**
+ * Canonical error response shape used by the v1 admin API (PR-012):
+ *   { error: { code, message, requestId, details } }
+ *
+ * Backwards-compatible with the pre-PR-012 shape:
+ *   { error: { message, type, details }, requestId }
+ *
+ * `code` is the stable machine-readable identifier (e.g. `slo_not_found`,
+ * `manage_scope_required`). `type` is retained for callers that still key
+ * off it; both map to the same underlying bucket.
+ */
+export function createErrorResponse(payload: ApiErrorPayload): Response {
+  const requestId = randomUUID();
+  const resolvedType =
+    payload.type ||
+    (payload.status >= 500
+      ? "server_error"
+      : payload.status === 404
+        ? "not_found"
+        : payload.status === 409
+          ? "conflict"
+          : "invalid_request");
+  const resolvedCode =
+    payload.code ||
+    (resolvedType === "server_error"
+      ? "internal_server_error"
+      : resolvedType === "not_found"
+        ? "not_found"
+        : resolvedType === "conflict"
+          ? "conflict"
+          : "invalid_request");
+
+  // PR-012 canonical shape for the v1 admin API: nest requestId inside `error`.
+  // Older callers (PR #4875 and earlier) read it as a sibling — keep both
+  // positions populated so neither side breaks.
+  return Response.json(
+    {
+      error: {
+        code: resolvedCode,
+        message: payload.message,
+        type: resolvedType,
+        requestId,
+        details: payload.details,
+      },
+      requestId,
+    },
+    { status: payload.status }
+  );
+}
+
+export function createErrorResponseFromUnknown(
+  error: unknown,
+  fallbackMessage = "Unexpected server error"
+): Response {
+  const anyError = error as {
+    message?: string;
+    status?: number;
+    type?: ApiErrorType;
+    code?: string;
+    details?: unknown;
+  };
+  const status = Number(anyError?.status) || 500;
+  return createErrorResponse({
+    status,
+    message: typeof anyError?.message === "string" ? anyError.message : fallbackMessage,
+    type: anyError?.type,
+    code: anyError?.code,
+    details: anyError?.details,
+  });
+}

@@ -1,0 +1,49 @@
+# OmniRoute — Docker deployment .env
+# This file is consumed by `docker compose --env-file .env` (implicit)
+# and by the omniroute container at runtime.
+#
+# IMPORTANT: paths here are CONTAINER paths (/app/...), NOT Windows paths.
+# All persistent data is mounted from ./data on the Windows host.
+
+# --- Server ---
+HOST=0.0.0.0
+PORT=20128
+NODE_ENV=production
+OMNIROUTE_DEPLOYMENT=docker
+
+# --- Data (mounted to ./data on the host) ---
+DATA_DIR=/app/data
+
+# --- Auth (carryover from C:\Users\koosh\.omniroute\.env) ---
+STORAGE_ENCRYPTION_KEY=60c6b3f742c161dcd2342898c253a7338370d02c6d4180e05debf999445a9ad9
+
+# --- Runtime / memory (16GB heap; prevents the "Empty completion" OOM cycle) ---
+OMNIROUTE_MEMORY_MB=16384
+REQUEST_TIMEOUT_MS=600000
+OMNIROUTE_DEFAULT_FETCH_TIMEOUT_MS=480000
+RATE_LIMIT_MAX_WAIT_MS=480000
+FETCH_KEEPALIVE_TIMEOUT_MS=60000
+DEFAULT_REQUEST_TIMEOUT_MS=120000
+
+# --- Debug (set false in steady state; turning these on writes verbose auth/log lines to docker logs) ---
+# DEBUG_LOGGING=true
+# DEBUG_AUTH=true
+
+# --- Redis (container-internal DNS; depends_on required: true) ---
+REDIS_URL=redis://redis:6379
+OMNIROUTE_REDIS_URL=redis://redis:6379
+
+# --- Live-WS sidecar suppression (port 20129 is not running in single-port Docker) ---
+OMNIROUTE_DISABLE_LIVE_WS_BRIDGE_WARN=true
+
+# --- Logging ---
+LOG_LEVEL=info
+
+# --- Optional: Remote mode (see docs/ops/VM_DEPLOYMENT_GUIDE.md + docs/ops/TUNNELS_GUIDE.md) ---
+# Uncomment one of these to expose OmniRoute over a public tunnel:
+#   OMNIROUTE_TUNNEL=cloudflared   # requires CLOUDFLARE_TUNNEL_TOKEN=...
+#   OMNIROUTE_TUNNEL=ngrok         # requires NGROK_AUTHTOKEN=... + NGROK_DOMAIN=...
+#   OMNIROUTE_TUNNEL=tailscale     # requires TS_AUTHKEY=tskey-... (auto-registers a node)
+# Public URL is auto-detected and written to OMNIROUTE_PUBLIC_URL.
+# For VM deployments, set explicitly:
+#   OMNIROUTE_PUBLIC_URL=https://omniroute.example.com

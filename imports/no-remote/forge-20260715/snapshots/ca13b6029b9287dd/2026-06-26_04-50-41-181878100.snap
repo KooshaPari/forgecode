@@ -1,0 +1,44 @@
+//! # logkit - Zero-cost Structured Logging Framework
+
+pub mod domain;
+pub mod application;
+pub mod adapters;
+pub mod infrastructure;
+
+pub use domain::*;
+pub use application::*;
+
+pub mod telemetry {
+    use metrics::{describe_counter, describe_gauge, describe_histogram, gauge, histogram, increment_counter};
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+
+    pub fn init() {
+        INIT.call_once(|| {
+            describe_counter!("logkit_requests_total", metrics::Unit::Count, "Total requests processed");
+            describe_counter!("logkit_errors_total", metrics::Unit::Count, "Total errors observed");
+            describe_gauge!("logkit_inflight_requests", metrics::Unit::Count, "Currently in-flight requests");
+            describe_histogram!("logkit_request_duration_seconds", metrics::Unit::Seconds, "Request latency");
+        });
+    }
+
+    pub fn request_started() {
+        init();
+        increment_counter!("logkit_requests_total");
+        gauge!("logkit_inflight_requests", 1.0);
+    }
+
+    pub fn request_finished(duration_seconds: f64) {
+        init();
+        histogram!("logkit_request_duration_seconds", duration_seconds);
+        gauge!("logkit_inflight_requests", 0.0);
+    }
+
+    pub fn request_failed() {
+        init();
+        increment_counter!("logkit_errors_total");
+    }
+}
+
+

@@ -1,0 +1,440 @@
+#!/usr/bin/env python3
+"""
+eval-bench-audit.py — Phase 8 cross-cutting auditor for the eval/bench/QA layer.
+
+Runs every time the user asks "what's the state of my eval/bench layer?"
+or can be invoked in a pre-push / CI cron to detect drift, dirty state,
+missing artifacts, and broken wiring.
+
+This script is INTENTIONALLY side-effect-free: it only reads state, computes
+scores, and prints a single human-readable report. It never modifies any
+repo. It is the SSOT for "is the eval/bench/QA layer healthy?".
+
+Usage:
+    python eval-bench-audit.py            # human-readable table
+    python eval-bench-audit.py --json     # machine-readable JSON for CI
+    python eval-bench-audit.py --ci       # exit 1 if any score < threshold
+
+Author: Phase 8 DAG extension (2026-06-23)
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+# ---------------------------------------------------------------------------
+# Configuration — list every repo that lives in the eval/bench/QA layer.
+# ---------------------------------------------------------------------------
+
+ROOT = Path(r"C:\Users\koosh")
+
+REPOS: list[dict[str, Any]] = [
+    # Primary eval/bench/QA targets (user's redirect scope).
+    {
+        "name": "Benchora",
+        "path": ROOT / "Benchora",
+        "kind": "rust-bench",
+        "remote": "KooshaPari/Benchora",
+        "expect_branch": "main",
+        "eval_role": "primary benchmark harness (criterion + property + mutation + contract)",
+    },
+    {
+        "name": "portage",
+        "path": ROOT / "portage",
+        "kind": "python-harbor-fork",
+        "remote": "KooshaPari/portage",
+        "expect_branch": "main",
+        "eval_role": "agent eval framework (Harbor-derived; RL environments; portage adapters)",
+    },
+    {
+        "name": "pheno-harness",
+        "path": ROOT / "pheno-harness",
+        "kind": "python-harness",
+        "remote": "KooshaPari/pheno-harness",
+        "expect_branch": "main",
+        "eval_role": "in-house eval layer (pillars, route_matrix, tbench, RLVR, harbor wrapper)",
+    },
+    {
+        "name": "heliosBench",
+        "path": ROOT / "heliosBench",
+        "kind": "python-bench",
+        "remote": "KooshaPari/heliosBench",
+        "expect_branch": "main",
+        "eval_role": "internal bench tool (Helios lab benchmarks)",
+    },
+    {
+        "name": "Tracera",
+        "path": ROOT / "Tracera",
+        "kind": "python-rust-trace",
+        "remote": "KooshaPari/Tracera",
+        "expect_branch": "main",
+        "eval_role": "agent-native multi-view requirements traceability (semantic scorer, RF docs)",
+    },
+    {
+        "name": "phenodag",
+        "path": ROOT / "phenodag",
+        "kind": "go-binary",
+        "remote": "KooshaPari/phenodag",
+        "expect_branch": "main",
+        "eval_role": "DAG engine + remote claim (drives work units across repos)",
+    },
+    {
+        "name": "AgilePlus",
+        "path": ROOT / "AgilePlus",
+        "kind": "python-spec",
+        "remote": "KooshaPari/AgilePlus",
+        "expect_branch": "main",
+        "eval_role": "spec-driven dev (lanes, work-units, intent+boundary snapshots)",
+    },
+    # Compute/infra layer (still in scope per original brief — user's redirect
+    # was to focus on eval/bench, but compute/infra is still owned).
+    {
+        "name": "BytePort",
+        "path": ROOT / "BytePort",
+        "kind": "tauri-golang-svelte",
+        "remote": "KooshaPari/BytePort",
+        "expect_branch": "main",
+        "eval_role": "infra tooling (Tauri + Go + SvelteKit) — bridges to Benchora + portage",
+    },
+    {
+        "name": "PhenoCompose",
+        "path": ROOT / "PhenoCompose",
+        "kind": "cargo-workspace",
+        "remote": "KooshaPari/PhenoCompose",
+        "expect_branch": "main",
+        "eval_role": "unified process-compose with NVMS support",
+    },
+    {
+        "name": "nanovms",
+        "path": ROOT / "nanovms",
+        "kind": "go-typescript",
+        "remote": "KooshaPari/nanovms",
+        "expect_branch": "main",
+        "eval_role": "headless VM abstraction (WASM/gVisor/Firecracker tiers)",
+    },
+    # Spine/registry (the boundary SSOT).
+    {
+        "name": "phenotype-registry",
+        "path": ROOT / "phenotype-registry",
+        "kind": "registry",
+        "remote": "KooshaPari/phenotype-registry",
+        "expect_branch": "main",
+        "eval_role": "master index (specs, patterns, templates) — boundary SSOT",
+    },
+    {
+        "name": "phenotype-org-audits",
+        "path": ROOT / "phenotype-org-audits",
+        "kind": "audits",
+        "remote": "KooshaPari/phenotype-org-audits",
+        "expect_branch": "main",
+        "eval_role": "the 71+ pillar audit/grading system + scorecards",
+    },
+    {
+        "name": "vibeproxy-monitoring-unified",
+        "path": ROOT / "vibeproxy-monitoring-unified",
+        "kind": "monitoring",
+        "remote": "KooshaPari/vibeproxy-monitoring-unified",
+        "expect_branch": "main",
+        "eval_role": "monitoring scaffold (vibeproxy metrics pipeline)",
+    },
+]
+
+# ---------------------------------------------------------------------------
+# Scoring — each criterion is 0..N points, total = 100.
+# ---------------------------------------------------------------------------
+
+MAX_SCORE = 100
+
+
+def _run(cmd: list[str], cwd: Path) -> tuple[int, str, str]:
+    """Run a command, capture (rc, stdout, stderr). Empty strings if rc != 0."""
+    try:
+        proc = subprocess.run(
+            cmd, cwd=str(cwd), capture_output=True, text=True, timeout=30
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+    except subprocess.TimeoutExpired:
+        return 124, "", "TIMEOUT"
+    except FileNotFoundError as e:
+        return 127, "", str(e)
+
+
+def score_repo(repo: dict[str, Any]) -> dict[str, Any]:
+    """Compute a health score for a single repo. Returns a dict with breakdown."""
+    path: Path = repo["path"]
+    breakdown: dict[str, Any] = {}
+    issues: list[str] = []
+    score = 0
+
+    if not path.exists():
+        return {
+            "name": repo["name"],
+            "score": 0,
+            "max": MAX_SCORE,
+            "issues": [f"PATH MISSING: {path}"],
+            "breakdown": {},
+            "absent": True,
+        }
+
+    # -- 25 pts: clean working tree -----------------------------------------
+    rc, out, _ = _run(["git", "status", "--porcelain"], path)
+    if rc == 0:
+        if out.strip() == "":
+            score += 25
+            breakdown["clean_tree"] = "25/25"
+        else:
+            issues.append(f"dirty tree: {len(out.splitlines())} entries")
+            breakdown["clean_tree"] = "0/25"
+    else:
+        issues.append(f"git status failed (rc={rc})")
+        breakdown["clean_tree"] = "0/25"
+
+    # -- 15 pts: branch tracking (not ahead/behind by >5) -------------------
+    rc, out, _ = _run(["git", "status", "-sb"], path)
+    if rc == 0:
+        # git status -sb lines look like:
+        #   ## main...origin/main [ahead 3, behind 10]
+        # or:
+        #   ## main...origin/main [ahead 3]
+        # or:
+        #   ## main...origin/main
+        import re as _re_branch
+        ahead = 0
+        behind = 0
+        for line in out.splitlines():
+            if not line.startswith("##"):
+                continue
+            m = _re_branch.search(r"ahead\s+(\d+)", line)
+            if m:
+                ahead = int(m.group(1))
+            m = _re_branch.search(r"behind\s+(\d+)", line)
+            if m:
+                behind = int(m.group(1))
+        if ahead == 0 and behind == 0:
+            score += 15
+            breakdown["branch_synced"] = "15/15 (clean)"
+        elif ahead > 0 and behind > 0:
+            # Diverged — both ahead AND behind. Severe.
+            if ahead <= 5 and behind <= 5:
+                score += 8
+                breakdown["branch_synced"] = (
+                    f"8/15 (diverged: {ahead} ahead, {behind} behind)"
+                )
+            else:
+                issues.append(f"diverged: {ahead} ahead, {behind} behind")
+                breakdown["branch_synced"] = "0/15"
+        elif ahead > 0:
+            if ahead <= 3:
+                score += 10
+                breakdown["branch_synced"] = f"10/15 ({ahead} unpushed)"
+            else:
+                issues.append(f"{ahead} unpushed commits")
+                breakdown["branch_synced"] = "0/15"
+        elif behind > 0:
+            if behind <= 5:
+                score += 10
+                breakdown["branch_synced"] = f"10/15 ({behind} behind)"
+            else:
+                issues.append(f"{behind} commits behind")
+                breakdown["branch_synced"] = "0/15"
+    else:
+        breakdown["branch_synced"] = "0/15 (git status -sb failed)"
+
+    # -- 15 pts: README present and substantive (>500 bytes) ---------------
+    readme_candidates = ["README.md", "README.rst", "README", "Readme.md"]
+    readme_size = 0
+    for r in readme_candidates:
+        rp = path / r
+        if rp.exists():
+            readme_size = rp.stat().st_size
+            break
+    if readme_size > 2000:
+        score += 15
+        breakdown["readme"] = f"15/15 ({readme_size} bytes)"
+    elif readme_size > 500:
+        score += 10
+        breakdown["readme"] = f"10/15 ({readme_size} bytes)"
+    elif readme_size > 0:
+        score += 5
+        breakdown["readme"] = f"5/15 ({readme_size} bytes — thin)"
+    else:
+        issues.append("no README")
+        breakdown["readme"] = "0/15"
+
+    # -- 15 pts: governance files (LICENSE + CHANGELOG + CODEOWNERS) --------
+    gov_present = []
+    if (path / "LICENSE").exists() or (path / "LICENSE-MIT").exists() or (path / "LICENSE-APACHE").exists():
+        gov_present.append("LICENSE")
+    if (path / "CHANGELOG.md").exists():
+        gov_present.append("CHANGELOG")
+    if (path / "CODEOWNERS").exists():
+        gov_present.append("CODEOWNERS")
+    if (path / "CONTRIBUTING.md").exists():
+        gov_present.append("CONTRIBUTING")
+    if (path / "SECURITY.md").exists():
+        gov_present.append("SECURITY")
+    if (path / ".gitignore").exists():
+        gov_present.append(".gitignore")
+    gov_pts = min(15, len(gov_present) * 3)
+    score += gov_pts
+    if gov_pts == 15:
+        breakdown["governance"] = f"15/15 ({', '.join(gov_present)})"
+    elif gov_pts >= 9:
+        breakdown["governance"] = f"{gov_pts}/15 (missing: some)"
+    else:
+        issues.append(f"governance thin: only {gov_present}")
+        breakdown["governance"] = f"{gov_pts}/15 (only {', '.join(gov_present)})"
+
+    # -- 15 pts: CI workflow present ----------------------------------------
+    workflows_dir = path / ".github" / "workflows"
+    if workflows_dir.exists() and any(workflows_dir.glob("*.yml")):
+        n_workflows = len(list(workflows_dir.glob("*.yml")))
+        if n_workflows >= 3:
+            score += 15
+            breakdown["ci"] = f"15/15 ({n_workflows} workflows)"
+        else:
+            score += 10
+            breakdown["ci"] = f"10/15 ({n_workflows} workflows)"
+    else:
+        issues.append("no CI workflows")
+        breakdown["ci"] = "0/15"
+
+    # -- 10 pts: tests present ---------------------------------------------
+    test_candidates = ["tests", "test", "__tests__", "src/tests", "spec"]
+    has_tests = any((path / d).exists() for d in test_candidates)
+    if has_tests:
+        score += 10
+        breakdown["tests"] = "10/10"
+    else:
+        issues.append("no tests/ directory")
+        breakdown["tests"] = "0/10"
+
+    # -- 5 pts: recent activity (commit in last 90 days) --------------------
+    rc, out, _ = _run(
+        ["git", "log", "-1", "--format=%ct", "HEAD"], path
+    )
+    if rc == 0 and out.strip().isdigit():
+        import time
+        last_commit_age_days = (time.time() - int(out.strip())) / 86400
+        if last_commit_age_days < 30:
+            score += 5
+            breakdown["activity"] = f"5/5 (last commit {last_commit_age_days:.0f}d ago)"
+        elif last_commit_age_days < 90:
+            score += 3
+            breakdown["activity"] = f"3/5 (last commit {last_commit_age_days:.0f}d ago)"
+        elif last_commit_age_days < 365:
+            score += 1
+            breakdown["activity"] = f"1/5 (last commit {last_commit_age_days:.0f}d ago — STALE)"
+        else:
+            issues.append(f"stale: last commit {last_commit_age_days/365:.1f} years ago")
+            breakdown["activity"] = f"0/5 (last commit {last_commit_age_days/365:.1f}y ago)"
+    else:
+        breakdown["activity"] = "0/5 (git log failed)"
+
+    return {
+        "name": repo["name"],
+        "score": score,
+        "max": MAX_SCORE,
+        "issues": issues,
+        "breakdown": breakdown,
+        "kind": repo["kind"],
+        "eval_role": repo["eval_role"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Reporting
+# ---------------------------------------------------------------------------
+
+
+def render_table(reports: list[dict[str, Any]]) -> str:
+    lines = []
+    lines.append("")
+    lines.append("=" * 92)
+    lines.append("EVAL/BENCH/QA LAYER HEALTH REPORT — Phase 8 DAG extension")
+    lines.append("=" * 92)
+    lines.append("")
+    lines.append(
+        f"{'REPO':<30s} {'SCORE':>7s}  {'STATUS':<10s}  {'KIND':<22s}"
+    )
+    lines.append("-" * 92)
+    for r in reports:
+        if r.get("absent"):
+            status = "ABSENT"
+        elif r["score"] >= 90:
+            status = "GREEN"
+        elif r["score"] >= 75:
+            status = "YELLOW"
+        elif r["score"] >= 50:
+            status = "ORANGE"
+        else:
+            status = "RED"
+        lines.append(
+            f"{r['name']:<30s} {r['score']:>4d}/{r['max']:<2d}  {status:<10s}  "
+            f"{r.get('kind','?'):<22s}"
+        )
+    lines.append("")
+    lines.append("--- DETAIL ---")
+    lines.append("")
+    for r in reports:
+        lines.append(f"### {r['name']}  [{r.get('kind','?')}]")
+        lines.append(f"   role: {r.get('eval_role','?')}")
+        lines.append(f"   score: {r['score']}/{r['max']}")
+        for k, v in r.get("breakdown", {}).items():
+            lines.append(f"     - {k}: {v}")
+        if r.get("issues"):
+            lines.append(f"   issues:")
+            for issue in r["issues"]:
+                lines.append(f"     * {issue}")
+        else:
+            lines.append(f"   issues: (none)")
+        lines.append("")
+
+    # Cross-repo summary
+    lines.append("=" * 92)
+    lines.append("CROSS-REPO SUMMARY")
+    lines.append("=" * 92)
+    present = [r for r in reports if not r.get("absent")]
+    if present:
+        avg = sum(r["score"] for r in present) / len(present)
+        green = sum(1 for r in present if r["score"] >= 90)
+        yellow = sum(1 for r in present if 75 <= r["score"] < 90)
+        orange = sum(1 for r in present if 50 <= r["score"] < 75)
+        red = sum(1 for r in present if r["score"] < 50)
+        lines.append(f"  Average score:    {avg:.1f}/{MAX_SCORE}")
+        lines.append(f"  GREEN (≥90):      {green}")
+        lines.append(f"  YELLOW (75-89):   {yellow}")
+        lines.append(f"  ORANGE (50-74):   {orange}")
+        lines.append(f"  RED (<50):        {red}")
+        lines.append(f"  Repos scored:     {len(present)}/{len(reports)}")
+    else:
+        lines.append("  No repos found.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def main(argv: list[str]) -> int:
+    reports = [score_repo(r) for r in REPOS]
+
+    if "--json" in argv:
+        print(json.dumps(reports, indent=2))
+        return 0
+
+    if "--ci" in argv:
+        # Exit 1 if any repo's score is below 50.
+        for r in reports:
+            if r.get("absent") or r["score"] < 50:
+                print(f"CI-FAIL: {r['name']} score={r.get('score',0)}")
+                return 1
+        return 0
+
+    print(render_table(reports))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

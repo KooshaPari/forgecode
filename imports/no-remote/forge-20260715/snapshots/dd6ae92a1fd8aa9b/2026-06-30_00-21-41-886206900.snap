@@ -1,0 +1,159 @@
+# Phenotype-org standard .gitignore — PhenoCompose
+# Hybrid Rust / Go / Zig / Mojo / Python / Node
+
+# ===== Build & dependency artifacts =====
+/target/
+**/target/
+**/*.rs.bk
+Cargo.lock.bak
+vendor/
+**/vendor/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# ===== Go =====
+**/go-build/
+*.test
+*.out
+
+# ===== Node / TS / JS =====
+node_modules/
+.pnp/
+.pnp.js
+*.tsbuildinfo
+**/tsconfig.tsbuildinfo
+.svelte-kit/
+.turbo/
+.parcel-cache/
+dist/
+build/
+.next/
+.nuxt/
+coverage/
+*.lcov
+
+# ===== Python =====
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/.venv/
+**/venv/
+**/env/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.pytest_cache/
+**/htmlcov/
+**/.coverage
+**/.coverage.*
+**/*.egg-info/
+**/.eggs/
+*.pyc
+
+# ===== Zig / Mojo =====
+cargo/zig-cache/
+.zigcache/
+**/*.mojo_cache/
+.mojo/
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+*.iml
+
+# ===== OS =====
+.DS_Store
+.AppleDouble
+.LSOverride
+**/Thumbs.db
+**/desktop.ino
+
+# ===== Environment / Secrets =====
+.env
+.env.local
+.env.*.local
+!.env.example
+*.pem
+*.key
+*_rsa
+*id_rsa*
+*credential*.json
+*credentials*.json
+*service-account*.json
+
+# ===== Registry / credential config =====
+.npmrc
+.pypirc
+.netrc
+
+# ===== Test & cache dirs =====
+.jest-cache/
+.eslintcache
+.npm/
+**/.cache/
+**/.output/
+**/tmp/
+**/temp/
+
+# ===== Build output =====
+/build/
+/coverage/
+/dist/
+/out/
+/.output/
+
+# ===== Logs =====
+*.log
+logs/
+lerna-debug.log*
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ===== Worktrees =====
+.worktrees/
+*-wtrees/
+.claude/worktrees/
+
+# ===== Tooling dirs =====
+.serena/
+.codex/
+.cursor/
+.audit/
+.draft/
+
+# ===== LLVM / Rust coverage & profile artifacts =====
+*.profraw
+*.profdata
+llvm-cov-*
+*.gcda
+*.gcno
+.instr-profile
+
+# ===== Temp / backup =====
+*.tmp
+*.bak
+*~
+**/desktop.ini
+
+# ===== Tauri generated (if applicable) =====
+frontend/**/src-tauri/gen/
+
+# ===== Incident / audit evidence (local only) =====
+incident-evidence/
+.incident-evidence/
+local/incident-evidence/
+
+# ===== Tooling draft files =====
+*.proposed
+
+# ===== Worklog files =====
+worklog-*.json
+worklogs/
+
+# ===== forge worktree =====
+".forge/"  

@@ -1,0 +1,21 @@
+import { projectBudgetSavings } from "./open-sse/services/compression/budgetForecast.ts";
+
+function point(tsMs: number, tokens: number, savedTokens: number) {
+  return { tsMs, tokens, savedTokens };
+}
+
+function constantHistory(n: number, perPointSaved: number, perPointTokens: number, stepMs = 1000) {
+  const start = 1_700_000_000_000;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push(point(start + i * stepMs, perPointTokens, perPointSaved));
+  }
+  return out;
+}
+
+const history = constantHistory(20, 100, 1000, 60_000);
+const r1h = projectBudgetSavings(history, 60 * 60 * 1000);
+const r30 = projectBudgetSavings(history, 30 * 60 * 1000);
+console.log("r1h:", JSON.stringify(r1h));
+console.log("r30:", JSON.stringify(r30));
+console.log("ratio:", r30.p50SavedTokens / r1h.p50SavedTokens);

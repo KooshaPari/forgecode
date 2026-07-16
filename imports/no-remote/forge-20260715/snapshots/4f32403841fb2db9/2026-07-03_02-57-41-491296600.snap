@@ -1,0 +1,29 @@
+$ErrorActionPreference = 'Continue'
+$path = "C:\Users\koosh\_top_repos.json"
+$bytes = [System.IO.File]::ReadAllBytes($path)
+# Detect BOM
+$bom = ''
+if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) { $bom = 'UTF-8 BOM' }
+elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) { $bom = 'UTF-16 LE BOM' }
+elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) { $bom = 'UTF-16 BE BOM' }
+else { $bom = 'no BOM' }
+Write-Host "Detected encoding: $bom (size=$($bytes.Length))"
+# Decode appropriately
+if ($bom -eq 'UTF-16 LE BOM') {
+    $enc = [System.Text.Encoding]::Unicode
+    $content = $enc.GetString($bytes)
+} elseif ($bom -eq 'UTF-16 BE BOM') {
+    $enc = New-Object System.Text.UnicodeEncoding($true, $true)
+    $content = $enc.GetString($bytes)
+} else {
+    # Strip BOM if any then decode UTF-8
+    if ($bom -eq 'UTF-8 BOM') { $bytes = $bytes[3..($bytes.Length-1)] }
+    $content = [System.Text.Encoding]::UTF8.GetString($bytes)
+}
+$json = $content | ConvertFrom-Json
+Write-Host ("Total count: {0} | Items returned: {1}" -f $json.total_count, $json.items.Count)
+$top = $json.items |
+    Where-Object { -not $_.fork } |
+    Sort-Object { $_.size } -Descending |
+    Select-Object -First 25 name, size, stargazers_count, language, pushed_at
+$top | Format-Table -AutoSize | Out-String -Width 220

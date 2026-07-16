@@ -1,0 +1,42 @@
+#!/bin/bash
+set +e
+cd /mnt/c/Users/koosh/.claude/lanes/portage-final/viewer
+
+echo "=== TSC (typecheck) ==="
+bunx tsc --noEmit > /tmp/tsc.log 2>&1
+ec=$?
+echo "TSC_EXIT=$ec"
+[ "$ec" -ne 0 ] && head -10 /tmp/tsc.log
+
+echo ""
+echo "=== TA LINT (oxlint --type-aware) ==="
+bunx oxlint --type-aware --config .oxlintrc.json app > /tmp/ta.log 2>&1
+ec=$?
+echo "TA_EXIT=$ec"
+grep -E "Found" /tmp/ta.log
+
+echo ""
+echo "=== LINT (oxlint basic) ==="
+bunx oxlint --config .oxlintrc.json app > /tmp/lint.log 2>&1
+ec=$?
+echo "LINT_EXIT=$ec"
+grep -E "Found" /tmp/lint.log
+
+echo ""
+echo "=== FORMAT (oxfmt --check) ==="
+bunx oxfmt --config .oxfmtrc.json --check app > /tmp/fmt.log 2>&1
+ec=$?
+echo "FMT_EXIT=$ec"
+tail -3 /tmp/fmt.log
+
+echo ""
+echo "=== BUILD ==="
+bun run build > /tmp/build.log 2>&1
+ec=$?
+echo "BUILD_EXIT=$ec"
+tail -3 /tmp/build.log
+
+echo ""
+echo "=== SUMMARY ==="
+echo "TSC=$ec_tsc (from earlier)"
+echo "TA=$ec"

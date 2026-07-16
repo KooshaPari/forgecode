@@ -1,0 +1,1 @@
+DELETE FROM usage_history WHERE id IN (SELECT id FROM usage_history WHERE timestamp < datetime('now','-7 days') ORDER BY timestamp ASC LIMIT 1000);

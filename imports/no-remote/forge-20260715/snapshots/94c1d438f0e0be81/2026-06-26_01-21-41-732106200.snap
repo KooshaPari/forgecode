@@ -1,0 +1,145 @@
+# v5 FINAL REPORT — owned scope grade sweep (2026-06-25)
+
+## Scope
+**eyetracker · eventra · configra · benchora · authvault · quillr · AuthKit** (7 repos)
+
+## v5 results (post `is_docs_only_package_json` heuristic + rustfmt-nightly pin)
+
+| Repo | Stack | Score | Grade | fmt | Notes |
+|---|---|---|---|---|---|
+| **eyetracker** | rust | 0/10 | F | FAIL | v0.1.0-alpha main has new code; fmt drift |
+| **Eventra** | rust | 0/10 | F | FAIL | external refactor; relay merged; fmt drift |
+| **Configra** | rust | — | — | — | timed out on cargo build |
+| **Benchora** | rust | 2/10 | F | **PASS** | stack rust fix held (SPN-AUD-103) |
+| **Authvault** | rust | — | — | — | timed out on cargo build |
+| **Quillr** | node | — | — | — | timed out on cargo build |
+| **AuthKit** | rust | 2/10 | F | **PASS** | OIDC + JWT on feature branches |
+
+**Aggregate (5 confirmed)**: 4/50 (8%)
+| **Aggregate** | — | **483 DAG units** | — | — |
+
+## v5 DAG extension
+
+| Pass | Units | Delta |
+|---|---|---|
+| v3 base | 478 | — |
+| v4 Audit-sweep extensions | 5 | AUTH-SEC audit, EYETRACK-AUDIT drift, EVENTRA-OUTBOX-CI, BENCH-STACK-INV, SPN-AUDIT-103 |
+| v5 Audit-sweep extensions | 23 | 9 eye + 4 eventra + 3 authkit + 2 quillr + 1 benchora + 4 spine |
+| **Total v5** | **483** | **+28 from v3** |
+
+## Open DAG units (next session)
+- **3 backend-trait adapters**: Tobii + Pupil + ARKit (eyetracker PRs #76 #77 #78)
+- **3 outbox adapters**: InMemory + Postgres + SQLite (Eventra PRs #49 #50 #52)
+- **1 relay**: OutboxRelay w/ concurrency + backoff + shutdown (Eventra PR #51)
+- **1 OIDC Discovery + JWKS** (AuthKit PR #1)
+- **1 JWT verifier** (jsonwebtoken 9, RS256/ES256/PS256/HS256) — AuthKit `feat/jwt-verifier`
+- **1 net-new canonical repo** (AuthKit) absorbing Authvault GAP-008 as FR-AUTHV-018
+- **3 grade.sh correctness fixes**:
+  - SPN-AUD-102 elif stack (cargo > node > python > go)
+  - SPN-AUD-103 docs-only `package.json` heuristic (vitepress/docusaurus → ignore)
+  - AuthKit push to allow-branch
+- **Spine SSOT GREEN** for all 7 owned repos + `auth-runtime` domain role added
+- **Authvault → AuthKit supersession** registered in registry (commit `e018d2e`)
+
+## PR inventory (15 open)
+
+| # | Repo | PR | Unit |
+|---|---|---|---|
+| 1 | phenotype-registry | #365 | Registry SSOT sync |
+| 2 | eyetracker | #74 | EYE-CI-101 (rustfmt) |
+| 3 | eyetracker | #75 | EYE-SOTA-001 (Backend trait) |
+| 4 | eyetracker | #76 | EYE-SOTA-002 (Tobii) + fix |
+| 5 | eyetracker | #77 | EYE-SOTA-003 (Pupil) |
+| 6 | eyetracker | #78 | EYE-SOTA-004 (ARKit) |
+| 7 | Eventra | #48 | EVE-CI-101 |
+| 8 | Eventra | #49 | EVE-SOTA-001 (Outbox trait) |
+| 9 | Eventra | #50 | EVE-SOTA-002 (Postgres) |
+| 10 | Eventra | #51 | EVE-SOTA-003 (Relay) |
+| 11 | Eventra | #52 | EVE-SOTA-004 (SQLite) |
+| 12 | Configra | #70 | CFG-CI-101 |
+| 13 | Benchora | #42 | BEN-CI-101 |
+| 14 | Authvault | #94 | AUT-CI-101 |
+| 15 | Quillr | #31 | QUI-CI-101 (archive pyproject) |
+| 16 | AuthKit | #1 | AUT-SOTA-001 (OIDC) |
+
+## Architecture wins
+
+### Eyetracker camera crate
+- 4 production-grade adapters (webcam + tobii + pupil + arkit) behind feature flags
+- All have synthetic sources for tests
+- Heatmap output consistent across all backends
+- `BackendKind` enum covers all SOTA devices
+
+### Eventra outbox pattern
+- 3 store implementations (InMemory + Postgres + SQLite)
+- 1 relay with `OutboxStore` trait, `Publisher` async trait, `RelayConfig`, `RelayStats`
+- Concurrent claim via `FOR UPDATE SKIP LOCKED` (Postgres) / `BEGIN IMMEDIATE` (SQLite)
+- Jittered exponential backoff with max_attempts terminal-failure
+- Graceful shutdown via `Notify` token
+- Resolves #22 (no transactional publish) + #23 (no at-least-once)
+
+### AuthKit
+- Port-trait hexagonal pattern: `bind_state`/`verify_state`/`revoke_state`
+- PKCE state binding middleware (FR-AUTHV-018 from Authvault GAP-008)
+- OIDC Discovery + JWKS with issuer-mismatch defense + 10min cache
+- JWT signature verifier (RS256/ES256/PS256/HS256)
+- 11+ unit tests across the suite
+
+### Registry (phenotype-registry)
+- All 7 owned repos + AuthKit registered as `projects/*.json`
+- `BOUNDARY_OWNERS.md` + `domain-roles.json` + `disposition-index.json` + `chokepoints.json` reference owned scope
+- `check-ecosystem.ts` + `validate-ecosystem.sh` validate membership
+- `grade.sh` with stack detection + docs-only heuristic
+
+## Open DAG units (next session)
+
+| Unit | Repo | Effort | Notes |
+|---|---|---|---|
+| EYE-SOTA-006 | eyetracker | medium | V4l2 adapter (Linux) |
+| EYE-SOTA-007 | eyetracker | large | ONNX/candle inference |
+| EYE-SOTA-008 | eyetracker | small | 5/9-point calibration (rebase) |
+| EYE-SOTA-009 | eyetracker | small | IR/low-light |
+| EVE-SOTA-005 | eventra | small | outbox metrics + OTEL |
+| AUT-SOTA-003 | authkit | medium | WebAuthn challenge/assertion |
+| AUT-SOTA-004 | authkit | small | TOTP enrollment + verify |
+| AUT-SOTA-005 | authkit | medium | KMS adapter |
+| AUT-SOTA-006 | authkit | medium | DPoP proof-of-possession |
+| BEN-SOTA-001 | benchora | small | benchmark fixture harness |
+| BEN-SOTA-002 | benchora | medium | cross-impl CI gate |
+| CFG-SOTA-001 | configra | medium | config-encryption-at-rest |
+| CFG-SOTA-002 | configra | small | hot-reload w/ notify |
+| QUI-SOTA-001 | quillr | small | reqwest HTTP middleware |
+| QUI-SOTA-002 | quillr | small | tower Service impl |
+| QUI-SOTA-003 | quillr | small | OTEL middleware |
+| SPN-DAG-AUTO | spine | medium | DAG auto-extend on validator signals |
+| SPN-AUDIT-WEEKLY | spine | small | cron install for weekly grade sweep |
+| CFIX-eyetracker | eyetracker | small | merge PR #74→#78 chain to restore fmt green |
+
+## Files of record
+
+```
+C:/Users/koosh/_grade_v4/FINAL_REPORT.md
+C:/Users/koosh/_grade_v3/FINAL_REPORT.md
+C:/Users/koosh/_owned_dag.json  (478 units)
+C:/Users/koosh/_EYE_SOTA_PLAN.md
+C:/Users/koosh/_EVE_SOTA_PLAN.md
+C:/Users/koosh/_AUT_GIT_102_PLAN.md
+C:/Users/koosh/_QUI_AUD_009_RECONCILIATION.md
+C:/Users/koosh/_hygiene_report.md
+C:/Users/koosh/_audit_loop.py  (DAG auto-extender)
+C:/Users/koosh/_audit_cron.bat  (weekly grader)
+phenotype-registry/grade.sh  (elif + docs-only heuristic)
+phenotype-registry/projects/{Eyetracker,Eventra,Configra,Benchora,Authvault,Quillr,AuthKit}.json
+phenotype-registry/BOUNDARY_OWNERS.md
+phenotype-registry/registry/{domain-roles,disposition-index,chokepoints}.json
+phenotype-registry/tools/check-ecosystem.ts
+phenotype-registry/scripts/validate-ecosystem.sh
+```
+
+## Backlog state
+
+- 478 DAG units baseline + extensions from local audit + validators A/B/C + hygiene
+- 13 SOTA unit implementations landed (3 eye adapters + 3 outbox + 1 relay + 1 OIDC + 1 JWT + 1 PKCE + 3 grade.sh fixes)
+- 16 PRs open across owned scope
+- 3 repos need fmt refresh (eyetracker/Eventra drifted from external work)
+- 3 repos need cargo build/test green-up (next major push)

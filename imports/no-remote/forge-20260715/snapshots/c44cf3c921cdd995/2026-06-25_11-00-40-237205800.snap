@@ -1,0 +1,33 @@
+## Summary
+
+Implements B28 — Tier-0 enforcement on every PR across all three BytePort engines.
+
+## Changes
+
+- **New: `.github/workflows/tier-0-gate.yml`** — blocking CI gate enforcing:
+  - Go: `go build`, `go test`, `go vet`, `go fmt` (blocking), `golangci-lint`
+  - Rust: `cargo build`, `cargo fmt --check`, `cargo clippy -D warnings`
+  - Frontend (SvelteKit): `npm run build`, `prettier --check`, `eslint`, `svelte-check`
+
+## What changed from existing CI
+
+| Check | Before | After |
+|---|---|---|
+| Go fmt | `continue-on-error: true` (advisory) | Blocking |
+| Rust build/test/lint | Not enforced | Blocking via cargo |
+| Frontend build/typecheck | Not enforced | Blocking via npm |
+| Rust go lint (`clippy -D warnings`) | Not enforced | Blocking |
+| `quality-gate.yml` | No-op placeholder | Replaced by tier-0-gate.yml |
+
+## Constraints
+
+- `phenotype-sdk` is explicitly excluded (org policy)
+- Concurrency: one run per ref; new commits cancel in-flight runs
+- Timeouts: 30m per job
+
+## Testing
+
+- [ ] CI must pass on this PR before merge
+- [ ] All existing workflows continue unchanged
+
+Refs: B28

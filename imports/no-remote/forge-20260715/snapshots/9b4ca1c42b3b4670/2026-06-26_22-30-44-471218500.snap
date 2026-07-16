@@ -1,0 +1,51 @@
+$ErrorActionPreference = 'Continue'
+$base = 'C:/Users/koosh/Civis_fresh'
+
+function Run-Ck($pkg) {
+    Write-Host "  --- $pkg ---"
+    $tmpout = [System.IO.Path]::GetTempFileName()
+    $tmperr = [System.IO.Path]::GetTempFileName()
+    # Use cmd /c to invoke cargo with proper redirection
+    cmd /c "set CARGO_TERM_COLOR=never && cargo check -p $pkg --offline --color=never > $tmpout 2> $tmperr"
+    $ec = $LASTEXITCODE
+    $stdout = Get-Content $tmpout -Raw -ErrorAction SilentlyContinue
+    $stderr = Get-Content $tmperr -Raw -ErrorAction SilentlyContinue
+    Remove-Item $tmpout,$tmperr -ErrorAction SilentlyContinue
+    $out = (($stdout + "`n" + $stderr) -split "`r?`n") | Where-Object { $_ -ne '' }
+    if ($ec -eq 0) {
+        $tail = ($out | Select-Object -Last 3) -join ' | '
+        Write-Host "    OK: $tail"
+    } else {
+        $errs = $out | Where-Object { $_ -match '^error\[' } | Select-Object -First 5
+        $errs | ForEach-Object { Write-Host "    $_" }
+        $summary = $out | Where-Object { $_ -match 'previous errors' } | Select-Object -First 1
+        if ($summary) { Write-Host "    $summary" }
+    }
+}
+
+function Check-Branch {
+    param([string]$branch, [string]$label)
+    Push-Location $base
+    Write-Host ""
+    Write-Host "===== $label ($branch) ====="
+    cmd /c "git checkout $branch 2>nul || git checkout -b $branch origin/$branch"
+    if ($LASTEXITCODE -ne 0) { Write-Host "  checkout FAILED"; Pop-Location; return }
+    cmd /c "git log --oneline -1"
+    Run-Ck 'civ-needs'
+    Run-Ck 'civ-economy'
+    Run-Ck 'civ-genetics'
+    Pop-Location
+}
+
+Check-Branch 'fix/workspace-bevy-ref-holocron-dep' 'BASELINE: workspace fix'
+Check-Branch 'chore/governance-forge-agents' 'PR-gov: governance file'
+Check-Branch 'feat/fr-civ-life-classifiers-tick' 'PR1: lifecycle classifiers'
+Check-Branch 'feat/fr-civ-life-reproduction-params' 'PR2: reproduction params'
+Check-Branch 'feat/fr-civ-life-labor-economy' 'PR3: labor-economy'
+Check-Branch 'feat/fr-civ-life-trace-matrix' 'PR4: trace matrix'
+
+Push-Location $base
+cmd /c "git checkout main 2>nul"
+Pop-Location
+Write-Host ""
+Write-Host "===== verification complete ====="

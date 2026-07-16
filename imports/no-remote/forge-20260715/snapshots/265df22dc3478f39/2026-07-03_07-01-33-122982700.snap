@@ -1,0 +1,17 @@
+@echo off
+setlocal
+cd /d "E:\lanes\AgilePlus-verify"
+echo === HEAD commit ===
+git -c color.ui=never show --no-patch --pretty=fuller HEAD
+echo.
+echo === Total commits ===
+git -c color.ui=never rev-list --count HEAD
+echo.
+echo === Earliest 5 (oldest first) ===
+git -c color.ui=never log --all --reverse --pretty=format:"^| %H | %ai | %s" > tmp_first.txt
+powershell -NoProfile -Command "Get-Content tmp_first.txt -TotalCount 5"
+echo.
+echo === Latest 10 ===
+git -c color.ui=never log --all --pretty=format:"^| %H | %ai | %s" > tmp_last.txt
+powershell -NoProfile -Command "Get-Content tmp_last.txt -TotalCount 10"
+del /q tmp_first.txt tmp_last.txt 2>NUL

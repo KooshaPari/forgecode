@@ -1,0 +1,6 @@
+@echo off
+set CARGO_TARGET_DIR=E:\cargo-target\watch-cli
+if not exist "%CARGO_TARGET_DIR%" mkdir "%CARGO_TARGET_DIR%"
+cd /d C:\Users\koosh\Dev\Civis\.worktrees\wt-watch-cli
+cargo clippy -p civ-watch -p civis-cli --all-targets --no-deps --message-format=short > .clippy_out.txt 2> .clippy_err.txt
+echo DONE %ERRORLEVEL% > .clippy_done.txt

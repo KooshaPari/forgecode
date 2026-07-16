@@ -1,0 +1,10 @@
+import json
+d = json.load(open('docs/audits/fr-matrix.json', encoding='utf-8'))
+rows = d['rows']
+cand = [r for r in rows if r.get('status')=='SPEC-ONLY' and r.get('test_refs') and not r.get('code_refs') and r['id'].startswith('FR-CIV-AGENTS')]
+print("=== FR-CIV-AGENTS (", len(cand), ") ===")
+for r in cand:
+    print(f"{r['id']}")
+    print(f"  tests: {r['test_refs']}")
+    print(f"  spec: {r.get('spec')}")
+    print()

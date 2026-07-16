@@ -1,0 +1,23 @@
+$repos = @(
+    "KooshaPari/kvirtualstage",
+    "KooshaPari/kmobile",
+    "KooshaPari/mobile-cli",
+    "KooshaPari/Eidolon",
+    "KooshaPari/playcua",
+    "KooshaPari/phenotype-journeys",
+    "kooshapari/agileplus",
+    "KooshaPari/Dino-fork"
+)
+$ansi = [regex]'\x1B\[[0-9;]*[mGKHfABCDEsu]'
+foreach ($r in $repos) {
+    $output = & gh api "repos/$r/commits/HEAD" 2>&1
+    $raw = (($output -join "`n") -replace $ansi, '').Trim()
+    try {
+        $j = $raw | ConvertFrom-Json
+        $lines = $j.commit.message -split "[`r`n]+"
+        $msg = $lines[0]
+        Write-Output "REPO=$r|SHA=$($j.sha)|DATE=$($j.commit.author.date)|MSG=$msg"
+    } catch {
+        Write-Output "REPO=$r|ERROR=$($_.Exception.Message)"
+    }
+}

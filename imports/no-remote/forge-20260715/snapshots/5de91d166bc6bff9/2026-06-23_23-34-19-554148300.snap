@@ -1,0 +1,32 @@
+## Summary
+Repin two dead GitHub Actions SHAs so the `Multi-ecosystem dependency audit` and `cargo-deny & go-mod check` workflows can resolve their setup actions on `main`.
+
+## Context
+The most recent CI run on `main` (#28062557392 and #28062557429) failed at the "Set up job" step with `Unable to resolve action … unable to find version <sha>` annotations on two pinned action references:
+
+- `actions/setup-node@1d0ff469b7ec7b138cb3bdcbe74e5672f63d3013` (`# v4`) in `Multi-ecosystem dependency audit` → `npm audit (Node)`
+- `actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496718a5831` (`# v5`) in `cargo-deny & go-mod check` → `go mod check`
+
+Both SHAs no longer resolve on the Actions runner, which is the same class of failure that the previous commit (`5feb611 — ci: repin dead actions/checkout SHAs to @v4`) fixed for `actions/checkout`. This PR completes the same hygiene for the remaining dead setup SHAs, keeping the pinning discipline intact (only the SHA + version comment change).
+
+## Changes
+- `.github/workflows/audit.yml:74` — `actions/setup-node` repinned to `49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0`
+- `.github/workflows/deny.yml:60` — `actions/setup-go` repinned to `40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0`
+
+Both SHAs were resolved against `repos/actions/setup-{node,go}/git/matching-refs/tags/v{4,5}` for the latest matching major, preserving the original major-version policy.
+
+## Testing
+1. Push to `fix/wave8-tasken-ci` (done).
+2. Re-run the failed workflows on the PR via the **Run workflow** dropdown, or wait for the PR-triggered `pull_request` runs.
+3. Expected: the `npm audit (Node)` job in `Multi-ecosystem dependency audit` and the `go mod check` job in `cargo-deny & go-mod check` now pass `Set up job` and proceed to their actual work.
+
+Manual verification of the new SHAs:
+```bash
+gh api repos/actions/setup-node/git/matching-refs/tags/v4 | jq -r '.[] | "\(.ref) -> \(.object.sha)"'
+gh api repos/actions/setup-go/git/matching-refs/tags/v5 | jq -r '.[] | "\(.ref) -> \(.object.sha)"'
+```
+
+## Links
+- Failing runs: [Multi-ecosystem dependency audit #28062557392](https://github.com/KooshaPari/Tasken/actions/runs/28062557392), [cargo-deny & go-mod check #28062557429](https://github.com/KooshaPari/Tasken/actions/runs/28062557429)
+- Prior same-class fix: commit `5feb611` (PR #60) — `actions/checkout` repin
+- Wave: 8 / Tasken CI red

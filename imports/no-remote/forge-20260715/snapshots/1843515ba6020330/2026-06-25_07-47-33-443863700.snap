@@ -1,0 +1,24 @@
+## Summary
+Add cost-to-complete estimation to the DAG renderer, showing per-unit estimated hours, color-coded nodes by effort, and a collapsible summary panel with breakdowns by unit type and status.
+
+## Context
+The DAG foundation epic (epic_F) needs effort tracking to help plan and monitor work. This implements a cost model that assigns default hours per unit type (render=2h, audit=4h, spec=3h, etc.), computes total estimated effort, and tracks actual vs estimated variance when actual hours are provided in the DAG data JSON.
+
+## Changes
+- **Cost model** (`src/lib/dag/cost.ts`): Defines default hours per unit type, effort tier classification (small/medium/large), and a `computeCostSummary` function that aggregates estimates by unit type, by status, and overall totals with variance
+- **DAG page update** (`src/pages/dag/index.astro`): Adds a collapsible cost summary panel showing breakdowns by unit type and status, an effort legend, per-node cost labels (estimated + actual hours), and color-coded borders/effort badges (green=small, yellow=medium, red=large)
+- **Data model** (`data/dag-data.json`): All 15 nodes now have explicit `estimatedHours` and `actualHours` fields with realistic values
+- **Type definitions** (`src/lib/dag/types.ts`): Added `CostByType`, `CostSummary`, and `UnitTypeDef` interfaces
+- **Live updates**: Client-side script updates cost displays when nodes change via F9 event simulation
+
+## Testing
+```bash
+cd sites/projects-landing
+bun test
+```
+
+All 29 F28 cost tests pass, covering:
+- Cost model constants and structure
+- Effort tier classification (boundary values, null handling)
+- `estimatedHoursFor` fallback logic
+- `computeCostSummary` aggregation (totals, variance, by-type, by-status, empty data, missing unit types, custom unit types)

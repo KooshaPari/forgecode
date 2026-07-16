@@ -1,0 +1,15 @@
+$ErrorActionPreference = 'Stop'
+Set-Location 'C:\Users\koosh\Civis'
+
+# Build cred input
+$in = "protocol=https`nhost=github.com`n`n"
+$in | Out-File -FilePath _cred_in.txt -Encoding ASCII -NoNewline
+
+Write-Host "--- cred_in.txt ---"
+Get-Content _cred_in.txt
+Write-Host "--- end ---"
+
+# Restore global helper, try fill
+$result = git credential fill < _cred_in.txt 2>&1
+Write-Host "RESULT:"
+Write-Host $result

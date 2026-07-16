@@ -1,0 +1,106 @@
+/**
+ * Admin endpoint: GET /api/v1/admin/budgets/[sloId]
+ *
+ * Surface a single SLO's error budget detail: consumed minutes,
+ * remaining minutes, burn rates over 1h/6h/24h/72h, and live
+ * burn-rate alert evaluations.
+ *
+ * Read-only, gated by the `manage` API-key scope (see
+ * `requireManagementAuth`).
+ *
+ * Response shape (200):
+ *   {
+ *     budget: BudgetDetailEntry,
+ *     alerts: BurnRateAlert[],
+ *     requestId, traceparent
+ *   }
+ *
+ * Response shape (404):
+ *   { error: { code: "budget_not_found", message, requestId, details } }
+ */
+
+import { NextRequest } from "next/server";
+import { requireManagementAuth } from "@/lib/api/requireManagementAuth";
+import {
+  createErrorResponseStatus,
+  createErrorResponseFromUnknown,
+} from "@/lib/api/errorResponse";
+import { withProxySpan } from "@/lib/observability/trace";
+import {
+  listActiveBudgets,
+  type ErrorBudgetSnapshot,
+  type ErrorBudgetStatus,
+} from "@/lib/observability/budget";
+import {
+  evaluateBurnRateAlerts,
+  type BurnRateAlert,
+} from "@/lib/observability/burnRateAlerts";
+import { SLO_CATALOG } from "../../../slos/route";
+
+export interface BudgetDetailEntry extends ErrorBudgetSnapshot {
+  readonly slo_objective: string | null;
+  readonly status: ErrorBudgetStatus;
+}
+
+export interface BudgetDetailResponse {
+  readonly budget: BudgetDetailEntry;
+  readonly alerts: BurnRateAlert[];
+  readonly requestId: string;
+  readonly traceparent: string;
+}
+
+export async function GET(
+  request: NextRequest,
+  ctx: { params: Promise<{ sloId: string }> },
+): Promise<Response> {
+  const authError = await requireManagementAuth(request);
+  if (authError) return authError;
+
+  const { sloId } = await ctx.params;
+
+  return withProxySpan("admin.getBudget", async (span) => {
+    try {
+      const budget = listActiveBudgets().find((b) => b.slo_id === sloId);
+      if (!budget) {
+        return createErrorResponse(
+          "budget_not_found",
+          `No error budget has been recorded for SLO '${sloId}'.`,
+          404,
+          { requestId: span.traceId, details: { sloId } },
+        );
+      }
+
+      const objective =
+        SLO_CATALOG.find((s) => s.id === sloId)?.objective ?? null;
+
+      const detail: BudgetDetailEntry = {
+        ...budget,
+        slo_objective: objective,
+        status: budget.status,
+      };
+
+      const alerts = evaluateBurnRateAlerts(budget);
+
+      const body: BudgetDetailResponse = {
+        budget: detail,
+        alerts,
+        requestId: span.traceId,
+        traceparent: span.traceparent,
+      };
+
+      return Response.json(body, {
+        status: 200,
+        headers: {
+          traceparent: span.traceparent,
+          "x-request-id": span.traceId,
+        },
+      });
+    } catch (error) {
+      return createErrorResponseFromUnknown(
+        error,
+        "Failed to load budget detail",
+        { requestId: span.traceId, details: { sloId } },
+      );
+    }
+  });
+}

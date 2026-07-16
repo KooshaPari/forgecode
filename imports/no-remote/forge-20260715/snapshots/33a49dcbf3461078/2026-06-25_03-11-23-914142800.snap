@@ -1,0 +1,73 @@
+using System;
+using System.IO;
+using FluentAssertions;
+using WorldSphereMod;
+using WorldSphereMod;
+using WorldSphereMod.Rig;
+using Xunit;
+
+namespace WorldSphereMod.Tests.E2E
+{
+    public class SkeletalRigVariantInvariantsTests
+    {
+        // Tests query the Constants.ActorRigTypes dictionary directly rather than
+        // asserting on inline ["human"] = RigType.Humanoid source syntax,
+        // because Constants.cs populates the registry via the AddRigGroup helper.
+
+        [Theory]
+        [InlineData("human", new[] { "Humanoid", "HumanoidVariant" })]
+        [InlineData("villager", new[] { "Humanoid" })]
+        [InlineData("swordsman", new[] { "Humanoid" })]
+        [InlineData("archer", new[] { "Humanoid" })]
+        [InlineData("mage", new[] { "Humanoid", "HumanoidVariant" })]
+        [InlineData("orc", new[] { "Humanoid", "HumanoidVariant" })]
+        [InlineData("elf", new[] { "Humanoid", "HumanoidVariant" })]
+        [InlineData("dwarf", new[] { "Humanoid" })]
+        [InlineData("goblin", new[] { "Humanoid" })]
+        [InlineData("skeleton", new[] { "Undead" })]
+        [InlineData("zombie", new[] { "Undead" })]
+        [InlineData("bandit", new[] { "Humanoid" })]
+        [InlineData("necromancer", new[] { "Humanoid", "HumanoidVariant" })]
+        [InlineData("druid", new[] { "Humanoid", "HumanoidVariant" })]
+        [InlineData("king", new[] { "Humanoid" })]
+        [InlineData("warrior", new[] { "Humanoid" })]
+        [InlineData("plague_doctor", new[] { "Humanoid", "HumanoidVariant" })]
+        [InlineData("demon", new[] { "Demonic" })]
+        [InlineData("angel", new[] { "Celestial" })]
+        [InlineData("whiteMage", new[] { "Humanoid", "HumanoidVariant" })]
+        [InlineData("evilMage", new[] { "Humanoid", "HumanoidVariant" })]
+        public void ActorRigTypes_resolves_expected_rig_variant(string actorId, string[] allowedRigTypes)
+        {
+            Assert.True(
+                Constants.ActorRigTypes.ContainsKey(actorId),
+                $"ActorRigTypes missing entry: {actorId}"
+            );
+
+            var rig = Constants.ResolveActorRig(actorId);
+            Assert.NotNull(rig);
+
+            var rigName = rig.ToString();
+            Assert.Contains(rigName, allowedRigTypes);
+        }
+
+        [Fact]
+        public void ActorRigTypes_contains_all_expected_actor_ids()
+        {
+            var expectedIds = new[]
+            {
+                "human", "villager", "swordsman", "archer", "mage",
+                "orc", "elf", "dwarf", "goblin", "skeleton",
+                "zombie", "bandit", "necromancer", "druid", "king",
+                "warrior", "plague_doctor", "demon", "angel", "whiteMage", "evilMage"
+            };
+
+            foreach (var id in expectedIds)
+            {
+                Assert.True(
+                    Constants.ActorRigTypes.ContainsKey(id),
+                    $"ActorRigTypes missing expected entry: {id}"
+                );
+            }
+        }
+    }
+}

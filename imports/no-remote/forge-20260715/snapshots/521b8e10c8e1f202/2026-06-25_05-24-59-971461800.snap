@@ -1,0 +1,94 @@
+/**
+ * Structured logger backed by the OpenTelemetry log pipeline.
+ *
+ * Wraps the OTel logger (when telemetry is enabled) and falls back to
+ * `console.*` when it is not. The logger is intentionally tiny — it adds
+ * the four standard levels and supports attribute passing. It does NOT
+ * replace `pino` or the existing `consoleInterceptor`; it augments them.
+ *
+ * @module observability/logger
+ */
+
+import type { Logger } from "./otel.ts";
+import { getPreboundMetrics } from "./metrics.ts";
+
+type Level = "info" | "warn" | "error" | "debug";
+
+let BOUND_LOGGER: Logger | null = null;
+
+/**
+ * Bind the logger used by the rest of the codebase. Re-binding replaces the
+ * existing handle (useful in tests).
+ *
+ * @param logger - The OTel logger (or null to detach).
+ */
+export function bindLogger(logger: Logger | null): void {
+  BOUND_LOGGER = logger;
+}
+
+/**
+ * Emit a structured log at the info level. Falls back to `console.info`
+ * when telemetry is not bound.
+ */
+export function logInfo(message: string, attrs?: Record<string, unknown>): void {
+  emit("info", message, attrs);
+}
+
+/** Emit a warn-level log. Falls back to `console.warn`. */
+export function logWarn(message: string, attrs?: Record<string, unknown>): void {
+  emit("warn", message, attrs);
+}
+
+/** Emit an error-level log. Falls back to `console.error`. */
+export function logError(message: string, attrs?: Record<string, unknown>): void {
+  emit("error", message, attrs);
+}
+
+/** Emit a debug-level log. Falls back to `console.debug`. */
+export function logDebug(message: string, attrs?: Record<string, unknown>): void {
+  emit("debug", message, attrs);
+}
+
+function emit(level: Level, message: string, attrs?: Record<string, unknown>): void {
+  if (BOUND_LOGGER) {
+    BOUND_LOGGER[level](message, attrs as never);
+    return;
+  }
+  const msg = formatLine(level, message, attrs);
+  const fn = level === "error" ? console.error : level === "warn" ? console.warn : level === "debug" ? console.debug : console.info;
+  fn(msg);
+}
+
+/**
+ * Read the current logger (or null when not bound). Test-only — production
+ * code should call `logInfo`/`logWarn`/etc directly.
+ */
+export function getBoundLogger(): Logger | null {
+  return BOUND_LOGGER;
+}
+
+/**
+ * Format a log line as `<ISO-timestamp> [<level>] <message> {attrs-json}`.
+ * Used for the console fallback path so logs stay grep-friendly even when
+ * telemetry is disabled.
+ */
+function formatLine(level: Level, message: string, attrs?: Record<string, unknown>): string {
+  const ts = new Date().toISOString();
+  const attrStr = attrs && Object.keys(attrs).length > 0 ? " " + JSON.stringify(attrs) : "";
+  return `${ts} [${level.toUpperCase()}] ${message}${attrStr}`;
+}
+
+/**
+ * Convenience wrapper: increment the `errors` counter and emit a structured
+ * error log in a single call. Returns the formatted message so callers can
+ * re-throw it if they want.
+ *
+ * @param message - Human-readable error description.
+ * @param attrs - Attribute map (typically includes `error.type`).
+ * @returns The formatted message.
+ */
+export function reportError(message: string, attrs?: Record<string, unknown>): string {
+  getPreboundMetrics().errors.add(1, attrs ?? {});
+  logError(message, attrs);
+  return message;
+}

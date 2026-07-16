@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Add statusHistory to each node in dag-data.json based on auditLog data."""
+import json
+from datetime import datetime, timedelta
+
+FILE = r"C:\Users\koosh\phenotype-landing\sites\projects-landing\data\dag-data.json"
+
+with open(FILE, "r", encoding="utf-8") as f:
+    data = json.load(f)
+
+TODAY = "2026-06-25"
+
+for node in data["nodes"]:
+    audit = node.get("auditLog", [])
+    history = []
+    added_initial = False
+
+    if audit:
+        # Determine date for initial entry (1 day before first audit entry)
+        first_date_str = audit[0]["date"]
+        try:
+            first_dt = datetime.strptime(first_date_str, "%Y-%m-%d")
+        except ValueError:
+            first_dt = datetime.now()
+        init_dt = first_dt - timedelta(days=1)
+        init_date_str = init_dt.strftime("%Y-%m-%d")
+
+        # Add initial creation entry if the first audit entry doesn't start at "initial"
+        # The starting status is the "from" of the first audit entry
+        initial_status = audit[0]["from"]
+        history.append({
+            "date": init_date_str,
+            "from": "initial",
+            "to": initial_status,
+            "note": "Node created"
+        })
+        added_initial = True
+
+        # Copy all audit entries
+        for entry in audit:
+            history.append({
+                "date": entry["date"],
+                "from": entry["from"],
+                "to": entry["to"],
+                "note": entry["note"]
+            })
+    else:
+        # No auditLog — single entry reflecting current status as initial state
+        current_status = node.get("status", "pending")
+        history.append({
+            "date": TODAY,
+            "from": "initial",
+            "to": current_status,
+            "note": "Initial state"
+        })
+
+    node["statusHistory"] = history
+
+# Write back
+with open(FILE, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+
+print("statusHistory added to all nodes.")

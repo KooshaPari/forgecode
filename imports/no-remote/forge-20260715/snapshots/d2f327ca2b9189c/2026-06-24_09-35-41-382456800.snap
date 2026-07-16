@@ -1,0 +1,425 @@
+#!/usr/bin/env bash
+# grade.sh — Absorption-justification audit grading engine
+# Usage: ./grade.sh <audit-markdown-path>
+#
+# Grades a single absorption-justification markdown against the 7-pillar
+# schema defined in registry/audit-absorption-justification/schema.json
+# (max=14). Emits a JSON report on stdout. Always exits 0.
+
+set -u
+
+# Locate project root by searching upward from the audit file.
+AUDIT="$1"
+
+# --- Argument validation -----------------------------------------------------
+if [[ $# -ne 1 ]]; then
+  echo "Usage: $0 <audit-markdown-path>" >&2
+  exit 0
+fi
+
+if [[ ! -f "$AUDIT" ]]; then
+  echo "Error: audit file not found: $AUDIT" >&2
+  exit 0
+fi
+
+AUDIT_DIR="$(cd "$(dirname "$AUDIT")" 2>/dev/null && pwd || dirname "$AUDIT")"
+PROJECT_ROOT=""
+candidate="$AUDIT_DIR"
+while [[ -n "$candidate" && "$candidate" != "/" && "$candidate" != "." ]]; do
+  if [[ -d "$candidate/registry" ]]; then
+    PROJECT_ROOT="$candidate"
+    break
+  fi
+  candidate="$(dirname "$candidate")"
+done
+[[ -z "$PROJECT_ROOT" ]] && PROJECT_ROOT="$(pwd)"
+
+REGISTRY="$PROJECT_ROOT/registry"
+PROJECTS_DIR="$REGISTRY/projects"
+
+# --- Project name extraction -------------------------------------------------
+PROJECT=""
+H1=$(grep -E '^#[[:space:]]+' "$AUDIT" 2>/dev/null | head -1 || true)
+if [[ -n "$H1" ]]; then
+  PROJECT=$(echo "$H1" \
+    | sed -E 's/^#[[:space:]]+//' \
+    | sed -E 's/[[:space:]]*[—-][[:space:]]*[Aa]bsorption.*$//' \
+    | sed -E 's/[[:space:]]*[Aa]bsorption.*$//' \
+    | xargs)
+fi
+if [[ -z "$PROJECT" ]]; then
+  PROJECT=$(grep -E '\*\*Repository:\*\*' "$AUDIT" 2>/dev/null | head -1 \
+    | sed -E 's/.*\*\*Repository:\*\*[[:space:]]*`?//; s/`[[:space:]]*$//; s/[[:space:]].*$//' \
+    | xargs || true)
+fi
+[[ -z "$PROJECT" ]] && PROJECT=$(basename "$AUDIT" .md)
+
+# --- Pillar 1: manifest-completeness (weight 3) -----------------------------
+# 5 mandatory headings required. Optional sections boost the score.
+P1_SCORE=0
+P1_STATUS="fail"
+P1_DETAIL=""
+
+MANDATORY=("## Source" "## Target" "## Status" "## Last-Resort-Exceptions" "## Restore-Command")
+OPTIONAL=("## Confidence" "## Source Inventory Summary" "## Branch Inventory Summary" "## Target Parity Summary" "## Gaps and Exceptions" "## Final Recommendation")
+
+mandatory_found=0
+for h in "${MANDATORY[@]}"; do
+  if grep -qF -- "$h" "$AUDIT" 2>/dev/null; then
+    mandatory_found=$((mandatory_found + 1))
+  fi
+done
+
+optional_found=0
+for h in "${OPTIONAL[@]}"; do
+  if grep -qF -- "$h" "$AUDIT" 2>/dev/null; then
+    optional_found=$((optional_found + 1))
+  fi
+done
+
+if [[ $mandatory_found -eq 5 ]]; then
+  if [[ $optional_found -ge 3 ]]; then
+    P1_SCORE=3
+    P1_STATUS="pass"
+    P1_DETAIL="all 5 mandatory headings present plus $optional_found optional sections"
+  else
+    P1_SCORE=2
+    P1_STATUS="partial"
+    P1_DETAIL="all 5 mandatory headings present but only $optional_found optional sections"
+  fi
+elif [[ $mandatory_found -ge 4 ]]; then
+  P1_SCORE=2
+  P1_STATUS="partial"
+  P1_DETAIL="$mandatory_found/5 mandatory headings present"
+elif [[ $mandatory_found -ge 3 ]]; then
+  P1_SCORE=1
+  P1_STATUS="partial"
+  P1_DETAIL="$mandatory_found/5 mandatory headings present"
+else
+  P1_SCORE=0
+  P1_STATUS="fail"
+  P1_DETAIL="only $mandatory_found/5 mandatory headings present"
+fi
+
+# --- Pillar 2: parity-evidence (weight 3) -----------------------------------
+# Grep for 'Target Evidence' column header in any table; count non-NO_MERIT
+# rows with citation-like content (path:line, commit SHAs, etc.).
+P2_SCORE=0
+P2_STATUS="fail"
+P2_DETAIL=""
+
+if ! grep -qiE 'Target[[:space:]]+Evidence' "$AUDIT" 2>/dev/null; then
+  P2_DETAIL="'Target Evidence' column header not found"
+else
+  # Extract the body of any markdown table that contains 'Target Evidence'
+  # and look for non-NO_MERIT rows with citations.
+  TABLE_BODY=$(awk '
+    /^\|/ {
+      in_table = 1
+      # Strip surrounding pipes, normalize separators
+      print
+      next
+    }
+    in_table && /^$/ { in_table = 0 }
+  ' "$AUDIT")
+
+  # Count rows in the matrix that are not NO_MERIT and have a citation.
+  # A citation looks like: path:line, commit SHA (7+ hex), or a file path.
+  cited_rows=$(echo "$TABLE_BODY" | awk -F'|' '
+    function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
+    /^\|/ {
+      for (i = 1; i <= NF; i++) {
+        cell = trim($i)
+        if (cell ~ /[A-Za-z0-9_./-]+\.[A-Za-z0-9]+:[0-9]+/ \
+         || cell ~ /\b[0-9a-f]{7,40}\b/ \
+         || cell ~ /[A-Za-z0-9_./-]+\.(rs|ts|py|sh|md|json|toml|ps1|js|go|cs)\b/) {
+          print "CITE"
+          next
+        }
+      }
+    }
+  ' | wc -l | tr -d ' ')
+
+  # Also count rows explicitly marked NO_MERIT.
+  nomerit_rows=$(grep -ciE 'NO_MERIT' "$AUDIT" 2>/dev/null || echo 0)
+
+  if [[ $cited_rows -ge 5 ]]; then
+    P2_SCORE=3
+    P2_STATUS="pass"
+    P2_DETAIL="Target Evidence column present; $cited_rows cited rows found"
+  elif [[ $cited_rows -ge 1 ]]; then
+    P2_SCORE=2
+    P2_STATUS="partial"
+    P2_DETAIL="Target Evidence column present but only $cited_rows cited rows"
+  else
+    P2_SCORE=1
+    P2_STATUS="partial"
+    P2_DETAIL="Target Evidence column header present only (no row citations)"
+  fi
+fi
+
+# --- Pillar 3: branch-coverage (weight 2) -----------------------------------
+# Grep for BRANCH_INVENTORY section AND count branch rows in any matrix table.
+P3_SCORE=0
+P3_STATUS="fail"
+P3_DETAIL=""
+
+if ! grep -qiE 'BRANCH_INVENTORY' "$AUDIT" 2>/dev/null; then
+  P3_DETAIL="BRANCH_INVENTORY section not found"
+else
+  # Count branch rows in tables. A branch row mentions a branch name and
+  # sits in a pipe-delimited table line.
+  branch_rows=$(grep -ciE '\|[^|]*branch[^|]*\|' "$AUDIT" 2>/dev/null || echo 0)
+  # Fallback heuristic: any pipe-table line containing a slash or 'feature/'
+  # or 'fix/' or 'release/' pattern that looks like a git branch.
+  if [[ $branch_rows -lt 3 ]]; then
+    branch_rows=$(grep -ciE '^\|[[:space:]]*[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+' "$AUDIT" 2>/dev/null || echo 0)
+  fi
+
+  if [[ $branch_rows -ge 3 ]]; then
+    P3_SCORE=2
+    P3_STATUS="pass"
+    P3_DETAIL="BRANCH_INVENTORY present with $branch_rows branch rows"
+  else
+    P3_SCORE=1
+    P3_STATUS="partial"
+    P3_DETAIL="BRANCH_INVENTORY present without branch matrix rows ($branch_rows found)"
+  fi
+fi
+
+# --- Pillar 4: last-resort-justification (weight 2) -------------------------
+P4_SCORE=0
+P4_STATUS="fail"
+P4_DETAIL=""
+
+if ! grep -qiE 'LAST_RESORT_EXCEPTIONS|Last-Resort-Exceptions' "$AUDIT" 2>/dev/null; then
+  P4_DETAIL="Last-Resort-Exceptions section not found"
+else
+  # Count rebuttal markers anywhere in the document.
+  rebuttals=0
+  grep -qiE 'Rebuttal|rebuttal:|Rebutted' "$AUDIT" 2>/dev/null && rebuttals=$((rebuttals + 1))
+  # Per-argument prose: look for numbered or bulleted points that frame a
+  # counter-argument ("however", "but", "yet", "still", "nonetheless",
+  # "remains", "unresolved", "outstanding", "trade-off").
+  prose_hits=$(grep -ciE '\b(however|nonetheless|nevertheless|unresolved|outstanding|trade-?off|residual|remain[s]?)\b' "$AUDIT" 2>/dev/null || echo 0)
+  if [[ $prose_hits -ge 1 ]]; then
+    rebuttals=$((rebuttals + 1))
+  fi
+  # Each top-level bullet that contains 'not absorb' or 'cannot absorb' counts
+  # as an additional per-argument prose marker.
+  absorb_hits=$(grep -ciE 'not[[:space:]]+absorb|cannot[[:space:]]+absorb|can.t[[:space:]]+absorb' "$AUDIT" 2>/dev/null || echo 0)
+  if [[ $absorb_hits -ge 1 ]]; then
+    rebuttals=$((rebuttals + 1))
+  fi
+
+  if [[ $rebuttals -ge 3 ]]; then
+    P4_SCORE=2
+    P4_STATUS="pass"
+    P4_DETAIL="Last-Resort-Exceptions section with $rebuttals rebuttal markers"
+  elif [[ $rebuttals -ge 1 ]]; then
+    P4_SCORE=1
+    P4_STATUS="partial"
+    P4_DETAIL="Last-Resort-Exceptions section present with $rebuttals rebuttal marker(s)"
+  else
+    P4_SCORE=0
+    P4_STATUS="fail"
+    P4_DETAIL="Last-Resort-Exceptions section present without rebuttal markers"
+  fi
+fi
+
+# --- Pillar 5: restore-command-validity (weight 1) -------------------------
+P5_SCORE=0
+P5_STATUS="fail"
+P5_DETAIL=""
+
+if grep -qiE 'mv[[:space:]]+\.archive/|git[[:space:]]+clone|git[[:space:]]+bundle|sha-?256' "$AUDIT" 2>/dev/null; then
+  P5_SCORE=1
+  P5_STATUS="pass"
+  P5_DETAIL="restore command pattern found (mv .archive/, git clone, git bundle, or sha256)"
+else
+  P5_DETAIL="no restore command pattern found"
+fi
+
+# --- Pillar 6: registry-integration (weight 2) ------------------------------
+P6_SCORE=0
+P6_STATUS="fail"
+P6_DETAIL=""
+
+PROJECT_LOWER=$(echo "$PROJECT" | tr '[:upper:]' '[:lower:]')
+CARD=""
+for c in "$PROJECT" "$PROJECT_LOWER"; do
+  if [[ -f "$PROJECTS_DIR/$c.json" ]]; then
+    CARD="$PROJECTS_DIR/$c.json"
+    break
+  fi
+done
+
+if [[ -n "$CARD" && -f "$CARD" ]]; then
+  if grep -qiE '"status"[[:space:]]*:[[:space:]]*"(archived|active)"' "$CARD" 2>/dev/null; then
+    P6_SCORE=2
+    P6_STATUS="pass"
+    P6_DETAIL="project card $PROJECT.json found with valid status"
+  else
+    P6_SCORE=1
+    P6_STATUS="partial"
+    P6_DETAIL="project card $PROJECT.json found with wrong status"
+  fi
+else
+  P6_DETAIL="no project card found for $PROJECT"
+fi
+
+# --- Pillar 7: deletion-gate-tooling-coverage (weight 1) --------------------
+P7_SCORE=0
+P7_STATUS="fail"
+P7_DETAIL=""
+
+if grep -qiE 'repo-delete-gate|already[[:space:]]+404|404[[:space:]]+Not[[:space:]]+Found|gate[[:space:]]+not[[:space:]]+required' "$AUDIT" 2>/dev/null; then
+  P7_SCORE=1
+  P7_STATUS="pass"
+  P7_DETAIL="deletion-gate tooling reference or justification found"
+else
+  P7_DETAIL="no deletion-gate reference or justification found"
+fi
+
+# --- Aggregate ---------------------------------------------------------------
+SCORE=$((P1_SCORE + P2_SCORE + P3_SCORE + P4_SCORE + P5_SCORE + P6_SCORE + P7_SCORE))
+MAX=14
+
+if [[ $MAX -gt 0 ]]; then
+  # 2-decimal percentage: score * 10000 / max
+  PCT_4D=$(( SCORE * 10000 / MAX ))
+  PCT_INT=$(( PCT_4D / 100 ))
+  PCT_REM=$(( PCT_4D - PCT_INT * 100 ))
+  PCT_STR=$(printf '%d.%02d' "$PCT_INT" "$PCT_REM")
+else
+  PCT_STR="0.00"
+fi
+
+# Grade boundaries (L0..L4) per schema.json.
+# L4: 11.5-14 (>=82.14%)
+# L3: 10-11.49 (71.42-82.13%)
+# L2: 7-9.99  (50.00-71.41%)
+# L1: 3-6.99  (21.43-49.99%)
+# L0: 0-2.99  (<=21.42%)
+if [[ $PCT_INT -ge 82 && $PCT_REM -ge 14 ]] || [[ $PCT_INT -ge 83 ]]; then
+  GRADE="L4"
+  CLASSIFICATION="Excellent: Absorption fully justified"
+elif [[ $PCT_INT -ge 71 && $PCT_REM -ge 42 ]] || [[ $PCT_INT -ge 72 ]]; then
+  GRADE="L3"
+  CLASSIFICATION="On Track: Minor gaps in justification"
+elif [[ $PCT_INT -ge 50 ]]; then
+  GRADE="L2"
+  CLASSIFICATION="Needs Improvement: Substantive gaps"
+elif [[ $PCT_INT -ge 21 && $PCT_REM -ge 43 ]] || [[ $PCT_INT -ge 22 ]]; then
+  GRADE="L1"
+  CLASSIFICATION="Critical Foundation Needed"
+else
+  GRADE="L0"
+  CLASSIFICATION="Unacceptable: Absorption not justified"
+fi
+
+# Timestamp in ISO-8601 UTC.
+TS=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u)
+
+# --- JSON output -------------------------------------------------------------
+# Minimal JSON escaper.
+json_str() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/ }"
+  s="${s//$'\r'/ }"
+  s="${s//$'\t'/ }"
+  printf '%s' "$s"
+}
+
+P1_NAME="manifest-completeness"
+P2_NAME="parity-evidence"
+P3_NAME="branch-coverage"
+P4_NAME="last-resort-justification"
+P5_NAME="restore-command-validity"
+P6_NAME="registry-integration"
+P7_NAME="deletion-gate-tooling-coverage"
+
+cat <<JSON
+{
+  "schema": "absorption-justification-audit",
+  "schema_version": "1.0.0",
+  "project": "$(json_str "$PROJECT")",
+  "audit_file": "$(json_str "$AUDIT")",
+  "score": $SCORE,
+  "max": $MAX,
+  "percentage": $PCT_STR,
+  "grade": "$GRADE",
+  "classification": "$(json_str "$CLASSIFICATION")",
+  "pillars": [
+    {
+      "id": 1,
+      "name": "$(json_str "$P1_NAME")",
+      "weight": 3,
+      "score": $P1_SCORE,
+      "max": 3,
+      "status": "$P1_STATUS",
+      "detail": "$(json_str "$P1_DETAIL")"
+    },
+    {
+      "id": 2,
+      "name": "$(json_str "$P2_NAME")",
+      "weight": 3,
+      "score": $P2_SCORE,
+      "max": 3,
+      "status": "$P2_STATUS",
+      "detail": "$(json_str "$P2_DETAIL")"
+    },
+    {
+      "id": 3,
+      "name": "$(json_str "$P3_NAME")",
+      "weight": 2,
+      "score": $P3_SCORE,
+      "max": 2,
+      "status": "$P3_STATUS",
+      "detail": "$(json_str "$P3_DETAIL")"
+    },
+    {
+      "id": 4,
+      "name": "$(json_str "$P4_NAME")",
+      "weight": 2,
+      "score": $P4_SCORE,
+      "max": 2,
+      "status": "$P4_STATUS",
+      "detail": "$(json_str "$P4_DETAIL")"
+    },
+    {
+      "id": 5,
+      "name": "$(json_str "$P5_NAME")",
+      "weight": 1,
+      "score": $P5_SCORE,
+      "max": 1,
+      "status": "$P5_STATUS",
+      "detail": "$(json_str "$P5_DETAIL")"
+    },
+    {
+      "id": 6,
+      "name": "$(json_str "$P6_NAME")",
+      "weight": 2,
+      "score": $P6_SCORE,
+      "max": 2,
+      "status": "$P6_STATUS",
+      "detail": "$(json_str "$P6_DETAIL")"
+    },
+    {
+      "id": 7,
+      "name": "$(json_str "$P7_NAME")",
+      "weight": 1,
+      "score": $P7_SCORE,
+      "max": 1,
+      "status": "$P7_STATUS",
+      "detail": "$(json_str "$P7_DETAIL")"
+    }
+  ],
+  "timestamp": "$(json_str "$TS")"
+}
+JSON
+
+# Exit 0 always per spec.
+exit 0

@@ -1,0 +1,7 @@
+with open(r'C:\Users\koosh\filelist.txt') as f:
+    lines = [l.strip() for l in f if l.strip()]
+print('Total files:', len(lines))
+build_crate = [l for l in lines if r'\crates\build\' in l]
+print('build crate files ({}):'.format(len(build_crate)))
+for l in build_crate:
+    print(' ', l)

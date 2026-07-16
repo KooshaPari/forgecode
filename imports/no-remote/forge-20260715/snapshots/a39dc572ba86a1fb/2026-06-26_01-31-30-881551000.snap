@@ -1,0 +1,8 @@
+Set-Location 'C:\Users\koosh\.claude\lanes\substrate-feat-cloud-dispatch'
+$logFile = Join-Path (Get-Location) 'build_output.txt'
+"Starting cargo check at $(Get-Date)" | Out-File -FilePath $logFile -Encoding utf8
+$result = cargo check -p substrate-core -p cloud-cursor -p cloud-kilo -p cloud-codex -p cloud-dispatch-conformance -p driver-cli 2>&1
+$result | Out-File -FilePath $logFile -Encoding utf8 -Append
+$exitCode = $LASTEXITCODE
+"EXIT_CODE=$exitCode" | Out-File -FilePath $logFile -Encoding utf8 -Append
+"Finished at $(Get-Date)" | Out-File -FilePath $logFile -Encoding utf8 -Append

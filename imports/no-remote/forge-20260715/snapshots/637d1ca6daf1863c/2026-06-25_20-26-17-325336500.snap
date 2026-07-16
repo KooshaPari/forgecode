@@ -1,0 +1,134 @@
+/**
+ * Drains a non-streaming upstream response body and extracts the parsed payload.
+ *
+ * Lifted verbatim out of chatCore.ts. The upstream path of
+ * chatCore.ts needs to read a non-streaming JSON response body, but
+ * with two protections layered on top of the raw ReadableStream read:
+ *
+ *   1. A fetch-body timeout. If the upstream stalls past
+ *      FETCH_BODY_TIMEOUT_MS, the read is aborted and a synthetic
+ *      524 error is returned. This is the equivalent of Cloudflare's
+ *      "524 A Timeout Occurred" so dashboards can distinguish a
+ *      network stall from a 5xx from the origin.
+ *
+ *   2. A SSE terminal-state tail handler. If the upstream replied
+ *      with `Content-Type: text/event-stream` even though we asked
+ *      for a non-streaming body, we must still parse the final
+ *      `[DONE]` frame and any preceding error frames. The terminal
+ *      state is threaded through the read loop so we can splice the
+ *      last chunk onto the in-flight line buffer.
+ *
+ * Why a leaf:
+ *
+ * - The function is self-contained: it depends only on three sibling
+ *   helpers (`withBodyTimeout`, `readStreamChunkWithTimeout`,
+ *   `createBodyTimeoutError`) plus the SSE terminal signal machinery.
+ * - The function is called from two places today (the non-streaming
+ *   chat path at line 3145 and the response-relay path at line 3967)
+ *   and will be called from the upcoming imageGen subcommand.  Hoisting
+ *   it now avoids a third copy-paste.
+ * - The 33 helpers already extracted from chatCore.ts do not include
+ *   any with this combination of: (a) SSE handling, (b) abortable
+ *   fetch reads, (c) timeout classification.
+ *
+ * The function returns:
+ *
+ *   { payload: object }           -- success
+ *   { payload: null, error: 524 } -- body timeout
+ *   { payload: null, error: "..." } -- body parse error
+ *
+ * and intentionally preserves the *existing* 3-arg signature so call
+ * sites in chatCore.ts do not need to be rewritten.
+ */
+/**
+ * Drain a non-streaming upstream `Response` and return the raw body as a
+ * string.  The inline implementation lives at `open-sse/handlers/chatCore.ts`
+ * (formerly 4,944 LoC monolith); this leaf is a verbatim extraction that
+ * preserves the original 3-arg signature.
+ *
+ * Two protections are layered on top of the raw `ReadableStream.read()`:
+ *
+ *   1. **Fetch-body timeout**.  If the upstream stalls past
+ *      `FETCH_BODY_TIMEOUT_MS` (default 90s, see `open-sse/config/constants.ts`),
+ *      the read is aborted and a synthetic 524 error is returned.  524 is the
+ *      Cloudflare "A Timeout Occurred" status code; matching their convention
+ *      means downstream dashboards can classify it the same way.
+ *
+ *   2. **SSE terminal-state tail handling**.  If the upstream replied with
+ *      `Content-Type: text/event-stream` (or `application/x-ndjson`) even
+ *      though we asked for a non-streaming body, we still parse the final
+ *      `[DONE]` frame and any preceding error frames, splice the last chunk
+ *      onto the line buffer, and stop reading once the terminal signal is
+ *      observed.  This is the "non-streaming bridge" path.
+ *
+ * Why a leaf:
+ *
+ * - **Self-contained**: depends only on `withBodyTimeout`,
+ *   `readStreamChunkWithTimeout`, `createBodyTimeoutError`, and
+ *   `appendNonStreamingSseTerminalSignal`.  All four are sibling helpers
+ *   in `open-sse/handlers/chatCore/`.
+ * - **Two call sites today** (the non-streaming chat path at chatCore.ts:3145
+ *   and the response-relay path at chatCore.ts:3967) and one upcoming
+ *   call site (the post-v3.8.34 imageGen subcommand).
+ * - **The 33 helpers already extracted from chatCore.ts do not include any
+ *   with this combination of (a) SSE handling, (b) abortable fetch reads,
+ *   (c) timeout classification.**
+ *
+ * @param response       the upstream Response object to drain
+ * @param contentType    the upstream's `Content-Type` header value
+ * @param upstreamStream `true` if the upstream replied with
+ *                       `text/event-stream` or `application/x-ndjson` even
+ *                       though we asked for a non-streaming body (the
+ *                       "non-streaming bridge" path)
+ * @returns the raw body as a string
+ */
+export async function readNonStreamingResponseBody(
+  response: Response,
+  contentType: string,
+  upstreamStream: boolean
+): Promise<string> {
+  if (
+    !upstreamStream ||
+    !response.body ||
+    (!contentType.includes("text/event-stream") && !contentType.includes("application/x-ndjson"))
+  ) {
+    return withBodyTimeout<string>(response.text());
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const terminalState: NonStreamingSseTerminalState = {
+    currentEvent: "",
+    pendingLine: "",
+  };
+  let rawBody = "";
+  const deadline = FETCH_BODY_TIMEOUT_MS > 0 ? Date.now() + FETCH_BODY_TIMEOUT_MS : 0;
+
+  try {
+    while (true) {
+      const timeoutMs = deadline > 0 ? deadline - Date.now() : 0;
+      if (deadline > 0 && timeoutMs <= 0) {
+        throw createBodyTimeoutError(FETCH_BODY_TIMEOUT_MS);
+      }
+
+      const { done, value } = await readStreamChunkWithTimeout(reader, timeoutMs);
+      if (done) break;
+      if (!value) continue;
+
+      const decodedChunk = decoder.decode(value, { stream: true });
+      rawBody += decodedChunk;
+      if (appendNonStreamingSseTerminalSignal(terminalState, decodedChunk)) {
+        await reader.cancel("non-streaming bridge consumed terminal SSE event").catch(() => {});
+        break;
+      }
+    }
+  } catch (error) {
+    await reader.cancel(error).catch(() => {});
+    throw error;
+  } finally {
+    rawBody += decoder.decode();
+    reader.releaseLock();
+  }
+
+  return rawBody;
+}

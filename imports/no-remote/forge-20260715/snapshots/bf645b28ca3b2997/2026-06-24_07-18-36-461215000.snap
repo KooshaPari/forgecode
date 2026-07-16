@@ -1,0 +1,2 @@
+@echo off
+"C:\program files\Git\usr\bin\bash.exe" -c "[[ -f 'C:/Users/koosh/phenotype-registry/audits/absorption-justifications/go-nippon-2026-06-23.md' ]] && echo YES1 || echo NO1; [[ -f '/c/Users/koosh/phenotype-registry/audits/absorption-justifications/go-nippon-2026-06-23.md' ]] && echo YES2 || echo NO2; echo shell=\$BASH_VERSION; echo mount=\$(mount | head -3)"

@@ -1,0 +1,41 @@
+import { projectBudgetSavings } from "./open-sse/services/compression/budgetForecast.ts";
+
+function point(tsMs: number, tokens: number, savedTokens: number) {
+  return { tsMs, tokens, savedTokens };
+}
+
+function constantHistory(n: number, perPointSaved: number, perPointTokens: number, stepMs = 1000) {
+  const start = 1_700_000_000_000;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push(point(start + i * stepMs, perPointTokens, perPointSaved));
+  }
+  return out;
+}
+
+// Check shape detection
+const rates = [];
+for (let i = 0; i < 20; i++) rates.push(100/1000);
+const m = rates.reduce((s,v) => s+v, 0) / rates.length;
+const variance = rates.reduce((s,v) => s + (v-m)**2, 0) / rates.length;
+const stddev = Math.sqrt(variance);
+const cv = stddev / m;
+console.log("m:", m, "variance:", variance, "stddev:", stddev, "cv:", cv);
+console.log("is constant:", cv < 0.15);
+
+// Check actual computation
+const history = constantHistory(20, 100, 1000, 60_000);
+const firstTs = history[0].tsMs;
+const lastTs = history[history.length - 1].tsMs;
+const spanMs = Math.max(1, lastTs - firstTs);
+console.log("spanMs:", spanMs);
+const meanSaved = history.reduce((s, p) => s + p.savedTokens, 0) / history.length;
+console.log("meanSaved per point:", meanSaved);
+const horizonMs = 30 * 60 * 1000;
+console.log("horizonMs:", horizonMs);
+console.log("ratio:", horizonMs / spanMs);
+console.log("linear projection:", meanSaved * (horizonMs / spanMs));
+
+// Actual call
+const r30 = projectBudgetSavings(history, horizonMs);
+console.log("r30:", JSON.stringify(r30));

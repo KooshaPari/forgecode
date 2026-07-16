@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+"""Capture commit date for each archive tag."""
+import subprocess
+
+TAGS = [
+    "archive/CC1-2026-06-11",
+    "archive/CC2-2026-06-11",
+    "archive/CC3-2026-06-11",
+    "archive/CC4-2026-06-11",
+    "archive/QC1-2026-06-11",
+    "archive/QC2-2026-06-11",
+    "archive/QC3-2026-06-11",
+    "archive/QC4-2026-06-11",
+    "archive/SD2-2026-06-11",
+    "archive/SD3-2026-06-11",
+    "archive/SD4-2026-06-11",
+]
+
+with open("audits/branch-clean/evidence/A9-archive-tags.txt", "w") as f:
+    f.write("refname|objectname|commitdate_iso|subject\n")
+    for t in TAGS:
+        sha = subprocess.run(
+            ["git", "rev-parse", t],
+            capture_output=True, text=True
+        ).stdout.strip()
+        out = subprocess.run(
+            ["git", "log", "-1", "--format=%cI|%s", sha],
+            capture_output=True, text=True
+        )
+        f.write(f"{t}|{sha[:7]}|{out.stdout.strip()}\n")
+
+print(open("audits/branch-clean/evidence/A9-archive-tags.txt").read())

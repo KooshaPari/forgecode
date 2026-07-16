@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""Check archive + push state of every KooshaPari repo in scope."""
+import json, subprocess, sys
+
+REPOS = [
+    "Benchora", "portage", "AgilePlus", "pheno-harness", "Tracera",
+    "phenodag", "vibeproxy-monitoring-unified", "phenotype-org-audits",
+    "heliosBench", "phenotype-registry", "nanovms", "PhenoCompose", "BytePort",
+]
+
+print(f"{'repo':32s} | {'archived':8s} | {'default':10s}")
+print("-" * 60)
+
+for r in REPOS:
+    try:
+        # Use a shell command so stdout flushes correctly on Windows
+        out_str = subprocess.check_output(
+            f'gh repo view KooshaPari/{r} --json name,isArchived,defaultBranchRef',
+            shell=True, stderr=subprocess.STDOUT, text=True, timeout=20,
+        )
+        d = json.loads(out_str)
+        default = d.get("defaultBranchRef", {}).get("name") if d.get("defaultBranchRef") else "?"
+        print(f"{d['name']:32s} | {str(d.get('isArchived',False)):8s} | {default:10s}")
+    except subprocess.CalledProcessError as e:
+        print(f"{r:32s} | ERROR rc={e.returncode} out={e.output.strip()[:60]}")
+    except Exception as e:
+        print(f"{r:32s} | EXC: {e}")

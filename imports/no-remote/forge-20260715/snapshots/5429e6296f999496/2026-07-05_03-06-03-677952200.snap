@@ -1,0 +1,109 @@
+"""
+For each user-named branch, list the files that are branch-only
+(those whose blob SHA is NOT in HEAD's blob set).
+"""
+import subprocess
+import json
+import os
+
+REPO = r'C:\Users\koosh\OmniRoute-fresh2'
+
+def run(args):
+    r = subprocess.run(args, capture_output=True, text=True, cwd=REPO, encoding='utf-8', errors='replace')
+    return r.stdout.strip(), r.returncode
+
+print('Building HEAD blob map...')
+out, _ = run(['git', 'ls-tree', '-r', 'HEAD'])
+head_blobs = {}  # path -> sha
+for line in out.split('\n'):
+    if not line.strip():
+        continue
+    parts = line.split(None, 2)
+    if len(parts) >= 3:
+        mode_type_sha = parts[:3]
+        sha = mode_type_sha[2]
+        path = mode_type_sha[-1] if False else parts[2].split('\t', 1)[-1]
+        # Actually format is "<mode> <type> <sha>\t<path>"
+        full = line
+        # Split on tab
+        meta, _, path = full.partition('\t')
+        sha = meta.split()[-1]
+        head_blobs[path] = sha
+print(f'  HEAD has {len(head_blobs)} files')
+
+USER_NAMED = [
+    'upstream-pr/refactor-apikey-providers',
+    'upstream-pr/refactor-token-refresh',
+    'upstream-pr/perf-budgets',
+    'upstream-pr/threat-model',
+    'upstream-pr/openapi-redoc',
+    'upstream-pr/pr-template',
+    'upstream-pr/incident-response',
+    'upstream-pr/log-buffer-cap-2026-06-24',
+    'upstream-pr/security-sweep-2026-06-24',
+    'upstream-pr/diego-mimocode-fix',
+    'upstream-pr/bifrost-docs',
+    'upstream-pr/kill-switch-extraction',
+    'upstream-pr/l1a-dispatch-2026-06-27',
+    'upstream-pr/cherry-batch-2026-06-24',
+    'upstream-pr/cherry-batch-2-2026-06-24',
+    'upstream-pr/cherry-batch-3-clean-2026-06-25',
+    'upstream-pr/antigravity-nvidia-fallback-2026-06-24',
+    'koosha/upstream-quota-4540-2026-06-21',
+    'koosha/upstream-perf-observability-2026-06-21',
+    'koosha/upstream-backend-health-2026-06-21',
+    'koosha/upstream-routing-stability-2026-06-21',
+    'koosha/upstream-concurrency-4580-2026-06-21',
+]
+
+results = {}
+for name in USER_NAMED:
+    branch = f'origin/{name}'
+    out, _ = run(['git', 'ls-tree', '-r', branch])
+    branch_files = {}  # path -> sha
+    for line in out.split('\n'):
+        if not line.strip():
+            continue
+        meta, _, path = line.partition('\t')
+        if not path:
+            continue
+        sha = meta.split()[-1]
+        branch_files[path] = sha
+
+    # Files in branch but not in HEAD
+    only_in_branch = set(branch_files) - set(head_files)
+    # Files in HEAD but not in branch
+    only_in_head = set(head_files) - set(branch_files)
+    # Files in both but with different SHA
+    both_diff = []
+    for p in set(branch_files) & set(head_files):
+        if branch_files[p] != head_files[p]:
+            both_diff.append(p)
+
+    results[name] = {
+        'branch_total': len(branch_files),
+        'head_total': len(head_files),
+        'only_in_branch': sorted(only_in_branch),
+        'only_in_head_count': len(only_in_head),
+        'both_different_count': len(both_diff),
+        'both_different_files': sorted(both_diff)[:30],
+    }
+
+# Save details
+with open(r'C:\Users\koosh\_branch_only_files.json', 'w') as f:
+    json.dump(results, f, indent=2)
+
+# Print summary
+print()
+print(f'{"name":50} {"only_branch":>11} {"only_head":>10} {"diff_both":>10}')
+print('-' * 90)
+for name, r in results.items():
+    print(f"  {name:48} {len(r['only_in_branch']):>11} {r['only_in_head_count']:>10} {r['both_different_count']:>10}")
+
+print()
+print('--- Sample "only in branch" files (from upstream-pr/refactor-apikey-providers) ---')
+sample = results['upstream-pr/refactor-apikey-providers']['only_in_branch'][:30]
+for f in sample:
+    print(f'  {f}')
+
+print('\nSaved to _branch_only_files.json')

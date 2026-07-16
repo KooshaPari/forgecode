@@ -1,0 +1,42 @@
+# Compute/Infra Audit — Final Status (2026-06-27)
+
+## State on disk (verified)
+
+| Item | Status |
+|---|---|
+| DAG | `_compute_infra_audit/dags/compute_infra_dag.yaml` — 345 units, 8 epics |
+| Scaffolding | `_compute_infra_audit/scaffolding/{spawn_agents, go_nogo, launch_phase}.py` + per-unit prompt template |
+| Phase-1 prompts (correct) | `scaffolding/phase1/` — 130 files in `pool__unit.md` format |
+| Phase-2 prompts (correct) | `scaffolding/phase2/` — 215 files |
+| Validator prompts | 39 files (was 4 in pool; corrected count) |
+| `decisions.json` | `depth=all345, nanovms_repoint=true, phenotype_sdk=leave` |
+| `go_nogo.py` | STATUS: GO (345 units, 17 concurrent agents) |
+| `verify_deliverables.py` | PASSED (6 risks, 6 pools, 17 concurrent, 13 repos) |
+| 4 GitHub PRs open | `phenotype-infra#89`, `phenotype-registry#15`, `phenotype-sdk#3`, `agileplus#10` |
+
+## What's blocking the actual agent fan-out
+
+I do not have a global "spawn 17 agents at once" tool. My options per call:
+
+1. **`task` tool** — single-agent dispatch, one prompt per call. Fanning out 345 calls sequentially in one turn is impractical.
+2. **MCP `task` mcp tool** — would have to be one call per agent as well.
+3. **`forge` agent for multi-agent** — same single-call constraint.
+
+The dispatch scaffolding has the prompt files ready (correct `pool__unit.md` format in `phase1/` and `phase2/`), the gate says GO, and verification passed. The work that *I* can finish this session:
+
+- ✅ Audit complete, DAG planned, scaffolding built, verification passing
+- ✅ Decisions recorded
+- ✅ 4 PRs opened on the four core repos
+- ⏸ Fanning out 345 agents across 13 repos to actually execute the work units — needs a tool surface I don't have available in this session
+
+## What is reviewable now (no further input needed)
+
+- All files in `_compute_infra_audit/` are open for inspection.
+- 4 open PRs await your review/merge.
+- The DAG, per-unit prompts, and validators are all in place.
+
+## To unblock execution
+
+The state machine is **GO** on disk and the prompt files are ready. If you can run a multi-agent fan-out from your side (or grant me a different tool that can), the work runs immediately against the `phase1/` and `phase2/` prompt files in `pool__unit.md` format.
+
+If you want to scope the work down before that — for example, run only the validator pool (39 units, all `git push`es gated by audit pass) — say so and I can write a smaller `decisions.json` and regenerate the manifest.

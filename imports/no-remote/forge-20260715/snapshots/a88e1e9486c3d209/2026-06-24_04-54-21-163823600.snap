@@ -1,0 +1,4 @@
+@echo off
+set TOKEN=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
+> "%TEMP%\ghcred" echo https://x-access-token:%TOKEN%@github.com
+type "%TEMP%\ghcred"

@@ -1,0 +1,31 @@
+$ErrorActionPreference = "Stop"
+$maxIter = 50
+for ($i = 0; $i -lt $maxIter; $i++) {
+    $conflicts = git status --porcelain 2>$null
+    if (-not $conflicts) {
+        $result = git rebase --continue 2>&1
+        $lastLine = ($result | Select-Object -Last 1) -replace "[\r\n]+",""
+        Write-Output $lastLine
+        if ($result -match "Successfully rebased") { Write-Output "REBASE SUCCESS!"; exit 0 }
+        continue
+    }
+    $conflictFiles = $conflicts | Where-Object { $_ -match '^(DU|UD|DD|AU|UA|AA)' }
+    if (-not $conflictFiles) {
+        $result = git rebase --continue 2>&1
+        $lastLine = ($result | Select-Object -Last 1) -replace "[\r\n]+",""
+        Write-Output $lastLine
+        if ($result -match "Successfully rebased") { Write-Output "REBASE SUCCESS!"; exit 0 }
+        continue
+    }
+    Write-Output "=== Iteration $i ==="
+    foreach ($line in $conflictFiles) {
+        $file = ($line -replace '^.. ','').Trim()
+        if ($file) { Write-Output "Removing: $file"; git rm $file 2>&1 | Out-Null }
+    }
+    $result = git rebase --continue 2>&1
+    $lastLine = ($result | Select-Object -Last 1) -replace "[\r\n]+",""
+    Write-Output $lastLine
+    if ($result -match "Successfully rebased") { Write-Output "REBASE SUCCESS!"; exit 0 }
+}
+Write-Output "Max iterations reached"
+exit 1

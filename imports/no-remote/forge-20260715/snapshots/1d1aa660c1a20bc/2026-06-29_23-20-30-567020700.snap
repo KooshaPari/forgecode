@@ -1,0 +1,109 @@
+# Cargo (Rust)
+target/
+**/target/
+Cargo.lock
+**/*.rs.bk
+
+# Go (vendor, binaries, test artifacts)
+vendor/
+*.exe
+*.test
+*.out
+
+# Node / TS / JS
+node_modules/
+.pnp/
+*.tsbuildinfo
+.svelte-kit/
+dist/
+build/
+.next/
+.nuxt/
+.turbo/
+.parcel-cache/
+coverage/
+*.lcov
+
+# Test / cache
+.jest-cache/
+.eslintcache
+.pytest_cache/
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+.cache/
+*.egg-info/
+
+# Python runtime environments
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+*.local
+*.pem
+*.key
+*_rsa
+*id_rsa*
+*credential*.json
+*credentials*.json
+*service-account*.json
+
+# Credential / registry config files
+.npmrc
+.pypirc
+.netrc
+
+# Tauri (Rust + frontend binding generator)
+frontend/**/src-tauri/gen/
+
+# Build / analysis output
+.audit/
+.history/
+.gradle/
+.kotlin/
+target/
+
+# Root-only build output variants
+/build/
+/coverage/
+/dist/
+/out/
+/target/
+
+# Build logs (ephemeral cargo / make / npm / tsc output)
+*.log
+logs/
+lerna-debug.log*
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Worktrees (in case you git-worktree-add within the repo)
+.worktrees/
+*-wtrees/
+
+# LLVM / Rust coverage & profile artifacts (cargo-with-llvm-cov, grcov, etc.)
+*.profraw
+*.profdata
+*.gcda
+*.gcno
+*.lcov
+.instr-profile
+
+# Incident / audit evidence (local only, not for version control)
+incident-evidence/
+.incident-evidence/
+local/incident-evidence/

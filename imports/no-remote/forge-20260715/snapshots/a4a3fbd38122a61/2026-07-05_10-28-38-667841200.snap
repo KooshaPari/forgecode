@@ -1,0 +1,45 @@
+# ─────────────────────────────────────────────────────────────────────
+# Claude Code + Codex profile launchers (pwsh equivalent of .zshrc)
+# Mirrors the env-bundle pattern from ~/.zshrc so claude-omni / claude-mm
+# work identically whether launched from zsh or pwsh.
+# Added: 2026-07-05
+# ─────────────────────────────────────────────────────────────────────
+
+# ── Resolve native binaries at load time (avoids name-shadowing recursion) ─
+$script:ClaudeExe = (Get-Command -CommandType Application -Name claude -ErrorAction SilentlyContinue).Source
+if (-not $script:ClaudeExe) { Write-Warning 'claude binary not found on PATH; claude-omni/claude-mm/claude will fail.' }
+$script:CodexExe  = (Get-Command -CommandType Application -Name codex  -ErrorAction SilentlyContinue).Source
+if (-not $script:CodexExe)  { Write-Warning 'codex binary not found on PATH; codex-omni/codex-mm will fail.' }
+
+$env:ANTHROPIC_AUTH_TOKEN = 'sk-cp-gPIgSPD1rxNMDQqvb4nYNj0HE4HfElst4cbyJQby9eMhod_1FU5OVTh1KisjFDPoPSngE-R_WwHAhA4ehgzqoIKhaXfipS-1CmEjUqCTPk2brR2Fq6PH0OA'
+$env:CLAUDE_CODE_AUTO_COMPACT_WINDOW = '512000'
+$env:ANTHROPIC_MODEL = 'MiniMax-M3[1m]'
+$env:ANTHROPIC_DEFAULT_SONNET_MODEL = 'MiniMax-M3[1m]'
+$env:ANTHROPIC_DEFAULT_OPUS_MODEL = 'MiniMax-M3[1m]'
+$env:ANTHROPIC_DEFAULT_HAIKU_MODEL = 'MiniMax-M3[1m]'
+
+# OmniRoute profile — routes via local OmniRoute proxy at 100.96.135.160:20128
+function claude-omni {
+    $env:ANTHROPIC_BASE_URL = 'http://100.96.135.160:20128/v1'
+    & $script:ClaudeExe @args
+}
+
+# Direct MiniMax profile — bypasses OmniRoute
+function claude-mm {
+    $env:ANTHROPIC_BASE_URL = 'https://api.minimax.io/anthropic'
+    & $script:ClaudeExe @args
+}
+
+# Default `claude` → OmniRoute
+function claude {
+    claude-omni @args
+}
+
+# Codex profiles — use --profile flag (matches ~/.codex/<name>.config.toml overlays)
+function codex-omni {
+    & $script:CodexExe --profile omniroute @args
+}
+
+function codex-mm {
+    & $script:CodexExe --profile minimax @args
+}

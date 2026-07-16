@@ -1,0 +1,27 @@
+{
+  "unit": "B12",
+  "title": "Update DOMAIN_ROLES.md platform row for nanovms",
+  "generated_from": "C:\Users\koosh\phenotype-registry\.grade-reports\grade.json",
+  "project": "phenotype-registry",
+  "stack": "rust",
+  "mode": "fast",
+  "score": 0,
+  "max": 10,
+  "percentage": 0,
+  "grade": "F",
+  "checks": [
+    {"name":"build","status":"fail","score":0,"max":2,"detail":"Pre-existing error: resolver setting '3' is not valid in Cargo.toml"},
+    {"name":"test-unit","status":"fail","score":0,"max":3,"detail":"Pre-existing: same Cargo.toml resolver issue"},
+    {"name":"fmt","status":"fail","score":0,"max":2,"detail":"Pre-existing: same Cargo.toml resolver issue"},
+    {"name":"clippy","status":"fail","score":0,"max":2,"detail":"Pre-existing: same Cargo.toml resolver issue"},
+    {"name":"deny","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},
+    {"name":"doc","status":"fail","score":0,"max":1,"detail":"Pre-existing: same Cargo.toml resolver issue"},
+    {"name":"test-snapshot","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},
+    {"name":"test-fuzz","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},
+    {"name":"coverage","status":"skipped","score":0,"max":2,"detail":"skipped in fast mode"},
+    {"name":"audit","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},
+    {"name":"bench","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"}
+  ],
+  "note": "Grade failures are pre-existing (Cargo.toml resolver=3 bug), not caused by B12 DOMAIN_ROLES.md change (markdown-only edit)",
+  "timestamp": "2026-06-25T20:22:29Z"
+}

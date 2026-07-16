@@ -1,0 +1,21 @@
+$callLogsDir = 'C:\Users\koosh\AppData\Roaming\omniroute\call_logs'
+$cutoff = (Get-Date).AddDays(-7)
+Write-Host "Pruning on-disk call_log artifacts older than $cutoff from $callLogsDir"
+
+$total = 0
+$size  = 0L
+foreach ($dir in Get-ChildItem $callLogsDir -Directory) {
+    foreach ($f in Get-ChildItem $dir.FullName -File) {
+        if ($f.LastWriteTime -lt $cutoff) {
+            $size += $f.Length
+            Remove-Item $f.FullName -Force
+            $total++
+        }
+    }
+    # remove empty date dir
+    $left = @(Get-ChildItem $dir.FullName -File)
+    if ($left.Count -eq 0) {
+        Remove-Item $dir.FullName -Force -Recurse
+    }
+}
+Write-Host "deleted=$total size_mb=$([math]::Round($size/1MB,2))"

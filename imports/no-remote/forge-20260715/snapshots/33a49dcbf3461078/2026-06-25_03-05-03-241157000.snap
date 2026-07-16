@@ -1,0 +1,126 @@
+using System;
+using System.IO;
+using FluentAssertions;
+using WorldSphereMod;
+using Xunit;
+
+/// <summary>
+/// Closes Phase 6 E2E gaps: humanoid/quadruped rig variants, Crabzilla/Dragon
+/// special cases, and static voxel fallback paths (e2e-coverage-gaps.md #3).
+///
+/// NOTE: Historically these tests grepped Constants.cs source for inline
+/// dictionary syntax like ["human"] = RigType.Humanoid. That failed when the
+/// registry moved to the AddRigGroup helper method (commit a717fad).
+/// These tests now query the actual runtime registry via Constants.ActorRigTypes
+/// and Constants.ResolveActorRig, which is the public API the rest of the
+/// codebase uses anyway.
+/// </summary>
+[Trait("Category", "E2E")]
+public class SkeletalRigVariantInvariantsTests
+{
+    static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(Directory.GetCurrentDirectory());
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "WorldSphereMod.sln")))
+        {
+            dir = dir.Parent;
+        }
+
+        dir.Should().NotBeNull("repo root with WorldSphereMod.sln must be locatable from test cwd");
+        return dir!.FullName;
+    }
+
+    static string ReadSourceFile(string relativePath)
+    {
+        var root = FindRepoRoot();
+        var fullPath = Path.Combine(root, relativePath);
+        File.Exists(fullPath).Should().BeTrue($"source file must exist at {fullPath}");
+        return File.ReadAllText(fullPath);
+    }
+
+    [Fact]
+    public void Constants_ActorRigTypes_maps_humanoid_quadruped_and_snake_variants()
+    {
+        Constants.ActorRigTypes.Should().ContainKey("human");
+        Constants.ActorRigTypes["human"].Should().Be(RigType.Humanoid);
+
+        Constants.ActorRigTypes.Should().ContainKey("wolf");
+        Constants.ActorRigTypes["wolf"].Should().Be(RigType.Quadruped);
+
+        Constants.ActorRigTypes.Should().ContainKey("bear");
+        Constants.ActorRigTypes["bear"].Should().Be(RigType.Quadruped);
+
+        Constants.ActorRigTypes.Should().ContainKey("snake");
+        Constants.ActorRigTypes["snake"].Should().Be(RigType.Snake);
+
+        // The public registry must expose a resolver method.
+        var constantsSource = ReadSourceFile("WorldSphereMod/Code/Constants.cs");
+        constantsSource.Should().Contain("public static RigType ResolveActorRig(string assetId)");
+
+        // Unknown actors must default to Humanoid for static fallback.
+        Constants.ResolveActorRig("__definitely_not_registered__")
+            .Should().Be(RigType.Humanoid,
+                "unknown actors must default to humanoid rig for static fallback");
+    }
+
+    [Fact]
+    public void Constants_dragon_and_crabzilla_resolve_to_RigType_None_for_voxel_path()
+    {
+        Constants.ActorRigTypes.Should().ContainKey("dragon");
+        Constants.ActorRigTypes["dragon"].Should().Be(RigType.None);
+
+        Constants.ActorRigTypes.Should().ContainKey("crabzilla");
+        Constants.ActorRigTypes["crabzilla"].Should().Be(RigType.None,
+            "mega actors skip skeletal driver and stay on voxel/avatar patches");
+    }
+
+    [Fact]
+    public void Core_registers_FixCrabzilla_and_skeletal_phase_toggle()
+    {
+        var core = ReadSourceFile("WorldSphereMod/Code/Core.cs");
+
+        core.Should().Contain("Patcher.PatchAll(typeof(FixCrabzilla))",
+            "Crabzilla 3D avatar patch must be registered at mod init");
+        core.Should().Contain("nameof(SavedSettings.SkeletalAnimation)",
+            "SkeletalAnimation must route through ApplyPhaseToggle");
+    }
+
+    [Fact]
+    public void RigDriver_non_humanoid_rigs_fall_back_to_static_VoxelRender_Submit()
+    {
+        var rigDriver = ReadSourceFile("WorldSphereMod/Code/Rig/RigDriver.cs");
+
+        // Source-level structural invariant: the SubmitSkinnedActor method must
+        // gate SkinnedMeshRenderer use behind a Humanoid check, and otherwise
+        // fall back to VoxelRender.Submit with a static mesh.
+        rigDriver.Should().Contain("rigType != RigType.Humanoid",
+            "only humanoid rigs use SkinnedMeshRenderer hierarchy (gated by kSkinnedRigProductionReady)");
+        rigDriver.Should().Contain("VoxelRender.Submit(",
+            "non-humanoid rigs must fall back to static voxel mesh submit");
+    }
+
+    [Fact]
+    public void VoxelRender_actor_emit_skips_skeletal_when_rig_is_None_and_uses_impostor_or_voxel()
+    {
+        var voxelRender = ReadSourceFile("WorldSphereMod/Code/Voxel/VoxelRender.cs");
+
+        voxelRender.Should().Contain("ResolveRigType(a.asset.id)");
+        voxelRender.Should().Contain("if (rigType != WorldSphereMod.Rig.RigType.None)",
+            "RigType.None actors must bypass RigDriver and continue to impostor/voxel tiers");
+        voxelRender.Should().Contain("Constants.ResolveActorRig(assetId)",
+            "rig resolution must delegate to Constants registry");
+    }
+
+    [Fact]
+    public void FixCrabzilla_and_dragonfix_gate_3D_avatar_patches_on_IsWorld3D()
+    {
+        var general = ReadSourceFile("WorldSphereMod/Code/General.cs");
+
+        general.Should().Contain("[HarmonyPatch(typeof(Crabzilla), nameof(Crabzilla.create))]",
+            "Crabzilla create must be patched for 3D billboard rig");
+        general.Should().Contain("[HarmonyPatch(typeof(Dragon), nameof(Dragon.create))]",
+            "Dragon create must hide vanilla sprite renderer in 3D mode");
+        general.Should().Contain("if (!Core.IsWorld3D)",
+            "mega-actor patches must no-op outside 3D worlds");
+    }
+}

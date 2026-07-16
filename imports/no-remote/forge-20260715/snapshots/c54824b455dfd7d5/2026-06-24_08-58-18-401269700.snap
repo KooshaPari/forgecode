@@ -1,0 +1,6 @@
+//! Credential management helpers
+
+pub mod credential_manager {
+    // Re-export the workspace credential-manager types
+    pub use credential_manager::*;
+}

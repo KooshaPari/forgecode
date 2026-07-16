@@ -1,0 +1,103 @@
+06:19:48.843222 exec-cmd.c:266          trace: resolved executable dir: C:/Program Files/Git/mingw64/bin
+06:19:48.861263 git.c:476               trace: built-in: git show :3:src/tracertm/ports/scorer.py
+"""Pluggable agreement ``ScorerPort`` (Pillar-A spine).
+
+Implements ``FR-TRC-019`` (Pluggable Agreement Scorer Port). See
+``docs/TRACERA_PLATFORM_RND.md`` §3.2.
+
+The platform scores requirement<->artifact *agreement* in several places
+(auto-linking, traceability confidence, blind-vs-intent verification). Today the
+scoring is heuristic and baked into individual services. This port makes the
+scoring **strategy** selectable at the call site without changing callers:
+
+* :class:`JaccardScorer`     -- lexical overlap (dependency-free reference impl).
+* ``SentenceTransformerScorer`` -- text embeddings (Pillar A, Phase 1).
+* ``SigLIPScorer``           -- visual embeddings (Pillar C).
+* VLM blind-vs-intent        -- "does the running code match the requirement?"
+                                (Pillar C, Phase 2, ``FR-TRC-020``).
+
+Only the dependency-free Jaccard strategy is implemented here; the embedding /
+VLM strategies plug in behind the same :class:`ScorerPort` so callers never
+change. Every scorer returns a normalized confidence in ``[0.0, 1.0]`` plus a
+human-readable rationale (the acceptance criterion of ``FR-TRC-019``).
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
+
+_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+@dataclass(frozen=True, slots=True)
+class ScoreResult:
+    """Normalized agreement score with provenance.
+
+    Attributes:
+        score: Confidence in ``[0.0, 1.0]``.
+        rationale: Human-readable explanation of the score.
+        strategy: Name of the scorer that produced this result.
+    """
+
+    score: float
+    rationale: str
+    strategy: str
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.score <= 1.0:
+            raise ValueError(f"score must be in [0.0, 1.0], got {self.score}")
+
+
+@runtime_checkable
+class ScorerPort(Protocol):
+    """Strategy interface for requirement<->artifact agreement scoring.
+
+    Pillars A and C consume the *same* port; the concrete strategy is chosen at
+    the call site (strategy pattern), satisfying ``FR-TRC-019``.
+    """
+
+    @property
+    def name(self) -> str:
+        """Stable identifier for this scoring strategy."""
+        ...
+
+    def score(self, requirement_text: str, artifact_text: str) -> ScoreResult:
+        """Return a normalized agreement score in ``[0.0, 1.0]``."""
+        ...
+
+
+def _tokenize(text: str) -> set[str]:
+    return {t.lower() for t in _TOKEN_RE.findall(text or "")}
+
+
+class JaccardScorer:
+    """Lexical (Jaccard) agreement scorer -- the dependency-free reference impl.
+
+    ``score = |tokens(req) ∩ tokens(art)| / |tokens(req) ∪ tokens(art)|``.
+
+    This is the baseline strategy: it ships with zero extra dependencies so the
+    spine is testable and usable immediately, while richer embedding/VLM
+    strategies are added behind the same :class:`ScorerPort`.
+    """
+
+    name = "jaccard"
+
+    def score(self, requirement_text: str, artifact_text: str) -> ScoreResult:
+        req = _tokenize(requirement_text)
+        art = _tokenize(artifact_text)
+        if not req and not art:
+            return ScoreResult(0.0, "both inputs empty", self.name)
+        union = req | art
+        if not union:
+            return ScoreResult(0.0, "no tokens", self.name)
+        inter = req & art
+        value = len(inter) / len(union)
+        rationale = (
+            f"{len(inter)} shared / {len(union)} total tokens"
+            f" (shared: {', '.join(sorted(inter)[:8])})"
+            if inter
+            else "no shared tokens"
+        )
+        return ScoreResult(round(value, 6), rationale, self.name)

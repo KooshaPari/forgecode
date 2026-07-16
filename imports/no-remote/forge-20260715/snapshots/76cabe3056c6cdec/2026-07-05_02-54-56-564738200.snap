@@ -1,0 +1,88 @@
+"""
+For each unrooted branch (no merge-base with main), compute:
+- ahead count from first shared commit (using --root)
+- net diff vs main (after linear commit chain)
+- classification
+"""
+import subprocess
+import json
+from pathlib import Path
+
+REPO = r'C:\Users\koosh\OmniRoute-fresh2'
+MAIN = 'main'
+HEAD = 'merge/2026-07-04-consolidation'
+
+def run(args):
+    r = subprocess.run(args, capture_output=True, text=True, cwd=REPO, encoding='utf-8', errors='replace')
+    return r.stdout.strip(), r.returncode
+
+# Read all branches
+with open(r'C:\Users\koosh\_omniroute_branches_all.json') as f:
+    all_branches = json.load(f)
+
+# Read mergeability info
+with open(r'C:\Users\koosh\_mergeability.json') as f:
+    mergeability = json.load(f)
+
+mergeable_names = set(b['name'] for b in mergeability['MERGEABLE'])
+unrooted_names = [b['name'] for b in mergeability['UNROOTED']]
+
+print(f'=== TOTALS ===')
+print(f'total branches: {len(all_branches)}')
+print(f'with merge base: {len(mergeable_names)}')
+print(f'unrooted: {len(unrooted_names)}')
+
+# For each unrooted, get diff vs main (after linear chain)
+results = []
+for name in unrooted_names:
+    branch = f'origin/{name}'
+    out, rc = run(['git', 'diff', '--shortstat', 'main..' + branch])
+    if rc != 0 or not out:
+        results.append({'name': name, 'error': f'diff failed: {out[:80]}'})
+        continue
+    # parse: " 5 files changed, 10 insertions(+), 5 deletions(-)"
+    parts = out.replace(',', '').split()
+    files = int(parts[0]) if parts and parts[0].isdigit() else 0
+    insertions = 0
+    deletions = 0
+    for i, p in enumerate(parts):
+        if p == 'insertion(s)+':
+            insertions = int(parts[i-1])
+        if p == 'deletion(s)-':
+            deletions = int(parts[i-1])
+    results.append({'name': name, 'files': files, 'ins': insertions, 'del': deletions, 'shortstat': out})
+
+# Sort by total change
+results.sort(key=lambda r: -(r.get('files', 0) + r.get('ins', 0) + r.get('del', 0)))
+
+print(f'\n=== TOP 30 UNROOTED BRANCHES BY CHANGE SIZE ===')
+for r in results[:30]:
+    print(f"  {r['name']:65} files={r.get('files', 0):4} +{r.get('ins', 0):6}/-{r.get('del', 0):6}")
+
+# Bucket by size
+small = [r for r in results if 0 < r.get('files', 0) <= 50 and r.get('files', 0) > 0]
+medium = [r for r in results if 50 < r.get('files', 0) <= 200]
+large = [r for r in results if r.get('files', 0) > 200]
+empty = [r for r in results if r.get('files', 0) == 0]
+errors = [r for r in results if 'error' in r]
+
+print(f'\n=== DISTRIBUTION ===')
+print(f'empty (already in main): {len(empty)}')
+print(f'small (1-50 files): {len(small)}')
+print(f'medium (51-200 files): {len(medium)}')
+print(f'large (200+ files): {len(large)}')
+print(f'errors: {len(errors)}')
+
+# Save results
+with open(r'C:\Users\koosh\_unrooted_analysis.json', 'w') as f:
+    json.dump({
+        'total': len(unrooted_names),
+        'small': [r['name'] for r in small],
+        'medium': [r['name'] for r in medium],
+        'large': [r['name'] for r in large],
+        'empty': [r['name'] for r in empty],
+        'errors': [r['name'] for r in errors],
+        'details': results,
+    }, f, indent=2)
+
+print(f'\nSaved to _unrooted_analysis.json')

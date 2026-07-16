@@ -1,0 +1,111 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Mock the comboContextCache module BEFORE importing the SUT.
+// We replace getUpstreamProxyConfigCached with a controllable spy.
+vi.mock("../../comboContextCache", () => ({
+  getUpstreamProxyConfigCached: vi.fn(),
+}));
+
+// Mock the cached settings helper similarly.
+vi.mock("../../../../src/lib/db/settings", () => ({
+  getCachedSettings: vi.fn(),
+}));
+
+// Mock the executors registry to avoid pulling in the full executor graph.
+const mockExecute = vi.fn();
+const mockBaseExecutor = { execute: mockExecute };
+vi.mock("../../executors", () => ({
+  getExecutor: vi.fn(() => mockBaseExecutor),
+}));
+
+import { resolveExecutorWithProxy } from "../resolveExecutorProxy";
+import { getUpstreamProxyConfigCached } from "../../comboContextCache";
+import { getCachedSettings } from "../../../../src/lib/db/settings";
+import { getExecutor } from "../../executors";
+
+const proxyMock = vi.mocked(getUpstreamProxyConfigCached);
+const settingsMock = vi.mocked(getCachedSettings);
+const registryMock = vi.mocked(getExecutor);
+
+describe("resolveExecutorWithProxy", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Default: proxy disabled, settings return no upstream-proxy map.
+    proxyMock.mockResolvedValue({ enabled: false });
+    settingsMock.mockResolvedValue({
+      upstreamProxyByProvider: {},
+    } as unknown as Awaited<ReturnType<typeof getCachedSettings>>);
+  });
+
+  it("returns the base executor untouched when the global proxy is disabled", async () => {
+    const wrapper = await resolveExecutorWithProxy("openai");
+    const result = wrapper.execute({ foo: "bar" } as unknown as Parameters<typeof wrapper.execute>[0]);
+    await expect(result).toBeInstanceOf(Promise);
+    expect(registryMock).toHaveBeenCalledWith("openai");
+    expect(mockExecute).toHaveBeenCalledWith({ foo: "bar" });
+  });
+
+  it("does not look up settings when the global proxy is disabled", async () => {
+    await resolveExecutorWithProxy("anthropic");
+    expect(proxyMock).toHaveBeenCalledTimes(1);
+    expect(settingsMock).not.toHaveBeenCalled();
+  });
+
+  it("consults the per-provider proxy map when the global proxy is enabled", async () => {
+    proxyMock.mockResolvedValueOnce({ enabled: true });
+    settingsMock.mockResolvedValueOnce({
+      upstreamProxyByProvider: {
+        openai: { proxyUrl: "http://proxy.test:8080", enabled: true },
+      },
+    } as unknown as Awaited<ReturnType<typeof getCachedSettings>>);
+
+    const wrapper = await resolveExecutorWithProxy("openai");
+
+    // The wrapper is no longer the bare base executor — it is wrapped.
+    expect(wrapper.execute).not.toBe(mockExecute);
+    expect(settingsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls through to the bare executor when the provider is not in the proxy map", async () => {
+    proxyMock.mockResolvedValueOnce({ enabled: true });
+    settingsMock.mockResolvedValueOnce({
+      upstreamProxyByProvider: {
+        anthropic: { proxyUrl: "http://proxy.test:8080", enabled: true },
+      },
+    } as unknown as Awaited<ReturnType<typeof getCachedSettings>>);
+
+    const wrapper = await resolveExecutorWithProxy("openai");
+    await wrapper.execute({} as unknown as Parameters<typeof wrapper.execute>[0]);
+
+    // Per-provider map miss => wrapper is the base executor.
+    expect(wrapper.execute).toBe(mockExecute);
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it("wraps the executor when a proxy is configured for the provider", async () => {
+    proxyMock.mockResolvedValueOnce({ enabled: true });
+    settingsMock.mockResolvedValueOnce({
+      upstreamProxyByProvider: {
+        openai: { proxyUrl: "http://proxy.test:8080", enabled: true },
+      },
+    } as unknown as Awaited<ReturnType<typeof getCachedSettings>>);
+
+    const wrapper = await resolveExecutorWithProxy("openai");
+    expect(wrapper.execute).not.toBe(mockExecute);
+  });
+
+  it("ignores providers with enabled=false in the per-provider map", async () => {
+    proxyMock.mockResolvedValueOnce({ enabled: true });
+    settingsMock.mockResolvedValueOnce({
+      upstreamProxyByProvider: {
+        openai: { proxyUrl: "http://proxy.test:8080", enabled: false },
+      },
+    } as unknown as Awaited<ReturnType<typeof getCachedSettings>>);
+
+    const wrapper = await resolveExecutorWithProxy("openai");
+    await wrapper.execute({} as unknown as Parameters<typeof wrapper.execute>[0]);
+
+    expect(wrapper.execute).toBe(mockExecute);
+    expect(mockExecute).toHaveBeenCalledTimes(1);
+  });
+});

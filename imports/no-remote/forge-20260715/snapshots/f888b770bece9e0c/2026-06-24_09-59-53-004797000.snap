@@ -1,0 +1,106 @@
+# Getting Started
+
+PolicyStack is the archived home of the **policy-federation** package, the
+runtime that materialises a single, harness-shaped effective policy out of a
+tree of declarative policy fragments. The active development line lives in
+[phenotype-tooling](https://github.com/KooshaPari/phenotype-tooling/tree/main/crates/policystack);
+this repository retains the Python implementation, CLI, schemas, and tests so
+existing deployments keep working.
+
+## What the stack does
+
+Given a project root, a target harness, and a task domain, PolicyStack:
+
+1. Discovers policy fragments under `policy-contract/` (manifest + JSON files).
+2. Resolves inheritance, precedence, and risk-tier heuristics.
+3. Emits a single effective policy JSON that downstream harnesses consume.
+
+The federated model means a single repo can carry policies for several AI
+harnesses (e.g. `codex`, `claude`, `gemini`) without duplicating rules.
+
+## At a glance
+
+| Component        | Path                | Purpose                                    |
+| ---------------- | ------------------- | ------------------------------------------ |
+| Resolver (CLI)   | `policy-contract/`  | Discovers and merges policy fragments.     |
+| Python package   | `cli/`              | `policy_federation` importable module.     |
+| Schemas          | `schemas/`          | JSON Schemas for fragments and manifests.  |
+| Policy sources   | `policies/`         | The actual rules, per harness/domain.      |
+| Contracts        | `contracts/`        | Acceptance contracts used by tests.        |
+| Wrapper          | `wrappers/go/`      | Go shim invoked by the Python CLI.         |
+| Documentation    | `docs/`             | This VitePress site.                       |
+
+## Quick start
+
+The canonical resolution invocation lives in the top-level `README.md`:
+
+```bash
+uv run python policy-contract/resolve.py \
+  --root . \
+  --harness codex \
+  --task-domain deployment \
+  --emit /tmp/effective-policy.json
+```
+
+Requirements:
+
+- Python 3.10 or newer (3.12 is what CI runs against).
+- [`uv`](https://github.com/astral-sh/uv) for reproducible script execution,
+  or a virtualenv with `policy_federation` editable-installed.
+- The Go wrapper is built from source on the CI runner so cross-platform
+  binaries work; locally, `go build -o wrappers/go/policy-wrapper ./wrappers/go`
+  produces a host-compatible binary.
+
+## Build the docs locally
+
+The docs site is a standard VitePress project rooted at `docs/`:
+
+```bash
+npm install --legacy-peer-deps
+npm run docs:dev      # live-reload local preview
+npm run docs:build    # static build -> docs/.vitepress-dist
+npm run docs:preview  # serve the built output
+```
+
+`docs:check` runs the build plus the full unit, component, and Playwright
+end-to-end test suites; it is the gate the CI workflow uses before publishing.
+
+## Project layout (top level)
+
+```
+.
+├── ADR.md                # Architecture Decision Records
+├── ARCHITECTURE.md       # Cross-cutting design overview
+├── CHARTER.md            # Project charter and scope
+├── SPEC.md               # Normative specification
+├── README.md             # Quickstart + migration notice
+├── cli/                  # Python package source
+├── contracts/            # Acceptance contracts
+├── docs/                 # This VitePress site
+├── policies/             # Declarative policy fragments
+├── policy-contract/      # Resolver entry point
+├── schemas/              # JSON Schemas
+├── specs/                # Behavioural specs
+├── tests/                # Pytest suite
+└── wrappers/             # Go wrapper + polyglot shims
+```
+
+## Quality gates
+
+PolicyStack enforces several local gates before any change can land:
+
+- **Python:** `ruff check .`, `ruff format --check .`, `pytest`.
+- **Go:** `go vet ./...`, `go build ./...`.
+- **Docs:** `npm run docs:check`.
+- **Git hooks:** `lefthook run pre-commit` and `lefthook run pre-push`.
+
+Run them locally before pushing; the `just grade` (or `task grade`) target
+chains every check into a single command.
+
+## Migration notice
+
+This repository is archived. New features and the canonical Rust
+implementation now live at
+[`phenotype-tooling/crates/policystack`](https://github.com/KooshaPari/phenotype-tooling/tree/main/crates/policystack).
+Bug fixes for the Python resolver continue to be accepted here on a
+best-effort basis.

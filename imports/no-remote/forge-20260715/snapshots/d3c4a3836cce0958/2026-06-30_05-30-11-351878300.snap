@@ -1,0 +1,93 @@
+## Summary
+
+Cline Bot Inc. has launched **ClinePass**, a $4.99 → $9.99/mo subscription
+that bundles 10 open-weight models from 6 labs into a single Cline-native
+*provider*:
+
+| Model | Lab |
+|---|---|
+| GLM 5.2 | Z.ai |
+| Kimi K2.7 Code | Moonshot AI |
+| Kimi K2.6 | Moonshot AI |
+| DeepSeek V4 Pro | DeepSeek |
+| DeepSeek V4 Flash | DeepSeek |
+| MiniMax M3 | MiniMax |
+| MiMo V2.5 Pro | MiMo |
+| MiMo V2.5 | MiMo |
+| Qwen3.7-Max | Qwen |
+| Qwen3.7-Plus | Qwen |
+
+The ClinePass FAQ states that ClinePass can be used *"with other coding agents
+by using your ClinePass API key"*. `omniroute` already advertises Cline as one
+of its native flows (see `src/shared/constants/providers/oauth.ts:168-177`),
+so ClinePass is a natural follow-up entry to register as an OpenAI-compatible
+apikey gateway alongside `crof`, `api-airforce`, `tokenrouter`, etc.
+
+This issue is to **track** first-class ClinePass support inside `omniroute`.
+
+## Why this fits `omniroute`'s wiring
+
+`omniroute`registers providers in two coordinated surfaces, gated by
+`scripts/check/check-provider-consistency.ts:33`:
+
+1. **Dashboard/marketing catalog** —
+   `src/shared/constants/providers/apikey/gateways.ts:5-528`
+   (`APIKEY_PROVIDERS_GATEWAYS`). Idiomatic precedents: `crof` (lines 86-94),
+   `api-airforce` (lines 72-85), `tokenrouter` (lines 512-527), `openadapter`
+   (lines 483-498). The catalog entry drives the dashboard's "Add Provider"
+   picker and is what end users see.
+2. **Runtime registry** — `open-sse/config/providers/registry/<id>/index.ts`
+   defines the wire image the gateway uses. The closest precedent is
+   `open-sse/config/providers/registry/crof/index.ts:1-38` (a 38-line
+   OpenAI-format apikey-gateway template). A matching import line and
+   `REGISTRY` key are added at `open-sse/config/providers/index.ts:172,343`.
+
+A check-gate test (`tests/unit/check-provider-consistency.test.ts`) verifies
+both surfaces stay in sync; any PR that adds one without the other fails
+locally before pushing.
+
+## Open Questions (please answer before the PR)
+
+Public `https://cline.bot/cline-pass` does not document these. To wire ClinePass
+correctly we need definitive answers:
+
+1. **Base URL** — what hostname do third-party agents call?
+   (e.g. `https://api.cline.bot`, `https://api.clinepass.ai`, `<other>`).
+2. **API key issuance surface and env-var name** — under what name should
+   the bearer token be supplied? (`CLINEPASS_API_KEY` is the proposal here.)
+3. **Wire protocol** — is ClinePass OpenAI-compatible chat-completions,
+   OpenAI Responses-API-compatible, Anthropic-Messages-compatible, or some
+   Cline-native shape? The simplest integration assumes OpenAI-format
+   chat-completions and rejects anything else.
+4. **Model-id namespace** — what model id strings does ClinePass accept?
+   Passthrough (`zai/glm-5.2`, `moonshotai/kimi-k2.7-code`, …), aliased
+   (`cline/glm-5.2`), or something else?
+5. **Key interchangeability** — does the key issued for Cline IDE/CLI work
+   for third-party harnesses, or do third-party agents need a separately
+   provisioned "agent key"?
+
+A working draft PR can be opened as **Draft** using placeholder defaults
+(headers: bearer `CLINEPASS_API_KEY`, base URL `<pending-ClinePass-endpoint>`,
+format: `openai`, model IDs passthrough) without blocking on these answers;
+reviewers can correct assumptions in-thread.
+
+## Acceptance criteria
+
+- The "Add Provider" dashboard lists a **ClinePass** option in the API-Key
+  gateways family.
+- Selecting it, supplying a key, and routing a chat-completion through
+  `<chosen model>` succeeds against the ClinePass endpoint.
+- A `clinepass` entry in both `src/shared/constants/providers/apikey/gateways.ts`
+  and `open-sse/config/providers/registry/clinepass/index.ts` is added
+  (plus `open-sse/config/providers/index.ts:172,343` registration).
+- `pnpm test:unit tests/unit/check-provider-consistency.test.ts` passes.
+- `pnpm test:unit` is green overall.
+- README provider count updates if maintained (currently "160+ providers",
+  may need "161+ providers"). Optional `docs/providers/CLINEPASS.md` doc.
+
+## References
+
+- Public ClinePass landing page: https://cline.bot/cline-pass
+- `omniroute`'s README provider-catalog section.
+- This issue's local triage design doc: `docs/superpowers/specs/2026-06-29-clinepass-triage-design.md`
+  (in the reporter's local checkout).

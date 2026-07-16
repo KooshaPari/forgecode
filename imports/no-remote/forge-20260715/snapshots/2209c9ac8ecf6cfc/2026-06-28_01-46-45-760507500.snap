@@ -1,0 +1,8 @@
+@echo off
+set MSYS_NO_PATHCONV=1
+"C:\Program Files\Git\usr\bin\bash.exe" -c "export MSYS_NO_PATHCONV=1 && /c/Program\ Files/Git/usr/bin/bash.exe /c/Users/koosh/phenotype-registry/grade.sh --fast --json 2>&1" 1>C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.stdout 2>C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.stderr
+echo exit=%errorlevel%
+echo --- STDOUT ---
+type C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.stdout
+echo --- STDERR ---
+type C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.stderr

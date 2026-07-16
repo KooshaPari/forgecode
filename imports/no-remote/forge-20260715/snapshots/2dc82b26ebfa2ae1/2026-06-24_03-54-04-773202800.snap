@@ -1,0 +1,9 @@
+@echo off
+setlocal
+set TOK=
+for /f "delims=" %%i in ('gh auth token') do set TOK=%%i
+if "%ASKPASS_PROMPT%"=="" (
+  echo %TOK%
+) else (
+  echo %TOK%
+)

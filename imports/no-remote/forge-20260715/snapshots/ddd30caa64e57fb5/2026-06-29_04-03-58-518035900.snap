@@ -1,0 +1,13 @@
+import json, re
+raw = open(r'C:\Users\koosh\_repos_inventory.json', 'r', encoding='utf-8').read()
+clean = re.compile(r'\x1b\[[0-9;]*[A-Za-z]').sub('', raw)
+data = json.loads(clean)
+nonforks = [r for r in data if not r['fork']]
+forks = [r for r in data if r['fork']]
+print(f'TOTAL {len(data)}  NON-FORKS {len(nonforks)}  FORKS {len(forks)}')
+print('---NON-FORKS---')
+for r in sorted(nonforks, key=lambda x: x['name']):
+    print(f"  {r['name']:35s} {r['lang']:15s} | {r['desc'][:70]}")
+print('---FORKS---')
+for r in sorted(forks, key=lambda x: x['name']):
+    print(f"  {r['name']:35s} {r['lang']:15s} FORK | {r['desc'][:70]}")

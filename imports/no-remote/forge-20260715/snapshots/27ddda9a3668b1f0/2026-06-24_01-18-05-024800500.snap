@@ -1,0 +1,54 @@
+$ErrorActionPreference = 'SilentlyContinue'
+$root = 'C:\Users\koosh'
+$exts = @{'.md'=$true;'.txt'=$true;'.json'=$true;'.toml'=$true;'.yaml'=$true;'.yml'=$true}
+$skip = @(
+  '\node_modules\', '\.git\', '\.venv\', '\.tox\', '\__pycache__\',
+  '\AppData\', '\Library\', '\scoop\', '\anaconda3\', '\Downloads\',
+  '\OneDrive\', '\Creative Cloud', '\CreativeCloud',
+  '\Cache\', '\.cache\', '\.npm\', '\.next\', '\.idea\', '\.vscode\',
+  '\.m2\', '\.gradle\', '\.cargo\', '\.rustup\', '\.dotnet\',
+  '\Temp\', '\tmp\', '\logs\'
+)
+$maxDepth = 8
+$results = New-Object System.Collections.Generic.List[object]
+
+function Test-Skip($path) {
+  foreach ($s in $skip) { if ($path -like "*$s*") { return $true } }
+  return $false
+}
+
+function Walk($dir, $depth) {
+  if ($depth -le 0) { return }
+  if (Test-Skip $dir) { return }
+  $items = Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue
+  foreach ($it in $items) {
+    if ($it.PSIsContainer) {
+      Walk -dir $it.FullName -depth ($depth - 1)
+    } else {
+      $ext = $it.Extension.ToLowerInvariant()
+      if ($exts[$ext]) {
+        # stream-read line by line
+        try {
+          $lineNo = 0
+          $reader = [System.IO.StreamReader]::new($it.FullName)
+          while ($reader.ReadLine()) {
+            $lineNo++
+            if ($_.ToLower().Contains('nippon')) {
+              $results.Add([pscustomobject]@{
+                Path = $it.FullName
+                Line = $lineNo
+                Text = $_.Trim()
+              })
+              if ($results.Count -ge 200) { $reader.Close(); return }
+            }
+          }
+          $reader.Close()
+        } catch {}
+      }
+    }
+  }
+}
+
+Walk -dir $root -depth $maxDepth
+$results | Select-Object -First 200 | Format-Table -AutoSize -Wrap Path,Line,Text
+"---TOTAL: $($results.Count)---"

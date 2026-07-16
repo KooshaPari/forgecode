@@ -1,0 +1,178 @@
+/**
+ * In-memory reactive store for the DAG live status renderer.
+ *
+ * F26 — DAG renderer: live status (consumes from F9 events)
+ *
+ * Manages node status updates, polling state, and view-mode switching.
+ * Designed to work in browser contexts (Astro client scripts).
+ */
+
+import type {
+  DagData,
+  DagNodeStatus,
+  DagStoreState,
+  DagViewMode,
+} from "./types.ts";
+
+/** Default polling interval in milliseconds. */
+export const DEFAULT_POLL_MS = 30_000;
+
+/**
+ * Lightweight store for DAG status state.
+ */
+export class DagStore {
+  private _state: DagStoreState;
+  private listeners: Set<() => void> = new Set();
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(data: DagData, _pollMs = DEFAULT_POLL_MS) {
+    // Ensure every node has a lastUpdated
+    const now = new Date().toISOString();
+    const hydratedNodes = data.nodes.map((n) => ({
+      ...n,
+      lastUpdated: n.lastUpdated ?? now,
+    }));
+    this._state = {
+      data: { ...data, nodes: hydratedNodes },
+      viewMode: "live",
+      isPolling: false,
+      lastPollAt: now,
+      error: null,
+    };
+  }
+
+  get state(): DagStoreState {
+    return this._state;
+  }
+
+  // ── Subscriptions ────────────────────────────────────────────────
+
+  onUpdate(cb: () => void): () => void {
+    this.listeners.add(cb);
+    return () => this.listeners.delete(cb);
+  }
+
+  private notify(): void {
+    for (const cb of this.listeners) {
+      try {
+        cb();
+      } catch {
+        // silently ignore
+      }
+    }
+  }
+
+  // ── View mode ────────────────────────────────────────────────────
+
+  setViewMode(mode: DagViewMode): void {
+    if (this._state.viewMode === mode) return;
+    this._state = { ...this._state, viewMode: mode };
+    if (mode === "live") {
+      this.startPolling();
+    } else {
+      this.stopPolling();
+    }
+    this.notify();
+  }
+
+  // ── Polling ──────────────────────────────────────────────────────
+
+  startPolling(): void {
+    if (this.pollTimer !== null) return;
+    this._state = { ...this._state, isPolling: true };
+    this.notify();
+    this.pollTimer = setInterval(() => {
+      this._state = {
+        ...this._state,
+        lastPollAt: new Date().toISOString(),
+      };
+      this.notify();
+    }, DEFAULT_POLL_MS);
+  }
+
+  stopPolling(): void {
+    if (this.pollTimer !== null) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+    this._state = { ...this._state, isPolling: false };
+    this.notify();
+  }
+
+  /** Manually trigger a poll tick. */
+  pollNow(): void {
+    this._state = {
+      ...this._state,
+      lastPollAt: new Date().toISOString(),
+    };
+    this.notify();
+  }
+
+  // ── Status updates ───────────────────────────────────────────────
+
+  /**
+   * Apply an external status update to a node.
+   * Called when an F9 event is received.
+   */
+  updateNodeStatus(nodeId: string, newStatus: DagNodeStatus): void {
+    const nodes = this._state.data.nodes.map((n) => {
+      if (n.id !== nodeId) return n;
+      return {
+        ...n,
+        status: newStatus,
+        lastUpdated: new Date().toISOString(),
+      };
+    });
+    this._state = {
+      ...this._state,
+      data: { ...this._state.data, nodes },
+      lastPollAt: new Date().toISOString(),
+    };
+    this.notify();
+  }
+
+  /**
+   * Batch-update multiple nodes at once (e.g. from a polling response).
+   */
+  batchUpdate(
+    updates: Array<{ nodeId: string; status: DagNodeStatus }>,
+  ): void {
+    const updateMap = new Map(updates.map((u) => [u.nodeId, u.status]));
+    const now = new Date().toISOString();
+    const nodes = this._state.data.nodes.map((n) => {
+      const newStatus = updateMap.get(n.id);
+      if (!newStatus) return n;
+      return { ...n, status: newStatus, lastUpdated: now };
+    });
+    this._state = {
+      ...this._state,
+      data: { ...this._state.data, nodes },
+      lastPollAt: now,
+    };
+    this.notify();
+  }
+
+  /** Reset all nodes to pending. */
+  resetAll(): void {
+    const now = new Date().toISOString();
+    const nodes = this._state.data.nodes.map((n) => ({
+      ...n,
+      status: "pending" as DagNodeStatus,
+      lastUpdated: now,
+    }));
+    this._state = {
+      ...this._state,
+      data: { ...this._state.data, nodes },
+      lastPollAt: now,
+      error: null,
+    };
+    this.notify();
+  }
+
+  // ── Cleanup ──────────────────────────────────────────────────────
+
+  destroy(): void {
+    this.stopPolling();
+    this.listeners.clear();
+  }
+}

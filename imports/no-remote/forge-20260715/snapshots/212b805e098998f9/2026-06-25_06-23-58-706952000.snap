@@ -1,0 +1,353 @@
+//! Error Types for MCP Protocol
+//! 
+//! This module defines all error types used in the MCP protocol implementation.
+
+use thiserror::Error;
+
+/// MCP Protocol Error
+#[derive(Error, Debug)]
+pub enum McpError {
+    #[error("Protocol error: {0}")]
+    Protocol(String),
+    
+    #[error("Invalid request: {0}")]
+    InvalidRequest(String),
+    
+    #[error("Method not found: {0}")]
+    MethodNotFound(String),
+    
+    #[error("Invalid parameters: {0}")]
+    InvalidParams(String),
+    
+    #[error("Internal error: {0}")]
+    Internal(String),
+    
+    #[error("Authentication failed: {0}")]
+    AuthenticationFailed(String),
+    
+    #[error("Authorization failed: {0}")]
+    AuthorizationFailed(String),
+    
+    #[error("Resource not found: {0}")]
+    ResourceNotFound(String),
+    
+    #[error("Tool not found: {0}")]
+    ToolNotFound(String),
+    
+    #[error("Session expired: {0}")]
+    SessionExpired(String),
+    
+    #[error("Rate limit exceeded: {0}")]
+    RateLimitExceeded(String),
+    
+    #[error("Timeout: {0}")]
+    Timeout(String),
+    
+    #[error("Transport error: {0}")]
+    Transport(#[from] McpTransportError),
+    
+    #[error("Security error: {0}")]
+    Security(#[from] McpSecurityError),
+    
+    #[error("Desktop automation error: {0}")]
+    DesktopAutomation(#[from] DesktopAutomationError),
+    
+    #[error("VM error: {0}")]
+    VirtualMachine(#[from] VirtualMachineError),
+    
+    #[error("CLI error: {0}")]
+    Cli(#[from] CliError),
+    
+    #[error("TTS error: {0}")]
+    Tts(#[from] TtsError),
+    
+    #[error("Credential error: {0}")]
+    Credential(#[from] CredentialError),
+}
+
+/// MCP Transport Error
+#[derive(Error, Debug)]
+pub enum McpTransportError {
+    #[error("Not connected")]
+    NotConnected,
+    
+    #[error("Connection failed: {0}")]
+    ConnectionFailed(String),
+    
+    #[error("Connection closed")]
+    ConnectionClosed,
+    
+    #[error("Invalid endpoint: {0}")]
+    InvalidEndpoint(String),
+    
+    #[error("Send failed: {0}")]
+    SendFailed(String),
+    
+    #[error("Receive failed: {0}")]
+    ReceiveFailed(String),
+    
+    #[error("Invalid message: {0}")]
+    InvalidMessage(String),
+    
+    #[error("Serialization error: {0}")]
+    SerializationError(#[from] serde_json::Error),
+
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+    
+    #[error("Network error: {0}")]
+    NetworkError(#[from] reqwest::Error),
+    
+    #[error("Timeout")]
+    Timeout,
+}
+
+/// MCP Security Error
+#[derive(Error, Debug)]
+pub enum McpSecurityError {
+    #[error("Invalid token: {0}")]
+    InvalidToken(String),
+    
+    #[error("Token expired: {0}")]
+    TokenExpired(String),
+    
+    #[error("Invalid signature: {0}")]
+    InvalidSignature(String),
+    
+    #[error("Insufficient scope: {0}")]
+    InsufficientScope(String),
+    
+    #[error("Resource access denied: {0}")]
+    ResourceAccessDenied(String),
+    
+    #[error("OAuth error: {0}")]
+    OAuth(String),
+    
+    #[error("JWT error: {0}")]
+    Jwt(#[from] jsonwebtoken::errors::Error),
+    
+    #[error("Encryption error: {0}")]
+    Encryption(String),
+    
+    #[error("Decryption error: {0}")]
+    Decryption(String),
+}
+
+/// Desktop Automation Error
+#[derive(Error, Debug)]
+pub enum DesktopAutomationError {
+    #[error("Screen capture failed: {0}")]
+    ScreenCaptureFailed(String),
+    
+    #[error("Click failed: {0}")]
+    ClickFailed(String),
+    
+    #[error("Type failed: {0}")]
+    TypeFailed(String),
+    
+    #[error("Key press failed: {0}")]
+    KeyPressFailed(String),
+    
+    #[error("Window not found: {0}")]
+    WindowNotFound(String),
+    
+    #[error("Window operation failed: {0}")]
+    WindowOperationFailed(String),
+    
+    #[error("Recording failed: {0}")]
+    RecordingFailed(String),
+    
+    #[error("Recording not found: {0}")]
+    RecordingNotFound(String),
+    
+    #[error("Invalid coordinates: {0}")]
+    InvalidCoordinates(String),
+    
+    #[error("Display not available: {0}")]
+    DisplayNotAvailable(String),
+    
+    #[error("Automation service not running: {0}")]
+    AutomationServiceNotRunning(String),
+}
+
+/// Virtual Machine Error
+#[derive(Error, Debug)]
+pub enum VirtualMachineError {
+    #[error("VM not found: {0}")]
+    VmNotFound(String),
+    
+    #[error("VM operation failed: {0}")]
+    VmOperationFailed(String),
+    
+    #[error("VM start failed: {0}")]
+    VmStartFailed(String),
+    
+    #[error("VM stop failed: {0}")]
+    VmStopFailed(String),
+    
+    #[error("VM snapshot failed: {0}")]
+    VmSnapshotFailed(String),
+    
+    #[error("VM restore failed: {0}")]
+    VmRestoreFailed(String),
+    
+    #[error("VM state invalid: {0}")]
+    VmStateInvalid(String),
+    
+    #[error("Container not found: {0}")]
+    ContainerNotFound(String),
+    
+    #[error("Container operation failed: {0}")]
+    ContainerOperationFailed(String),
+    
+    #[error("Hypervisor not available: {0}")]
+    HypervisorNotAvailable(String),
+    
+    #[error("Insufficient resources: {0}")]
+    InsufficientResources(String),
+}
+
+/// CLI Error
+#[derive(Error, Debug)]
+pub enum CliError {
+    #[error("Command execution failed: {0}")]
+    CommandExecutionFailed(String),
+    
+    #[error("Command not found: {0}")]
+    CommandNotFound(String),
+    
+    #[error("Permission denied: {0}")]
+    PermissionDenied(String),
+    
+    #[error("Process not found: {0}")]
+    ProcessNotFound(String),
+    
+    #[error("Process kill failed: {0}")]
+    ProcessKillFailed(String),
+    
+    #[error("Working directory invalid: {0}")]
+    WorkingDirectoryInvalid(String),
+    
+    #[error("Environment variable invalid: {0}")]
+    EnvironmentVariableInvalid(String),
+    
+    #[error("Command timeout: {0}")]
+    CommandTimeout(String),
+    
+    #[error("Shell not available: {0}")]
+    ShellNotAvailable(String),
+}
+
+/// TTS Error
+#[derive(Error, Debug)]
+pub enum TtsError {
+    #[error("TTS engine not available: {0}")]
+    EngineNotAvailable(String),
+    
+    #[error("Voice not found: {0}")]
+    VoiceNotFound(String),
+    
+    #[error("Synthesis failed: {0}")]
+    SynthesisFailed(String),
+    
+    #[error("Audio playback failed: {0}")]
+    AudioPlaybackFailed(String),
+    
+    #[error("Audio format not supported: {0}")]
+    AudioFormatNotSupported(String),
+    
+    #[error("Invalid TTS configuration: {0}")]
+    InvalidConfiguration(String),
+    
+    #[error("TTS service not running: {0}")]
+    ServiceNotRunning(String),
+    
+    #[error("Language not supported: {0}")]
+    LanguageNotSupported(String),
+}
+
+/// Credential Error
+#[derive(Error, Debug)]
+pub enum CredentialError {
+    #[error("Credential not found: {0}")]
+    CredentialNotFound(String),
+    
+    #[error("Credential storage failed: {0}")]
+    StorageFailed(String),
+    
+    #[error("Credential decryption failed: {0}")]
+    DecryptionFailed(String),
+    
+    #[error("Credential encryption failed: {0}")]
+    EncryptionFailed(String),
+    
+    #[error("Invalid credential type: {0}")]
+    InvalidCredentialType(String),
+    
+    #[error("Credential expired: {0}")]
+    CredentialExpired(String),
+    
+    #[error("Keystore not available: {0}")]
+    KeystoreNotAvailable(String),
+    
+    #[error("Access denied: {0}")]
+    AccessDenied(String),
+    
+    #[error("Invalid credential format: {0}")]
+    InvalidFormat(String),
+}
+
+impl McpError {
+    /// Convert to MCP error code
+    pub fn to_error_code(&self) -> i32 {
+        match self {
+            McpError::Protocol(_) => -32000,
+            McpError::InvalidRequest(_) => -32600,
+            McpError::MethodNotFound(_) => -32601,
+            McpError::InvalidParams(_) => -32602,
+            McpError::Internal(_) => -32603,
+            McpError::AuthenticationFailed(_) => -32001,
+            McpError::AuthorizationFailed(_) => -32002,
+            McpError::ResourceNotFound(_) => -32003,
+            McpError::ToolNotFound(_) => -32004,
+            McpError::SessionExpired(_) => -32005,
+            McpError::RateLimitExceeded(_) => -32006,
+            McpError::Timeout(_) => -32007,
+            McpError::Transport(_) => -32100,
+            McpError::Security(_) => -32200,
+            McpError::DesktopAutomation(_) => -32300,
+            McpError::VirtualMachine(_) => -32400,
+            McpError::Cli(_) => -32500,
+            McpError::Tts(_) => -32600,
+            McpError::Credential(_) => -32700,
+        }
+    }
+    
+    /// Create MCP error from error code
+    pub fn from_error_code(code: i32, message: String) -> Self {
+        match code {
+            -32000 => McpError::Protocol(message),
+            -32600 => McpError::InvalidRequest(message),
+            -32601 => McpError::MethodNotFound(message),
+            -32602 => McpError::InvalidParams(message),
+            -32603 => McpError::Internal(message),
+            -32001 => McpError::AuthenticationFailed(message),
+            -32002 => McpError::AuthorizationFailed(message),
+            -32003 => McpError::ResourceNotFound(message),
+            -32004 => McpError::ToolNotFound(message),
+            -32005 => McpError::SessionExpired(message),
+            -32006 => McpError::RateLimitExceeded(message),
+            -32007 => McpError::Timeout(message),
+            _ => McpError::Internal(message),
+        }
+    }
+}
+
+/// Result type for MCP operations
+pub type McpResult<T> = Result<T, McpError>;
+
+/// Result type for transport operations
+pub type TransportResult<T> = Result<T, McpTransportError>;
+
+/// Result type for security operations
+pub type SecurityResult<T> = Result<T, McpSecurityError>;

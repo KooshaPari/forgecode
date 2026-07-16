@@ -1,0 +1,373 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestDefaultConfig(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if cfg == nil {
+		t.Fatal("DefaultConfig() returned nil")
+	}
+
+	if cfg.DefaultTimeout != "30s" {
+		t.Errorf("DefaultConfig().DefaultTimeout = %q, want %q", cfg.DefaultTimeout, "30s")
+	}
+
+	if cfg.MaxParallel != 3 {
+		t.Errorf("DefaultConfig().MaxParallel = %d, want 3", cfg.MaxParallel)
+	}
+
+	if len(cfg.Commands) == 0 {
+		t.Error("DefaultConfig() returned config with no commands")
+	}
+
+	// Verify expected default commands are present
+	required := []string{"typescript", "lint", "test"}
+	for _, name := range required {
+		cmd, ok := cfg.Commands[name]
+		if !ok {
+			t.Errorf("DefaultConfig() missing required command %q", name)
+			continue
+		}
+		if !cmd.Enabled {
+			t.Errorf("DefaultConfig() command %q should be enabled", name)
+		}
+		if cmd.Command == "" {
+			t.Errorf("DefaultConfig() command %q has empty Command", name)
+		}
+		if cmd.Timeout == "" {
+			t.Errorf("DefaultConfig() command %q has empty Timeout", name)
+		}
+	}
+}
+
+func TestConfigLoad_NoConfigFile(t *testing.T) {
+	// Use a temp directory that has no config file
+	dir := t.TempDir()
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load() returned unexpected error: %v", err)
+	}
+	if cfg == nil {
+		t.Fatal("Load() returned nil config")
+	}
+
+	// Should fall back to defaults
+	if cfg.MaxParallel != 3 {
+		t.Errorf("Load() with no file: MaxParallel = %d, want 3", cfg.MaxParallel)
+	}
+	if cfg.DefaultTimeout != "30s" {
+		t.Errorf("Load() with no file: DefaultTimeout = %q, want %q", cfg.DefaultTimeout, "30s")
+	}
+}
+
+func TestConfigLoad_InvalidYAML(t *testing.T) {
+	dir := t.TempDir()
+	kwatchDir := filepath.Join(dir, ".kwatch")
+	if err := os.MkdirAll(kwatchDir, 0755); err != nil {
+		t.Fatalf("failed to create .kwatch dir: %v", err)
+	}
+
+	// Write invalid YAML (unclosed bracket)
+	invalidYAML := "commands: [invalid: yaml: here"
+	if err := os.WriteFile(filepath.Join(kwatchDir, "kwatch.yaml"), []byte(invalidYAML), 0644); err != nil {
+		t.Fatalf("failed to write invalid yaml: %v", err)
+	}
+
+	_, err := Load(dir)
+	if err == nil {
+		t.Error("Load() with invalid YAML: expected error, got nil")
+	}
+}
+
+func TestConfigLoad_ValidFile(t *testing.T) {
+	dir := t.TempDir()
+	kwatchDir := filepath.Join(dir, ".kwatch")
+	if err := os.MkdirAll(kwatchDir, 0755); err != nil {
+		t.Fatalf("failed to create .kwatch dir: %v", err)
+	}
+
+	yamlContent := `defaultTimeout: 45s
+maxParallel: 5
+commands:
+  typescript:
+    command: npx
+    args: [tsc, --noEmit]
+    timeout: 60s
+    enabled: true
+  custom:
+    command: ./script.sh
+    args: []
+    timeout: 10s
+    enabled: false
+`
+	if err := os.WriteFile(filepath.Join(kwatchDir, "kwatch.yaml"), []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write yaml: %v", err)
+	}
+
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+
+	if cfg.DefaultTimeout != "45s" {
+		t.Errorf("DefaultTimeout = %q, want 45s", cfg.DefaultTimeout)
+	}
+	if cfg.MaxParallel != 5 {
+		t.Errorf("MaxParallel = %d, want 5", cfg.MaxParallel)
+	}
+	if len(cfg.Commands) != 2 {
+		t.Errorf("got %d commands, want 2", len(cfg.Commands))
+	}
+	ts := cfg.Commands["typescript"]
+	if !ts.Enabled {
+		t.Error("typescript command should be enabled")
+	}
+	if ts.Args[0] != "tsc" {
+		t.Errorf("typescript args[0] = %q, want tsc", ts.Args[0])
+	}
+}
+
+func TestConfigLoad_UnreadableFile(t *testing.T) {
+	// Try to load from a path where the file exists but is not readable.
+	// This test only runs on platforms where chmod 000 actually restricts reads.
+	if os.Getuid() == 0 {
+		t.Skip("running as root; cannot test permission denial")
+	}
+	dir := t.TempDir()
+	kwatchDir := filepath.Join(dir, ".kwatch")
+	if err := os.MkdirAll(kwatchDir, 0755); err != nil {
+		t.Fatalf("failed to create .kwatch dir: %v", err)
+	}
+	configPath := filepath.Join(kwatchDir, "kwatch.yaml")
+	if err := os.WriteFile(configPath, []byte("defaultTimeout: 30s\nmaxParallel: 1\ncommands: {}\n"), 0000); err != nil {
+		t.Fatalf("failed to write yaml: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(configPath, 0644) })
+
+	_, err := Load(dir)
+	if err == nil {
+		t.Error("Load() with unreadable file: expected error, got nil")
+	}
+}
+
+func TestConfigSave(t *testing.T) {
+	dir := t.TempDir()
+
+	cfg := DefaultConfig()
+	cfg.DefaultTimeout = "1m"
+	cfg.MaxParallel = 7
+
+	if err := cfg.Save(dir); err != nil {
+		t.Fatalf("Save() returned error: %v", err)
+	}
+
+	// Verify file was created
+	configPath := filepath.Join(dir, ".kwatch", "kwatch.yaml")
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		t.Fatal("Save() did not create config file")
+	}
+
+	// Reload and verify
+	loaded, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load() after Save() returned error: %v", err)
+	}
+	if loaded.DefaultTimeout != "1m" {
+		t.Errorf("after save/reload: DefaultTimeout = %q, want 1m", loaded.DefaultTimeout)
+	}
+	if loaded.MaxParallel != 7 {
+		t.Errorf("after save/reload: MaxParallel = %d, want 7", loaded.MaxParallel)
+	}
+}
+
+func TestConfigValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     *Config
+		wantErr bool
+	}{
+		{
+			name: "valid default config",
+			cfg:  DefaultConfig(),
+		},
+		{
+			name: "invalid default timeout",
+			cfg: &Config{
+				DefaultTimeout: "not-a-duration",
+				MaxParallel:    1,
+				Commands:       map[string]Command{},
+			},
+			wantErr: true,
+		},
+		{
+			name: "zero max parallel",
+			cfg: &Config{
+				DefaultTimeout: "30s",
+				MaxParallel:    0,
+				Commands:       map[string]Command{},
+			},
+			wantErr: true,
+		},
+		{
+			name: "negative max parallel",
+			cfg: &Config{
+				DefaultTimeout: "30s",
+				MaxParallel:    -1,
+				Commands:       map[string]Command{},
+			},
+			wantErr: true,
+		},
+		{
+			name: "command with empty Command field",
+			cfg: &Config{
+				DefaultTimeout: "30s",
+				MaxParallel:    1,
+				Commands: map[string]Command{
+					"bad": {Command: "", Args: nil, Timeout: "1s", Enabled: true},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "command with invalid timeout",
+			cfg: &Config{
+				DefaultTimeout: "30s",
+				MaxParallel:    1,
+				Commands: map[string]Command{
+					"bad": {Command: "echo", Args: []string{"hi"}, Timeout: "forever", Enabled: true},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "command with empty timeout is allowed",
+			cfg: &Config{
+				DefaultTimeout: "30s",
+				MaxParallel:    1,
+				Commands: map[string]Command{
+					"ok": {Command: "echo", Args: []string{"hi"}, Timeout: "", Enabled: true},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr = %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestConfigGetTimeout(t *testing.T) {
+	cfg := &Config{
+		DefaultTimeout: "30s",
+		MaxParallel:    1,
+		Commands: map[string]Command{
+			"custom":  {Command: "x", Timeout: "5s"},
+			"inherit": {Command: "y", Timeout: ""}, // inherits default
+			"broken":  {Command: "z", Timeout: "bogus"},
+		},
+	}
+
+	tests := []struct {
+		name    string
+		cmdName string
+		want    time.Duration
+	}{
+		{"command-specific timeout", "custom", 5 * time.Second},
+		{"falls back to default", "inherit", 30 * time.Second},
+		{"falls back when command timeout is invalid", "broken", 30 * time.Second},
+		{"unknown command uses default", "unknown", 30 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := cfg.GetTimeout(tt.cmdName)
+			if got != tt.want {
+				t.Errorf("GetTimeout(%q) = %v, want %v", tt.cmdName, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfigGetTimeout_InvalidDefault(t *testing.T) {
+	// Edge case: invalid default timeout should fall back to 30s
+	cfg := &Config{
+		DefaultTimeout: "not-a-duration",
+		MaxParallel:    1,
+		Commands:       map[string]Command{},
+	}
+
+	got := cfg.GetTimeout("anything")
+	if got != 30*time.Second {
+		t.Errorf("GetTimeout with invalid default = %v, want 30s", got)
+	}
+}
+
+func TestConfigGetEnabledCommands(t *testing.T) {
+	cfg := &Config{
+		DefaultTimeout: "30s",
+		MaxParallel:    1,
+		Commands: map[string]Command{
+			"a": {Command: "x", Enabled: true},
+			"b": {Command: "y", Enabled: false},
+			"c": {Command: "z", Enabled: true},
+		},
+	}
+
+	enabled := cfg.GetEnabledCommands()
+	if len(enabled) != 2 {
+		t.Errorf("GetEnabledCommands() returned %d, want 2", len(enabled))
+	}
+	if _, ok := enabled["a"]; !ok {
+		t.Error("GetEnabledCommands() missing 'a'")
+	}
+	if _, ok := enabled["b"]; ok {
+		t.Error("GetEnabledCommands() should not include disabled 'b'")
+	}
+	if _, ok := enabled["c"]; !ok {
+		t.Error("GetEnabledCommands() missing 'c'")
+	}
+}
+
+func TestConfigGetEnabledCommands_Empty(t *testing.T) {
+	cfg := &Config{Commands: map[string]Command{}}
+	enabled := cfg.GetEnabledCommands()
+	if len(enabled) != 0 {
+		t.Errorf("GetEnabledCommands() on empty config = %d, want 0", len(enabled))
+	}
+}
+
+func TestConfigExists(t *testing.T) {
+	dir := t.TempDir()
+
+	// Should not exist initially
+	if ConfigExists(dir) {
+		t.Error("ConfigExists() = true for empty dir, want false")
+	}
+
+	// Create config
+	kwatchDir := filepath.Join(dir, ".kwatch")
+	if err := os.MkdirAll(kwatchDir, 0755); err != nil {
+		t.Fatalf("failed to create .kwatch dir: %v", err)
+	}
+	configPath := filepath.Join(kwatchDir, "kwatch.yaml")
+	if err := os.WriteFile(configPath, []byte("defaultTimeout: 30s\nmaxParallel: 1\ncommands: {}\n"), 0644); err != nil {
+		t.Fatalf("failed to write yaml: %v", err)
+	}
+
+	// Should now exist
+	if !ConfigExists(dir) {
+		t.Error("ConfigExists() = false after writing config, want true")
+	}
+}

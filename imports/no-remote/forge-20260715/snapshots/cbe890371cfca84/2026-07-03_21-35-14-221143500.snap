@@ -1,0 +1,6 @@
+$branches = Get-Content 'C:\Users\koosh\_branches.txt' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and $_ -ne 'main' }
+foreach ($b in $branches) {
+  Write-Host "=== $b ==="
+  git -C 'C:\Users\koosh\repos\phenotype-tooling' push origin $b 2>&1 | Select-Object -First 3
+  Write-Host ""
+}

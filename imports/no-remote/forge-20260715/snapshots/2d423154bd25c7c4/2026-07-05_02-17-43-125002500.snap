@@ -1,0 +1,41 @@
+"""
+Merge with -X ours (prefer our HEAD content) for the 2 small branches.
+Use ASCII-safe output.
+"""
+import subprocess
+import sys
+CWD = r'C:\Users\koosh\OmniRoute-fresh2'
+
+def run(cmd, **kw):
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=CWD,
+                       encoding='utf-8', errors='replace', timeout=300, **kw)
+    return r.returncode, r.stdout, r.stderr
+
+def safe_print(s):
+    sys.stdout.buffer.write((s + '\n').encode('utf-8', errors='replace'))
+    sys.stdout.flush()
+
+results = []
+for branch in ['fix/off-next-ci-257', 'fix/main-docs-build-gates']:
+    safe_print(f'\n=== {branch} (with -X ours) ===')
+    rc, _, _ = run(['git', 'branch', '-f', '_tmp_test', f'origin/{branch}'])
+    rc, out, err = run(['git', 'merge', '--no-ff',
+                        '-X', 'ours',
+                        '-m', f'merge({branch}): keep our content, pull branch additions',
+                        '_tmp_test'])
+    if rc == 0:
+        rc2, log, _ = run(['git', 'log', '-1', '--format=%H %s', 'HEAD'])
+        results.append((branch, 'OK', log.strip()[:50]))
+        safe_print(f'  OK: {log.strip()[:60]}')
+    else:
+        safe_print(f'  FAILED: {(err or out)[:300]}')
+        run(['git', 'merge', '--abort'])
+        results.append((branch, 'FAIL', (err or out)[:200]))
+
+run(['git', 'branch', '-D', '_tmp_test'])
+
+rc, head, _ = run(['git', 'rev-parse', 'HEAD'])
+safe_print(f'\nHEAD: {head.strip()[:10]}')
+rc, log, _ = run(['git', 'log', '--oneline', '-7'])
+safe_print('Last 7 commits:')
+safe_print(log)

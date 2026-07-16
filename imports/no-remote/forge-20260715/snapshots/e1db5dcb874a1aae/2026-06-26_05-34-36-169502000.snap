@@ -1,0 +1,123 @@
+/**
+ * PR-041 — Tests for dedup key generation.
+ *
+ * @module tests/unit/batch/dedupKey.test
+ */
+
+import { describe, it, expect } from "vitest";
+import { computeDedupKey, dedupPayload } from "@/lib/batch/dedupKey";
+
+// ---------------------------------------------------------------------------
+// dedupPayload
+// ---------------------------------------------------------------------------
+
+describe("dedupPayload", () => {
+  it("includes model, messages, and semantic params", () => {
+    const payload = dedupPayload({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "hello" }],
+      temperature: 0.7,
+      top_p: 0.9,
+      max_tokens: 100,
+    });
+    expect(payload).toContain("gpt-4o");
+    expect(payload).toContain("hello");
+    expect(payload).toContain("0.7");
+    expect(payload).toContain("0.9");
+    expect(payload).toContain("100");
+  });
+
+  it("strips transport-only keys (stream_options, user, metadata, store)", () => {
+    const withTransport = dedupPayload({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "hi" }],
+      stream_options: { include_usage: true },
+      user: "test-user",
+      metadata: { session: "abc" },
+      store: true,
+    });
+    const withoutTransport = dedupPayload({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect(withTransport).toBe(withoutTransport);
+  });
+
+  it("includes stream and n (they change response shape)", () => {
+    const streaming = dedupPayload({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "hi" }],
+      stream: true,
+      n: 2,
+    });
+    const nonStreaming = dedupPayload({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect(streaming).not.toBe(nonStreaming);
+    expect(streaming).toContain("true");
+    expect(streaming).toContain("2");
+  });
+
+  it("produces the same payload regardless of key ordering", () => {
+    const a = dedupPayload({
+      temperature: 0.5,
+      model: "claude-3-opus",
+      messages: [{ role: "user", content: "test" }],
+    });
+    const b = dedupPayload({
+      messages: [{ role: "user", content: "test" }],
+      model: "claude-3-opus",
+      temperature: 0.5,
+    });
+    expect(a).toBe(b);
+  });
+
+  it("includes unknown / custom keys as-is", () => {
+    const payload = dedupPayload({
+      model: "custom-model",
+      messages: [{ role: "user", content: "x" }],
+      custom_param: "v",
+    });
+    expect(payload).toContain("custom_param");
+    expect(payload).toContain("v");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeDedupKey
+// ---------------------------------------------------------------------------
+
+describe("computeDedupKey", () => {
+  it("returns a deterministic 64-char hex string", () => {
+    const body = {
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: "hi" }],
+    };
+    const key = computeDedupKey(body);
+    expect(key).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("returns the same key for identical bodies", () => {
+    const body = {
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "hello world" }],
+      temperature: 0.7,
+    };
+    const k1 = computeDedupKey(body);
+    const k2 = computeDedupKey({ ...body });
+    expect(k1).toBe(k2);
+  });
+
+  it("returns different keys when messages differ", () => {
+    const k1 = computeDedupKey({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "hello" }],
+    });
+    const k2 = computeDedupKey({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "goodbye" }],
+    });
+    expect(k1).not.toBe(k2);
+  });
+});

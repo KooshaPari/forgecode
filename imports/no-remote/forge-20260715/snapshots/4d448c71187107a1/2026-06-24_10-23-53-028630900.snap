@@ -1,0 +1,5 @@
+@echo off
+set CARGO_TARGET_DIR=E:\civis-target
+cd /d "C:\Users\koosh\Dev\Civis\.worktrees\wt-impl-godtools"
+cargo check -p civ-engine --message-format=short > "C:\Users\koosh\AppData\Local\Temp\civ-engine-check.log" 2>&1
+echo CARGO_EXIT=%ERRORLEVEL% >> "C:\Users\koosh\AppData\Local\Temp\civ-engine-check.log"

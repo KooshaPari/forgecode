@@ -1,0 +1,6 @@
+import json, re, sys, os
+raw = open(r'C:\Users\koosh\Civis\_prs_final.json', 'rb').read()
+text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', raw.decode('utf-8', 'replace')).strip()
+prs = json.loads(text)
+for p in prs:
+    print(f"#{p['number']:>4}  {p['state']:<8}  {p['headRefName'][:40]:<40}  {p['title'][:80]}")

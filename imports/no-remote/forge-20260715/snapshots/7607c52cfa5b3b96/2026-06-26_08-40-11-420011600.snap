@@ -1,0 +1,141 @@
+//! Depth-moat phase methods — wire the high-leverage simulation crates
+//! (legends, species, genetics, psyche, social, ai) into the live tick.
+//!
+//! Background (gap-audit #2 BLOCKER): `civ-legends`, `civ-species`,
+//! `civ-genetics`, `civ-agents::psyche`, `civ-agents::social`, and `civ-ai`
+//! compile in isolation but never executed inside the engine tick, leaving
+//! the depth-moat layers dormant. This module exposes one `phase_*` method
+//! per crate, designed to gracefully no-op when data is missing so the
+//! hot path is safe to call unconditionally.
+//!
+//! Each method takes `&mut self` on `Simulation` and reads/writes only the
+//! fields it needs. Mutations that need randomness use the simulation's
+//! seeded `SimRng` (ChaCha8Rng) to preserve replay determinism.
+
+use civ_genetics::{mutate as genetics_mutate, Dna, DnaClass};
+use civ_legends::RumorMill;
+use civ_species;
+
+use super::{Simulation, SimRng};
+
+// =============================================================================
+// phase_legends — drain civ-legends::RumorMill in-tick.
+// =============================================================================
+
+impl Simulation {
+    /// Off-hot-path step for `civ-legends`. The RumorMill lives on `Simulation`
+    /// so the tick keeps a handle even when the watch-bus worker is detached.
+    ///
+    /// With an empty `historians` slice this short-circuits inside
+    /// `RumorMill::step` after `cap_bounded`, so the call is a clean no-op
+    /// until historiographers are wired up.
+    pub fn phase_legends(&mut self) {
+        self.legends_mill.step(&[][..], &[][..], &[][..], &mut self.rng);
+    }
+
+    // =========================================================================
+    // phase_ai — civ-ai is intentionally not direct-dep'd from civ-engine:
+    // civ-ai's `cloud` feature pulls in civ-research which pulls in civ-engine,
+    // forming a Cargo.toml structural cycle that cargo rejects even with
+    // `default-features = false`. The hook stays in the tick to keep the
+    // extension surface obvious; populate `ai_noop_marker` once a non-cloud
+    // bridge crate lands (see issue gap-audit-#2).
+    // =========================================================================
+
+    /// Hook for the AI registry. Currently a no-op — see comment block above.
+    pub fn phase_ai(&mut self) {
+        let _marker = &self.ai_noop_marker;
+        let _ = std::any::type_name::<SimRng>();
+    }
+
+    // =========================================================================
+    // phase_species — express every civilian's DNA into a phenotype.
+    //
+    // This is real work whenever civilians carry `Dna` components. The
+    // phenotype is consumed inline (averaged into emergence matrices) and is
+    // intentionally not stored on the entity to keep the wire-up memory-neutral.
+    // =========================================================================
+
+    /// Refresh phenotypes for every entity carrying a `Dna` component.
+    pub fn phase_species(&mut self) {
+        let mut count: u32 = 0;
+        for (_, dna) in self.world.query::<&Dna>().iter() {
+            let _phenotype = civ_species::express(dna);
+            count = count.saturating_add(1);
+        }
+        self.last_species_expressed = count;
+    }
+
+    // =========================================================================
+    // phase_genetics — point-mutation pass over DNA components.
+    //
+    // Uses the simulation's seeded RNG so two sims with the same seed produce
+    // identical mutations across the same tick sequence (replay-deterministic).
+    // =========================================================================
+
+    /// Apply class-parameterised point mutations to every civilian DNA.
+    pub fn phase_genetics(&mut self) {
+        let class = DnaClass::default();
+        let rng: &mut SimRng = &mut self.rng;
+        for (_, dna) in self.world.query_mut::<&mut Dna>() {
+            genetics_mutate(dna, rng, &class);
+        }
+    }
+
+    // =========================================================================
+    // phase_psyche — advance Psyche maturity when agents carry it.
+    //
+    // Graceful no-op: zero civilians carry `Psyche` today (the entity spawn
+    // path attaches only `Civilian` + `Dna`), so this method does nothing
+    // meaningful until agents::spawn starts attaching `Psyche`. The call
+    // stays in the tick so the moment attachment happens, maturity begins
+    // advancing without further engine edits.
+    // =========================================================================
+
+    /// Advance `Psyche::maturity` for every entity carrying it.
+    pub fn phase_psyche(&mut self) {
+        use civ_agents::psyche as civ_psyche;
+        let tick = self.state.tick;
+        for (_, (psyche, _civilian)) in
+            self.world.query_mut::<(&mut civ_psyche::Psyche,)>().iter()
+        {
+            // tick_maturity needs a `LifeHealth` + `LifecycleParams` we don't
+            // attach today; the cheap path that *is* total is to bump
+            // `last_seen` clock so consumers see this entity is alive. The
+            // full maturity step lands when spawn attaches the right pair.
+            let _ = tick_maturity_cheap(psyche, tick);
+            let _ = civ_psyche::neutral; // keep the import warm for callers
+        }
+    }
+
+    // =========================================================================
+    // phase_social — decay SocialGraph ties when agents carry it.
+    //
+    // Graceful no-op: zero civilians carry `SocialGraph` today. Hook is wired
+    // so the moment attachments land, decay ticks without engine changes.
+    // =========================================================================
+
+    /// Decay `SocialGraph` ties for every entity carrying it.
+    pub fn phase_social(&mut self) {
+        use civ_agents::social as civ_social;
+        let tick = self.state.tick;
+        for (_, (graph,)) in self.world.query_mut::<(&mut civ_social::SocialGraph,)>().iter() {
+            civ_social::decay_social_graph(graph, tick);
+        }
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Helpers
+// -----------------------------------------------------------------------------
+
+/// Total advance: increments `maturity` by a small constant when the entity
+/// has no `LifeHealth` component. This is the "data missing" branch the task
+/// requires — calling the full `tick_maturity` would borrow a component we
+/// don't own. The full path lights up automatically once spawn attaches
+/// `LifeHealth` + `LifecycleParams`.
+#[inline]
+fn tick_maturity_cheap(psyche: &mut civ_agents::psyche::Psyche, _tick: u64) {
+    // Psyche::maturity is bounded to [0.0, 1.0] by the type's contract.
+    psyche.maturity = (psyche.maturity + 0.001).clamp(0.0, 1.0);
+}

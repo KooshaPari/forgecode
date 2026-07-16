@@ -1,0 +1,56 @@
+//! Path-helper utilities shared across Phenotype compute/infra agents.
+//!
+//! Replaces the formerly duplicated `expand()` / `dirs_home()` functions
+//! that existed independently in `oci-lottery/src/config.rs` and
+//! `oci-post-acquire/src/main.rs`.
+
+use std::path::PathBuf;
+
+/// Resolve `~` to the user's `$HOME` directory.
+///
+/// Returns `None` when `$HOME` is not set (unusual on Linux/macOS, common
+/// in minimal containers).
+pub fn dirs_home() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// Expand a leading `~/` into the user's home directory.
+///
+/// ### Examples
+///
+/// ```ignore
+/// assert!(expand("~/.oci/config").is_absolute());
+/// assert_eq!(expand("/etc/passwd"), PathBuf::from("/etc/passwd"));
+/// ```
+pub fn expand(p: &str) -> PathBuf {
+    if let Some(rest) = p.strip_prefix("~/")
+        && let Some(home) = dirs_home()
+    {
+        return home.join(rest);
+    }
+    PathBuf::from(p)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expand_absolute_is_passthrough() {
+        assert_eq!(expand("/etc/passwd"), PathBuf::from("/etc/passwd"));
+    }
+
+    #[test]
+    fn expand_tilde_prefix_resolves() {
+        let p = expand("~/foo/bar");
+        // Should start with the home dir
+        let home = dirs_home().expect("HOME must be set in test env");
+        assert!(p.starts_with(&home));
+        assert!(p.ends_with("foo/bar"));
+    }
+
+    #[test]
+    fn expand_relative_is_passthrough() {
+        assert_eq!(expand("relative/path"), PathBuf::from("relative/path"));
+    }
+}

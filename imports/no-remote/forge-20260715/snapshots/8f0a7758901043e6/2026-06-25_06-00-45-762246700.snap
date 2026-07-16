@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""Convert CRLF -> LF for hygiene scripts (one-shot utility)."""
+import sys
+
+files = [
+    r'C:\Users\koosh\Dev\Civis\scripts\ci\audit-worktrees.sh',
+    r'C:\Users\koosh\Dev\Civis\scripts\ci\audit-pr-queue.sh',
+    r'C:\Users\koosh\Dev\Civis\scripts\ci\with-cargo-target.sh',
+    r'C:\Users\koosh\Dev\Civis\scripts\ci\hygiene.sh',
+]
+
+for f in files:
+    with open(f, 'rb') as fp:
+        data = fp.read()
+    before_crlf = data.count(b'\r\n')
+    data = data.replace(b'\r\n', b'\n')
+    with open(f, 'wb') as fp:
+        fp.write(data)
+    print(f'{f}: replaced {before_crlf} CRLF -> LF')

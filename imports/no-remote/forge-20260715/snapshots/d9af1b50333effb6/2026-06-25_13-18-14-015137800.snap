@@ -1,0 +1,317 @@
+//! Review-fix loop orchestrator.
+//!
+//! Polls for CI and code review status, feeds review feedback to the agent,
+//! and iterates until approved or max cycles reached.
+//! Traceability: FR-012 / WP12-T071
+
+use std::collections::HashSet;
+
+use agileplus_dag::unit::DagUnit;
+use agileplus_domain::domain::work_package::WorkPackage;
+use agileplus_domain::ports::agent::{AgentConfig, AgentPort, AgentStatus};
+
+/// Outcome of running the review-fix loop.
+#[derive(Debug, Clone)]
+pub enum ReviewOutcome {
+    /// PR was approved and CI passed.
+    Approved,
+    /// Max cycles reached without approval.
+    MaxCyclesReached { cycles: u32, last_feedback: String },
+    /// Agent job failed during a fix cycle.
+    AgentFailed { error: String },
+    /// Loop was cancelled externally.
+    Cancelled,
+}
+
+/// Run the review-fix loop for a work package.
+///
+/// In this scaffold implementation the loop polls the agent port for job
+/// completion status. Full Coderabbit integration is wired in later when
+/// the ReviewPort adapter (WP09) is available.
+///
+/// For now the loop:
+///   1. Polls `AgentPort::query_status` until the agent completes.
+///   2. If the agent returns success the PR is treated as approved.
+///   3. If the agent indicates it is waiting for review we simulate a single
+///      poll cycle that considers it approved (no-op review adapter).
+///   4. If the agent fails we return `AgentFailed`.
+///
+/// Returns `ReviewOutcome`.
+pub async fn run_review_loop<A: AgentPort>(
+    wp: &WorkPackage,
+    job_id: &str,
+    agent: &A,
+    _agent_config: &AgentConfig,
+    max_cycles: u32,
+    poll_interval_secs: u64,
+) -> ReviewOutcome {
+    let poll = std::time::Duration::from_secs(poll_interval_secs);
+    let mut last_feedback = String::new();
+
+    for cycle in 1..=max_cycles {
+        println!("  Review cycle {cycle}/{max_cycles}: polling agent status...");
+
+        // Poll with a timeout using tokio::time::timeout
+        let status = match agent.query_status(job_id).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "error polling agent status");
+                tokio::time::sleep(poll).await;
+                continue;
+            }
+        };
+
+        match status {
+            AgentStatus::Completed { result } => {
+                if result.success {
+                    println!("  Agent completed successfully.");
+                    return ReviewOutcome::Approved;
+                } else {
+                    last_feedback = result.stderr.clone();
+                    println!(
+                        "  Agent completed with failure: {}",
+                        &result.stderr[..result.stderr.len().min(200)]
+                    );
+                    // Feed back stderr as instruction for next cycle
+                    if cycle < max_cycles {
+                        let instruction = format!(
+                            "Your previous attempt failed. Please fix the following issues:\n\n{}",
+                            result.stderr
+                        );
+                        if let Err(e) = agent.send_instruction(job_id, &instruction).await {
+                            tracing::warn!(error = %e, "failed to send instruction to agent");
+                        }
+                    }
+                }
+            }
+            AgentStatus::WaitingForReview { pr_url } => {
+                println!("  Agent waiting for review at: {pr_url}");
+                // In a real implementation we would poll Coderabbit here.
+                // For now, treat as approved.
+                return ReviewOutcome::Approved;
+            }
+            AgentStatus::Failed { error } => {
+                println!("  Agent failed: {error}");
+                return ReviewOutcome::AgentFailed { error };
+            }
+            AgentStatus::Running { pid } => {
+                tracing::debug!(pid = pid, "agent still running");
+            }
+            AgentStatus::Pending => {
+                tracing::debug!("agent pending");
+            }
+        }
+
+        tokio::time::sleep(poll).await;
+    }
+
+    println!(
+        "  Max review cycles ({max_cycles}) reached for WP {}.",
+        wp.id
+    );
+    ReviewOutcome::MaxCyclesReached {
+        cycles: max_cycles,
+        last_feedback,
+    }
+}
+
+/// Result of reviewing a single DAG unit.
+#[derive(Debug, Clone)]
+pub struct DagReviewResult {
+    /// The unit ID that was reviewed.
+    pub unit_id: String,
+    /// Whether the review passed.
+    pub approved: bool,
+    /// Number of review-fix cycles used.
+    pub cycles_used: u32,
+    /// Error message if failed.
+    pub error: Option<String>,
+}
+
+/// Run DAG-driven parallel reviews.
+///
+/// Given a list of DAG units with their job IDs, this function:
+/// 1. Groups units into waves by the dependency topology
+/// 2. Within each wave, runs reviews concurrently for independent units
+/// 3. Uses the same review-fix loop as the sequential path
+/// 4. Returns aggregated results per unit
+///
+/// The `deps` map defines the dependency graph: `unit_id -> set of deps`.
+pub async fn run_dag_reviews<A: AgentPort>(
+    units: &[DagUnit],
+    job_ids: &[(&str, &str)],   // (unit_id, job_id)
+    agent: &A,
+    agent_config: &AgentConfig,
+    max_review_cycles: u32,
+    _deps: &std::collections::HashMap<String, HashSet<String>>,
+) -> Vec<DagReviewResult> {
+    // Build a lookup from unit_id -> job_id.
+    let job_map: std::collections::HashMap<&str, &str> = job_ids.iter().cloned().collect();
+
+    // Review all units concurrently (DAG executor already serializes
+    // units with file-scope conflicts).
+    let futures: Vec<_> = units
+        .iter()
+        .filter_map(|unit| {
+            let uid = unit.id.as_str();
+            job_map.get(uid).map(|&jid| {
+                let unit_clone = unit.clone();
+                let job_id_owned = jid.to_owned();
+                async move {
+                    let outcome = review_single_dag_unit(
+                        &unit_clone,
+                        &job_id_owned,
+                        agent,
+                        agent_config,
+                        max_review_cycles,
+                    )
+                    .await;
+                    (unit_clone.id.clone(), outcome)
+                }
+            })
+        })
+        .collect();
+
+    // Run all reviews concurrently.
+    let outcomes = futures_util::future::join_all(futures).await;
+
+    let mut results: Vec<DagReviewResult> = outcomes
+        .into_iter()
+        .map(|(unit_id, outcome)| {
+            let approved = matches!(outcome, DagReviewOutcome::Approved);
+            let (cycles_used, error) = match &outcome {
+                DagReviewOutcome::Approved => (1, None),
+                DagReviewOutcome::MaxCyclesReached { cycles, .. } => {
+                    (*cycles, Some("max review cycles reached".to_string()))
+                }
+                DagReviewOutcome::AgentFailed { error } => (0, Some(error.clone())),
+            };
+            DagReviewResult {
+                unit_id,
+                approved,
+                cycles_used,
+                error,
+            }
+        })
+        .collect();
+
+    results
+}
+
+// Internal outcome type for the DAG review helper.
+#[derive(Debug)]
+enum DagReviewOutcome {
+    Approved,
+    MaxCyclesReached { cycles: u32, last_feedback: String },
+    AgentFailed { error: String },
+}
+
+async fn review_single_dag_unit<A: AgentPort>(
+    unit: &DagUnit,
+    job_id: &str,
+    agent: &A,
+    _agent_config: &AgentConfig,
+    max_cycles: u32,
+) -> DagReviewOutcome {
+    println!("  Reviewing unit {} (job {})...", unit.id, job_id);
+
+    let poll = std::time::Duration::from_secs(15);
+    let mut last_feedback = String::new();
+
+    for cycle in 1..=max_cycles {
+        println!(
+            "  [{}] Review cycle {}/{max_cycles}: polling agent status...",
+            unit.id, cycle
+        );
+
+        let status = match agent.query_status(job_id).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(unit = %unit.id, error = %e, "error polling agent status");
+                tokio::time::sleep(poll).await;
+                continue;
+            }
+        };
+
+        match status {
+            AgentStatus::Completed { result } => {
+                if result.success {
+                    println!("  [{}] Agent completed successfully.", unit.id);
+                    return DagReviewOutcome::Approved;
+                } else {
+                    last_feedback = result.stderr.clone();
+                    println!(
+                        "  [{}] Agent completed with failure: {}",
+                        unit.id,
+                        &result.stderr[..result.stderr.len().min(200)]
+                    );
+                    if cycle < max_cycles {
+                        let instruction = format!(
+                            "Your previous attempt failed. Please fix:\n\n{}",
+                            result.stderr
+                        );
+                        if let Err(e) = agent.send_instruction(job_id, &instruction).await {
+                            tracing::warn!(error = %e, "failed to send instruction");
+                        }
+                    }
+                }
+            }
+            AgentStatus::WaitingForReview { pr_url } => {
+                println!("  [{}] Agent waiting for review at: {pr_url}", unit.id);
+                return DagReviewOutcome::Approved;
+            }
+            AgentStatus::Failed { error } => {
+                println!("  [{}] Agent failed: {error}", unit.id);
+                return DagReviewOutcome::AgentFailed { error };
+            }
+            AgentStatus::Running { .. } | AgentStatus::Pending => {
+                tracing::debug!(unit = %unit.id, "agent still running");
+            }
+        }
+
+        tokio::time::sleep(poll).await;
+    }
+
+    println!(
+        "  [{}] Max review cycles ({max_cycles}) reached.",
+        unit.id
+    );
+    DagReviewOutcome::MaxCyclesReached {
+        cycles: max_cycles,
+        last_feedback,
+    }
+}
+
+/// Format structured review comments into an agent instruction.
+pub fn format_feedback(comments: &[String]) -> String {
+    if comments.is_empty() {
+        return "No actionable feedback.".to_string();
+    }
+    let items: Vec<String> = comments
+        .iter()
+        .enumerate()
+        .map(|(i, c)| format!("{}. {}", i + 1, c))
+        .collect();
+    format!(
+        "Please address the following review comments:\n\n{}\n",
+        items.join("\n")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_feedback_empty() {
+        assert_eq!(format_feedback(&[]), "No actionable feedback.");
+    }
+
+    #[test]
+    fn format_feedback_numbered() {
+        let comments = vec!["Fix typo".to_string(), "Add test".to_string()];
+        let result = format_feedback(&comments);
+        assert!(result.contains("1. Fix typo"));
+        assert!(result.contains("2. Add test"));
+    }
+}

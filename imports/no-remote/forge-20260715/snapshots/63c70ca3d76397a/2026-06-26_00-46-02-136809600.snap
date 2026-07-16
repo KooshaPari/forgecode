@@ -1,0 +1,43 @@
+import json
+import re
+import sys
+
+repos = [
+    ('eyetracker', 'eye'),
+    ('eventra', 'eve'),
+    ('configra', 'cfg'),
+    ('benchora', 'ben'),
+    ('authvault', 'aut'),
+    ('quillr', 'qui'),
+]
+
+print(f"{'repo':<11} {'PR':<5} {'state':<10} {'mergeable':<10} {'draft':<6} title")
+print('-' * 100)
+
+for repo, prefix in repos:
+    path = rf'C:\Users\koosh\_pr_{prefix}_batch.json'
+    try:
+        data = open(path, 'rb').read()
+    except FileNotFoundError:
+        print(f'{repo:<11} MISSING file')
+        continue
+    clean = re.sub(rb'\x1b\[[0-9;]*m', b'', data).decode('utf-8', errors='replace')
+    try:
+        d = json.loads(clean)
+    except Exception as e:
+        print(f'{repo:<11} parse_err: {e}  head: {clean[:80]}')
+        continue
+    if isinstance(d, dict) and 'message' in d and 'documentation_url' in d:
+        print(f'{repo:<11} API_ERR: {d["message"][:60]}')
+        continue
+    if isinstance(d, list) and len(d) > 0:
+        d = d[0]
+    if isinstance(d, dict) and 'message' in d:
+        print(f'{repo:<11} NO_PR: {d["message"][:60]}')
+        continue
+    n = d.get('number', '?')
+    state = d.get('state', '?')
+    mergeable = d.get('mergeable', '?')
+    draft = d.get('draft', False)
+    title = (d.get('title', '') or '')[:60]
+    print(f'{repo:<11} #{n:<4} {state:<10} {str(mergeable):<10} {str(draft):<6} {title}')

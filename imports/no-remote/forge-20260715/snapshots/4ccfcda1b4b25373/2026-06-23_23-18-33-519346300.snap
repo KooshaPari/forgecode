@@ -1,0 +1,9 @@
+import json, sys
+data = json.load(open(r"C:\Users\koosh\_gh_search_full.json", encoding="utf-8"))
+keys = ['portage','benchora','byteport','nanovms','phenocompose','phenotype-infra','evalora','profila','tracely','httpora','phenotype-validation','phenotype-gauge','tracera','flagward','flowra','apisync','portalis','pheno-cli','helMo','metron','nanoswarm','vibeproxy','phenotype-evaluation','bench','eval','qa','qeng','port','agileplus','agileplus','thegent','pheno','helix','tokn','kits','flag','sentinel','phenotooling','agileplus-mcp','argis']
+matches = [r for r in data if any(k in r['name'].lower() for k in keys)]
+matches.sort(key=lambda r: r['name'].lower())
+for r in matches:
+    desc = (r.get('description') or '')[:100]
+    print(f"{r['name']:35s} | {(r.get('visibility') or '?'):8s} | {desc}")
+print(f"\nTotal: {len(matches)} of {len(data)}")

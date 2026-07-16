@@ -1,0 +1,82 @@
+# Microsoft.PowerShell_profile.ps1
+# pwsh equivalent of ~/.zshrc Claude Code / Codex profile helpers.
+# Loaded automatically on every pwsh launch.
+#
+# Usage:
+#   claude-omni [any flags]   # → http://100.96.135.160:20128/v1 (OmniRoute)
+#   claude-mm   [any flags]   # → https://api.minimax.io/anthropic (direct)
+#   codex-omni  [any flags]   # → --profile omniroute
+#   codex-mm    [any flags]   # → --profile minimax
+# All flags (-p, --dangerously-skip-permissions, --resume, etc.) pass through.
+
+# ── Resolve native binaries at load time (avoids name-shadowing recursion) ─
+$script:ClaudeExe = (Get-Command -CommandType Application -Name claude -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+if (-not $script:ClaudeExe) { Write-Warning 'claude binary not found on PATH; claude-omni/claude-mm/claude will fail.' }
+$script:CodexExe  = (Get-Command -CommandType Application -Name codex  -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+if (-not $script:CodexExe)  { Write-Warning 'codex binary not found on PATH; codex-omni/codex-mm will fail.' }
+
+# ── Shared Claude env bundle ──────────────────────────────────────────────
+$script:ClaudeAuthToken = 'sk-cp-gPIgSPD1rxNMDQqvb4nYNj0HE4HfElst4cbyJQby9eMhod_1FU5OVTh1KisjFDPoPSngE-R_WwHAhA4ehgzqoIKhaXfipS-1CmEjUqCTPk2brR2Fq6PH0OA'
+
+function Set-ClaudeEnv {
+    $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW     = '512000'
+    $env:ANTHROPIC_MODEL                     = 'Main'
+    $env:ANTHROPIC_DEFAULT_SONNET_MODEL      = 'Main'
+    $env:ANTHROPIC_DEFAULT_OPUS_MODEL        = 'Main'
+    $env:ANTHROPIC_DEFAULT_HAIKU_MODEL       = 'Main'
+}
+
+# ── Claude Code profiles ───────────────────────────────────────────────────
+function claude-omni {
+    [void](Ensure-SseCleanupProxy)
+    Set-ClaudeEnv
+    $env:ANTHROPIC_AUTH_TOKEN  = 'sk-a6e8236359cd319b-3w6jyp-b0931376'
+    # Route through local SSE-cleanup proxy to strip OmniRoute's post-response.trailer
+    # `: x-omniroute-*` annotations. See C:\Users\koosh\.omniroute\bin\sse-cleanup-proxy.mjs
+    $env:ANTHROPIC_BASE_URL   = 'http://127.0.0.1:20130/v1'
+    & $script:ClaudeExe @args
+}
+
+function claude-mm {
+    Set-ClaudeEnv
+    $env:ANTHROPIC_AUTH_TOKEN  = 'sk-cp-gPIgSPD1rxNMDQqvb4nYNj0HE4HfElst4cbyJQby9eMhod_1FU5OVTh1KisjFDPoPSngE-R_WwHAhA4ehgzqoIKhaXfipS-1CmEjUqCTPk2brR2Fq6PH0OA'
+    $env:ANTHROPIC_BASE_URL   = 'https://api.minimax.io/anthropic'
+    & $script:ClaudeExe @args
+}
+
+# Default `claude` → omniroute (matches the ~/.zshrc default)
+function claude {
+    claude-omni @args
+}
+
+# ── Codex profiles ─────────────────────────────────────────────────────────
+# Ensure-SseCleanupProxy brings up C:\Users\koosh\.omniroute\bin\sse-cleanup-proxy.mjs
+# on 127.0.0.1:20130 if it isn't already listening. Codex 0.142.5's strict SSE
+# parser dislikes OmniRoute's post-`response.completed` `: x-omniroute-*`
+# annotations; the proxy tears down the upstream socket the moment it flushes
+# `response.completed`, dropping the trailer before codex sees it.
+function Ensure-SseCleanupProxy {
+    $listening = Get-NetTCPConnection -LocalPort 20130 -State Listen -ErrorAction SilentlyContinue
+    if ($listening) { return $true }
+
+    $vbs = 'C:\Users\koosh\Temp\start-proxy.vbs'
+    if (-not (Test-Path $vbs)) {
+        Write-Warning "Ensure-SseCleanupProxy: $vbs not found; codex-omni/claude-omni may fail with stream errors."
+        return $false
+    }
+    # Detached launch via .vbs so we don't hang the parent shell.
+    Start-Process -FilePath 'cscript.exe' -ArgumentList '//nologo', "`"$vbs`"" -WindowStyle Hidden
+    Start-Sleep -Milliseconds 1200
+
+    $listening = Get-NetTCPConnection -LocalPort 20130 -State Listen -ErrorAction SilentlyContinue
+    return [bool]$listening
+}
+
+function codex-omni {
+    [void](Ensure-SseCleanupProxy)
+    & $script:CodexExe --profile omniroute @args
+}
+
+function codex-mm {
+    & $script:CodexExe --profile minimax @args
+}

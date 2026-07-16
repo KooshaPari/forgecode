@@ -1,0 +1,34 @@
+## Summary
+Add artifact-aware scheduling to the DAG engine that prevents parallel execution of units touching the same files, extending the topological parallel-bucket scheduler with file-level conflict detection.
+
+## Context
+The existing parallel-bucket scheduler (epic F5) groups DAG nodes by topological rank but assumes all nodes within a bucket are safe to run concurrently. Two units that write to the same file (or one that reads while another writes) would produce data races, corruption, or non-deterministic results. This unit (F7) adds the missing artifact-awareness layer.
+
+## Changes
+- New `artifact` module with `ArtifactSet` (read/write file declarations), `ConflictKind` (write–write, read–write), and `ArtifactConflict` types
+- `detect_conflicts()` — pair-wise file-level conflict detection within a parallel bucket
+- `schedule_artifact_aware()` — extends the base `Schedule` with greedy colouring to serialise conflicting nodes into separate sub-buckets while preserving topological order
+- `format_artifact_schedule()` — human-readable schedule and conflict reporting
+- The original `scheduler` module is untouched; behaviour is additive
+
+### Key Implementation Details
+- Conflict detection uses three checks per pair: write–write intersection, read–write (both directions)
+- Resolution uses a simple greedy first-fit colouring: each node is placed in the first conflict-free sub-bucket within its rank
+- Nodes without artifact declarations are skipped during both detection and resolution — they never cause conflicts
+
+## Use Cases
+- A `build` node writes `out/binary` and a `test` node writes `out/test-report` — no conflict, they can run in parallel
+- Two `compile` units both write `build/object.o` — conflict detected, serialised
+- A `reader` node reads `data.txt` while a `writer` writes it — read–write conflict detected, serialised
+- All three nodes reading `shared.txt` — no conflict, full parallelism preserved
+
+## Testing
+```bash
+cargo test -p byteport-dag
+```
+
+The 12 new tests cover: write–write conflicts, read–write conflicts, shared reads (no conflict), three-way conflicts, missing artifact entries, empty schedules, two-level rank propagation, and format output.
+
+## Links
+- Epic: epic_F — DAG foundation + automation
+- Areas: compute-infra

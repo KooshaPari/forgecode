@@ -1,0 +1,39 @@
+## Summary
+Add parallel-bucket visualization to the DAG renderer, enabling users to see which units can run concurrently, identify the critical path, and estimate wall-clock time.
+
+## Context
+The DAG renderer (F24-F28) provides an interactive graph view, but project managers and engineers need a **schedule-oriented view** that answers: "What can run in parallel? What's on the critical path? How long will this take?" This PR adds the Bucket View — a swimlane-based parallel schedule computed from the DAG topology.
+
+## Changes
+- **`src/lib/dag/buckets.ts`** — Core computation module with:
+  - `topoSortWithLevels()`: Kahn's algorithm returning topological order + longest-path level assignment
+  - `computeCriticalPath()`: Forward/backward CPM pass with zero-slack tracing (8 steps: forward ES/EF, backward LF/LS, slack calculation, path extraction)
+  - `computeBucketSchedule()`: Groups nodes by level into parallel buckets with wall-clock duration per bucket
+  - `computeWallClock()`: Convenience function for per-bucket and total wall-clock estimates
+- **`src/pages/dag/buckets.astro`** — New page with:
+  - Swimlane layout showing each parallel bucket as a horizontal section
+  - Status badges, duration tags, and concurrency badges per node
+  - Critical-path nodes highlighted with red borders and "critical" labels
+  - Timeline header showing proportional wall-clock bars
+  - Concurrency analysis panel (largest bucket, parallel efficiency, savings vs sequential)
+  - Toggle link between Graph View (`/dag/`) and Bucket View (`/dag/buckets/`)
+- **`src/pages/dag/index.astro`** — Added "Bucket View" toggle button in legend bar
+- **`tests/dag-buckets.test.ts`** — 36 tests covering topo sort, CPM critical path, bucket grouping, wall-clock computation, and invariants across 5 fixture DAG topologies (linear chain, fork-join diamond, duration-variance diamond, empty, single node)
+- **`vitest.config.ts`** — Test runner configuration for projects-landing
+- **`data/dag-data.json`** — Added `estimatedHours` to all 15 Epic F units
+
+## Testing
+```bash
+# Run the full test suite (54 tests total — 36 new bucket + 18 existing)
+cd sites/projects-landing && bun test
+
+# Preview the bucket view
+cd sites/projects-landing && bun run dev
+# Then visit http://localhost:4321/dag/buckets
+# Or click "Bucket View" from the graph view at /dag/
+```
+
+## Links
+- Related issues: F29 (compute-infra epic)
+- Graph view (F24-F28): `/dag/`
+- Bucket view: `/dag/buckets/`

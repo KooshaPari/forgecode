@@ -1,0 +1,5 @@
+with open(r'C:\Users\koosh\OmniRoute-upstream\src\app\api\combos\[id]\route.ts', 'rb') as f:
+    head = f.read(16)
+print('first 16 bytes:', head)
+print('BOM present:', head.startswith(b'\xef\xbb\xbf'))
+print('UTF-16 BOM present:', head.startswith(b'\xff\xfe') or head.startswith(b'\xfe\xff'))

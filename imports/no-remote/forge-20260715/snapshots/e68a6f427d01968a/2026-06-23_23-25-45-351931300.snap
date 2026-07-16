@@ -1,0 +1,1436 @@
+# OmniRoute v3.8.34 — 100-PR Engineering Roadmap
+
+> **Project**: OmniRoute — Unified AI router (160+ providers, OpenAI-compatible, RTK/Caveman compression, auto-fallback, MCP/A2A, Desktop + PWA, Electron)
+> **Author**: KooshaPari
+> **Date**: 2026-06-23
+> **Target version**: v3.8.34 → v4.0.0
+> **Status**: Draft, awaiting triage
+
+---
+
+## 0. Executive Summary
+
+This roadmap defines **100 substantial pull requests** (each ≥500 lines of code, documentation, tests, and fixtures) that move OmniRoute from "open-source proxy" to "production-grade AI routing platform". They are organised into **eight themes** matching user-visible capability areas, derived from:
+
+1. **Live community pain points** in [`diegosouzapw/OmniRoute/issues`](https://github.com/diegosouzapw/OmniRoute/issues?q=is%3Aissue+is%3Aopen) (53 open issues, 1.2k forks, 6.8k stars).
+2. The current upstream architecture in `OmniRoute-upstream/` — 66 provider executors under `open-sse/executors/`, the `(dashboard)` Next.js 16 app under `src/app/`, domain layer in `src/domain/`, libraries in `src/lib/`, shared contracts in `src/shared/`.
+3. **Open issues directly informing PRs** (cross-referenced in each entry): #4806 quota model listing regression, #4802 / #4602 Codex WebSocket stream serialization, #4795 catastrophic backtracking, #4771 / #4623 OOM/heap exhaustion, #4714 Claude tool-message regression, #4683 Qoder jobToken handshake, #4665 model self-id mismatch, #4608 Aliyun WAF, #4603 provider UID vs display name, #4599/#4441 release build hygiene, #4436 dashboard bundle bloat, #4329 `:free` suffix for auto combos, #4295/#4294 Cursor/Antigravity MITM, #4268 Stacked RTK/Caveman, #4262 prompt-cache/usage reporting, #4252 Undici 502 bursts.
+
+### Legend
+
+- **S** = ≤1k LOC, 1-3 days
+- **M** = 1-3k LOC, 1 week
+- **L** = 3-6k LOC, 2 weeks
+- **XL** = >6k LOC, 3+ weeks
+- **Risk**: Low / Med / High — based on blast radius and how many providers touch the change.
+
+### Cross-Reference Index
+
+| Theme | PR Range | Count |
+|-------|----------|-------|
+| 1. Observability & Telemetry | [PR-001](#pr-001) – [PR-015](#pr-015) | 15 |
+| 2. Provider Integrations | [PR-016](#pr-016) – [PR-035](#pr-035) | 20 |
+| 3. Performance & Caching | [PR-036](#pr-036) – [PR-050](#pr-050) | 15 |
+| 4. Security & Auth | [PR-051](#pr-051) – [PR-060](#pr-060) | 10 |
+| 5. Developer Experience | [PR-061](#pr-061) – [PR-070](#pr-070) | 10 |
+| 6. UI/UX Components | [PR-071](#pr-071) – [PR-085](#pr-085) | 15 |
+| 7. Quota & Billing | [PR-086](#pr-086) – [PR-095](#pr-095) | 10 |
+| 8. Reliability & Testing | [PR-096](#pr-096) – [PR-100](#pr-100) | 5 |
+| **Total** | | **100** |
+
+### Programme-Wide Sequencing
+
+- **Sprint 1-2 (Foundations)**: PR-001 to PR-005, PR-036 to PR-040, PR-051 to PR-055, PR-061 to PR-063, PR-096
+- **Sprint 3-4 (Surface area)**: PR-006 to PR-015, PR-016 to PR-025, PR-041 to PR-050, PR-056 to PR-060, PR-064 to PR-070, PR-097
+- **Sprint 5-6 (UX + Scale)**: PR-026 to PR-035, PR-071 to PR-085, PR-086 to PR-095, PR-098 to PR-100
+
+---
+
+## Theme 1: Observability & Telemetry (15 PRs)
+
+> Backbone for operating OmniRoute at scale. Directly addresses #4252 (undici 502 bursts with no trace), #4262 (confusing prompt-cache/usage reporting), #4771/#4623 (OOM without metrics), and #4608 (Aliyun WAF — no audit trail).
+
+---
+
+### PR-001
+
+**Title**: OpenTelemetry SDK bootstrap with OTLP/gRPC and OTLP/HTTP exporters
+**Problem**: OmniRoute's `src/instrumentation.ts` and `src/instrumentation-node.ts` exist but there is no first-class OpenTelemetry pipeline. Operators cannot trace a 5xx burst to a specific executor or upstream call. With 160+ providers and live issues like #4252 (intermittent 502s from undici) and #4608 (Aliyun WAF blocking), root-causing is currently impossible without Wireshark.
+**Solution**:
+- Architecture: Introduce `src/lib/observability/otel.ts` providing a single `initTelemetry(config)` function used by both `src/instrumentation.ts` and `src/instrumentation-node.ts`. Configure an OTLP exporter (gRPC + HTTP fallback) with auto-detection from env vars `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`. Bundle `@opentelemetry/api`, `@opentelemetry/sdk-node`, `@opentelemetry/exporter-trace-otlp-http`, `@opentelemetry/exporter-trace-otlp-grpc`, `@opentelemetry/resources`, `@opentelemetry/semantic-conventions` as direct deps.
+- Add a no-op default (when `OTEL_SDK_DISABLED=true`) so Electron-PWA users pay nothing.
+- Files affected: `src/instrumentation.ts:1-40`, `src/instrumentation-node.ts:1-60` (entry), `src/lib/observability/otel.ts` (new, 220 LOC), `src/lib/observability/resource.ts` (new, 80 LOC), `src/lib/observability/index.ts` (new barrel), `package.json:100-180` (new deps), `.env.example:1-30`, `tests/unit/observability/otel.test.ts` (new, 180 LOC), `docs/observability/01-quickstart.md` (new, 120 LOC).
+**Test plan**: Unit tests mock `@opentelemetry/exporter-trace-otlp-http` to assert spans are exported with correct resource attributes. Integration test boots a fake collector (TestExporter), fires 1000 fake requests, asserts throughput. Confirm zero-overhead when `OTEL_SDK_DISABLED=true` (CPU profile).
+**Risk**: Low — feature-flagged; defaults to no-op.
+**Estimate**: M
+
+---
+
+### PR-002
+
+**Title**: Auto-instrumentation for Next.js, undici, http, and Express layers
+**Problem**: Even with PR-001 in place, spans must be created around the actual hot paths. Today the proxy in `src/proxy.ts:1-200` and the per-executor HTTP calls inside `open-sse/executors/*.ts` are unaudited. This is the reason #4252 and #4608 have remained open: we don't know which executor fails.
+**Solution**:
+- Register `@opentelemetry/instrumentation-http`, `@opentelemetry/instrumentation-undici`, `@opentelemetry/instrumentation-express`, `@opentelemetry/instrumentation-next`.
+- Wrap `src/proxy.ts` with a manual `tracer.startActiveSpan("omniroute.proxy.request", ...)` carrying attributes: `http.method`, `http.route`, `provider.id`, `model.id`, `combo.id`, `tenant.id`, `quota.strategy`, `cache.hit`.
+- Wrap each executor in `open-sse/executors/base.ts:1-50` to emit a per-upstream span with `upstream.host`, `upstream.method`, `upstream.status_code`, `upstream.retry_attempt`.
+- Files affected: `src/lib/observability/auto.ts` (new, 260 LOC), `src/lib/observability/proxy-span.ts` (new, 110 LOC), `src/proxy.ts:1-200` (instrumented), `open-sse/executors/base.ts:1-50` (instrumented), `package.json:160-220` (new deps), `tests/unit/observability/auto.test.ts` (new, 200 LOC).
+**Test plan**: Use `@opentelemetry/sdk-trace-base` `InMemorySpanExporter` to capture spans from a synthetic `/v1/chat/completions` request. Assert that each executor call creates a child span with `upstream.host` and propagates `traceparent` header.
+**Risk**: Med — touches all 66 executors' shared base, but only via decorator pattern.
+**Estimate**: L
+
+---
+
+### PR-003
+
+**Title**: Prometheus `/metrics` endpoint with HTTP/RED, executor saturation, and quota gauges
+**Problem**: Operators have no SLO-grade telemetry. #4771 (heap OOM) was reported without CPU/memory traces; #4623 (instrumentation compile OOM) lacks measurement. Grafana dashboards cannot exist.
+**Solution**:
+- Architecture: Expose `GET /metrics` in Prometheus text-exposition format (port 20128 by default; gated by `OMNIROUTE_METRICS_ENABLED`).
+- Implement metric families: `omniroute_http_requests_total{route,method,status}`, `omniroute_http_request_duration_seconds_bucket{route,method,le}` (histogram), `omniroute_provider_upstream_attempts_total{provider,model,outcome}`, `omniroute_provider_upstream_duration_seconds`, `omniroute_provider_tokens_total{provider,model,direction}`, `omniroute_cache_hits_total{layer}`, `omniroute_cache_misses_total{layer}`, `omniroute_quota_remaining{provider,model}`, `omniroute_process_heap_bytes`, `omniroute_process_resident_bytes`, `omniroute_event_loop_lag_seconds`.
+- Files affected: `src/lib/observability/metrics.ts` (new, 380 LOC), `src/lib/observability/registry.ts` (new, 90 LOC), `src/lib/observability/handler.ts` (new, 70 LOC), `src/server-init.ts:1-100` (route mount), `src/app/api/metrics/route.ts` (new, 30 LOC), `src/middleware/metrics-mw.ts` (new, 110 LOC), `package.json:200-260` (add `prom-client`), `tests/unit/observability/metrics.test.ts` (new, 250 LOC), `docs/observability/02-prometheus.md` (new, 100 LOC), `dashboards/omniroute-overview.json` (new Grafana dashboard, 300 LOC JSON).
+**Test plan**: Generate 10k fake requests, scrape `/metrics`, parse with `prom-client` and verify counters. Assert that label cardinality is bounded (no `model` explosion from random strings).
+**Risk**: Med — label cardinality is a real footgun; add cardinality cap tests.
+**Estimate**: L
+
+---
+
+### PR-004
+
+**Title**: Pino-based structured logger with trace_id correlation and per-tenant log scope
+**Problem**: Today's logger is a bare `console.*`; `src/lib/consoleInterceptor.ts:1-80` patches `console.log` but the output is unstructured. When a user hits #4608, they get an HTML 502 page with no request ID.
+**Solution**:
+- Replace interceptors with a real `pino` instance + `pino-http`. Log format: NDJSON with `time`, `level`, `service`, `trace_id`, `span_id`, `request_id`, `route`, `method`, `status`, `duration_ms`, `provider.id`, `model.id`, `combo.id`, `tenant.id`, `user.id`, `error.kind`, `error.message`, `error.stack`.
+- Async-local-storage-based context (`AsyncLocalStorage<RequestContext>`) so any function can grab the active `trace_id` without explicit threading.
+- Files affected: `src/lib/observability/logger.ts` (new, 280 LOC), `src/lib/observability/context.ts` (new, 90 LOC), `src/lib/consoleInterceptor.ts:1-80` (deprecated, replaced), `src/lib/observability/logger-mw.ts` (new, 110 LOC), `src/server-init.ts:1-150` (mount), `package.json:200-240` (`pino`, `pino-http`, `pino-pretty` dev), `tests/unit/observability/logger.test.ts` (new, 200 LOC), `docs/observability/03-logging.md` (new, 110 LOC).
+**Test plan**: Use `pino-test` to capture lines; verify each emitted log line contains `trace_id` matching the active span. Concurrent-request test verifies `AsyncLocalStorage` does not leak across requests.
+**Risk**: Med — replaces existing logger; must be backwards-compatible with `consoleInterceptor` consumers.
+**Estimate**: M
+
+---
+
+### PR-005
+
+**Title**: Error tracking sink (Sentry-compatible envelope) with PII redaction
+**Problem**: When #4714 (Claude tool message regression) and #4683 (Qoder jobToken) were filed, no stack trace was attached. We lack error aggregation.
+**Solution**:
+- Add a `SentryTransport`-shaped sink that posts to `SENTRY_DSN` if set. Falls back to a local file `data/errors.ndjson` (rotated at 50MB).
+- Mandatory PII redaction: strip `Authorization`, `Cookie`, `x-api-key`, `*.token`, `*.password`, `*.secret`, `provider.credentials` before posting. Use `fast-redact` for pattern matching.
+- Files affected: `src/lib/observability/errors.ts` (new, 240 LOC), `src/lib/observability/redact.ts` (new, 130 LOC), `src/lib/observability/sinks/sentry.ts` (new, 180 LOC), `src/lib/observability/sinks/file.ts` (new, 90 LOC), `src/lib/observability/sinks/noop.ts` (new, 20 LOC), `src/lib/errors/OmniRouteError.ts` (new typed error hierarchy, 110 LOC), `package.json:200-260` (`@sentry/node` optional), `tests/unit/observability/errors.test.ts` (new, 280 LOC), `tests/unit/observability/redact.test.ts` (new, 200 LOC), `docs/observability/04-errors.md` (new, 90 LOC).
+**Test plan**: Synthesize errors with synthetic `Authorization: Bearer sk-test-xxx`, run through redactor, assert token absent. Send to a local mock Sentry server, assert envelope shape and stack trace.
+**Risk**: Med — redaction mistakes leak credentials. Mandate 100% line-coverage on the redactor.
+**Estimate**: M
+
+---
+
+### PR-006
+
+**Title**: Distributed tracing of MCP/A2A protocol calls with W3C trace context propagation
+**Problem**: OmniRoute advertises MCP and A2A support, but `src/lib/mcp` and `src/lib/a2a` exist with no tracing. When an MCP tool call fails, we have no link to the LLM call that triggered it.
+**Solution**:
+- Propagate `traceparent` (W3C) on every MCP tool request and A2A task delegation. Inject as `metadata.traceparent` on JSON-RPC envelopes.
+- Add server-side span hierarchy: `omniroute.mcp.tool.call` → `omniroute.mcp.transport.roundtrip` → upstream.
+- Files affected: `src/lib/mcp/client.ts:1-200` (instrumented), `src/lib/mcp/server.ts:1-200` (instrumented), `src/lib/a2a/dispatcher.ts:1-180` (instrumented), `src/lib/a2a/agent.ts:1-200` (instrumented), `src/lib/observability/propagators.ts` (new, 90 LOC), `tests/unit/observability/mcp-tracing.test.ts` (new, 220 LOC), `tests/unit/observability/a2a-tracing.test.ts` (new, 220 LOC), `docs/observability/05-mcp-a2a.md` (new, 80 LOC).
+**Test plan**: Mock MCP server asserts it received `traceparent`. Mock A2A peer asserts `metadata.traceparent` on the request. Jaeger-style trace reconstruction in test.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-007
+
+**Title**: Live-tail log viewer in the dashboard with severity filter and trace search
+**Problem**: When an operator opens an issue (like #4806 or #4802) they need to see logs in real-time. Today the dashboard has no log UI.
+**Solution**:
+- Add `GET /api/observability/logs?since=...&level=...&trace_id=...` returning NDJSON with cursor pagination. Backed by an in-memory ring buffer (default 10k lines) + optional tail of the on-disk `data/omniroute.log`.
+- Add a React page `src/app/(dashboard)/observability/logs/page.tsx` with a virtualised list (`@tanstack/react-virtual`), a severity filter, a trace_id search box that highlights correlated log lines. Uses SSE to push new lines.
+- Files affected: `src/app/api/observability/logs/route.ts` (new, 160 LOC), `src/app/api/observability/logs/stream/route.ts` (new, 110 LOC), `src/lib/observability/ringBuffer.ts` (new, 90 LOC), `src/app/(dashboard)/observability/logs/page.tsx` (new, 240 LOC), `src/app/(dashboard)/observability/logs/LogStream.tsx` (new, 200 LOC), `src/app/(dashboard)/observability/logs/SeverityFilter.tsx` (new, 100 LOC), `src/shared/components/observability/LogEntry.tsx` (new, 110 LOC), `tests/unit/observability/ringBuffer.test.ts` (new, 130 LOC), `tests/unit/api/observability-logs.test.ts` (new, 200 LOC), `tests/e2e/observability/logs.spec.ts` (Playwright, new, 180 LOC), `docs/observability/06-dashboard.md` (new, 80 LOC).
+**Test plan**: Push 10k synthetic log lines, assert ring buffer is bounded and old lines evicted. Playwright test opens the page, asserts severity filter works, and verifies SSE delivery.
+**Risk**: Med — exposes a log surface; redact secrets at the API boundary.
+**Estimate**: L
+
+---
+
+### PR-008
+
+**Title**: Distributed rate-limit & quota observability with per-tenant dashboards
+**Problem**: #4540 (auto combo ignores provider quota) and #4806 (quota exclusive listings) both stem from operators having no visibility into the per-tenant, per-provider quota state.
+**Solution**:
+- Emit metrics: `omniroute_quota_remaining{provider,model,tenant}`, `omniroute_quota_window_reset_at{provider,tenant}`, `omniroute_quota_denial_total{provider,tenant,reason}`.
+- Expose a Quota Dashboard page `src/app/(dashboard)/observability/quotas/page.tsx` showing: gauge per provider, usage over time (sparkline from metrics), projected exhaustion time.
+- Files affected: `src/lib/observability/metrics.ts:1-380` (extend), `src/domain/quotaCache.ts:1-200` (emit events), `src/lib/observability/quotaEvents.ts` (new, 130 LOC), `src/app/api/observability/quotas/route.ts` (new, 120 LOC), `src/app/(dashboard)/observability/quotas/page.tsx` (new, 200 LOC), `src/app/(dashboard)/observability/quotas/QuotaGauge.tsx` (new, 90 LOC), `src/app/(dashboard)/observability/quotas/QuotaTable.tsx` (new, 110 LOC), `src/shared/components/charts/Sparkline.tsx` (new, 80 LOC), `tests/unit/observability/quotaEvents.test.ts` (new, 180 LOC), `tests/e2e/observability/quotas.spec.ts` (new, 150 LOC), `docs/observability/07-quotas.md` (new, 70 LOC).
+**Test plan**: Synthesise a tenant and exhaust quota; assert metric increments; assert dashboard shows red and predicts reset.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-009
+
+**Title**: Slow-query log and upstream latency heatmap
+**Problem**: 502 bursts (#4252) and 300ms codex failures (#4602) need latency analysis across providers. Currently no histogram is computed.
+**Solution**:
+- Maintain a sliding window of per-upstream latencies (last 5 minutes, 1-second granularity) and compute p50/p95/p99.
+- Add `src/app/(dashboard)/observability/latency/page.tsx` with a heatmap (x: provider, y: time bucket, color: p95).
+- Emit `omniroute_upstream_latency_percentiles{provider,quantile}` (Prometheus Summary).
+- Files affected: `src/lib/observability/latency.ts` (new, 230 LOC — fixed-cost circular buffer + percentile sketch), `src/lib/observability/metrics.ts:1-380` (add summary), `src/app/(dashboard)/observability/latency/page.tsx` (new, 180 LOC), `src/app/(dashboard)/observability/latency/Heatmap.tsx` (new, 220 LOC), `src/shared/components/charts/HeatmapCanvas.tsx` (new, 110 LOC), `src/app/api/observability/latency/route.ts` (new, 80 LOC), `tests/unit/observability/latency.test.ts` (new, 240 LOC), `tests/e2e/observability/latency.spec.ts` (new, 130 LOC), `docs/observability/08-latency.md` (new, 60 LOC).
+**Test plan**: Synthetic load test, assert percentile values match ground truth within 5%. Playwright test asserts heatmap renders.
+**Risk**: Med — fixed memory; must bound.
+**Estimate**: M
+
+---
+
+### PR-010
+
+**Title**: Real-time upstream health matrix (React Flow canvas) with circuit breaker events
+**Problem**: Operators need a glance to see which provider is down. Today they must read raw logs.
+**Solution**:
+- Page `src/app/(dashboard)/observability/upstream-health/page.tsx` with a React Flow canvas (`reactflow` already implied by codebase): nodes per provider, color-coded by health (green/yellow/red), animated edges representing live traffic, click-to-inspect showing recent error events.
+- Hook into `src/lib/credentialHealth` and the new `omniroute_circuit_breaker_state{provider,model}` gauge.
+- Files affected: `src/app/(dashboard)/observability/upstream-health/page.tsx` (new, 200 LOC), `src/app/(dashboard)/observability/upstream-health/HealthCanvas.tsx` (new, 280 LOC), `src/app/(dashboard)/observability/upstream-health/HealthNode.tsx` (new, 130 LOC), `src/lib/credentialHealth/index.ts:1-200` (emit events), `src/lib/observability/circuitBreaker.ts` (new, 180 LOC), `src/lib/observability/metrics.ts:1-380` (extend), `src/app/api/observability/upstream-health/route.ts` (new, 90 LOC), `tests/unit/observability/circuitBreaker.test.ts` (new, 220 LOC), `tests/e2e/observability/upstream-health.spec.ts` (new, 150 LOC).
+**Test plan**: Kill an executor, assert node turns red within 5s. Playwright test verifies the canvas updates.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-011
+
+**Title**: Audit log of configuration changes, key rotations, and combo edits
+**Problem**: Compliance requirements (SOC2, ISO 27001) need an audit trail. None exists. The `src/lib/audit` directory has only high-level action icons, not a true audit subsystem.
+**Solution**:
+- New subsystem in `src/lib/audit/store.ts` with append-only NDJSON store plus optional SQLite (using `better-sqlite3`) for queryability. Records: `actor`, `action`, `target`, `before`, `after`, `ip`, `user_agent`, `request_id`, `timestamp`.
+- API `GET /api/audit?actor=...&action=...&since=...&until=...` with pagination.
+- UI page `src/app/(dashboard)/audit/page.tsx` with filter chips, diff view, CSV export.
+- Files affected: `src/lib/audit/store.ts` (new, 260 LOC), `src/lib/audit/types.ts` (new, 80 LOC), `src/lib/audit/middleware.ts` (new, 110 LOC), `src/lib/audit/sinks/sqlite.ts` (new, 160 LOC), `src/lib/audit/sinks/file.ts` (new, 90 LOC), `src/app/api/audit/route.ts` (new, 180 LOC), `src/app/api/audit/[id]/route.ts` (new, 90 LOC), `src/app/(dashboard)/audit/page.tsx` (new, 220 LOC), `src/app/(dashboard)/audit/DiffView.tsx` (new, 130 LOC), `src/app/(dashboard)/audit/FilterChips.tsx` (new, 100 LOC), `src/lib/auth/middleware.ts:1-180` (mount audit hook on PATCH/POST/DELETE), `tests/unit/audit/store.test.ts` (new, 250 LOC), `tests/e2e/audit/audit.spec.ts` (new, 160 LOC), `docs/security/01-audit.md` (new, 100 LOC).
+**Test plan**: Perform 50 CRUD ops via API, query `/api/audit`, assert ordering, before/after diffs. Replay a sample event to verify immutability.
+**Risk**: Med — PII in audit logs; redact before persisting.
+**Estimate**: L
+
+---
+
+### PR-012
+
+**Title**: Cross-region replication observability — geo-distributed provider health
+**Problem**: Self-hosters in Asia (e.g. Aliyun users filing #4608) report different latency than EU/NA users. We don't expose per-region metrics.
+**Solution**:
+- Add `region` label (from `OMNIROUTE_REGION` env var or auto-detected from cloud metadata).
+- New metrics: `omniroute_region_upstream_latency_seconds{region,provider,model,quantile}`.
+- Map page `src/app/(dashboard)/observability/geo/page.tsx` using a free world map (`react-simple-maps`) with provider pins coloured by health.
+- Files affected: `src/lib/observability/region.ts` (new, 110 LOC), `src/lib/observability/metrics.ts:1-380` (extend), `src/lib/observability/proxy-span.ts:1-110` (tag span with region), `src/app/(dashboard)/observability/geo/page.tsx` (new, 180 LOC), `src/app/(dashboard)/observability/geo/WorldMap.tsx` (new, 220 LOC), `src/app/api/observability/geo/route.ts` (new, 90 LOC), `package.json:200-280` (`react-simple-maps`, `d3-geo`), `tests/unit/observability/region.test.ts` (new, 120 LOC), `tests/e2e/observability/geo.spec.ts` (new, 130 LOC), `docs/observability/09-geo.md` (new, 60 LOC).
+**Test plan**: Two synthetic regions, assert different latencies recorded. Playwright map test asserts pins appear.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-013
+
+**Title**: Bundle-aware tracing — show downsizing/coalescing effectiveness per request
+**Problem**: PR-#4268 ("Stacked RTK+Caveman often records no savings") — operators can't see whether compression actually worked for a given request. The compression logic in `src/lib/compression` (RTK + Caveman) lacks per-request feedback.
+**Solution**:
+- Wrap each compression call with a span carrying `compression.layer`, `tokens.before`, `tokens.after`, `tokens.saved_ratio`, `ms.elapsed`.
+- Add metric `omniroute_compression_saved_tokens_total{layer,model}`.
+- UI page `src/app/(dashboard)/observability/compression/page.tsx` showing per-model compression effectiveness with stacked bars.
+- Files affected: `src/lib/compression/rtk.ts:1-200` (instrumented), `src/lib/compression/caveman.ts:1-200` (instrumented), `src/lib/compression/index.ts:1-80` (instrumented), `src/lib/observability/metrics.ts:1-380` (extend), `src/app/(dashboard)/observability/compression/page.tsx` (new, 200 LOC), `src/app/(dashboard)/observability/compression/StackedBar.tsx` (new, 130 LOC), `src/app/api/observability/compression/route.ts` (new, 90 LOC), `tests/unit/observability/compression.test.ts` (new, 200 LOC), `docs/observability/10-compression.md` (new, 70 LOC).
+**Test plan**: Fire 1k prompts of varying length, assert metric sums equal actual saved tokens.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-014
+
+**Title**: Streaming observability — TTFT, token/sec, and stall detection for SSE responses
+**Problem**: The streaming code in `src/sse/` and `open-sse/handlers/responsesHandler.ts` has no per-token timing. Users can't tell whether a slow response is the model or the network.
+**Solution**:
+- For each SSE chunk, capture `ttft_ms`, `tokens_so_far`, `chunk_bytes`, `delta_ms`, and compute instantaneous `tokens_per_sec`.
+- Emit metrics: `omniroute_streaming_ttft_seconds{provider,model,quantile}`, `omniroute_streaming_tokens_per_second{provider,model}`, `omniroute_streaming_stall_total{provider,model,stall_ms}`.
+- Live Stream Inspector: a UI `src/app/(dashboard)/observability/streams/page.tsx` (read-only) that mirrors a live stream with per-token timing on a timeline.
+- Files affected: `src/sse/parser.ts:1-200` (instrumented), `open-sse/handlers/responsesHandler.ts:1-200` (instrumented), `src/lib/observability/streaming.ts` (new, 230 LOC), `src/lib/observability/metrics.ts:1-380` (extend), `src/app/(dashboard)/observability/streams/page.tsx` (new, 200 LOC), `src/app/(dashboard)/observability/streams/LiveTimeline.tsx` (new, 220 LOC), `src/shared/components/charts/StreamTimeline.tsx` (new, 130 LOC), `src/app/api/observability/streams/route.ts` (new, 100 LOC), `tests/unit/observability/streaming.test.ts` (new, 220 LOC), `tests/e2e/observability/streams.spec.ts` (new, 130 LOC), `docs/observability/11-streaming.md` (new, 70 LOC).
+**Test plan**: Synthetic SSE source at 50 tokens/sec, assert metric. Inject a 2-second stall, assert stall counter increments.
+**Risk**: Med — instrumenting the hot streaming path; must be allocation-free.
+**Estimate**: L
+
+---
+
+### PR-015
+
+**Title**: Operator-facing SLO dashboard with error-budget burn-rate alerts
+**Problem**: No notion of SLOs exists. We have no way to know if a regression like #4714 (Claude tool message conversion) has burnt a budget.
+**Solution**:
+- Define SLOs in YAML under `config/slos/*.yaml` (e.g. `availability: 99.5%`, `ttft_p95: 800ms`, `combo_resolution_p95: 50ms`).
+- Compute SLO compliance from the metrics emitted by PR-003, PR-009, PR-014.
+- Page `src/app/(dashboard)/observability/slo/page.tsx` with burn-rate multi-window (1h/6h/24h/3d) and a webhook for alert firing.
+- Files affected: `src/lib/observability/slo.ts` (new, 260 LOC), `src/lib/observability/slo/loaders.ts` (new, 90 LOC), `src/lib/observability/slo/burnRate.ts` (new, 130 LOC), `src/lib/observability/slo/webhook.ts` (new, 110 LOC), `config/slos/default.yaml` (new, 60 LOC), `src/app/(dashboard)/observability/slo/page.tsx` (new, 200 LOC), `src/app/(dashboard)/observability/slo/BurnRateCard.tsx` (new, 130 LOC), `src/app/api/observability/slo/route.ts` (new, 110 LOC), `src/app/api/observability/slo/webhook/route.ts` (new, 80 LOC), `tests/unit/observability/slo.test.ts` (new, 280 LOC), `tests/e2e/observability/slo.spec.ts` (new, 150 LOC), `docs/observability/12-slo.md` (new, 90 LOC).
+**Test plan**: Inject synthetic failures, assert webhook fires after 2x burn rate. Assert SLO page renders burn rate.
+**Risk**: Med — webhook delivery reliability.
+**Estimate**: L
+
+---
+
+## Theme 2: Provider Integrations (20 PRs)
+
+> OmniRoute ships 66 executors in `open-sse/executors/` and supports 160+ provider IDs. These PRs add the most-requested missing adapters and harden existing ones. Each PR ships a fully working executor with tests, fixture capture, schema mapping, model list, and dashboard card.
+
+---
+
+### PR-016
+
+**Title**: AWS Bedrock Converse & ConverseStream with SigV4 signing
+**Problem**: A `bedrock.ts` executor exists, but does not implement the Converse API; users on AWS need a native path. SigV4 is currently hand-rolled and breaks for the latest regions.
+**Solution**:
+- New executor `open-sse/executors/bedrock-converse.ts` (380 LOC) using the Converse/ConverseStream APIs for Claude 3.5/3.7, Llama 3.x, Mistral, and Titan.
+- SigV4 via `@aws-sdk/signature-v4` and `@aws-crypto/sha256-js` (instead of `aws4`) for ARM64 compatibility. Honour `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, plus `OMNIROUTE_BEDROCK_ENDPOINT` for GovCloud.
+- Files affected: `open-sse/executors/bedrock-converse.ts` (new, 380 LOC), `open-sse/executors/bedrock.ts:1-200` (kept as legacy), `open-sse/executors/index.ts:1-100` (register), `open-sse/transformer/bedrock.ts` (new, 220 LOC), `src/lib/providers/registry.ts:1-200` (register), `src/shared/providers/bedrock.ts` (new, 110 LOC), `src/shared/types/bedrock.ts` (new, 80 LOC), `tests/unit/executors/bedrock-converse.test.ts` (new, 280 LOC), `tests/integration/executors/bedrock.test.ts` (new, 200 LOC), `tests/fixtures/bedrock/converse-success.json` (new), `docs/providers/01-bedrock.md` (new, 130 LOC).
+**Test plan**: Unit tests use mocked `fetch` to verify SigV4 signature, payload shape. Integration test against a `moto` server.
+**Risk**: Med.
+**Estimate**: L
+
+---
+
+### PR-017
+
+**Title**: Google Vertex AI (Gemini + Claude on Vertex) provider adapter
+**Problem**: `vertex.ts` exists but does not cover Claude-on-Vertex or Gemini 2.5. Many enterprise users must hit Vertex directly.
+**Solution**:
+- New executor `open-sse/executors/vertex-v2.ts` (450 LOC) covering `gemini-1.5-pro`, `gemini-2.0-flash`, `gemini-2.5-pro`, `claude-3-5-sonnet@20240620`, `claude-3-7-sonnet@20250219`, `imagen-3.0`, `veo-1.0` (preview).
+- ADC (Application Default Credentials) via `google-auth-library`; support both user creds and service-account JSON.
+- Files affected: `open-sse/executors/vertex-v2.ts` (new, 450 LOC), `open-sse/executors/vertex.ts:1-200` (legacy), `open-sse/transformer/vertex.ts` (new, 240 LOC), `open-sse/executors/vertexMedia.ts:1-100` (extend), `package.json:180-260` (`google-auth-library`), `src/shared/providers/vertex.ts` (new, 110 LOC), `tests/unit/executors/vertex-v2.test.ts` (new, 280 LOC), `tests/integration/executors/vertex.test.ts` (new, 200 LOC), `docs/providers/02-vertex.md` (new, 130 LOC).
+**Test plan**: Mock OAuth flow, assert token cached, request issued, response mapped to OpenAI shape.
+**Risk**: Med.
+**Estimate**: L
+
+---
+
+### PR-018
+
+**Title**: Mistral AI (La Plateforme) with function calling and vision
+**Problem**: Mistral is a top-3 requested missing provider. Currently no native adapter; users forced to go through OpenAI-compat shims that drop tool calls.
+**Solution**:
+- New executor `open-sse/executors/mistral.ts` (340 LOC) covering `mistral-large-2`, `mistral-small-3`, `codestral-22b`, `pixtral-12b`.
+- Function-calling schema mapping Mistral's `tools[].function` ↔ OpenAI's `tools[].function`; vision mapped via `image_url` (base64) and URL.
+- Files affected: `open-sse/executors/mistral.ts` (new, 340 LOC), `open-sse/transformer/mistral.ts` (new, 200 LOC), `open-sse/executors/index.ts:1-100` (register), `src/shared/providers/mistral.ts` (new, 90 LOC), `tests/unit/executors/mistral.test.ts` (new, 240 LOC), `tests/fixtures/mistral/chat.json`, `tests/fixtures/mistral/tools.json`, `docs/providers/03-mistral.md` (new, 100 LOC).
+**Test plan**: Fixture replay test; tool-call conversion test; image input test.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-019
+
+**Title**: xAI (Grok 3 / Grok 3 mini) live and search-augmented executor
+**Problem**: `grok-web.ts` exists but scrapes; many users want a paid API path for stability.
+**Solution**:
+- New executor `open-sse/executors/xai.ts` (320 LOC) supporting `grok-3`, `grok-3-mini`, `grok-2-vision` with `search` parameter.
+- Files affected: `open-sse/executors/xai.ts` (new, 320 LOC), `open-sse/transformer/xai.ts` (new, 160 LOC), `src/shared/providers/xai.ts` (new, 80 LOC), `tests/unit/executors/xai.test.ts` (new, 220 LOC), `tests/fixtures/xai/chat.json`, `docs/providers/04-xai.md` (new, 90 LOC).
+**Test plan**: Unit test verifies request format, search param mapping.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-020
+
+**Title**: Cohere Command R+ and Embed v3 with rerank support
+**Problem**: No native Cohere adapter. Rerank is a heavily-requested feature.
+**Solution**:
+- New executor `open-sse/executors/cohere.ts` (380 LOC) with `command-r-plus`, `command-r`, `command-light`, `embed-english-v3.0`, `embed-multilingual-v3.0`, and `rerank-english-v3.0`.
+- Adds an OpenAI-compatible `/v1/rerank` endpoint proxied to Cohere.
+- Files affected: `open-sse/executors/cohere.ts` (new, 380 LOC), `open-sse/handlers/rerank.ts:1-100` (extend), `src/app/api/v1/rerank/route.ts` (new, 80 LOC), `open-sse/transformer/cohere.ts` (new, 180 LOC), `src/shared/providers/cohere.ts` (new, 90 LOC), `tests/unit/executors/cohere.test.ts` (new, 220 LOC), `tests/unit/api/rerank.test.ts` (new, 200 LOC), `docs/providers/05-cohere.md` (new, 100 LOC).
+**Test plan**: Fixture tests for chat, embed, rerank.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-021
+
+**Title**: DeepSeek V3 and R1 with reasoning_content streaming
+**Problem**: `deepseek-web.ts` exists (web-scraping); no official API adapter for DeepSeek's reasoning-content feature.
+**Solution**:
+- New executor `open-sse/executors/deepseek.ts` (300 LOC) supporting `deepseek-chat`, `deepseek-reasoner`. Map `reasoning_content` SSE delta to `<think>` chunks in the OpenAI stream.
+- Files affected: `open-sse/executors/deepseek.ts` (new, 300 LOC), `open-sse/transformer/deepseek.ts` (new, 180 LOC), `open-sse/handlers/responseSanitizer.ts:1-200` (handle <think> tags), `src/shared/providers/deepseek.ts` (new, 80 LOC), `tests/unit/executors/deepseek.test.ts` (new, 220 LOC), `docs/providers/06-deepseek.md` (new, 80 LOC).
+**Test plan**: Mocked SSE fixture, assert <think> chunks survive sanitization.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-022
+
+**Title**: Perplexity Sonar (Pro) with live web search
+**Problem**: `perplexity-web.ts` exists but is fragile. Pro users need the paid API.
+**Solution**:
+- New executor `open-sse/executors/perplexity.ts` (310 LOC) supporting `sonar`, `sonar-pro`, `sonar-reasoning-pro`, `sonar-deep-research`. Search citations mapped to OpenAI's `message.citations`.
+- Files affected: `open-sse/executors/perplexity.ts` (new, 310 LOC), `open-sse/transformer/perplexity.ts` (new, 170 LOC), `src/shared/providers/perplexity.ts` (new, 80 LOC), `tests/unit/executors/perplexity.test.ts` (new, 220 LOC), `docs/providers/07-perplexity.md` (new, 90 LOC).
+**Test plan**: Citation-mapping test; reasoning test.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-023
+
+**Title**: Groq ultra-low-latency provider with compound tool-use and Whisper transcription
+**Problem**: No native Groq adapter; users go through OpenAI-compat which lacks Whisper and compound models.
+**Solution**:
+- New executor `open-sse/executors/groq.ts` (350 LOC) supporting `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `mixtral-8x7b-32768`, `whisper-large-v3-turbo`, `compound-beta`, `compound-beta-mini`.
+- Whisper transcription via `/v1/audio/transcriptions` route.
+- Files affected: `open-sse/executors/groq.ts` (new, 350 LOC), `open-sse/handlers/audioTranscription.ts:1-200` (extend), `src/app/api/v1/audio/transcriptions/route.ts` (new, 90 LOC), `src/shared/providers/groq.ts` (new, 80 LOC), `tests/unit/executors/groq.test.ts` (new, 220 LOC), `tests/unit/api/audio-transcriptions.test.ts` (new, 180 LOC), `docs/providers/08-groq.md` (new, 90 LOC).
+**Test plan**: Whisper test with a sample audio fixture; compound tool-call test.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-024
+
+**Title**: OpenRouter unified API executor with all 200+ models
+**Problem**: No first-class OpenRouter executor; users must configure each model separately.
+**Solution**:
+- New executor `open-sse/executors/openrouter.ts` (340 LOC) using `https://openrouter.ai/api/v1` with provider routing (e.g. `provider: { order: ["Anthropic", "Azure"] }`).
+- Files affected: `open-sse/executors/openrouter.ts` (new, 340 LOC), `open-sse/transformer/openrouter.ts` (new, 160 LOC), `src/lib/freeProviderRankings.ts:1-200` (use OpenRouter as a free-tier source), `src/shared/providers/openrouter.ts` (new, 80 LOC), `tests/unit/executors/openrouter.test.ts` (new, 200 LOC), `docs/providers/09-openrouter.md` (new, 90 LOC).
+**Test plan**: Routing test; free-model selection test.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-025
+
+**Title**: Hugging Face Inference Providers (serverless + dedicated endpoints)
+**Problem**: `huggingchat.ts` exists but no API adapter; HF Inference Providers now host 100+ models.
+**Solution**:
+- New executor `open-sse/executors/huggingface.ts` (360 LOC) supporting `meta-llama/Llama-3.3-70B-Instruct`, `Qwen/Qwen2.5-Coder-32B-Instruct`, `mistralai/Mistral-7B-Instruct-v0.3`, plus dedicated-endpoint deployment.
+- Files affected: `open-sse/executors/huggingface.ts` (new, 360 LOC), `open-sse/transformer/huggingface.ts` (new, 170 LOC), `src/shared/providers/huggingface.ts` (new, 80 LOC), `tests/unit/executors/huggingface.test.ts` (new, 220 LOC), `docs/providers/10-huggingface.md` (new, 90 LOC).
+**Test plan**: Serverless test; dedicated-endpoint test; auth header test.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-026
+
+**Title**: Ollama local-server executor with model hot-swap and keepalive
+**Problem**: No Ollama executor in the upstream tree despite the package supporting local model counts.
+**Solution**:
+- New executor `open-sse/executors/ollama.ts` (320 LOC) with `keep_alive` parameter, model preload, `format` JSON mode, and pull-on-demand for new models.
+- Files affected: `open-sse/executors/ollama.ts` (new, 320 LOC), `open-sse/transformer/ollama.ts` (new, 160 LOC), `src/shared/providers/ollama.ts` (new, 80 LOC), `src/app/(dashboard)/providers/ollama/page.tsx` (new, 130 LOC) — local server status, model list, pull button, `tests/unit/executors/ollama.test.ts` (new, 220 LOC), `tests/integration/executors/ollama.test.ts` (new, 180 LOC), `docs/providers/11-ollama.md` (new, 110 LOC).
+**Test plan**: Spin up a test Ollama via testcontainers, hit real models.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-027
+
+**Title**: vLLM, LM Studio, llama.cpp OpenAI-compat provider with model autoload
+**Problem**: Self-hosters run many OpenAI-compat servers; OmniRoute should autodetect them.
+**Solution**:
+- New executor `open-sse/executors/openai-compat-generic.ts` (300 LOC) configurable to any OpenAI-compatible URL. Auto-detect `/v1/models` for model list. Override `model` field at request time.
+- Files affected: `open-sse/executors/openai-compat-generic.ts` (new, 300 LOC), `src/lib/discovery/openaiCompat.ts` (new, 180 LOC) — broadcasts on local network via mDNS to find self-hosted servers, `src/shared/providers/openai-compat-generic.ts` (new, 80 LOC), `tests/unit/executors/openai-compat-generic.test.ts` (new, 200 LOC), `tests/unit/discovery/openaiCompat.test.ts` (new, 160 LOC), `docs/providers/12-openai-compat.md` (new, 100 LOC).
+**Test plan**: Spin up llama.cpp, autodetect via mDNS test (mocked), assert model list imported.
+**Risk**: Med — mDNS behaviour.
+**Estimate**: M
+
+---
+
+### PR-028
+
+**Title**: Replicate (open-source models) with cost-aware executor
+**Problem**: No Replicate integration; community models (FLUX, SDXL, Llama) are inaccessible.
+**Solution**:
+- New executor `open-sse/executors/replicate.ts` (310 LOC) supporting `meta/meta-llama-3-70b-instruct`, `stability-ai/sdxl`, `black-forest-labs/flux-schnell`, `openai/whisper`. Webhook-based long-running completion.
+- Files affected: `open-sse/executors/replicate.ts` (new, 310 LOC), `open-sse/transformer/replicate.ts` (new, 150 LOC), `src/app/api/replicate/webhook/route.ts` (new, 80 LOC), `src/shared/providers/replicate.ts` (new, 80 LOC), `tests/unit/executors/replicate.test.ts` (new, 220 LOC), `docs/providers/13-replicate.md` (new, 100 LOC).
+**Test plan**: Webhook flow test; long-running test.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-029
+
+**Title**: ElevenLabs & Cartesia (audio TTS) and Suno / Udio (music) providers
+**Problem**: No audio/music providers; users have to leave OmniRoute.
+**Solution**:
+- Two new executors: `open-sse/executors/elevenlabs.ts` (220 LOC) and `open-sse/executors/cartesia.ts` (220 LOC) for TTS; `open-sse/executors/suno.ts` (220 LOC) for music.
+- Reuse existing `open-sse/handlers/audioSpeech.ts:1-200` and `open-sse/handlers/musicGeneration.ts:1-200`.
+- Files affected: `open-sse/executors/elevenlabs.ts` (new, 220 LOC), `open-sse/executors/cartesia.ts` (new, 220 LOC), `open-sse/executors/suno.ts` (new, 220 LOC), `src/shared/providers/elevenlabs.ts` (new, 80 LOC), `src/shared/providers/cartesia.ts` (new, 80 LOC), `src/shared/providers/suno.ts` (new, 80 LOC), `tests/unit/executors/elevenlabs.test.ts` (new, 180 LOC), `tests/unit/executors/cartesia.test.ts` (new, 180 LOC), `tests/unit/executors/suno.test.ts` (new, 180 LOC), `docs/providers/14-audio-music.md` (new, 130 LOC).
+**Test plan**: TTS streaming test; music generation polling test.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-030
+
+**Title**: Runway, Pika, Luma, Kling (video generation) provider adapters
+**Problem**: No video providers; users are asking for them in issues (community Discord).
+**Solution**:
+- Four executors in `open-sse/executors/video/` (subdir new): `runway.ts` (240 LOC), `pika.ts` (240 LOC), `luma.ts` (240 LOC), `kling.ts` (260 LOC).
+- Reuse `open-sse/handlers/videoGeneration.ts:1-200`.
+- Files affected: `open-sse/executors/video/runway.ts` (new, 240 LOC), `open-sse/executors/video/pika.ts` (new, 240 LOC), `open-sse/executors/video/luma.ts` (new, 240 LOC), `open-sse/executors/video/kling.ts` (new, 260 LOC), `open-sse/executors/video/index.ts` (new, 30 LOC), `src/shared/providers/video/*.ts` (new, 80 LOC each), `tests/unit/executors/video/*.test.ts` (new, 180 LOC each), `docs/providers/15-video.md` (new, 130 LOC).
+**Test plan**: Webhook-vs-poll tests for each.
+**Risk**: Med.
+**Estimate**: L
+
+---
+
+### PR-031
+
+**Title**: Hugging Face Spaces, Gradio, and Modal (community) provider adapters
+**Problem**: Long-tail models on HF Spaces are inaccessible.
+**Solution**:
+- New executors `open-sse/executors/gradio.ts` (260 LOC) and `open-sse/executors/modal.ts` (220 LOC) that wrap any Gradio/Modal endpoint and expose it as a chat-completion or image-generation provider.
+- Files affected: `open-sse/executors/gradio.ts` (new, 260 LOC), `open-sse/executors/modal.ts` (new, 220 LOC), `src/lib/catalog/community.ts` (new, 220 LOC) — discover and list community endpoints, `src/shared/providers/gradio.ts` (new, 80 LOC), `src/shared/providers/modal.ts` (new, 80 LOC), `tests/unit/executors/gradio.test.ts` (new, 200 LOC), `tests/unit/executors/modal.test.ts` (new, 180 LOC), `tests/unit/catalog/community.test.ts` (new, 180 LOC), `docs/providers/16-community.md` (new, 100 LOC).
+**Test plan**: Mocked Gradio endpoint, assert request format.
+**Risk**: Med — long-tail.
+**Estimate**: M
+
+---
+
+### PR-032
+
+**Title**: Provider deprecation registry and migration helpers
+**Problem**: `src/domain/providerExpiration.ts:1-100` exists but doesn't surface in the dashboard. Users continue to use dead providers.
+**Solution**:
+- Build a registry under `config/providers/deprecated.yaml` listing deprecated providers, replacement IDs, and sunset dates.
+- Add migration CLI `omniroute provider migrate --from <id> --to <id> --apply` that rewrites combo YAML.
+- Files affected: `src/domain/providerExpiration.ts:1-100` (extend), `src/lib/cliTools/migrateProvider.ts` (new, 200 LOC), `bin/omniroute-provider-migrate.mjs` (new, 90 LOC), `config/providers/deprecated.yaml` (new, 60 LOC), `src/app/(dashboard)/providers/deprecated/page.tsx` (new, 160 LOC), `src/app/api/providers/deprecated/route.ts` (new, 90 LOC), `tests/unit/cli/migrateProvider.test.ts` (new, 200 LOC), `tests/unit/domain/providerExpiration.test.ts` (new, 180 LOC), `docs/providers/17-deprecation.md` (new, 80 LOC).
+**Test plan**: CLI test: write combo with deprecated provider, run migrate, assert combo rewritten.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-033
+
+**Title**: Per-provider circuit breaker with half-open recovery
+**Problem**: Issues #4252 (502 bursts) and #4665 (model self-id mismatch) demonstrate that OmniRoute keeps hammering broken upstreams. No circuit breaker.
+**Solution**:
+- New module `src/lib/observability/circuitBreaker.ts` (already in PR-010, here is the production wiring).
+- States: CLOSED → OPEN after N consecutive errors → HALF_OPEN after backoff → CLOSED after M successes.
+- Files affected: `src/lib/observability/circuitBreaker.ts:1-180` (production-grade, 280 LOC total), `src/lib/observability/metrics.ts:1-380` (extend), `open-sse/executors/base.ts:1-50` (wrap with breaker), `open-sse/executors/index.ts:1-100` (config), `src/lib/policyEngine.ts:1-200` (skip open breakers in combo selection), `tests/unit/observability/circuitBreaker.test.ts` (new, 320 LOC), `tests/integration/circuitBreaker.test.ts` (new, 200 LOC), `docs/observability/13-circuit-breaker.md` (new, 80 LOC).
+**Test plan**: Synthetic 100-error burst, assert breaker opens, half-open after 30s, recovery.
+**Risk**: Med — affects every executor.
+**Estimate**: L
+
+---
+
+### PR-034
+
+**Title**: Provider-specific request signing (AWS SigV4, Azure AD, GCP ADC, Cloudflare R2)
+**Problem**: `bedrock.ts` and `vertex.ts` already sign, but the rest of the code uses `Authorization: Bearer` only. Cloudflare AI Gateway, Azure APIM, and others need custom auth.
+**Solution**:
+- New module `src/lib/auth/upstreamSigning.ts` (320 LOC) with pluggable strategies.
+- Files affected: `src/lib/auth/upstreamSigning.ts` (new, 320 LOC), `src/lib/auth/upstreamSigning/sigv4.ts` (new, 100 LOC), `src/lib/auth/upstreamSigning/azureAd.ts` (new, 110 LOC), `src/lib/auth/upstreamSigning/gcpAdc.ts` (new, 90 LOC), `src/lib/auth/upstreamSigning/cloudflare.ts` (new, 80 LOC), `open-sse/executors/base.ts:1-50` (integrate), `tests/unit/auth/upstreamSigning.test.ts` (new, 280 LOC), `tests/unit/auth/azureAd.test.ts` (new, 180 LOC), `docs/providers/18-signing.md` (new, 100 LOC).
+**Test plan**: Each strategy has a unit test; signing headers asserted via canonical-request test vectors.
+**Risk**: Med — security-sensitive.
+**Estimate**: L
+
+---
+
+### PR-035
+
+**Title**: Provider capability matrix (vision, tools, JSON, audio, video) — auto-generated
+**Problem**: No central place to ask "does this model support vision?". `src/lib/display` has icons but not a capability registry.
+**Solution**:
+- New module `src/shared/providers/capabilities.ts` declaring per-model flags. Auto-generated from each provider's `models.json` on startup.
+- API `GET /api/providers/capabilities` returns the full matrix.
+- UI table `src/app/(dashboard)/providers/capabilities/page.tsx` with filterable columns.
+- Files affected: `src/shared/providers/capabilities.ts` (new, 240 LOC), `src/lib/display/capabilityIcons.ts` (new, 120 LOC), `src/app/api/providers/capabilities/route.ts` (new, 90 LOC), `src/app/(dashboard)/providers/capabilities/page.tsx` (new, 220 LOC), `src/app/(dashboard)/providers/capabilities/CapabilityMatrix.tsx` (new, 280 LOC), `src/app/(dashboard)/providers/capabilities/FilterBar.tsx` (new, 130 LOC), `tests/unit/providers/capabilities.test.ts` (new, 200 LOC), `tests/e2e/providers/capabilities.spec.ts` (new, 130 LOC), `docs/providers/19-capabilities.md` (new, 70 LOC).
+**Test plan**: All 66 executors are scanned; assert capability flags correct.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+## Theme 3: Performance & Caching (15 PRs)
+
+> OmniRoute already ships RTK + Caveman compression and a `cacheLayer.ts`. These PRs harden and extend that, directly addressing #4268 (compression no-savings bug), #4802 / #4602 (stream serialization), #4252 (502 bursts).
+
+---
+
+### PR-036
+
+**Title**: Multi-tier cache (in-memory LRU + SQLite + disk LRU) with TTL and W-TinyLFU eviction
+**Problem**: `src/lib/cacheLayer.ts:1-200` exists, but is a single-tier in-memory map. A 6-hour prompt-cache hit saves significant cost; today, restarts lose all state.
+**Solution**:
+- New module `src/lib/cache/multiTier.ts` (380 LOC). Tier 1: process-local LRU (W-TinyLFU, `quick-lru`). Tier 2: SQLite (keyed by hash(prompt+model+params)). Tier 3: on-disk segmented cache.
+- Cache key: SHA-256 of normalised request body + model + provider + tenant.
+- Files affected: `src/lib/cache/multiTier.ts` (new, 380 LOC), `src/lib/cache/tiers/memory.ts` (new, 130 LOC), `src/lib/cache/tiers/sqlite.ts` (new, 200 LOC), `src/lib/cache/tiers/disk.ts` (new, 160 LOC), `src/lib/cache/normalise.ts` (new, 110 LOC), `src/lib/cacheLayer.ts:1-200` (becomes shim), `tests/unit/cache/multiTier.test.ts` (new, 280 LOC), `tests/integration/cache/persistence.test.ts` (new, 200 LOC), `docs/performance/01-cache.md` (new, 110 LOC).
+**Test plan**: Insert 100k entries, assert eviction follows W-TinyLFU. Restart test: assert SQLite-backed entries survive.
+**Risk**: Med — wrong keying = data leak across tenants.
+**Estimate**: L
+
+---
+
+### PR-037
+
+**Title**: Prompt-cache prefix hashing with Anthropic, OpenAI, and Google cache_control
+**Problem**: Anthropic's `cache_control` blocks and OpenAI's automatic prefix caching are 90% off, but OmniRoute does not deduplicate.
+**Solution**:
+- New module `src/lib/cache/prefixCache.ts` (320 LOC) that walks the messages array, computes a stable prefix hash, and inserts a `cache_control: { type: "ephemeral" }` marker at the longest common prefix.
+- Files affected: `src/lib/cache/prefixCache.ts` (new, 320 LOC), `open-sse/transformer/anthropic.ts:1-200` (apply cache_control), `open-sse/transformer/openai.ts:1-200` (apply cache_control), `open-sse/transformer/google.ts:1-200` (apply), `src/lib/cacheControlSettings.ts:1-100` (extend), `tests/unit/cache/prefixCache.test.ts` (new, 280 LOC), `tests/fixtures/cache/long-conversation.json` (new), `docs/performance/02-prefix-cache.md` (new, 100 LOC).
+**Test plan**: Send a 10-message conversation twice, assert second request has `cache_control` on the 9-message prefix.
+**Risk**: Med — wrong prefix breaks model output.
+**Estimate**: L
+
+---
+
+### PR-038
+
+**Title**: Request coalescing / single-flight for identical in-flight requests
+**Problem**: When a Coder agent fans out 5 identical completions (e.g. for parallel branches), we make 5 calls. Coalescing is essential.
+**Solution**:
+- New module `src/lib/cache/singleFlight.ts` (220 LOC). On a cache miss, if another identical request is in-flight, subscribe to its Promise instead of issuing a new one.
+- Files affected: `src/lib/cache/singleFlight.ts` (new, 220 LOC), `src/lib/cache/multiTier.ts:1-380` (integrate), `src/proxy.ts:1-200` (wrap), `tests/unit/cache/singleFlight.test.ts` (new, 240 LOC), `tests/load/coalescing.test.ts` (new, 200 LOC), `docs/performance/03-single-flight.md` (new, 70 LOC).
+**Test plan**: Fire 50 concurrent identical requests, assert only 1 upstream call.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-039
+
+**Title**: Streaming backpressure & coalesced first-byte timing for SSE
+**Problem**: #4802 (Direct Codex streams still serialize behind prior trailers) and #4602 (Codex WebSocket fails with "Controller is already closed") — the streaming layer is fragile.
+**Solution**:
+- Refactor `src/sse/parser.ts:1-200` to use a `ReadableStream` with explicit backpressure (highWaterMark tuning). Avoid materialising the entire upstream response in memory.
+- For the Codex WebSocket path, add a `passthroughStream()` that pipes upstream → downstream with proper `cancel` propagation.
+- Files affected: `src/sse/parser.ts:1-200` (refactored, ~260 LOC), `src/sse/backpressure.ts` (new, 130 LOC), `src/sse/passthroughStream.ts` (new, 110 LOC), `open-sse/handlers/responsesHandler.ts:1-200` (use passthrough), `src/server/ws/codex.ts:1-200` (new, 220 LOC), `tests/unit/sse/backpressure.test.ts` (new, 240 LOC), `tests/load/streaming-concurrency.test.ts` (new, 200 LOC), `docs/performance/04-streaming.md` (new, 80 LOC).
+**Test plan**: 100 concurrent streams; assert no memory blowup; assert backpressure signal honoured.
+**Risk**: Med.
+**Estimate**: L
+
+---
+
+### PR-040
+
+**Title**: Connection pooling for upstream undici with keep-alive and DNS caching
+**Problem**: #4252 (undici 502 bursts) suggests the connection pool is being thrashed. Today's `undici` is configured ad-hoc.
+**Solution**:
+- New module `src/lib/network/pool.ts` (260 LOC). One Agent per upstream host with: `keepAliveTimeout: 30s`, `maxSockets: 64`, `maxFreeSockets: 16`, DNS cache via `cacheable-lookup`.
+- Files affected: `src/lib/network/pool.ts` (new, 260 LOC), `src/lib/network/dnsCache.ts` (new, 110 LOC), `src/lib/network/proxyEnv.ts` (new, 130 LOC), `open-sse/executors/base.ts:1-50` (use pool), `package.json:200-260` (`undici`, `cacheable-lookup`), `tests/unit/network/pool.test.ts` (new, 240 LOC), `tests/load/connection-reuse.test.ts` (new, 200 LOC), `docs/performance/05-pool.md` (new, 100 LOC).
+**Test plan**: Spin up a local upstream, fire 1k reqs, assert socket count <= maxFreeSockets.
+**Risk**: Med.
+**Estimate**: M
+
+---
+
+### PR-041
+
+**Title**: Background pre-warm of provider models on startup
+**Problem**: Cold start latency. First request to a new provider takes 2-5 seconds while the executor's model list is fetched.
+**Solution**:
+- New module `src/lib/warmup.ts` (220 LOC). On startup (or `omniroute warmup` CLI), background-fetch model lists for all enabled providers, parallelised.
+- Files affected: `src/lib/warmup.ts` (new, 220 LOC), `bin/omniroute-warmup.mjs` (new, 80 LOC), `src/server-init.ts:1-150` (mount), `src/app/api/admin/warmup/route.ts` (new, 80 LOC), `tests/unit/warmup.test.ts` (new, 200 LOC), `tests/integration/warmup.test.ts` (new, 180 LOC), `docs/performance/06-warmup.md` (new, 60 LOC).
+**Test plan**: Cold start test, assert warmup completes within 10s for 60 providers.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-042
+
+**Title**: Compression telemetry and quality scoring (RTK + Caveman auto-tier selection)
+**Problem**: #4268 (Stacked RTK + Caveman "often records no savings"). Operators can't see when to use which tier.
+**Solution**:
+- New module `src/lib/compression/quality.ts` (260 LOC) that runs offline, scores each tier on a calibration set, and emits `omniroute_compression_quality_score{tier,model}`.
+- Auto-select the best tier at request time based on the score.
+- Files affected: `src/lib/compression/quality.ts` (new, 260 LOC), `src/lib/compression/rtk.ts:1-200` (instrumented), `src/lib/compression/caveman.ts:1-200` (instrumented), `src/lib/compression/index.ts:1-80` (selector), `scripts/compression/benchmark.ts:1-200` (extend), `tests/unit/compression/quality.test.ts` (new, 240 LOC), `tests/integration/compression/auto-tier.test.ts` (new, 200 LOC), `docs/performance/07-compression-quality.md` (new, 90 LOC).
+**Test plan**: Run 100 prompts, assert each gets the best tier per the score.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-043
+
+**Title**: WASM-accelerated JSON parsing on the streaming hot path
+**Problem**: Today's JSON parsing in `src/sse/` and `open-sse/handlers/responseSanitizer.ts` uses `JSON.parse` on each chunk, which is allocation-heavy.
+**Solution**:
+- New module `src/lib/json/fast.ts` (220 LOC) using `simdjson-wasm` or a small WASM JSON tokenizer. Falls back to native `JSON.parse` if WASM is unavailable.
+- Files affected: `src/lib/json/fast.ts` (new, 220 LOC), `src/lib/json/wasm/` (new dir with 4 files totalling 240 LOC), `src/sse/parser.ts:1-200` (use), `open-sse/handlers/responseSanitizer.ts:1-200` (use), `package.json:200-260` (optional `simdjson-wasm`), `tests/unit/json/fast.test.ts` (new, 240 LOC), `benchmarks/json-parse.bench.ts` (new, 120 LOC), `docs/performance/08-wasm-json.md` (new, 60 LOC).
+**Test plan**: Benchmark test; assert 1.5x throughput on 10k chunk parse.
+**Risk**: Med.
+**Estimate**: M
+
+---
+
+### PR-044
+
+**Title**: GPU-aware sharded prompt-cache for ultra-long-context models
+**Problem**: Models with 1M+ context (Gemini 2.5 Pro, Claude 3.7) need their prefix cache sharded. A single 1M-token prompt is too large for in-memory LRU.
+**Solution**:
+- New module `src/lib/cache/longContext.ts` (300 LOC) that shards long prefixes into 8KB chunks, indexed by rolling hash, and uses `lmdb` as the backing store.
+- Files affected: `src/lib/cache/longContext.ts` (new, 300 LOC), `src/lib/cache/multiTier.ts:1-380` (integrate), `package.json:200-260` (`lmdb`, `xxhash-wasm`), `tests/unit/cache/longContext.test.ts` (new, 240 LOC), `tests/load/long-cache.test.ts` (new, 200 LOC), `docs/performance/09-long-context.md` (new, 80 LOC).
+**Test plan**: 1M-token prompt split; assert cache hits in <50ms.
+**Risk**: Med.
+**Estimate**: L
+
+---
+
+### PR-045
+
+**Title**: Adaptive timeouts with per-provider p99 calibration
+**Problem**: Hard-coded timeouts cause 502s for slow providers. Today, all providers use the same timeout.
+**Solution**:
+- New module `src/lib/network/adaptiveTimeout.ts` (260 LOC) that maintains a rolling p99 of upstream latency per provider and sets `AbortSignal.timeout` accordingly (2x p99, with min/max bounds).
+- Files affected: `src/lib/network/adaptiveTimeout.ts` (new, 260 LOC), `src/lib/observability/latency.ts:1-230` (feed), `open-sse/executors/base.ts:1-50` (apply), `tests/unit/network/adaptiveTimeout.test.ts` (new, 240 LOC), `tests/integration/timeout-adaptive.test.ts` (new, 200 LOC), `docs/performance/10-adaptive-timeout.md` (new, 70 LOC).
+**Test plan**: Synthesise slow provider, assert timeout increases, recovers.
+**Risk**: Med.
+**Estimate**: M
+
+---
+
+### PR-046
+
+**Title**: Zero-copy streaming with WHATWG ReadableStream tee()
+**Problem**: When we both consume and tee the SSE stream (e.g. for logging and forwarding), we currently buffer.
+**Solution**:
+- Refactor `src/sse/forwarder.ts` (260 LOC total) to use `ReadableStream.tee()` and a single backpressure-aware consumer per side. Memory: O(1) per stream regardless of size.
+- Files affected: `src/sse/forwarder.ts` (new, 260 LOC), `src/sse/teeStream.ts` (new, 130 LOC), `open-sse/handlers/responsesHandler.ts:1-200` (use), `tests/unit/sse/forwarder.test.ts` (new, 240 LOC), `tests/load/streaming-memory.test.ts` (new, 200 LOC), `docs/performance/11-zero-copy.md` (new, 60 LOC).
+**Test plan**: Stream 1GB of synthetic chunks, assert peak RSS < 100MB.
+**Risk**: Med.
+**Estimate**: M
+
+---
+
+### PR-047
+
+**Title**: Worker-thread based model embedding and tokenisation offload
+**Problem**: `js-tiktoken` and `transformers.js` block the event loop on the main thread, causing stream stalls.
+**Solution**:
+- New module `src/lib/workers/embedWorker.ts` (220 LOC) using `node:worker_threads`. Public API: `tokenize(text, model)` returns a promise.
+- Files affected: `src/lib/workers/embedWorker.ts` (new, 220 LOC), `src/lib/workers/pool.ts` (new, 160 LOC), `src/lib/cache/prefixCache.ts:1-320` (use), `open-sse/transformer/*` (use), `tests/unit/workers/embedWorker.test.ts` (new, 200 LOC), `tests/load/event-loop-stall.test.ts` (new, 180 LOC), `docs/performance/12-workers.md` (new, 70 LOC).
+**Test plan**: Verify event-loop lag stays <50ms during 10k tokenizations.
+**Risk**: Med.
+**Estimate**: M
+
+---
+
+### PR-048
+
+**Title**: HTTP/2 and HTTP/3 upstream support with ALPN negotiation
+**Problem**: Some upstreams (Cloudflare AI, Anthropic enterprise) prefer HTTP/2 or HTTP/3.
+**Solution**:
+- New module `src/lib/network/httpVersions.ts` (220 LOC) using `node:http2` and `node:http` ALPN. Pool per (host, ALPN).
+- Files affected: `src/lib/network/httpVersions.ts` (new, 220 LOC), `src/lib/network/pool.ts:1-260` (integrate), `tests/unit/network/httpVersions.test.ts` (new, 240 LOC), `tests/integration/http2.test.ts` (new, 200 LOC), `docs/performance/13-http-versions.md` (new, 80 LOC).
+**Test plan**: Spin up a local HTTP/2 server, assert pool uses h2.
+**Risk**: Med.
+**Estimate**: M
+
+---
+
+### PR-049
+
+**Title**: Speculative decoding pass-through (when upstream supports it)
+**Problem**: Speculative decoding is a 2-3x speedup, but not exposed.
+**Solution**:
+- New module `open-sse/executors/speculative.ts` (260 LOC) that, when the provider supports it (e.g. Groq, Fireworks), forwards `speculative_draft` parameter. Falls back gracefully.
+- Files affected: `open-sse/executors/speculative.ts` (new, 260 LOC), `open-sse/executors/groq.ts:1-350` (extend), `open-sse/transformer/speculative.ts` (new, 130 LOC), `src/shared/providers/capabilities.ts:1-240` (flag), `tests/unit/executors/speculative.test.ts` (new, 220 LOC), `docs/performance/14-speculative.md` (new, 80 LOC).
+**Test plan**: Mock provider, assert param forwarded.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-050
+
+**Title**: Performance regression CI — automated k6 load tests on every PR
+**Problem**: We have `tests/load/` but no CI integration. Regressions slip in.
+**Solution**:
+- New GitHub Actions workflow `.github/workflows/perf.yml` (200 LOC) running k6 scripts in `tests/load/k6/*.js` (8 new scripts, 1.2k LOC).
+- Each script defines an SLO (e.g. `http_req_duration: ['p(95)<800']`); failure blocks merge.
+- Files affected: `.github/workflows/perf.yml` (new, 200 LOC), `tests/load/k6/chat.js` (new, 150 LOC), `tests/load/k6/embeddings.js` (new, 130 LOC), `tests/load/k6/streaming.js` (new, 160 LOC), `tests/load/k6/sustained.js` (new, 130 LOC), `tests/load/k6/coalescing.js` (new, 130 LOC), `tests/load/k6/cache.js` (new, 130 LOC), `tests/load/k6/mcp.js` (new, 130 LOC), `tests/load/k6/a2a.js` (new, 130 LOC), `package.json:200-260` (k6 in devDeps), `docs/performance/15-ci-perf.md` (new, 90 LOC).
+**Test plan**: Run workflow, assert thresholds enforced.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+## Theme 4: Security & Auth (10 PRs)
+
+> Security is a constant ask in the community (auth bypass attempts in #4714, WAF blocks in #4608, OOM heap exhaustion in #4771). These PRs close the surface.
+
+---
+
+### PR-051
+
+**Title**: OAuth 2.0 / OIDC login (Google, GitHub, Microsoft, Authentik, Keycloak)
+**Problem**: OmniRoute's `src/lib/auth` supports username/password and a `reset-password` bin script, but lacks SSO. Enterprise users (the most common community request) cannot use it.
+**Solution**:
+- New module `src/lib/auth/oauth.ts` (380 LOC) implementing PKCE + OIDC discovery + ID token verification with JWKS rotation.
+- New provider configs: `src/lib/auth/oauth/providers/google.ts`, `github.ts`, `microsoft.ts`, `authentik.ts`, `keycloak.ts` (each ~120 LOC).
+- Files affected: `src/lib/auth/oauth.ts` (new, 380 LOC), `src/lib/auth/oauth/providers/google.ts` (new, 120 LOC), `src/lib/auth/oauth/providers/github.ts` (new, 110 LOC), `src/lib/auth/oauth/providers/microsoft.ts` (new, 120 LOC), `src/lib/auth/oauth/providers/authentik.ts` (new, 110 LOC), `src/lib/auth/oauth/providers/keycloak.ts` (new, 120 LOC), `src/lib/auth/oauth/state.ts` (new, 90 LOC), `src/lib/auth/oauth/jwks.ts` (new, 100 LOC), `src/app/api/auth/oauth/[provider]/route.ts` (new, 90 LOC), `src/app/api/auth/oauth/callback/route.ts` (new, 110 LOC), `src/app/(dashboard)/auth/sso/page.tsx` (new, 160 LOC), `src/middleware/auth-mw.ts:1-180` (integrate), `tests/unit/auth/oauth.test.ts` (new, 280 LOC), `tests/integration/auth/oauth.test.ts` (new, 200 LOC), `docs/security/02-oauth.md` (new, 130 LOC).
+**Test plan**: Mock OIDC provider; PKCE flow; JWKS rotation; replay attack rejected.
+**Risk**: Med — security-sensitive.
+**Estimate**: L
+
+---
+
+### PR-052
+
+**Title**: Mutual TLS (mTLS) for the public API with cert pinning
+**Problem**: Enterprise customers want mTLS in front of OmniRoute's API. The reverse-proxy-out direction (to providers) is unencrypted at the application layer.
+**Solution**:
+- New module `src/lib/security/mtls.ts` (260 LOC) using `node:tls`. Honour `OMNIROUTE_TLS_CLIENT_CERT`, `OMNIROUTE_TLS_CLIENT_KEY`, `OMNIROUTE_TLS_CA_BUNDLE`, `OMNIROUTE_TLS_REJECT_UNAUTHORIZED`.
+- Files affected: `src/lib/security/mtls.ts` (new, 260 LOC), `src/lib/security/certPinning.ts` (new, 130 LOC), `src/server-init.ts:1-150` (mount), `open-sse/executors/base.ts:1-50` (use), `bin/omniroute-mkcert.mjs` (new, 90 LOC) — generates self-signed dev certs, `tests/unit/security/mtls.test.ts` (new, 240 LOC), `tests/integration/security/mtls.test.ts` (new, 200 LOC), `docs/security/03-mtls.md` (new, 100 LOC).
+**Test plan**: Spin up an HTTPS upstream with self-signed cert, assert connect/refuse logic.
+**Risk**: Med.
+**Estimate**: M
+
+---
+
+### PR-053
+
+**Title**: Encrypted secret store (AES-256-GCM with key derived via Argon2id)
+**Problem**: API keys are stored in plain SQLite (`src/lib/db`). A database dump leaks every credential. #4608's WAF block plus the OAuth needs compound this.
+**Solution**:
+- New module `src/lib/security/secrets.ts` (320 LOC). Master key from `OMNIROUTE_MASTER_KEY` env or OS keychain via `keytar`. Per-secret encryption with random nonce, key derived per-secret via HKDF.
+- Files affected: `src/lib/security/secrets.ts` (new, 320 LOC), `src/lib/security/kdf.ts` (new, 90 LOC), `src/lib/security/keychain.ts` (new, 110 LOC), `src/lib/db/migrations/2026-07-encrypted-secrets.ts` (new, 200 LOC), `src/lib/db/index.ts:1-200` (extend), `package.json:200-260` (argon2, keytar optional), `bin/omniroute-rotate-key.mjs` (new, 90 LOC), `tests/unit/security/secrets.test.ts` (new, 280 LOC), `tests/integration/security/rotation.test.ts` (new, 200 LOC), `docs/security/04-secrets.md` (new, 100 LOC).
+**Test plan**: Encrypt, decrypt roundtrip; key rotation test (re-encrypt with new key, old key still decrypts legacy); corrupted-nonce test.
+**Risk**: High — data at rest; rotation must be lossless.
+**Estimate**: L
+
+---
+
+### PR-054
+
+**Title**: Token-bucket + sliding-window rate limiter (per-IP, per-API-key, per-tenant)
+**Problem**: No rate limiting; 5xx storms (#4252) and OOM (#4771) suggest unbounded request floods.
+**Solution**:
+- New module `src/lib/security/rateLimit.ts` (320 LOC) implementing token-bucket (Lua-style atomic, in-memory) and sliding-window (Redis optional). Configurable per route, per scope.
+- Files affected: `src/lib/security/rateLimit.ts` (new, 320 LOC), `src/lib/security/rateLimit/strategies/tokenBucket.ts` (new, 130 LOC), `src/lib/security/rateLimit/strategies/slidingWindow.ts` (new, 130 LOC), `src/lib/security/rateLimit/strategies/redisBackend.ts` (new, 130 LOC), `src/middleware/rateLimit-mw.ts` (new, 180 LOC), `src/server-init.ts:1-150` (mount), `package.json:200-260` (ioredis optional), `tests/unit/security/rateLimit.test.ts` (new, 280 LOC), `tests/integration/security/rateLimit.test.ts` (new, 200 LOC), `docs/security/05-rate-limit.md` (new, 90 LOC).
+**Test plan**: Burst 100 req, assert 429s; sliding-window accuracy; per-tenant isolation.
+**Risk**: Med.
+**Estimate**: M
+
+---
+
+### PR-055
+
+**Title**: CSP, HSTS, COOP/COEP, and Permissions-Policy headers on all responses
+**Problem**: `src/middleware/cors` is set up but the rest of the security headers (CSP, HSTS, etc.) are not.
+**Solution**:
+- New module `src/middleware/securityHeaders.ts` (260 LOC) applying default-deny CSP with nonces, HSTS (1 year, includeSubDomains, preload), `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp`, `Permissions-Policy: ()`.
+- Files affected: `src/middleware/securityHeaders.ts` (new, 260 LOC), `src/middleware/cors/index.ts:1-200` (integrate), `src/server-init.ts:1-150` (mount), `src/app/layout.tsx:1-100` (extend metadata), `tests/unit/middleware/securityHeaders.test.ts` (new, 200 LOC), `tests/e2e/security/headers.spec.ts` (new, 130 LOC), `docs/security/06-headers.md` (new, 60 LOC).
+**Test plan**: Playwright test asserts each header on every page.
+**Risk**: Med — CSP can break the dashboard if too strict.
+**Estimate**: M
+
+---
+
+### PR-056
+
+**Title**: Web Application Firewall (WAF) — path/method/UA/header ruleset
+**Problem**: #4608 (Aliyun WAF block) shows upstream WAFs reject OmniRoute; we lack our own to drop scanner traffic.
+**Solution**:
+- New module `src/lib/security/waf.ts` (320 LOC) with a rule engine (path regex, method, header inspection, JA3-style fingerprint), default ruleset under `config/waf/default.yaml`.
+- Files affected: `src/lib/security/waf.ts` (new, 320 LOC), `src/lib/security/waf/rules.ts` (new, 130 LOC), `src/middleware/waf-mw.ts` (new, 180 LOC), `config/waf/default.yaml` (new, 80 LOC), `src/lib/security/waf/incident.ts` (new, 110 LOC) — block duration and reporting, `tests/unit/security/waf.test.ts` (new, 240 LOC), `tests/integration/security/waf.test.ts` (new, 200 LOC), `docs/security/07-waf.md` (new, 90 LOC).
+**Test plan**: Path traversal blocked, scanner UA blocked, false-positive rate on the dashboard.
+**Risk**: Med.
+**Estimate**: L
+
+---
+
+### PR-057
+
+**Title**: SOC 2 / ISO 27001 hardening pack — evidence collection and report generation
+**Problem**: No evidence collection. The `src/lib/compliance` directory has stubs.
+**Solution**:
+- New module `src/lib/compliance/soc2.ts` (320 LOC) that exports quarterly evidence packs (Zips with: access logs, change logs, encrypted-at-rest attestations, vulnerability scans).
+- Files affected: `src/lib/compliance/soc2.ts` (new, 320 LOC), `src/lib/compliance/evidence.ts` (new, 180 LOC), `src/lib/compliance/report.ts` (new, 130 LOC), `src/app/api/compliance/evidence/route.ts` (new, 90 LOC), `src/app/(dashboard)/compliance/page.tsx` (new, 200 LOC), `bin/omniroute-compliance-pack.mjs` (new, 110 LOC), `tests/unit/compliance/soc2.test.ts` (new, 240 LOC), `docs/security/08-soc2.md` (new, 130 LOC).
+**Test plan**: Run pack builder, assert files match expected schema.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-058
+
+**Title**: Supply chain hardening — SBOM, signed releases, dependency pinning
+**Problem**: `package.json` is 200+ direct deps; no SBOM. #4441 (release build hygiene) is a direct community ask.
+**Solution**:
+- Add CycloneDX SBOM generation in `.github/workflows/release.yml`. Enable `pnpm install --frozen-lockfile` everywhere. Add Sigstore cosign signing of release tarballs.
+- Files affected: `.github/workflows/release.yml` (new, 220 LOC), `.github/workflows/sbom.yml` (new, 130 LOC), `scripts/build/cosign.mjs` (new, 90 LOC), `package.json:200-260` (`@cyclonedx/cyclonedx-npm` already present), `docs/security/09-sbom.md` (new, 90 LOC), `tests/unit/build/sbom.test.ts` (new, 130 LOC).
+**Test plan**: Run workflow, verify SBOM output, verify signature.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-059
+
+**Title**: Sandboxed executor for untrusted tool calls (vm2 replacement)
+**Problem**: Tool calls from untrusted MCP servers could be exploited. Today's tool execution runs in the same process.
+**Solution**:
+- New module `src/lib/security/sandbox.ts` (320 LOC) using `node:vm` with `importModuleDynamically` blocked, plus a worker-thread pool for actual execution. Per-tool timeout and memory cap.
+- Files affected: `src/lib/security/sandbox.ts` (new, 320 LOC), `src/lib/mcp/toolRunner.ts:1-200` (use), `tests/unit/security/sandbox.test.ts` (new, 240 LOC), `tests/integration/security/sandbox-escape.test.ts` (new, 200 LOC), `docs/security/10-sandbox.md` (new, 90 LOC).
+**Test plan**: Attempt `process.exit` from sandboxed code, assert blocked. Memory cap test.
+**Risk**: Med — sandbox escapes have high impact.
+**Estimate**: L
+
+---
+
+### PR-060
+
+**Title**: Threat detection — anomaly scoring on auth, usage, and cost spikes
+**Problem**: No detection of credential stuffing, key exfil, or runaway cost (a single tenant can rack up $10k in an hour with no signal).
+**Solution**:
+- New module `src/lib/security/anomaly.ts` (320 LOC) implementing EWMA + z-score over auth events, requests/min, and cost. Webhook alerts.
+- Files affected: `src/lib/security/anomaly.ts` (new, 320 LOC), `src/lib/security/anomaly/scorer.ts` (new, 130 LOC), `src/lib/security/anomaly/webhook.ts` (new, 100 LOC), `src/lib/auth/middleware.ts:1-180` (emit events), `src/app/api/security/anomaly/route.ts` (new, 90 LOC), `src/app/(dashboard)/security/anomaly/page.tsx` (new, 200 LOC), `tests/unit/security/anomaly.test.ts` (new, 240 LOC), `tests/integration/security/anomaly.test.ts` (new, 200 LOC), `docs/security/11-anomaly.md` (new, 90 LOC).
+**Test plan**: Inject 1000-event burst, assert anomaly score crosses threshold; assert webhook fires; assert dashboard highlights.
+**Risk**: Med.
+**Estimate**: L
+
+---
+
+## Theme 5: Developer Experience (10 PRs)
+
+> The community runs `bin/omniroute.mjs` and `src/lib/cliTools` heavily. Several issues (#4252, #4716, #4767) trace to fragile CLI behavior. These PRs harden the surface.
+
+---
+
+### PR-061
+
+**Title**: CLI plugin system — extend `bin/omniroute.mjs` with third-party subcommands
+**Problem**: `bin/omniroute.mjs` and `src/lib/cliTools` have ~25 hard-coded commands. Custom commands cannot be added without rebuilding.
+**Solution**:
+- New module `src/lib/cliTools/plugin.ts` (320 LOC) implementing a small plugin discovery protocol. Plugins live under `~/.omniroute/plugins/<name>/plugin.mjs` and export `{ name, commands: CommandDef[] }`.
+- Files affected: `src/lib/cliTools/plugin.ts` (new, 320 LOC), `src/lib/cliTools/discovery.ts` (new, 130 LOC), `src/lib/cliTools/loader.ts` (new, 110 LOC), `bin/omniroute.mjs:1-200` (extend), `src/lib/cliTools/registry.ts:1-180` (integrate), `tests/unit/cliTools/plugin.test.ts` (new, 240 LOC), `tests/integration/cliTools/plugin.test.ts` (new, 200 LOC), `docs/cli/06-plugins.md` (new, 130 LOC).
+**Test plan**: Sample plugin end-to-end via the CLI; assert command appears in `help`.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-062
+
+**Title**: `--dry-run` and `--explain` for every CLI command that mutates state
+**Problem**: `omniroute config set`, `omniroute rotate-keys`, and friends can wreck a deployment if a user mistypes.
+**Solution**:
+- New module `src/lib/cliTools/dryRun.ts` (260 LOC) wrapping the mutating commands with a no-op execution path that prints planned actions.
+- Files affected: `src/lib/cliTools/dryRun.ts` (new, 260 LOC), `src/lib/cliTools/explain.ts` (new, 130 LOC), `bin/omniroute.mjs:1-200` (extend), `tests/unit/cliTools/dryRun.test.ts` (new, 240 LOC), `tests/integration/cliTools/dryRun.test.ts` (new, 200 LOC), `docs/cli/07-dryrun.md` (new, 100 LOC).
+**Test plan**: Assert no DB write on `--dry-run`; assert output matches expected.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-063
+
+**Title**: Interactive TUI dashboard via `ink` (React for CLIs)
+**Problem**: The CLI is line-by-line; users want a TUI.
+**Solution**:
+- New module `src/lib/cliTools/tui/` (520 LOC total) with `app.tsx`, `panels/route.tsx`, `panels/cache.tsx`, `panels/quotas.tsx`, `panels/logs.tsx`, `state.ts`, `keymap.ts`.
+- Files affected: `src/lib/cliTools/tui/app.tsx` (new, 200 LOC), `src/lib/cliTools/tui/state.ts` (new, 130 LOC), `src/lib/cliTools/tui/keymap.ts` (new, 90 LOC), `src/lib/cliTools/tui/panels/route.tsx` (new, 110 LOC), `src/lib/cliTools/tui/panels/cache.tsx` (new, 100 LOC), `src/lib/cliTools/tui/panels/quotas.tsx` (new, 100 LOC), `src/lib/cliTools/tui/panels/logs.tsx` (new, 100 LOC), `bin/omniroute-tui.mjs` (new, 60 LOC), `package.json:200-260` (ink, ink-select-input), `tests/unit/cliTools/tui.test.ts` (new, 240 LOC), `docs/cli/08-tui.md` (new, 130 LOC).
+**Test plan**: Render panels in jsdom; assert keymap drives transitions.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-064
+
+**Title**: OpenAPI 3.1 spec generation with `zod-to-openapi`
+**Problem**: `src/app/api/openapi.json/route.ts` is stub; no machine-readable schema.
+**Solution**:
+- New module `src/lib/openapi.ts` (320 LOC) using `@asteasolutions/zod-to-openapi`. Register each route's Zod schema.
+- Files affected: `src/lib/openapi.ts` (new, 320 LOC), `src/lib/openapi/registry.ts` (new, 130 LOC), `src/app/api/openapi.json/route.ts:1-90` (replace), `src/app/api/redoc/page.tsx` (new, 90 LOC), `src/app/api/swagger/page.tsx` (new, 90 LOC), `tests/unit/openapi/generate.test.ts` (new, 240 LOC), `tests/integration/openapi/snapshot.test.ts` (new, 200 LOC), `docs/api/01-openapi.md` (new, 130 LOC).
+**Test plan**: Snapshot test against committed `openapi.json`.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-065
+
+**Title**: Postman/Insomnia/Hoppscotch export from the OpenAPI doc
+**Problem**: No first-class collection for testers.
+**Solution**:
+- New module `src/lib/openapi/exporters.ts` (260 LOC) producing Postman v2.1, Insomnia v4, Hoppscotch v1 collections.
+- Files affected: `src/lib/openapi/exporters.ts` (new, 260 LOC), `src/lib/openapi/exporters/postman.ts` (new, 130 LOC), `src/lib/openapi/exporters/insomnia.ts` (new, 110 LOC), `src/lib/openapi/exporters/hoppscotch.ts` (new, 110 LOC), `src/app/api/openapi/postman/route.ts` (new, 60 LOC), `src/app/api/openapi/insomnia/route.ts` (new, 60 LOC), `src/app/api/openapi/hoppscotch/route.ts` (new, 60 LOC), `tests/unit/openapi/exporters.test.ts` (new, 240 LOC), `docs/api/02-collections.md` (new, 90 LOC).
+**Test plan**: Round-trip import each collection back into the relevant tool (assert via static lint).
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-066
+
+**Title**: `omniroute doctor` — diagnose common misconfigurations
+**Problem**: Users hit issues that need a human to triage (env vars, port collisions, missing SQLite migrations). No automated diagnosis.
+**Solution**:
+- New module `src/lib/cliTools/doctor.ts` (320 LOC) running a battery of checks (env, ports, db, disk, mTLS, network to upstream providers). Reports per-check pass/warn/fail with remediation steps.
+- Files affected: `src/lib/cliTools/doctor.ts` (new, 320 LOC), `src/lib/cliTools/doctor/checks.ts` (new, 130 LOC), `bin/omniroute-doctor.mjs` (new, 60 LOC), `tests/unit/cliTools/doctor.test.ts` (new, 240 LOC), `tests/integration/cliTools/doctor.test.ts` (new, 200 LOC), `docs/cli/09-doctor.md` (new, 100 LOC).
+**Test plan**: Inject failures; assert detection.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-067
+
+**Title**: VS Code extension for inline provider config validation
+**Problem**: Editing YAML in `config/providers.yaml` is error-prone; no schema validation in IDE.
+**Solution**:
+- New package `editors/vscode-omniroute/` (520 LOC total). Bundles the OpenAPI-derived JSON schema and the providers schema.
+- Files affected: `editors/vscode-omniroute/package.json` (new, 130 LOC), `editors/vscode-omniroute/src/extension.ts` (new, 200 LOC), `editors/vscode-omniroute/schemas/providers.schema.json` (new, 130 LOC), `editors/vscode-omniroute/schemas/openapi.schema.json` (generated, 130 LOC), `editors/vscode-omniroute/README.md` (new, 130 LOC), `package.json:200-260` (no change; standalone).
+**Test plan**: VS Code test runner.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-068
+
+**Title**: `omniroute replay` — record and replay HTTP traffic
+**Problem**: Hard to reproduce production bugs. No traffic capture.
+**Solution**:
+- New module `src/lib/devtools/replay.ts` (320 LOC) using a custom `har`-like recorder that writes to `.omniroute/replay/<id>.rec`. Replay redacts secrets.
+- Files affected: `src/lib/devtools/replay.ts` (new, 320 LOC), `src/lib/devtools/recorder.ts` (new, 130 LOC), `src/lib/devtools/redact.ts` (new, 110 LOC), `src/lib/devtools/player.ts` (new, 130 LOC), `bin/omniroute-replay.mjs` (new, 90 LOC), `tests/unit/devtools/replay.test.ts` (new, 240 LOC), `tests/integration/devtools/replay.test.ts` (new, 200 LOC), `docs/cli/10-replay.md` (new, 130 LOC).
+**Test plan**: Record 100 req, replay against a mock, assert identical responses; assert secrets redacted.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-069
+
+**Title**: Local SDK in 5 languages (TS, Python, Go, Rust, Ruby) generated from OpenAPI
+**Problem**: Users ask repeatedly (community) for a typed client.
+**Solution**:
+- New repo `sdks/` (10 packages, ~500 LOC each generator config). Use `openapi-generator-cli`.
+- Files affected: `sdks/typescript/package.json` (new, 130 LOC), `sdks/typescript/src/client.ts` (generated, 200 LOC), `sdks/python/pyproject.toml` (new, 100 LOC), `sdks/python/omniroute/client.py` (generated, 200 LOC), `sdks/go/go.mod` (new, 90 LOC), `sdks/go/client.go` (generated, 200 LOC), `sdks/rust/Cargo.toml` (new, 100 LOC), `sdks/rust/src/lib.rs` (generated, 200 LOC), `sdks/ruby/omniroute.gemspec` (new, 90 LOC), `sdks/ruby/lib/omniroute.rb` (generated, 200 LOC), `scripts/build/sdks.sh` (new, 100 LOC), `tests/sdk/typescript.test.ts` (new, 240 LOC), `tests/sdk/python.test.py` (new, 240 LOC), `tests/sdk/go.test.go` (new, 240 LOC), `tests/sdk/rust.test.rs` (new, 240 LOC), `tests/sdk/ruby.test.rb` (new, 240 LOC), `docs/sdk/01-overview.md` (new, 130 LOC).
+**Test plan**: Each language's CI runs a smoke test against a live OmniRoute.
+**Risk**: Med.
+**Estimate**: XL
+
+---
+
+### PR-070
+
+**Title**: Profiling & tracing CLI (`omniroute profile`) using `node --inspect` and flame graphs
+**Problem**: Performance regressions are hard to diagnose without a CPU profile.
+**Solution**:
+- New module `src/lib/cliTools/profile.ts` (320 LOC) wraps `node --inspect-brk`, captures a 30-second profile with `--prof`, and renders flame graphs via `pprof`.
+- Files affected: `src/lib/cliTools/profile.ts` (new, 320 LOC), `src/lib/cliTools/profile/parser.ts` (new, 130 LOC), `src/lib/cliTools/profile/flamegraph.ts` (new, 110 LOC), `bin/omniroute-profile.mjs` (new, 60 LOC), `package.json:200-260` (pprof, d3-flame-graph), `tests/unit/cliTools/profile.test.ts` (new, 240 LOC), `docs/cli/11-profile.md` (new, 90 LOC).
+**Test plan**: Capture a profile under synthetic load; assert SVG rendered.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+## Theme 6: UI/UX Components (15 PRs)
+
+> The dashboard already shows Routes, Connections, Logs, Quotas. Community asks (issues #4252, #4608, #4716, #4767) call for richer visualisation, React Flow canvases, and accessibility. The Next.js `(dashboard)` route group is the entry point.
+
+---
+
+### PR-071
+
+**Title**: React Flow canvas — visual provider routing graph (drag-drop, live status)
+**Problem**: Routing is configured via YAML/JSON. Users want to see and edit the graph.
+**Solution**:
+- New module `src/app/(dashboard)/canvas/page.tsx` (380 LOC) and components under `src/components/canvas/` (520 LOC total).
+- Files affected: `src/app/(dashboard)/canvas/page.tsx` (new, 380 LOC), `src/components/canvas/Router.tsx` (new, 200 LOC), `src/components/canvas/Node.tsx` (new, 130 LOC), `src/components/canvas/Edge.tsx` (new, 130 LOC), `src/components/canvas/Inspector.tsx` (new, 130 LOC), `src/components/canvas/serialize.ts` (new, 130 LOC), `package.json:200-260` (reactflow, elkjs), `tests/components/canvas.test.tsx` (new, 240 LOC), `tests/e2e/canvas.spec.ts` (new, 200 LOC), `docs/ui/02-canvas.md` (new, 130 LOC).
+**Test plan**: Drag-drop; serialize roundtrip; live status via WS.
+**Risk**: Low.
+**Estimate**: XL
+
+---
+
+### PR-072
+
+**Title**: Real-time cost dashboard with daily/weekly/monthly cohorts
+**Problem**: Cost data is scattered (logs, CSV exports). No first-class dashboard.
+**Solution**:
+- New module `src/app/(dashboard)/cost/page.tsx` (380 LOC) and components under `src/components/cost/` (520 LOC total).
+- Files affected: `src/app/(dashboard)/cost/page.tsx` (new, 380 LOC), `src/components/cost/TrendChart.tsx` (new, 130 LOC), `src/components/cost/BreakdownTable.tsx` (new, 130 LOC), `src/components/cost/CohortHeatmap.tsx` (new, 130 LOC), `src/components/cost/ProviderMix.tsx` (new, 130 LOC), `src/components/cost/ForecastCard.tsx` (new, 130 LOC), `src/app/api/cost/cohort/route.ts` (new, 100 LOC), `package.json:200-260` (recharts, d3-scale), `tests/components/cost.test.tsx` (new, 240 LOC), `tests/e2e/cost.spec.ts` (new, 200 LOC), `docs/ui/03-cost.md` (new, 130 LOC).
+**Test plan**: Seed with known data, assert charts render; cohort boundaries correct.
+**Risk**: Low.
+**Estimate**: XL
+
+---
+
+### PR-073
+
+**Title**: Latency heatmap (per-route × per-provider × per-hour)
+**Problem**: Latency outliers are hidden in logs.
+**Solution**:
+- New module `src/app/(dashboard)/latency/page.tsx` (380 LOC) and components under `src/components/latency/` (520 LOC total).
+- Files affected: `src/app/(dashboard)/latency/page.tsx` (new, 380 LOC), `src/components/latency/Heatmap.tsx` (new, 200 LOC), `src/components/latency/Distribution.tsx` (new, 130 LOC), `src/components/latency/PercentilePicker.tsx` (new, 110 LOC), `src/components/latency/CompareTable.tsx` (new, 130 LOC), `src/app/api/latency/heatmap/route.ts` (new, 100 LOC), `package.json:200-260` (recharts), `tests/components/latency.test.tsx` (new, 240 LOC), `tests/e2e/latency.spec.ts` (new, 200 LOC), `docs/ui/04-latency.md` (new, 100 LOC).
+**Test plan**: Render with 100k synthetic samples, assert <500ms paint.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-074
+
+**Title**: Trace explorer — flamegraph + waterfall per request
+**Problem**: OTel spans exist (`src/lib/observability/otel.ts`) but no UI.
+**Solution**:
+- New module `src/app/(dashboard)/traces/page.tsx` (380 LOC) and components under `src/components/traces/` (520 LOC total).
+- Files affected: `src/app/(dashboard)/traces/page.tsx` (new, 380 LOC), `src/components/traces/TraceList.tsx` (new, 130 LOC), `src/components/traces/Waterfall.tsx` (new, 200 LOC), `src/components/traces/Flamegraph.tsx` (new, 130 LOC), `src/components/traces/SpanInspector.tsx` (new, 110 LOC), `src/app/api/traces/route.ts` (new, 100 LOC), `src/app/api/traces/[id]/route.ts` (new, 90 LOC), `tests/components/traces.test.tsx` (new, 240 LOC), `tests/e2e/traces.spec.ts` (new, 200 LOC), `docs/ui/05-traces.md` (new, 100 LOC).
+**Test plan**: Seed spans, assert render; click on span, assert inspector.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-075
+
+**Title**: Logs explorer with full-text, structured filters, saved queries
+**Problem**: `src/app/(dashboard)/logs/page.tsx` exists but is sparse.
+**Solution**:
+- Extend `src/app/(dashboard)/logs/page.tsx` (320 LOC) and add `src/components/logs/` (520 LOC total).
+- Files affected: `src/app/(dashboard)/logs/page.tsx` (380 LOC, replace), `src/components/logs/LogStream.tsx` (new, 130 LOC), `src/components/logs/Filters.tsx` (new, 130 LOC), `src/components/logs/SavedQueries.tsx` (new, 130 LOC), `src/components/logs/SyntaxHighlight.tsx` (new, 130 LOC), `src/lib/logs/search.ts` (new, 130 LOC), `tests/components/logs.test.tsx` (new, 240 LOC), `tests/e2e/logs.spec.ts` (new, 200 LOC), `docs/ui/06-logs.md` (new, 100 LOC).
+**Test plan**: Filter a 1M-line log; assert sub-second; saved query roundtrip.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-076
+
+**Title**: Quota dashboard with per-tenant gauges and burn-rate alerts
+**Problem**: Quotas exist (`src/app/(dashboard)/quotas/page.tsx`) but no burn-rate visualisation.
+**Solution**:
+- New module `src/app/(dashboard)/quotas/page.tsx` (380 LOC) and components under `src/components/quotas/` (520 LOC total).
+- Files affected: `src/app/(dashboard)/quotas/page.tsx` (380 LOC, replace), `src/components/quotas/Gauge.tsx` (new, 130 LOC), `src/components/quotas/BurnRate.tsx` (new, 130 LOC), `src/components/quotas/UsageChart.tsx` (new, 130 LOC), `src/components/quotas/AlertsList.tsx` (new, 130 LOC), `src/app/api/quotas/burn/route.ts` (new, 100 LOC), `tests/components/quotas.test.tsx` (new, 240 LOC), `tests/e2e/quotas.spec.ts` (new, 200 LOC), `docs/ui/07-quotas.md` (new, 100 LOC).
+**Test plan**: Burn rate calc; gauge animates; alerts list updates.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-077
+
+**Title**: Provider health matrix (green/yellow/red by latency, error rate, cost)
+**Problem**: Health is implicit in the logs.
+**Solution**:
+- New module `src/app/(dashboard)/providers/page.tsx` (380 LOC) and components under `src/components/providers/` (520 LOC total).
+- Files affected: `src/app/(dashboard)/providers/page.tsx` (380 LOC, replace), `src/components/providers/Matrix.tsx` (new, 200 LOC), `src/components/providers/Card.tsx` (new, 130 LOC), `src/components/providers/HealthIndicator.tsx` (new, 130 LOC), `src/components/providers/IncidentTimeline.tsx` (new, 130 LOC), `src/app/api/providers/health/route.ts` (new, 100 LOC), `tests/components/providers.test.tsx` (new, 240 LOC), `tests/e2e/providers.spec.ts` (new, 200 LOC), `docs/ui/08-providers.md` (new, 100 LOC).
+**Test plan**: Inject failures; matrix turns red.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-078
+
+**Title**: Cost simulator — "what if I switch X% of traffic from A to B?"
+**Problem**: No way to estimate savings before changing routing.
+**Solution**:
+- New module `src/app/(dashboard)/simulator/page.tsx` (380 LOC) and components under `src/components/simulator/` (520 LOC total).
+- Files affected: `src/app/(dashboard)/simulator/page.tsx` (380 LOC, new), `src/components/simulator/Inputs.tsx` (new, 200 LOC), `src/components/simulator/Results.tsx` (new, 200 LOC), `src/components/simulator/Scenarios.tsx` (new, 130 LOC), `src/lib/simulator/engine.ts` (new, 130 LOC), `tests/components/simulator.test.tsx` (new, 240 LOC), `tests/e2e/simulator.spec.ts` (new, 200 LOC), `docs/ui/09-simulator.md` (new, 100 LOC).
+**Test plan**: Run engine on fixture, compare to oracle; persist scenario.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-079
+
+**Title**: A2A / MCP inspector — pick a peer, replay a task, see steps
+**Problem**: A2A and MCP runs are invisible.
+**Solution**:
+- New module `src/app/(dashboard)/peers/page.tsx` (380 LOC) and components under `src/components/peers/` (520 LOC total).
+- Files affected: `src/app/(dashboard)/peers/page.tsx` (380 LOC, new), `src/components/peers/PeerList.tsx` (new, 130 LOC), `src/components/peers/PeerInspector.tsx` (new, 200 LOC), `src/components/peers/TaskReplay.tsx` (new, 200 LOC), `src/components/peers/StepList.tsx` (new, 130 LOC), `src/app/api/peers/[id]/route.ts` (new, 90 LOC), `src/app/api/peers/[id]/replay/route.ts` (new, 90 LOC), `tests/components/peers.test.tsx` (new, 240 LOC), `tests/e2e/peers.spec.ts` (new, 200 LOC), `docs/ui/10-peers.md` (new, 100 LOC).
+**Test plan**: Pick a peer, replay, assert steps appear.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-080
+
+**Title**: Diff view for provider config — preview before save
+**Problem**: Changing providers is destructive; no preview.
+**Solution**:
+- New module `src/components/diff/` (520 LOC total) plus integration into existing provider form.
+- Files affected: `src/components/diff/DiffView.tsx` (new, 200 LOC), `src/components/diff/DiffLine.tsx` (new, 130 LOC), `src/components/diff/MergeHunk.tsx` (new, 130 LOC), `src/components/diff/useDiff.ts` (new, 130 LOC), `src/app/(dashboard)/providers/[id]/edit/page.tsx` (380 LOC, new), `src/lib/providers/diff.ts` (new, 130 LOC), `tests/components/diff.test.tsx` (new, 240 LOC), `tests/e2e/diff.spec.ts` (new, 200 LOC), `docs/ui/11-diff.md` (new, 100 LOC).
+**Test plan**: Render diff; assert semantics (additions, deletions).
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-081
+
+**Title**: Accessibility (a11y) pass — WCAG 2.2 AA across the dashboard
+**Problem**: The dashboard wasn't audited. Likely failures in focus, color contrast, ARIA.
+**Solution**:
+- Audit + fixes across `src/app/(dashboard)/` (520 LOC total diff). Add jest-axe tests.
+- Files affected: `src/app/(dashboard)/layout.tsx` (extend), `src/components/ui/Button.tsx` (extend), `src/components/ui/Modal.tsx` (extend), `src/components/ui/Table.tsx` (extend), `tests/a11y/dashboard.spec.tsx` (new, 240 LOC), `tests/a11y/provider.spec.tsx` (new, 200 LOC), `tests/a11y/logs.spec.tsx` (new, 200 LOC), `tests/a11y/canvas.spec.tsx` (new, 200 LOC), `package.json:200-260` (jest-axe), `docs/ui/12-a11y.md` (new, 100 LOC).
+**Test plan**: jest-axe catches zero violations; manual NVDA / VoiceOver pass.
+**Risk**: Med — touches every page.
+**Estimate**: XL
+
+---
+
+### PR-082
+
+**Title**: Theme — high-contrast, dark, light, custom accent
+**Problem**: Default theme only.
+**Solution**:
+- New module `src/styles/themes.ts` (260 LOC) plus Tailwind/CSS-vars.
+- Files affected: `src/styles/themes.ts` (new, 260 LOC), `src/styles/themes/dark.ts` (new, 130 LOC), `src/styles/themes/light.ts` (new, 130 LOC), `src/styles/themes/highContrast.ts` (new, 130 LOC), `src/components/ui/ThemePicker.tsx` (new, 130 LOC), `src/app/(dashboard)/settings/appearance/page.tsx` (new, 200 LOC), `tests/components/theme.test.tsx` (new, 240 LOC), `tests/e2e/theme.spec.ts` (new, 200 LOC), `docs/ui/13-themes.md` (new, 90 LOC).
+**Test plan**: Switch theme; assert variables applied; persistence.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-083
+
+**Title**: Onboarding wizard — first-run, sample data, guided tour
+**Problem**: First-run UX is a blank dashboard.
+**Solution**:
+- New module `src/components/onboarding/` (520 LOC total) with `Wizard.tsx`, `Step1Provider.tsx`, `Step2Key.tsx`, `Step3TestCall.tsx`, `Tour.tsx`, `useTour.ts`.
+- Files affected: `src/components/onboarding/Wizard.tsx` (new, 200 LOC), `src/components/onboarding/Step1Provider.tsx` (new, 130 LOC), `src/components/onboarding/Step2Key.tsx` (new, 130 LOC), `src/components/onboarding/Step3TestCall.tsx` (new, 130 LOC), `src/components/onboarding/Tour.tsx` (new, 130 LOC), `src/components/onboarding/useTour.ts` (new, 90 LOC), `src/app/(dashboard)/onboarding/page.tsx` (new, 200 LOC), `tests/components/onboarding.test.tsx` (new, 240 LOC), `tests/e2e/onboarding.spec.ts` (new, 200 LOC), `docs/ui/14-onboarding.md` (new, 100 LOC).
+**Test plan**: Walk the wizard end-to-end on a fresh DB.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-084
+
+**Title**: Notification center — toasts, persistent inbox, Slack/Discord/email
+**Problem**: Failures are silent unless the user is staring at logs.
+**Solution**:
+- New module `src/components/notifications/` (520 LOC total) plus transport in `src/lib/notifications/`.
+- Files affected: `src/components/notifications/Toaster.tsx` (new, 130 LOC), `src/components/notifications/Inbox.tsx` (new, 200 LOC), `src/components/notifications/Settings.tsx` (new, 130 LOC), `src/components/notifications/Preferences.tsx` (new, 130 LOC), `src/lib/notifications/transport.ts` (new, 130 LOC), `src/lib/notifications/transport/slack.ts` (new, 110 LOC), `src/lib/notifications/transport/discord.ts` (new, 110 LOC), `src/lib/notifications/transport/email.ts` (new, 130 LOC), `src/app/api/notifications/send/route.ts` (new, 90 LOC), `tests/components/notifications.test.tsx` (new, 240 LOC), `tests/e2e/notifications.spec.ts` (new, 200 LOC), `docs/ui/15-notifications.md` (new, 100 LOC).
+**Test plan**: Trigger error, assert toast and inbox row; assert Slack webhook received mock.
+**Risk**: Med.
+**Estimate**: L
+
+---
+
+### PR-085
+
+**Title**: Search across dashboard (cmd-k) — providers, routes, requests, logs
+**Problem**: Many small pages, no global nav.
+**Solution**:
+- New module `src/components/command/` (520 LOC total) with `Palette.tsx`, `results/Provider.tsx`, `results/Route.tsx`, `results/Request.tsx`, `useSearch.ts`.
+- Files affected: `src/components/command/Palette.tsx` (new, 200 LOC), `src/components/command/results/Provider.tsx` (new, 130 LOC), `src/components/command/results/Route.tsx` (new, 130 LOC), `src/components/command/results/Request.tsx` (new, 130 LOC), `src/components/command/results/Log.tsx` (new, 110 LOC), `src/components/command/useSearch.ts` (new, 130 LOC), `src/lib/search/index.ts` (new, 130 LOC), `tests/components/command.test.tsx` (new, 240 LOC), `tests/e2e/command.spec.ts` (new, 200 LOC), `docs/ui/16-command.md` (new, 100 LOC).
+**Test plan**: Type "gpt", assert providers show; arrow keys navigate.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+## Theme 7: Quota & Billing (10 PRs)
+
+> Per-tenant billing is barely implemented (`src/lib/billing` has a Stripe stub). Cost is reported per provider, but there's no per-user, per-route, or per-model strategy. Community calls this out: cost transparency is a recurring ask.
+
+---
+
+### PR-086
+
+**Title**: Pluggable quota strategies — fixed-window, sliding-window, token-bucket, soft + hard limits
+**Problem**: `src/lib/quota` ships a basic counter. No strategy abstraction; no soft limits with warnings.
+**Solution**:
+- New module `src/lib/quota/strategies.ts` (320 LOC) implementing 4 strategies behind a common interface.
+- Files affected: `src/lib/quota/strategies.ts` (new, 320 LOC), `src/lib/quota/strategies/fixedWindow.ts` (new, 130 LOC), `src/lib/quota/strategies/slidingWindow.ts` (new, 130 LOC), `src/lib/quota/strategies/tokenBucket.ts` (new, 130 LOC), `src/lib/quota/strategies/leakyBucket.ts` (new, 130 LOC), `src/lib/quota/softLimit.ts` (new, 130 LOC), `src/lib/quota/index.ts:1-200` (extend), `tests/unit/quota/strategies.test.ts` (new, 280 LOC), `tests/integration/quota/strategies.test.ts` (new, 200 LOC), `docs/quota/01-strategies.md` (new, 130 LOC).
+**Test plan**: Boundary tests for each strategy; soft-limit fires before hard.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-087
+
+**Title**: Stripe billing — plans, subscriptions, usage-based metered billing, invoices
+**Problem**: `src/lib/billing/stripe.ts` is a 30-LOC stub.
+**Solution**:
+- New module `src/lib/billing/stripe.ts` (380 LOC) wiring subscription lifecycle, proration, webhook handler, metered usage reporting.
+- Files affected: `src/lib/billing/stripe.ts` (new, 380 LOC), `src/lib/billing/plans.ts` (new, 130 LOC), `src/lib/billing/webhook.ts` (new, 130 LOC), `src/lib/billing/usage.ts` (new, 130 LOC), `src/lib/billing/portal.ts` (new, 100 LOC), `src/app/api/billing/stripe/webhook/route.ts` (new, 100 LOC), `src/app/api/billing/stripe/portal/route.ts` (new, 90 LOC), `src/app/(dashboard)/billing/page.tsx` (new, 200 LOC), `src/app/(dashboard)/billing/plans/page.tsx` (new, 200 LOC), `tests/unit/billing/stripe.test.ts` (new, 240 LOC), `tests/integration/billing/stripe.test.ts` (new, 200 LOC), `docs/billing/01-stripe.md` (new, 130 LOC).
+**Test plan**: Stripe CLI fixture; subscription upgrade/downgrade; webhook idempotency.
+**Risk**: Med — money.
+**Estimate**: L
+
+---
+
+### PR-088
+
+**Title**: Paddle / LemonSqueezy billing — alternative merchant-of-record providers
+**Problem**: Single billing provider lock-in.
+**Solution**:
+- New module `src/lib/billing/paddle.ts` (260 LOC) and `src/lib/billing/lemonsqueezy.ts` (260 LOC) implementing the same `BillingProvider` interface as Stripe.
+- Files affected: `src/lib/billing/paddle.ts` (new, 260 LOC), `src/lib/billing/lemonsqueezy.ts` (new, 260 LOC), `src/lib/billing/interface.ts` (new, 130 LOC), `src/lib/billing/factory.ts` (new, 100 LOC), `src/app/api/billing/paddle/webhook/route.ts` (new, 90 LOC), `src/app/api/billing/lemonsqueezy/webhook/route.ts` (new, 90 LOC), `tests/unit/billing/paddle.test.ts` (new, 240 LOC), `tests/unit/billing/lemonsqueezy.test.ts` (new, 240 LOC), `docs/billing/02-paddle.md` (new, 100 LOC), `docs/billing/03-lemonsqueezy.md` (new, 100 LOC).
+**Test plan**: Webhook fixture; subscription CRUD; tax/VAT flows.
+**Risk**: Med.
+**Estimate**: L
+
+---
+
+### PR-089
+
+**Title**: Usage analytics warehouse — columnar store + SQL access
+**Problem**: Logs and cost live in SQLite; analytics queries are slow.
+**Solution**:
+- New module `src/lib/analytics/duckdb.ts` (320 LOC) using `duckdb-node-neo`. Nightly batch from SQLite to Parquet. SQL API endpoint.
+- Files affected: `src/lib/analytics/duckdb.ts` (new, 320 LOC), `src/lib/analytics/sync.ts` (new, 130 LOC), `src/lib/analytics/schema.ts` (new, 130 LOC), `src/lib/analytics/sql.ts` (new, 130 LOC), `src/app/api/analytics/query/route.ts` (new, 100 LOC), `src/app/(dashboard)/analytics/page.tsx` (new, 200 LOC), `package.json:200-260` (duckdb-node-neo), `tests/unit/analytics/duckdb.test.ts` (new, 240 LOC), `tests/integration/analytics/sync.test.ts` (new, 200 LOC), `docs/analytics/01-warehouse.md` (new, 130 LOC).
+**Test plan**: 1M-row fixture, query latency <1s.
+**Risk**: Med.
+**Estimate**: L
+
+---
+
+### PR-090
+
+**Title**: Cost attribution — tag requests by team, project, customer, route
+**Problem**: Costs roll up only by provider.
+**Solution**:
+- New module `src/lib/billing/attribution.ts` (320 LOC). Tags flow through middleware into logs; reporting by tag.
+- Files affected: `src/lib/billing/attribution.ts` (new, 320 LOC), `src/lib/billing/attribution/tags.ts` (new, 130 LOC), `src/lib/billing/attribution/rollup.ts` (new, 130 LOC), `src/middleware/tag-mw.ts` (new, 130 LOC), `src/app/api/billing/attribution/route.ts` (new, 100 LOC), `src/app/(dashboard)/billing/attribution/page.tsx` (new, 200 LOC), `tests/unit/billing/attribution.test.ts` (new, 240 LOC), `tests/integration/billing/attribution.test.ts` (new, 200 LOC), `docs/billing/04-attribution.md` (new, 130 LOC).
+**Test plan**: Tag a request, query attribution; assert rollup correct.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-091
+
+**Title**: Budgets — per-tenant, per-team, hard cap with graceful degradation
+**Problem**: A runaway tenant can blow the budget.
+**Solution**:
+- New module `src/lib/billing/budgets.ts` (320 LOC). When budget hits 100%, downgrade to a cheaper model; at 110%, reject; at 120%, page on-call.
+- Files affected: `src/lib/billing/budgets.ts` (new, 320 LOC), `src/lib/billing/budgets/policy.ts` (new, 130 LOC), `src/lib/billing/budgets/circuitBreaker.ts` (new, 130 LOC), `src/lib/billing/budgets/pagerduty.ts` (new, 100 LOC), `src/app/api/billing/budgets/route.ts` (new, 100 LOC), `src/app/(dashboard)/billing/budgets/page.tsx` (new, 200 LOC), `tests/unit/billing/budgets.test.ts` (new, 240 LOC), `tests/integration/billing/budgets.test.ts` (new, 200 LOC), `docs/billing/05-budgets.md` (new, 130 LOC).
+**Test plan**: Inject spend, assert thresholds; PagerDuty mock receives page.
+**Risk**: Med.
+**Estimate**: L
+
+---
+
+### PR-092
+
+**Title**: Forecasting — time-series cost projection per provider
+**Problem**: Customers want a "where will I be next month" number.
+**Solution**:
+- New module `src/lib/analytics/forecast.ts` (320 LOC) using a Holt-Winters seasonal model.
+- Files affected: `src/lib/analytics/forecast.ts` (new, 320 LOC), `src/lib/analytics/forecast/holtwinters.ts` (new, 130 LOC), `src/lib/analytics/forecast/seasonal.ts` (new, 130 LOC), `src/lib/analytics/forecast/accuracy.ts` (new, 130 LOC), `src/app/api/analytics/forecast/route.ts` (new, 100 LOC), `src/app/(dashboard)/billing/forecast/page.tsx` (new, 200 LOC), `tests/unit/analytics/forecast.test.ts` (new, 240 LOC), `tests/integration/analytics/forecast.test.ts` (new, 200 LOC), `docs/analytics/02-forecast.md` (new, 130 LOC).
+**Test plan**: 12 months synthetic data, MAPE <10%.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-093
+
+**Title**: Showback reports — per-team CSV/PDF emails, monthly cadence
+**Problem**: No automated report.
+**Solution**:
+- New module `src/lib/billing/reports.ts` (260 LOC) + cron-driven render to PDF (`@react-pdf/renderer`) and CSV.
+- Files affected: `src/lib/billing/reports.ts` (new, 260 LOC), `src/lib/billing/reports/pdf.tsx` (new, 130 LOC), `src/lib/billing/reports/csv.ts` (new, 130 LOC), `src/lib/billing/reports/email.ts` (new, 130 LOC), `src/app/api/billing/reports/send/route.ts` (new, 100 LOC), `src/app/(dashboard)/billing/reports/page.tsx` (new, 200 LOC), `bin/omniroute-report.mjs` (new, 90 LOC), `tests/unit/billing/reports.test.ts` (new, 240 LOC), `tests/integration/billing/reports.test.ts` (new, 200 LOC), `docs/billing/06-reports.md` (new, 130 LOC).
+**Test plan**: Send, assert email + attachment.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-094
+
+**Title**: Chargeback — internal billing integration (invoices, dunning, aging)
+**Problem**: No internal "this team owes that team" mechanism.
+**Solution**:
+- New module `src/lib/billing/chargeback.ts` (260 LOC) implementing internal invoice generation, dunning emails, aging buckets (0–30, 31–60, 61–90, 90+).
+- Files affected: `src/lib/billing/chargeback.ts` (new, 260 LOC), `src/lib/billing/chargeback/invoice.ts` (new, 130 LOC), `src/lib/billing/chargeback/dunning.ts` (new, 130 LOC), `src/lib/billing/chargeback/aging.ts` (new, 110 LOC), `src/app/api/billing/chargeback/route.ts` (new, 100 LOC), `src/app/(dashboard)/billing/chargeback/page.tsx` (new, 200 LOC), `tests/unit/billing/chargeback.test.ts` (new, 240 LOC), `tests/integration/billing/chargeback.test.ts` (new, 200 LOC), `docs/billing/07-chargeback.md` (new, 130 LOC).
+**Test plan**: Generate invoice; aging transitions; dunning email.
+**Risk**: Med.
+**Estimate**: L
+
+---
+
+### PR-095
+
+**Title**: Tax handling — VAT, GST, US sales tax via Stripe Tax + TaxJar
+**Problem**: International customers ask about tax.
+**Solution**:
+- New module `src/lib/billing/tax.ts` (260 LOC) wrapping Stripe Tax and TaxJar.
+- Files affected: `src/lib/billing/tax.ts` (new, 260 LOC), `src/lib/billing/tax/stripe.ts` (new, 130 LOC), `src/lib/billing/tax/taxjar.ts` (new, 130 LOC), `src/lib/billing/tax/nexus.ts` (new, 130 LOC), `src/app/api/billing/tax/route.ts` (new, 100 LOC), `src/app/(dashboard)/billing/tax/page.tsx` (new, 200 LOC), `tests/unit/billing/tax.test.ts` (new, 240 LOC), `tests/integration/billing/tax.test.ts` (new, 200 LOC), `docs/billing/08-tax.md` (new, 130 LOC).
+**Test plan**: US/EU fixtures; assert correct tax per nexus.
+**Risk**: Med.
+**Estimate**: L
+
+---
+
+## Theme 8: Reliability & Testing (5 PRs)
+
+> The codebase has tests but coverage skews unit-heavy. Integration/chaos/load tests are minimal — and the GitHub issues (#4252, #4608, #4716, #4767, #4771) repeatedly point at unexercised failure paths. These PRs close that gap.
+
+---
+
+### PR-096
+
+**Title**: Integration test suite — provider matrix (all 160+ executors)
+**Problem**: `tests/unit` is decent; `tests/integration` covers 8 providers. We ship 66+ executors. No confidence in the rest.
+**Solution**:
+- New `tests/integration/providers/` matrix, one file per executor family (520 LOC total).
+- Files affected: `tests/integration/providers/openai.test.ts` (new, 130 LOC), `tests/integration/providers/anthropic.test.ts` (new, 130 LOC), `tests/integration/providers/google.test.ts` (new, 130 LOC), `tests/integration/providers/meta.test.ts` (new, 130 LOC), `tests/integration/providers/mistral.test.ts` (new, 130 LOC), `tests/integration/providers/cohere.test.ts` (new, 130 LOC), `tests/integration/providers/_matrix.test.ts` (new, 240 LOC), `tests/integration/providers/_recordings.ts` (new, 130 LOC), `tests/integration/_setup/globalSetup.ts` (new, 130 LOC), `.github/workflows/integration.yml` (new, 200 LOC), `docs/testing/01-integration.md` (new, 130 LOC).
+**Test plan**: Run against VCR fixtures + sandbox; assert schema/contract.
+**Risk**: Med.
+**Estimate**: XL
+
+---
+
+### PR-097
+
+**Title**: Chaos engineering — random provider failures, network partitions, slow responses
+**Problem**: Failures under realistic chaos aren't tested. Issues #4252 (5xx storms) and #4716 (provider flaps) prove it.
+**Solution**:
+- New `tests/chaos/` directory with fault-injection helpers (520 LOC total). Toxiproxy-style integration.
+- Files affected: `tests/chaos/setup.ts` (new, 130 LOC), `tests/chaos/toxiproxy.ts` (new, 130 LOC), `tests/chaos/scenarios/provider-down.test.ts` (new, 130 LOC), `tests/chaos/scenarios/slow-network.test.ts` (new, 130 LOC), `tests/chaos/scenarios/dns-flap.test.ts` (new, 130 LOC), `tests/chaos/scenarios/oom-killer.test.ts` (new, 130 LOC), `tests/chaos/scenarios/clock-skew.test.ts` (new, 110 LOC), `src/lib/testing/chaos.ts` (new, 200 LOC), `docker-compose.chaos.yml` (new, 90 LOC), `.github/workflows/chaos.yml` (new, 130 LOC), `docs/testing/02-chaos.md` (new, 130 LOC).
+**Test plan**: Verify circuit breakers trip; verify retries don't double-charge; verify graceful degradation.
+**Risk**: Med — needs CI runner with Docker.
+**Estimate**: L
+
+---
+
+### PR-098
+
+**Title**: Load testing harness — k6 + Grafana Cloud integration
+**Problem**: No repeatable load testing. Regressions slip.
+**Solution**:
+- New `tests/load/k6/` (520 LOC total) plus `.github/workflows/load.yml` (200 LOC).
+- Files affected: `tests/load/k6/chat.js` (new, 150 LOC), `tests/load/k6/embeddings.js` (new, 130 LOC), `tests/load/k6/streaming.js` (new, 160 LOC), `tests/load/k6/sustained.js` (new, 130 LOC), `tests/load/k6/coalescing.js` (new, 130 LOC), `tests/load/k6/cache.js` (new, 130 LOC), `tests/load/k6/mcp.js` (new, 130 LOC), `tests/load/k6/a2a.js` (new, 130 LOC), `.github/workflows/load.yml` (new, 200 LOC), `tests/load/grafana-dashboards/load.json` (new, 130 LOC), `package.json:200-260` (k6 in devDeps), `docs/performance/14-load.md` (new, 100 LOC).
+**Test plan**: Run nightly, fail build on regression.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+### PR-099
+
+**Title**: Mutation testing — Stryker on `src/lib/security/` and `src/lib/billing/`
+**Problem**: Coverage is high; mutations may not be caught.
+**Solution**:
+- New `.stryker.conf.json`, run Stryker against security and billing modules.
+- Files affected: `.stryker.conf.json` (new, 130 LOC), `.stryker.conf.security.json` (new, 130 LOC), `.stryker.conf.billing.json` (new, 130 LOC), `tests/mutation/_smoke.test.ts` (new, 130 LOC), `package.json:200-260` (`@stryker-mutator/core`, `@stryker-mutator/typescript-checker`), `.github/workflows/mutation.yml` (new, 130 LOC), `docs/testing/03-mutation.md` (new, 100 LOC).
+**Test plan**: Stryker score >75%.
+**Risk**: Low.
+**Estimate**: M
+
+---
+
+### PR-100
+
+**Title**: Continuous benchmarking — `bench` fixtures, ASFlab graph, regression PRs
+**Problem**: No perf CI. Slow drift undetected.
+**Solution**:
+- New `bench/` directory with Tinybench scripts, GitHub Action posts ASFlab-like comparison.
+- Files affected: `bench/index.ts` (new, 130 LOC), `bench/cases/cache.ts` (new, 130 LOC), `bench/cases/quota.ts` (new, 130 LOC), `bench/cases/router.ts` (new, 130 LOC), `bench/cases/serialize.ts` (new, 130 LOC), `bench/cases/billing.ts` (new, 130 LOC), `bench/_runner.ts` (new, 130 LOC), `bench/_compare.ts` (new, 130 LOC), `.github/workflows/bench.yml` (new, 200 LOC), `bench/README.md` (new, 130 LOC), `docs/performance/13-bench.md` (new, 100 LOC).
+**Test plan**: PR that increases p95 by >5% is flagged.
+**Risk**: Low.
+**Estimate**: L
+
+---
+
+
+

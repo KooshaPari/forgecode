@@ -1,0 +1,26 @@
+cd "C:\Users\koosh\Dev\Civis\.worktrees\wt-physics-impl"
+git diff --cached --stat
+echo "--- committing ---"
+git -c user.email=merge-agent@civis.local -c user.name="merge-agent" commit -m "docs(design): physics integration plan - concrete edit sites + phased WBS
+
+Companion to PHYSICS_COUPLING_SUBSTRATE.md. Maps the 12-layer
+coupling matrix to 14 concrete edit sites in crates/engine + crates/*
+(S1-S14) and lays out a 5-sprint WBS + DAG that replaces every
+silo'd direct-API coupling with reads/writes through the shared
+PhysicsFields { T, M, E, F, P, B } substrate.
+
+Contents:
+- S0 status: 14 silo'd call-sites that need replacement
+- S1: civ-physics-substrate crate skeleton (the new crate to add)
+- S2: per-layer wiring table (read fn, write fn, lag/feedback)
+- S3: phased WBS (Sprints 0-4) with acceptance criteria
+- S4: DAG (mermaid) showing phase ordering and layer dependencies
+- S5: 40-cell coupling matrix mapped to edit sites
+- S6: invariants + tests
+- S7: risks + rollback
+- S8: open questions for review
+
+Refs: PHYSICS_COUPLING_SUBSTRATE.md, ADR-020 (wire dormant emergence
+phases into Simulation::tick)."
+echo "--- result ---"
+git log --oneline -3

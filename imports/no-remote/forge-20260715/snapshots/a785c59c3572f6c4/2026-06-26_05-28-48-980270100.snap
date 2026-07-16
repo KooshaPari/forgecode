@@ -1,0 +1,104 @@
+/**
+ * PR-041 — Dedup key generation for request coalescing.
+ *
+ * Produces a deterministic SHA-256 hex digest from the semantically
+ * meaningful fields of an LLM provider request: model, messages, and
+ * any parameters that affect the response (temperature, top_p,
+ * max_tokens, tools, response_format, stop, etc.).
+ *
+ * Fields that are transport-only (stream, stream_options) are
+ * normalised away so a streaming and a non-streaming call with
+ * identical semantics collapse to the same key.
+ *
+ * @module lib/batch/dedupKey
+ */
+
+import crypto from "node:crypto";
+
+/** Set of top-level body keys that affect the provider response. */
+const SEMANTIC_KEYS = new Set<string>([
+  "model",
+  "messages",
+  "temperature",
+  "top_p",
+  "top_k",
+  "max_tokens",
+  "max_completion_tokens",
+  "stop",
+  "frequency_penalty",
+  "presence_penalty",
+  "tools",
+  "tool_choice",
+  "response_format",
+  "modalities",
+  "seed",
+  "logit_bias",
+  "reasoning_effort",
+  "thinking",
+]);
+
+/** Keys that are transport / observability only — stripped before hashing. */
+const TRANSPORT_KEYS = new Set<string>([
+  "stream",
+  "stream_options",
+  "n",
+  "user",
+  "metadata",
+  "store",
+]);
+
+/**
+ * Recursively sort the keys of a JSON-serialisable value so that
+ * `{b:1, a:2}` produces the same hash as `{a:2, b:1}`.
+ */
+function deepSort(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== "object") return value;
+
+  if (Array.isArray(value)) {
+    return value.map(deepSort);
+  }
+
+  const obj = value as Record<string, unknown>;
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(obj).sort()) {
+    sorted[key] = deepSort(obj[key]);
+  }
+  return sorted;
+}
+
+/**
+ * Extract only the semantically meaningful fields from a request body,
+ * returning a deterministic JSON string that serves as the dedup payload.
+ */
+export function dedupPayload(body: Record<string, unknown>): string {
+  const relevant: Record<string, unknown> = {};
+
+  for (const key of SEMANTIC_KEYS) {
+    if (key in body) {
+      relevant[key] = deepSort(body[key]);
+    }
+  }
+
+  // Include any key that is NOT in the transport-only set and NOT a
+  // known semantic key (custom / provider-specific params).
+  for (const key of Object.keys(body)) {
+    if (!SEMANTIC_KEYS.has(key) && !TRANSPORT_KEYS.has(key)) {
+      relevant[key] = deepSort(body[key]);
+    }
+  }
+
+  return JSON.stringify(relevant, Object.keys(relevant).sort());
+}
+
+/**
+ * Compute a deterministic dedup key (SHA-256 hex digest) from the
+ * semantically meaningful fields of a provider request body.
+ *
+ * @param body - The full provider request body (model, messages, params).
+ * @returns 64-character hex SHA-256 digest.
+ */
+export function computeDedupKey(body: Record<string, unknown>): string {
+  const payload = dedupPayload(body);
+  return crypto.createHash("sha256").update(payload, "utf-8").digest("hex");
+}

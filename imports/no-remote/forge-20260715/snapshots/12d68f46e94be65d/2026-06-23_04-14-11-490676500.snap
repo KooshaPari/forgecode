@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""List all KooshaPari repos matching compute/infra/observability/kit patterns."""
+import json
+import os
+import re
+import subprocess
+import urllib.request
+
+# Try gh CLI first, fall back to API
+patterns = [
+    "nano", "byteport", "compose", "pheno", "infra", "observ",
+    "kit", "spine", "registry", "kits", "specs", "otel", "forge",
+    "sdk", "dag", "journey", "harness", "harness-", "absorb",
+    "mcp", "cli", "agent", "phenokits", "phenoproc", "phenorouter",
+    "phenodocs", "phenofastmcp", "phenokits", "phenodag", "phenohub",
+    "phenoforge", "phenoshared", "phenocli", "phenospecs",
+    "phenoclis", "phenoshare", "phenomcp", "phenoflow",
+    "phenobyte", "phenobyteport", "phenobyteporter",
+    "byteport", "byteport", "byteporter",
+]
+
+env = os.environ.copy()
+# try .env
+try:
+    with open(r"C:\Users\koosh\.env", "r") as f:
+        for line in f:
+            if line.startswith("GITHUB_TOKEN="):
+                env["GH_TOKEN"] = line.split("=", 1)[1].strip()
+                break
+except Exception:
+    pass
+
+repos = []
+for page in range(1, 6):
+    url = f"https://api.github.com/user/repos?per_page=100&page={page}&sort=updated"
+    try:
+        r = subprocess.run(
+            ["gh", "api", f"user/repos?per_page=100&page={page}&sort=updated"],
+            capture_output=True, text=True, env=env, timeout=60
+        )
+        if r.returncode != 0 or not r.stdout.strip():
+            break
+        page_data = json.loads(r.stdout)
+        if not page_data:
+            break
+        repos.extend(page_data)
+    except Exception as e:
+        print(f"err: {e}", flush=True)
+        break
+
+print(f"total repos: {len(repos)}", flush=True)
+
+# Filter
+print("\n=== MATCHING REPOS ===", flush=True)
+seen = set()
+for r in repos:
+    name = r.get("name", "")
+    name_l = name.lower()
+    for p in patterns:
+        if p in name_l and name not in seen:
+            print(f"{r.get('full_name'):50s} | {r.get('description', '')[:60]}", flush=True)
+            seen.add(name)
+            break
+
+# Show repos named exactly
+exact = ["nanovms", "phenocompose", "byteport", "phenotype-infra", "PhenoObservability"]
+print("\n=== EXACT NAME LOOKUPS ===", flush=True)
+for e in exact:
+    for r in repos:
+        if r.get("name") == e or r.get("name", "").lower() == e.lower():
+            print(f"FOUND: {r.get('full_name')} | {r.get('description', '')}", flush=True)
+            break
+    else:
+        print(f"NOT FOUND: {e}", flush=True)

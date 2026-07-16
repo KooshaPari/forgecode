@@ -1,0 +1,203 @@
+# Self-Healing & Intelligence — Research Dossier
+
+**Date:** 2026-06-26
+**Upstream:** `diegosouzapw/OmniRoute` v3.8.36
+**Fork:** `KooshaPari/OmniRoute`
+**Status:** Pre-brainstorming evidence lock — no implementation yet, scope unconfirmed.
+
+This file locks in **verified** facts about the upstream self-healing / routing /
+quota / cost / model-intelligence surface so the brainstorming, spec, and
+implementation work has zero cold-start cost. Every line is cited.
+
+---
+
+## 1. What already exists (verified, line-cited)
+
+### 1.1 `SelfHealingManager` (single-class, in-memory)
+`open-sse/services/autoCombo/selfHealing.ts:1-167`
+
+- Auto-excludes a provider when its score drops below `0.2` (`EXCLUSION_THRESHOLD`, line 22).
+- Cooldown escalation: doubles on repeated exclusion, capped at 30 min (`MAX_COOLDOWN_MS`, lines 19-20, 78-80).
+- Re-admits at score ≥ `0.3` (`REENTRY_THRESHOLD`, line 21) once cooldown elapses.
+- Probe flow: while excluded and circuit breaker is `HALF_OPEN`, allows a probe request; 3 successful probes fully re-admit (lines 67-72, 109-120).
+- Incident mode: trips if >50% of providers are OPEN (`INCIDENT_MODE_THRESHOLD = 0.5`, lines 23, 125-135).
+- State is **purely in-memory** (`private exclusions = new Map()`, line 26). Lost on restart.
+- **No error-class granularity** — score is the only signal.
+- **No anomaly detection** — purely threshold-based.
+- **No persistence of learned priors** — only volatile `ExclusionEntry[]`.
+- Singleton accessor: `getSelfHealingManager()` at line 164.
+
+### 1.2 Pluggable routing strategies
+`open-sse/services/autoCombo/routerStrategy.ts:1-331`
+
+- `RouterStrategy` interface (lines 44-48): `name`, `description`, `select(pool, context) -> RoutingDecision`.
+- Registered strategies (lines 288-303):
+  - `rules` — 6-factor scoring wrapper
+  - `cost` / `eco` (alias)
+  - `latency` / `fast` (alias)
+  - `sla-aware` / `sla` (alias) — checks p95 / error rate / cost SLOs
+  - `lkgp` — last known good provider first
+- `registerStrategy(name, impl)` (line 314) — extension point.
+- `selectWithStrategy(pool, context, "rules")` — main entry point.
+- None of these consume learned priors; scoring is point-in-time.
+
+### 1.3 Quota cache (per-connection, with reset window)
+`src/domain/quotaCache.ts:1-450`
+
+- In-memory `Map<connectionId, QuotaCacheEntry>` (line 56).
+- TTLs: active 5 min, exhausted 5 min (`ACTIVE_TTL_MS`, `EXHAUSTED_TTL_MS`, lines 48-49).
+- Background tick every 60 s (`REFRESH_INTERVAL_MS`, line 51), max 5 concurrent refreshes (line 57).
+- Persists snapshots via `saveQuotaSnapshot()` (line 20).
+- `advancedWindowResetAt()` (lines 75-94) auto-advances past an expired `nextResetAt` — eagerly unblocks requests when the reset has passed but the background refresh hasn't run.
+- `quotaSnapshotChanged()` (#4438 fix, lines 169-185) — pure function that returns true only on first observation or real change → prevents 400K+ no-op snapshot rows/day on idle accounts.
+- **Gap:** `windowDurationMs` is referenced (line 36, line 245) but the corresponding DB column is **not present in any migration** (`grep -L "window_duration_ms" src/lib/db/migrations/*.sql` confirms). Field is dead code.
+
+### 1.4 `model_intelligence` table — DORMANT
+`src/lib/db/modelIntelligence.ts:1-232` + `src/lib/db/migrations/097_model_intelligence.sql`
+
+- Table created in migration 097; PK = `(model, source, category)` (composite, WITHOUT ROWID).
+- 3 sources: `user_override` (priority 1) > `arena_elo` (2) > `models_dev_tier` (3).
+- 7 task categories: `coding | review | planning | analysis | debugging | documentation | default`.
+- Full CRUD: `get`, `getBySource`, `upsert`, `delete`, `deleteExpired`, `deleteBySource`, `list`, `bulkUpsert`, `setUserFitnessOverrideEntry`, `deleteUserFitnessOverrideEntry`.
+- Resolution chain helper `getResolvedTaskFitness(model, category)` at line 191.
+- **Critical gap:** zero call sites. `grep -l "modelIntelligence\|ModelIntelligence" open-sse/services/autoCombo/taskFitness.ts src/domain/*.ts` returns 0 hits. Table exists but is **not wired into the live scorer**.
+
+### 1.5 Resilience stack (4 layers)
+`docs/architecture/RESILIENCE_GUIDE.md` (249 lines, v3.8.31, lastUpdated 2026-06-20)
+
+1. **Provider circuit breaker** — `src/shared/utils/circuitBreaker.ts` — DB-backed `domain_circuit_breakers`, 4 states (CLOSED/DEGRADED/OPEN/HALF_OPEN). Trip codes `[408, 500, 502, 503, 504]`. OAuth: 5/8 failures/60s. API-key: 7/12/30s. Local: derived/2/15s.
+2. **Connection cooldown** — `src/sse/services/auth.ts::markAccountUnavailable()`, exponential `baseCooldownMs * 2 ** failureIndex`, terminal states `banned | expired | credits_exhausted`.
+3. **Model lockout** — in-memory `Map<provider:conn:model, ModelLockoutEntry>`. Settings persisted, state ephemeral.
+4. **Quota-share concurrency (v3.8.36)** — per-connection `max_concurrent` semaphore + combo cooldown-aware retry bounded by `comboCooldownWait` (max 5s wait, 2 attempts, 8s budget).
+
+All four are **reactive** — they respond to an error that already happened. None of them *predict* failure.
+
+### 1.6 Cost surface
+`src/domain/costRules.ts` (19.8 KB), pricing sync via `src/lib/pricingSync.ts` (LiteLLM source).
+
+- `costPer1MTokens` is per-model, sourced from LiteLLM.
+- No mechanism to derive $/MTok from a flat subscription.
+- Provider connections table has no `monthly_cost` / `subscription_period` columns.
+
+### 1.7 Data substrate already in place (lots of unused signal)
+`src/lib/db/`:
+- `quotaSnapshots.ts` — historical quota observations
+- `usageLogs.ts`, `usageSummary.ts`, `usageAnalytics.ts`
+- `providerStats.ts` (lines 29-67) — `getProviderCallStats()` / `getModelCallStats()` aggregate from `call_logs` (avg latency, success rate, total tokens)
+- `quotaGroups.ts`, `quotaPools.ts`, `quotaModelCaps.ts`, `quotaConsumption.ts`
+- `callLogStats.ts`, `compressionAnalytics.ts`, `compressionRunTelemetry.ts`
+- `detailedLogs.ts`
+
+The **history** is already being written. The **learning** layer that turns history into priors is missing.
+
+### 1.8 E2E coverage today
+`tests/e2e/`:
+- `resilience-plan-alignment.spec.ts` (11.5 KB) — covers resilience plan UI alignment.
+- `system-failover.test.ts` (25.4 KB) — failover behavior.
+- `combos-flow.spec.ts` (20.9 KB) — combo flow.
+- **No `self-healing.spec.ts` / `selfHealing.test.ts`** — `grep -r "selfHealing\|SelfHealing" tests/` returns 0 hits.
+- **No `quota-learning.spec.ts` / `model-intelligence.spec.ts`.**
+
+---
+
+## 2. The gap (what the user's task targets)
+
+| User's ask | Today | Gap |
+|---|---|---|
+| Self-healing | In-memory `SelfHealingManager` with score-threshold + 3-probe re-admit | No persistence, no error-class granularity, no anomaly detection, no playbook |
+| Learning quota reset times | `nextResetAt` cached per connection; 5-min refresh; auto-advance on past reset | Doesn't *learn* window length from history; `window_duration_ms` referenced but never persisted |
+| Usage patterns by model | `providerStats` aggregates from `call_logs` | No bias injected into `RouterStrategy.select()` |
+| User inputs monthly cost → derive $/MTok for cache r/w + I/O | `costPer1MTokens` from LiteLLM only | No subscription input; no cache r/w cost distinction; no derivation pipeline |
+| Learn provider-model error types / latencies | `circuitBreaker.ts` only counts trip codes `[408, 500-504]` | No persistent error taxonomy; no per-(provider,model,error_class) failure rate |
+| Optional LLM/agent learner | Skills + A2A + MCP infrastructure exists | No "analyst" skill that observes `detailed_logs` + `usage_logs` and emits healing actions |
+| E2E | `resilience-plan-alignment.spec.ts` covers UI | No self-healing E2E, no quota-learning E2E |
+
+---
+
+## 3. Fork vs upstream constraints
+
+`AGENTS.md:567-581` (upstream):
+
+> "This repository is a fork of `diegosouzapw/OmniRoute`. Keep fork-only operational changes (for example GHCR image publishing, personal deployment workflows, or local automation) out of upstream contribution PRs.
+> When preparing a PR for upstream, always start the work branch from `upstream/main`, not from this fork's `main`."
+
+The user's fork lives at `C:\Users\koosh\OmniRoute-upstream\` with:
+- `origin` = `https://github.com/diegosouzapw/OmniRoute.git`
+- `koosha` = `https://github.com/KooshaPari/OmniRoute.git`
+- Current branch: `feat/cli-setup-aggregator` (2 commits ahead of `origin/release/v3.8.36`).
+
+---
+
+## 4. Live counts (for AGENTS.md-style accuracy discipline)
+
+- Providers: 231 (upstream README claim, verified `grep -c` per `AGENTS.md`).
+- DB modules: 83 (`ls src/lib/db/*.ts | wc -l`).
+- Migrations: 107 (`ls src/lib/db/migrations/*.sql | wc -l`, latest `107_quota_combos_quota_share_strategy.sql`).
+- Routing strategies: 15 (`ROUTING_STRATEGY_VALUES` in `src/shared/constants/routingStrategies.ts`).
+- Self-healing strategies registered: 0 (autoCombo only ships `selfHealing.ts`, not registered in a strategy registry).
+- Tests touching `selfHealing`: 0 (`grep -r "selfHealing\|SelfHealing" tests/`).
+- Tests touching `model_intelligence`: needs check.
+- Tests touching `quota_snapshots`: needs check.
+
+---
+
+## 5. Open questions to user
+
+**Q1 — First deliverable scope:**
+- A: Quota reset learning + predicted next reset (recommended — smallest, foundational)
+- B: Error taxonomy learning + per-class cooldowns
+- C: Subscription-cost → $/MTok derivation (high QOL, small code surface)
+- D: Self-healing v2 (anomaly + playbook)
+- E: All four in one mega-PR (rejected by brainstorming skill)
+
+**Q2 — Delivery path:**
+- A: Pure upstream PR (cleanest, smallest blast radius)
+- B: Fork-first, upstream-later (recommended for dogfooding)
+- C: Hybrid — upstream extensibility hook PR + fork-only plugin (recommended for max upstream surface)
+- D: Decide later (blocks spec)
+
+---
+
+## 6. Candidate file targets for the first PR (pending Q1/Q2 confirmation)
+
+If Q1=A and Q2=C:
+
+**Upstream extensibility PR (small, surgical):**
+- `open-sse/services/autoCombo/selfHealing.ts` — add `interface HealingObserver` + `registerObserver()` extension point. No behavior change.
+- `src/domain/quotaCache.ts` — emit `(connectionId, provider, resetAt, observedAt)` events to observers on every `setQuotaCache()` call.
+- `src/lib/db/modelIntelligence.ts` — already extensible; no upstream changes needed.
+- New migration `108_quota_observations.sql` — add `window_duration_ms INTEGER` column to `quota_snapshots` (currently referenced but absent).
+- New test file `tests/unit/selfHealing.test.ts` — covers observer hook + window-duration recording.
+
+**Fork-only behavior PR (the actual feature):**
+- `open-sse/services/learning/` (new) — `quotaResetLearner.ts`, `errorTaxonomy.ts`, `usagePatternLearner.ts`, `subscriptionCost.ts`.
+- `open-sse/services/autoCombo/learningStrategy.ts` (new) — `LearningStrategyImpl implements RouterStrategy` registered as `learning`.
+- `src/lib/db/migrations/108_quota_observations.sql` (fork-side alt) + `109_subscription_costs.sql`.
+- `src/app/api/learning/*` (new) — read/write endpoints for learned priors.
+- `tests/e2e/self-healing.spec.ts`, `tests/e2e/quota-learning.spec.ts`, `tests/e2e/subscription-cost.spec.ts`.
+
+---
+
+## 7. Spec / plan / implementation path
+
+Once Q1 and Q2 are answered:
+1. Brainstorm → propose 2-3 approaches with tradeoffs.
+2. Present design in sections (architecture / components / data flow / error handling / testing).
+3. Write design doc to `docs/superpowers/specs/2026-06-26-self-healing-intelligence-design.md`.
+4. Self-review (placeholder scan, internal consistency, scope, ambiguity).
+5. User reviews spec.
+6. `writing-plans` skill → `docs/superpowers/plans/2026-06-26-self-healing-intelligence.md`.
+7. Create issue on fork (`KooshaPari/OmniRoute`) + PR description draft targeting `diegosouzapw/OmniRoute`.
+8. Execute via `subagent-driven-development` (recommended) or `executing-plans`.
+
+---
+
+## 8. Reference paths
+
+- Resilience guide: `docs/architecture/RESILIENCE_GUIDE.md`
+- Auto-combo guide: `docs/routing/AUTO-COMBO.md`
+- Quota share guide: `docs/routing/QUOTA_SHARE.md`
+- Reasoning replay: `docs/routing/REASONING_REPLAY.md`
+- Architecture: `docs/architecture/ARCHITECTURE.md`
+- Submit PR guide: `docs/SUBMIT_PR.md`
+- AGENTS.md (upstream): `AGENTS.md`

@@ -1,0 +1,18 @@
+"""Show recent PRs from _all_prs.json sorted by most-recent activity."""
+import json
+import re
+
+raw = open(r'C:\Users\koosh\Civis\_all_prs.json', 'rb').read()
+text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', raw.decode('utf-8', 'replace'))
+prs = json.loads(text)
+prs_sorted = sorted(prs, key=lambda p: p.get('mergedAt') or p.get('updatedAt') or '0', reverse=True)
+print(f"{'#':>4}  {'state':<10}  {'mergedAt':<11}  {'+/−':<10}  {'files':<6}  branch / title")
+print("-" * 110)
+for p in prs_sorted[:25]:
+    state = p['state']
+    merged = (p.get('mergedAt') or '')[:10]
+    diff = f"+{p['additions']}/-{p['deletions']}"
+    files = str(p['changedFiles'])
+    branch = p['headRefName'][:40]
+    title = p['title'][:55]
+    print(f"#{p['number']:>4}  {state:<10}  {merged:<11}  {diff:<10}  {files:<6}  {branch:<40}  {title}")

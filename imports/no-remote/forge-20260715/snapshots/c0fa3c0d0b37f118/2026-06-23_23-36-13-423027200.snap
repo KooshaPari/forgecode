@@ -1,0 +1,30 @@
+"""Extract SOTA features, gaps, and DAG seed entries from audit data."""
+import json
+from pathlib import Path
+
+WS = Path(r"C:\Users\koosh")
+data = json.loads((WS / "_audit_summary.json").read_text(encoding="utf-8"))
+
+
+def show(name, keys):
+    r = data.get(name, {})
+    print(f"\n{'='*70}\n{name}\n{'='*70}")
+    for k in keys:
+        v = r.get(k)
+        if v is None:
+            continue
+        if isinstance(v, list):
+            print(f"  {k}: ({len(v)})")
+            for x in v[:30]:
+                print(f"    - {x[:120]}")
+        else:
+            v = str(v)[:2000]
+            print(f"  {k}: {v}")
+
+
+# Per-repo highlights
+for n in ["Benchora", "portage", "pheno-harness", "Tracera", "phenodag",
+          "BytePort", "PhenoCompose", "nanovms", "vibeproxy-monitoring-unified",
+          "phenotype-org-audits", "heliosBench", "phenotype-registry",
+          "phenotype-infra-ci-fix", "AgilePlus"]:
+    show(n, ["readme_first_120", "agents_f", "claude_"])

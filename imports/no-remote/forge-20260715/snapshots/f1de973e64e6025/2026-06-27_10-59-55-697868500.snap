@@ -1,0 +1,70 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/acceptance-contract",
+    "crates/dag-scheduler",
+    "crates/docs-health",
+    "crates/fr-trace",
+    "crates/quality-gate",
+    "crates/legacy-scan",
+    "crates/agent-orchestrator",
+    "crates/audit-privacy",
+    "crates/bench-guard",
+    "crates/commit-msg-check",
+    "crates/doc-link-check",
+    "crates/fr-coverage",
+    "crates/release-cut",
+    "crates/sbom-gen",
+    "crates/fuzz-setup",
+    "crates/anthropic-usage-poll",
+    "crates/agent-forecast",
+    "crates/temporal-grounding",
+    "crates/phenotype-resilience",
+    "crates/phenotype-service-registry",
+    "crates/phenotype-config",
+    "crates/phenotype-diff",
+    "crates/worktree-manager",
+    "crates/phenotype-tooling-observability",
+    "crates/phenotype-cli",
+    "bin/hook-entry",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+description = "Phenotype tooling ecosystem — CI, quality gates, release automation, and developer workflow tooling"
+license = "MIT"
+repository = "https://github.com/KooshaPari/phenotype-tooling"
+documentation = "https://github.com/KooshaPari/phenotype-tooling#readme"
+authors = ["Phenotype Contributors"]
+rust-version = "1.75"
+keywords = ["phenotype", "tooling", "ci", "quality-gates", "release-automation", "developer-workflow"]
+categories = ["development-tools::build-utils", "development-tools::testing"]
+
+[workspace.dependencies]
+clap = { version = "4.5", features = ["derive"] }
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "fs"] }
+walkdir = "2.5"
+thiserror = "2.0"
+regex = "1.11"
+serde_yaml = "0.9"
+reqwest = { version = "0.13", features = ["blocking", "json"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.23", features = ["v4", "serde"] }
+# tracing pulled transitively via [patch.crates-io] redirect below
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Patch: pheno-tracing (ADR-012 fleet-canonical OTLP tracer) is a private
+# git-dep that cannot be resolved in all build environments. Redirect
+# `pheno-tracing` to the canonical `tracing` crate on crates.io so the
+# workspace builds offline / in CI / without network access.
+# When pheno-tracing is published or vendored, remove this patch.
+[patch.crates-io]
+pheno-tracing = { package = "tracing", version = "0.1" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

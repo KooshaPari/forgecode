@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/settly",
+    "crates/pheno-config",
+    "crates/config-schema",
+    "crates/phenotype-config-loader",
+    "crates/configra-ops",
+]
+
+[workspace.package]
+version = "0.4.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+authors = ["KooshaPari"]
+
+# Tier-2 quality bar (ADR-023 + L5-110 substrate audit, 2026-06-20).
+# The four canonical sub-crates are split by concern per ADR-022 / ADR-031:
+#   pheno-config              — typed runtime Config + ConfigBuilder
+#   settly                    — settings lifecycle (validation, versioning)
+#   config-schema             — JSON schema validation primitives
+#   phenotype-config-loader   — generic JSON/Toml file loaders
+# Every sub-crate ships a README.md, CHANGELOG.md, AGENTS.md, and passes the
+# library-tier coverage gate (>= 80%) codified in ADR-040.
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "2"
+anyhow = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = "0.4"
+tempfile = "3"
+criterion = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+clap = { version = "4", features = ["derive", "env"] }
+# `secrecy` provides a `SecretBox<str>` heap-allocated redacting wrapper
+# used by `pheno_config::secret::SecretString` for sensitive config values
+# (API keys, OAuth tokens, DB passwords smuggled in connection strings, ...).
+# We pin to v0.10 because that's the first release whose `Debug` impl redacts
+# by default (older versions leaked the inner value through `Debug`).
+secrecy = { version = "0.10", features = ["serde"] }

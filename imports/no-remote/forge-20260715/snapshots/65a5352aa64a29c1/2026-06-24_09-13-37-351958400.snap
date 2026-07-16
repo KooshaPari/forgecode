@@ -1,0 +1,430 @@
+//! Security Module for MCP Protocol
+//! 
+//! This module provides security features including OAuth2, resource indicators,
+//! token validation, and credential management.
+
+use crate::types::*;
+use crate::error::*;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use chrono::{DateTime, Utc, Duration};
+use url::Url;
+use uuid::Uuid;
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use oauth2::*;
+use oauth2::basic::BasicClient;
+use oauth2::reqwest::async_http_client;
+
+/// Security Manager for MCP
+pub struct SecurityManager {
+    oauth_clients: HashMap<String, BasicClient>,
+    token_store: TokenStore,
+    resource_indicators: HashMap<String, Url>,
+    validation_config: ValidationConfig,
+}
+
+impl SecurityManager {
+    pub fn new() -> Self {
+        Self {
+            oauth_clients: HashMap::new(),
+            token_store: TokenStore::new(),
+            resource_indicators: HashMap::new(),
+            validation_config: ValidationConfig::default(),
+        }
+    }
+    
+    /// Register OAuth2 client
+    pub fn register_oauth_client(
+        &mut self,
+        client_id: String,
+        client_secret: String,
+        auth_url: Url,
+        token_url: Url,
+        redirect_url: Option<Url>,
+    ) -> Result<(), McpSecurityError> {
+        let client = BasicClient::new(
+            ClientId::new(client_id.clone()),
+            Some(ClientSecret::new(client_secret)),
+            AuthUrl::from_url(auth_url),
+            Some(TokenUrl::from_url(token_url)),
+        );
+        
+        let client = if let Some(redirect) = redirect_url {
+            client.set_redirect_uri(RedirectUrl::from_url(redirect))
+        } else {
+            client
+        };
+        
+        self.oauth_clients.insert(client_id, client);
+        Ok(())
+    }
+    
+    /// Generate authorization URL
+    pub fn generate_auth_url(
+        &self,
+        client_id: &str,
+        scopes: Vec<String>,
+        state: Option<String>,
+        resource_indicators: Vec<Url>,
+    ) -> Result<Url, McpSecurityError> {
+        use oauth2::url::Url as OAuthUrl;
+        let client = self.oauth_clients.get(client_id)
+            .ok_or_else(|| McpSecurityError::OAuth(
+                format!("OAuth client not found: {}", client_id)
+            ))?;
+
+        let mut auth_request = client.authorize_url(CsrfToken::new_random);
+
+        // Add scopes
+        if !scopes.is_empty() {
+            auth_request = auth_request.add_scopes(
+                scopes.into_iter().map(Scope::new).collect()
+            );
+        }
+
+        // Add state if provided (oauth2 4.x: set_state removed; pass via add_extra_param
+        // which is the standard OAuth2.0 extension point for state)
+        if let Some(state_value) = state.clone() {
+            auth_request = auth_request.add_extra_param("state", state_value);
+        }
+
+        // Add resource indicators (RFC 8707)
+        for resource in &resource_indicators {
+            auth_request = auth_request.add_extra_param("resource", resource.as_str());
+        }
+
+        let (auth_url, _csrf_token) = auth_request.url();
+        Ok(auth_url)
+    }
+    
+    /// Exchange authorization code for access token
+    pub async fn exchange_code_for_token(
+        &self,
+        client_id: &str,
+        auth_code: String,
+        pkce_verifier: Option<String>,
+    ) -> Result<TokenResponse, McpSecurityError> {
+        let client = self.oauth_clients.get(client_id)
+            .ok_or_else(|| McpSecurityError::OAuth(
+                format!("OAuth client not found: {}", client_id)
+            ))?;
+        
+        let mut token_request = client.exchange_code(AuthorizationCode::new(auth_code));
+        
+        // Add PKCE verifier if provided
+        if let Some(verifier) = pkce_verifier {
+            token_request = token_request.set_pkce_verifier(PkceCodeVerifier::new(verifier));
+        }
+        
+        let token_response = token_request.request_async(async_http_client).await
+            .map_err(|e| McpSecurityError::OAuth(e.to_string()))?;
+
+        // oauth2 4.x: access_token(), token_type() return owned types via Deref/Inner; expires_in
+        // returns Option<Duration>; refresh_token and scopes are not on StandardTokenResponse
+        // but may be on ExtraTokenFields. Use defensive accessors.
+        let access_token = token_response.access_token().secret().clone();
+        let token_type = token_response.token_type().as_ref().to_string();
+        let expires_in = token_response.expires_in().map(|d| d.as_secs());
+        let refresh_token = None; // Generic StandardTokenResponse doesn't expose refresh_token; depends on ExtraTokenFields
+        let scope = None; // Same for scopes; depends on ExtraTokenFields
+
+        let token = TokenResponse {
+            access_token,
+            token_type,
+            expires_in,
+            refresh_token,
+            scope,
+        };
+
+        Ok(token)
+    }
+    
+    /// Validate access token
+    pub async fn validate_token(
+        &self,
+        token: &str,
+        required_scopes: Vec<String>,
+        resource_indicator: Option<Url>,
+    ) -> Result<TokenClaims, McpSecurityError> {
+        // Try to decode as JWT first
+        if let Ok(claims) = self.decode_jwt_token(token) {
+            // Validate scopes
+            if !required_scopes.is_empty() {
+                let token_scopes = claims.scopes.clone().unwrap_or_default();
+                for required_scope in &required_scopes {
+                    if !token_scopes.contains(required_scope) {
+                        return Err(McpSecurityError::InsufficientScope(
+                            format!("Missing scope: {}", required_scope)
+                        ));
+                    }
+                }
+            }
+            
+            // Validate resource indicator
+            if let Some(resource) = resource_indicator {
+                if let Some(aud) = &claims.aud {
+                    if !aud.contains(&resource.to_string()) {
+                        return Err(McpSecurityError::ResourceAccessDenied(
+                            format!("Token not valid for resource: {}", resource)
+                        ));
+                    }
+                }
+            }
+            
+            return Ok(claims);
+        }
+        
+        // Fall back to token introspection
+        self.introspect_token(token).await
+    }
+    
+    /// Decode JWT token
+    fn decode_jwt_token(&self, token: &str) -> Result<TokenClaims, McpSecurityError> {
+        let validation = Validation::new(jsonwebtoken::Algorithm::RS256);
+        let token_data = decode::<TokenClaims>(
+            token,
+            &DecodingKey::from_rsa_pem(self.validation_config.public_key.as_bytes())?,
+            &validation,
+        )?;
+        
+        Ok(token_data.claims)
+    }
+    
+    /// Introspect token via OAuth2 introspection endpoint
+    async fn introspect_token(&self, token: &str) -> Result<TokenClaims, McpSecurityError> {
+        // Implementation depends on the OAuth2 provider
+        // This is a placeholder for token introspection
+        Err(McpSecurityError::InvalidToken("Token introspection not implemented".to_string()))
+    }
+    
+    /// Store token
+    pub fn store_token(&mut self, token_id: String, token: TokenResponse) {
+        self.token_store.store(token_id, token);
+    }
+    
+    /// Get stored token
+    pub fn get_token(&self, token_id: &str) -> Option<&TokenResponse> {
+        self.token_store.get(token_id)
+    }
+    
+    /// Register resource indicator
+    pub fn register_resource_indicator(&mut self, name: String, url: Url) {
+        self.resource_indicators.insert(name, url);
+    }
+    
+    /// Get resource indicator
+    pub fn get_resource_indicator(&self, name: &str) -> Option<&Url> {
+        self.resource_indicators.get(name)
+    }
+}
+
+/// Token Store for managing OAuth2 tokens
+pub struct TokenStore {
+    tokens: HashMap<String, TokenResponse>,
+}
+
+impl TokenStore {
+    pub fn new() -> Self {
+        Self {
+            tokens: HashMap::new(),
+        }
+    }
+    
+    pub fn store(&mut self, token_id: String, token: TokenResponse) {
+        self.tokens.insert(token_id, token);
+    }
+    
+    pub fn get(&self, token_id: &str) -> Option<&TokenResponse> {
+        self.tokens.get(token_id)
+    }
+    
+    pub fn remove(&mut self, token_id: &str) -> Option<TokenResponse> {
+        self.tokens.remove(token_id)
+    }
+    
+    pub fn cleanup_expired(&mut self) {
+        let now = Utc::now();
+        self.tokens.retain(|_, token| {
+            if let Some(expires_in) = token.expires_in {
+                // This is a simplified expiration check
+                // In a real implementation, you'd store the issued_at time
+                Duration::seconds(expires_in as i64) > Duration::zero()
+            } else {
+                true
+            }
+        });
+    }
+}
+
+/// Token Response from OAuth2 flow
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenResponse {
+    pub access_token: String,
+    pub token_type: String,
+    pub expires_in: Option<u64>,
+    pub refresh_token: Option<String>,
+    pub scope: Option<Vec<String>>,
+}
+
+/// JWT Token Claims
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenClaims {
+    pub sub: String,
+    pub iss: String,
+    pub aud: Option<Vec<String>>,
+    pub exp: i64,
+    pub iat: i64,
+    pub scopes: Option<Vec<String>>,
+    pub client_id: Option<String>,
+    pub resource: Option<Vec<String>>,
+}
+
+/// Validation Configuration
+#[derive(Debug, Clone)]
+pub struct ValidationConfig {
+    pub public_key: String,
+    pub issuer: String,
+    pub audience: Vec<String>,
+    pub clock_skew: Duration,
+}
+
+impl Default for ValidationConfig {
+    fn default() -> Self {
+        Self {
+            public_key: String::new(),
+            issuer: String::new(),
+            audience: Vec::new(),
+            clock_skew: Duration::minutes(5),
+        }
+    }
+}
+
+/// PKCE (Proof Key for Code Exchange) Helper
+pub struct PkceHelper;
+
+impl PkceHelper {
+    /// Generate PKCE code verifier and challenge
+    pub fn generate_pkce_pair() -> (String, String) {
+        use oauth2::PkceCodeChallenge as _;
+        // oauth2 4.x: use the S256Method via new_random_code_verifier_sha256
+        let (code_verifier, code_challenge) = PkceCodeChallenge::new_random_sha256();
+
+        (
+            code_verifier.secret().clone(),
+            code_challenge.as_str().to_string(),
+        )
+    }
+    
+    /// Verify PKCE challenge
+    pub fn verify_pkce_challenge(verifier: &str, challenge: &str) -> bool {
+        let code_verifier = PkceCodeVerifier::new(verifier.to_string());
+        let expected_challenge = PkceCodeChallenge::from_code_verifier_sha256(&code_verifier);
+        
+        expected_challenge.as_str() == challenge
+    }
+}
+
+/// Session Token for MCP sessions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionToken {
+    pub session_id: Uuid,
+    pub user_id: String,
+    pub client_id: String,
+    pub issued_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub scopes: Vec<String>,
+    pub metadata: HashMap<String, String>,
+}
+
+impl SessionToken {
+    pub fn new(
+        session_id: Uuid,
+        user_id: String,
+        client_id: String,
+        scopes: Vec<String>,
+        expires_in: Duration,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            session_id,
+            user_id,
+            client_id,
+            issued_at: now,
+            expires_at: now + expires_in,
+            scopes,
+            metadata: HashMap::new(),
+        }
+    }
+    
+    pub fn is_expired(&self) -> bool {
+        Utc::now() > self.expires_at
+    }
+    
+    pub fn has_scope(&self, scope: &str) -> bool {
+        self.scopes.contains(&scope.to_string())
+    }
+}
+
+/// Credential Encryption Helper
+pub struct CredentialEncryption;
+
+impl CredentialEncryption {
+    /// Encrypt credential data
+    pub fn encrypt(data: &str, key: &[u8]) -> Result<Vec<u8>, McpSecurityError> {
+        // This is a placeholder for actual encryption
+        // In a real implementation, you'd use a proper encryption library
+        Ok(data.as_bytes().to_vec())
+    }
+    
+    /// Decrypt credential data
+    pub fn decrypt(data: &[u8], key: &[u8]) -> Result<String, McpSecurityError> {
+        // This is a placeholder for actual decryption
+        // In a real implementation, you'd use a proper decryption library
+        String::from_utf8(data.to_vec())
+            .map_err(|e| McpSecurityError::Decryption(e.to_string()))
+    }
+    
+    /// Generate encryption key
+    pub fn generate_key() -> Vec<u8> {
+        // Generate a random 256-bit key
+        (0..32).map(|_| rand::random::<u8>()).collect()
+    }
+}
+
+/// Security Policy for MCP operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityPolicy {
+    pub required_authentication: bool,
+    pub required_scopes: Vec<String>,
+    pub allowed_origins: Vec<String>,
+    pub rate_limits: HashMap<String, RateLimit>,
+    pub resource_access_rules: Vec<ResourceAccessRule>,
+}
+
+/// Rate Limit Configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimit {
+    pub requests_per_minute: u32,
+    pub burst_size: u32,
+    pub window_size: Duration,
+}
+
+/// Resource Access Rule
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceAccessRule {
+    pub resource_pattern: String,
+    pub required_scopes: Vec<String>,
+    pub allowed_operations: Vec<String>,
+    pub ip_whitelist: Option<Vec<String>>,
+}
+
+/// Security Context for MCP operations
+#[derive(Debug, Clone)]
+pub struct SecurityContext {
+    pub session_token: Option<SessionToken>,
+    pub access_token: Option<String>,
+    pub client_ip: Option<String>,
+    pub user_agent: Option<String>,
+    pub request_id: String,
+    pub timestamp: DateTime<Utc>,
+}

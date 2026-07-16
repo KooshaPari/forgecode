@@ -1,0 +1,74 @@
+# agentkit
+
+> Agent SDK + runtime + polyglot surface — LangChain/LangGraph/CrewAI-class competitor.
+
+Rust core with **Zig/Mojo/Go FFI** + **Python/TypeScript/C# SDKs** + **MCP-native gateway**.
+
+## Workspace layout
+
+```
+kits/agentora/
++- Cargo.toml                 workspace root (12 members)
++- agentkit/                  LangChain/LangGraph-class core SDK
++- agentora-graph/            StateGraph runtime (LangGraph-class)
++- agentora-crew/             Multi-agent orchestration (CrewAI/AutoGen-class)
++- agentora-skills/           Skills domain + phenotype-daemon binary
++- agentora-ipc/              UDS+SHM+mpsc IPC primitives
++- agentora-cli/              CLI shell (clap-ext, absorbs helios-cli agent scope)
++- agentora-mcp/              MCP gateway (absorbs MCPForge + agentapi)
++- agentora-obs/              OTel traces + cost metering
++- agentora-py/               PyO3 Python SDK (per-lang repo: KooshaPari/agentkit-py)
++- agentora-ts/               napi-rs TypeScript SDK (per-lang repo: KooshaPari/agentkit-ts)
++- agentora-cs/               C# SDK via csbindgen (per-lang repo: KooshaPari/agentkit-cs)
++- agentora-ffi/              C-ABI + Zig/Mojo FFI core
++- scripts/                   auditor loop, grade.sh, seed-dag.sh, seed_dag.py
++- docs/                      DAG.md, COMPETITIVE.md, BOUNDARY.md, PR_PLAN.md, SDK_REPOS.md
++- .github/workflows/         ci.yml, bench-trend.yml, fuzz-nightly.yml, release.yml
++- .grade-reports/            baseline + per-PR rolling snapshots
++- .dag/                      phenodag + dagctl state (DBs, JSON)
++- .auditors/                 auditor logs + dry-run JSON
+```
+
+## Build
+
+```bash
+cargo build --workspace --all-features
+cargo test  --workspace --all-features
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt   --all -- --check
+cargo doc   --workspace --no-deps
+```
+
+## Grade
+
+```bash
+./scripts/grade.sh . > .grade-reports/baseline-$(date +%Y-%m-%d).json
+```
+
+Targets **71+** aggregate per `phenotype-registry/grade.sh` rubric.
+
+## DAG
+
+```bash
+./scripts/seed-dag.sh
+# then use kits/phenodag CLI to inspect / claim / status
+```
+
+Targets **400 nodes** across 8 sub-DAGs (A core, B graph, C crew, D skills+daemon,
+E ipc/mcp/obs/ffi, F cli, G py/ts/cs, H hygiene+gov).
+
+## Boundary (out of scope)
+
+`phenotype-infra`, `nanovms`, `phenocompose`, `byteport`, `heliosApp`, `heliosRouter`,
+`heliosBench`, `portage`, `heliosLab`.
+
+See `docs/BOUNDARY.md`.
+
+## See also
+
+- `docs/DAG.md` — 400-node DAG plan
+- `docs/COMPETITIVE.md` — vs LangChain / LangGraph / CrewAI / AutoGen
+- `docs/PR_PLAN.md` — ~67-PR cut sequence
+- `docs/SDK_REPOS.md` — per-language SDK repo split
+- `../../phenotype-registry` — registry of record (worklogs, FR-CIV-*, audits)
+- `../../AgilePlus` — worklog protocol + grading rubric

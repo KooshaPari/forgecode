@@ -1,0 +1,21 @@
+[workspace]
+members = [
+    "crates/sidekick-messaging",
+  ]
+resolver = "2"
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+authors = ["Koosha Pari <kooshapari@gmail.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/KooshaPari/Sidekick"
+
+[workspace.dependencies]
+tokio = { version = "1.39", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+
+[profile.release]
+opt-level = 3
+lto = true

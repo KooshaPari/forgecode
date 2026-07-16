@@ -1,0 +1,11 @@
+const { execSync } = require("child_process");
+const path = require("path");
+const fs = require("fs");
+
+const env = { ...process.env, PATH: `C:\\Users\\koosh\\AppData\\Roaming\\Python\\Python314\\Scripts;${process.env.PATH}` };
+const out = execSync(`zizmor --format json .github/workflows/`, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+const j = JSON.parse(out);
+const c = {};
+for (const x of j) c[x.ident] = (c[x.ident] || 0) + 1;
+console.log("total:", j.length);
+for (const [k, v] of Object.entries(c).sort((a, b) => b[1] - a[1])) console.log(" ", k, ":", v);

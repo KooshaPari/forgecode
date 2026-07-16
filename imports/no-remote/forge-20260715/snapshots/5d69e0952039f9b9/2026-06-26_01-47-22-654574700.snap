@@ -1,0 +1,14 @@
+{
+  "name": "Tracera",
+  "full_name": "KooshaPari/Tracera",
+  "role": "tracing-infra",
+  "description": "Tracing and observability instrumentation SDK. 30 branches, 105 MB, Go (test framework scaffold).",
+  "status": "active",
+  "lifecycle": "active",
+  "audit_artifact": "absorption-justifications/Tracera-2026-06-25.md",
+  "repo_path": "KooshaPari/Tracera",
+  "absorption_target": "phenotype-infra/crates/pheno-telemetry/",
+  "absorption_supersedes": "KooshaPari/Tracera",
+  "tags": ["tracing", "observability", "go", "compute-infra"],
+  "registry_v": "1.5.4"
+}

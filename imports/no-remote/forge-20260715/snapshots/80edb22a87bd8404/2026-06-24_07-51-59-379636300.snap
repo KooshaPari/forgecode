@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+cd "C:/Users/koosh/phenotype-registry" || exit 1
+# Convert to a real Windows path that bash can stat
+SAMPLE_WIN=$(cygpath -w "C:/Users/koosh/_sample_audit.md" 2>/dev/null || echo "C:/Users/koosh/_sample_audit.md")
+echo "Sample (windows): $SAMPLE_WIN"
+# Try several path forms
+bash "./registry/audit-absorption-justification/grade.sh" "C:/Users/koosh/_sample_audit.md"
+ec=$?
+echo "---EXIT_CODE=$ec---"
+if [[ $ec -ne 0 ]]; then
+  # Try without leading slash
+  bash "./registry/audit-absorption-justification/grade.sh" "/c/Users/koosh/_sample_audit.md"
+  echo "---EXIT_CODE2=$?---"
+fi

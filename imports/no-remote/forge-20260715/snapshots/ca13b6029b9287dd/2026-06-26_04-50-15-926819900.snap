@@ -1,0 +1,58 @@
+//! # logkit - Zero-cost Structured Logging Framework
+//! Log Entry
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use super::Level;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEntry {
+    pub id: Uuid,
+    pub level: Level,
+    pub message: String,
+    pub timestamp: DateTime<Utc>,
+    pub correlation_id: Option<String>,
+    pub fields: Vec<(String, serde_json::Value)>,
+}
+
+impl LogEntry {
+    pub fn new(level: Level, message: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            level,
+            message: message.into(),
+            timestamp: Utc::now(),
+            correlation_id: None,
+            fields: Vec::new(),
+        }
+    }
+
+    pub fn with_field(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
+        self.fields.push((key.into(), value));
+        self
+    }
+
+    pub fn with_correlation_id(mut self, correlation_id: impl Into<String>) -> Self {
+        self.correlation_id = Some(correlation_id.into());
+        self
+    }
+}
+        init();
+        increment_counter!("logkit_requests_total");
+        gauge!("logkit_inflight_requests", 1.0);
+    }
+
+    pub fn request_finished(duration_seconds: f64) {
+        init();
+        histogram!("logkit_request_duration_seconds", duration_seconds);
+        gauge!("logkit_inflight_requests", 0.0);
+    }
+
+    pub fn request_failed() {
+        init();
+        increment_counter!("logkit_errors_total");
+    }
+}
+

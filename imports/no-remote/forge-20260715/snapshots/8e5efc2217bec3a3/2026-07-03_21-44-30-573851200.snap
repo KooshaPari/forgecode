@@ -1,0 +1,94 @@
+name: Release SBOM
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to generate SBOM against (default: HEAD for manual run)'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    name: Generate and publish SBOM (CycloneDX + SPDX)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - name: Checkout source at the tagged ref
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          workspaces: |
+            . -> target
+
+      - name: Generate CycloneDX SBOM (deterministic from Cargo.lock)
+        run: |
+          cargo run -p sbom-gen --release --locked
+
+      - name: Verify SBOM is valid CycloneDX
+        run: |
+          python3 -c "
+          import json, sys
+          with open('docs/security/sbom.json', encoding='utf-8') as f:
+              d = json.load(f)
+          assert d['bomFormat'] == 'CycloneDX', f'bomFormat != CycloneDX: {d[\"bomFormat\"]}'
+          assert d['specVersion'] == '1.4', f'specVersion != 1.4: {d[\"specVersion\"]}'
+          n = len(d.get('components', []))
+          print(f'OK: CycloneDX 1.4 with {n} components')
+          assert n > 0, 'SBOM has no components'
+          "
+
+      - name: Hash the SBOM
+        run: |
+          python3 -c "
+          import hashlib
+          with open('docs/security/sbom.json', 'rb') as f:
+              digest = hashlib.sha256(f.read()).hexdigest()
+          with open('docs/security/sbom.json.sha256', 'w') as f:
+              f.write(f'{digest}  sbom.json\n')
+          print(f'sha256: {digest}')
+          "
+
+      - name: Attach SBOM to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag=${GITHUB_REF#refs/tags/}
+          if [ -z "$tag" ] && [ -n "${{ github.event.release.tag_name }}" ]; then
+            tag="${{ github.event.release.tag_name }}"
+          fi
+          if [ -z "$tag" ]; then
+            echo "No tag detected — skipping release attach (use workflow_dispatch.ref to override)"
+            exit 0
+          fi
+          gh release upload "$tag" \
+            --clobber \
+            docs/security/sbom.json \
+            docs/security/sbom.json.sha256
+
+      - name: Upload SBOM as workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-sbom
+          path: |
+            docs/security/sbom.json
+            docs/security/sbom.json.sha256
+          if-no-files-found: error
+          retention-days: 365

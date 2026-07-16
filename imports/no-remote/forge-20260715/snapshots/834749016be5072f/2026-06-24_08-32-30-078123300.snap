@@ -1,0 +1,82 @@
+/*!
+# Credential Manager
+
+Absorbed from `_tmp_kvirtualstage/credential_manager` on 2026-06-24.
+
+A secure credential management system with support for:
+- Encrypted credential vault (AES-256-GCM / ChaCha20-Poly1305)
+- OAuth integration (Google, GitHub, Steam, Discord)
+- JWT-based session management
+- TOTP-based multi-factor authentication
+- Safe credential injection for automation workflows
+*/
+
+pub mod config;
+pub mod crypto;
+pub mod error;
+pub mod vault;
+pub mod oauth;
+
+// Stub modules from the source architecture (to be fleshed out)
+pub mod session;
+pub mod mfa;
+pub mod injection;
+
+pub use config::CredentialConfig;
+pub use error::{CredentialError, Result};
+pub use vault::CredentialVault;
+pub use oauth::OAuthManager;
+pub use session::SessionManager;
+pub use mfa::MfaManager;
+pub use injection::CredentialInjector;
+
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+/// Top-level credential manager orchestrating all components.
+pub struct CredentialManager {
+    vault: Arc<RwLock<CredentialVault>>,
+    oauth: Arc<OAuthManager>,
+    session: Arc<SessionManager>,
+    mfa: Arc<MfaManager>,
+    injector: Arc<CredentialInjector>,
+    config: CredentialConfig,
+}
+
+impl CredentialManager {
+    pub async fn new(config: CredentialConfig) -> Result<Self> {
+        let vault = Arc::new(RwLock::new(CredentialVault::new(&config).await?));
+        let oauth = Arc::new(OAuthManager::new(&config).await?);
+        let session = Arc::new(SessionManager::new(&config).await?);
+        let mfa = Arc::new(MfaManager::new(&config).await?);
+        let injector = Arc::new(CredentialInjector::new(&config).await?);
+
+        Ok(Self { vault, oauth, session, mfa, injector, config })
+    }
+
+    pub fn vault(&self) -> Arc<RwLock<CredentialVault>> { Arc::clone(&self.vault) }
+    pub fn oauth(&self) -> Arc<OAuthManager> { Arc::clone(&self.oauth) }
+    pub fn session(&self) -> Arc<SessionManager> { Arc::clone(&self.session) }
+    pub fn mfa(&self) -> Arc<MfaManager> { Arc::clone(&self.mfa) }
+    pub fn injector(&self) -> Arc<CredentialInjector> { Arc::clone(&self.injector) }
+
+    pub async fn shutdown(&self) -> Result<()> {
+        self.vault.write().await.flush().await?;
+        self.session.flush().await?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_credential_manager_creation() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = CredentialConfig::test_config(temp_dir.path());
+        let manager = CredentialManager::new(config).await;
+        assert!(manager.is_ok());
+    }
+}

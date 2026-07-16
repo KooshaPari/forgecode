@@ -1,0 +1,8 @@
+import os
+clean = r'C:\Users\koosh\OmniRoute-clean\open-sse\executors\codex.ts'
+
+with open(clean, 'r', encoding='utf8', errors='replace') as fh:
+    c = fh.read()
+
+# Show the area from ~15500 to ~18800 to see normalizeCodexTools body
+print(c[15500:18800])

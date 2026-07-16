@@ -1,0 +1,13 @@
+import json, sys
+events = json.load(open(sys.argv[1]))
+print(f"{len(events)} events total")
+for e in events:
+    actor = e.get('actor', {}).get('login', '?')
+    body = (e.get('body') or '').replace(chr(10), ' ').replace(chr(13), ' ')[:80]
+    cid = (e.get('commit_id') or '')[:8]
+    src = ''
+    if 'source' in e and e['source']:
+        src_issue = e['source'].get('issue', {}).get('number', '')
+        if src_issue:
+            src = f' src={src_issue}'
+    print(f"{e['event']:18} by {actor:20} commit={cid}{src} body={body!r}")

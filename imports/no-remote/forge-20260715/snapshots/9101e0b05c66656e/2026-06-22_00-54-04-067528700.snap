@@ -1,0 +1,46 @@
+//! phenotype-event-store
+//!
+//! Durable SQLite-backed event store with outbox + DLQ + JSON schema registry
+//! + read-model projections. Absorbed from `KooshaPari/phenoEvents` on
+//! 2026-06-21.
+//!
+//! ## Modules
+//!
+//! - [`bus`]     — `SqliteBus` (durable outbox + DLQ) and `InMemoryBus`
+//!                 (compatibility shim delegating to `phenotype-event-bus`).
+//! - [`core`]    — `EventEnvelope` (UUIDv7 id, causation/correlation,
+//!                 schema version, JSON payload).
+//! - [`schema`]  — Additive JSON schema registry with version lookups.
+//! - [`projection`] — SQL read-model projection with checkpointing.
+//!                 Observability hooks go through the standard `tracing`
+//!                 crate (no re-export needed).
+//!
+//! ## Quick start
+//!
+//! ```no_run
+//! use phenotype_event_store::prelude::*;
+//!
+//! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+//! let bus = SqliteBus::connect("sqlite::memory:").await?;
+//! let envelope = EventEnvelope::new(
+//!     "orders.created",
+//!     serde_json::json!({"order_id": "o-1"}),
+//! );
+//! bus.publish(envelope).await?;
+//! # Ok(()) }
+//! ```
+
+pub mod bus;
+pub mod core;
+pub mod observability;
+pub mod projection;
+pub mod schema;
+
+pub mod prelude {
+    pub use crate::bus::{BusError, InMemoryBus, SqliteBus};
+    pub use crate::core::{EventEnvelope, EventId};
+    pub use crate::projection::{OrderProjection, ProjectionError};
+    pub use crate::schema::{SchemaError, SchemaId, SchemaRegistry};
+}
+
+pub use prelude::*;

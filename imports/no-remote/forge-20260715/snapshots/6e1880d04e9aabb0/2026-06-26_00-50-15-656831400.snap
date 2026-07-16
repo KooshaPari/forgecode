@@ -1,0 +1,88 @@
+// src/bifrost/index.ts — bifrost-backed provider registry.
+import type { ProviderDescriptor } from "../discovery/types.js";
+// It owns: auth, provider adapters, retries, circuit breaking, streaming.
+// We own: provider list (which adapters to enable), routing policy, and
+// project-specific pricing/failover rules.
+//
+// Provider set mirrors the catalog in docs/research/UNLIMITED_LLM_ACCESS.md:
+// 16+ adapters covering direct-provider keys + cookie-jar (web) auth.
+
+import { Bifrost } from "@maximhq/bifrost";
+// Inlined minimal request/response shape — exact bifrost types live in
+// @maximhq/bifrost/dist/types which is private; we re-export just enough
+// for downstream code to type-check without leaking the whole tree.
+export interface ChatRequest {
+  provider: string;
+  model: string;
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  stream?: boolean;
+  temperature?: number;
+  max_tokens?: number;
+}
+export interface ChatResponse {
+  id: string;
+  provider: string;
+  model: string;
+  content: string;
+  usage?: { input_tokens: number; output_tokens: number };
+}
+
+export interface ProviderSpec {
+  id: string;
+  label: string;
+  kind: "key" | "cookie" | "vertex" | "bedrock";
+  baseUrl?: string;
+  envKey?: string;
+}
+
+const PROVIDERS: ProviderSpec[] = [
+  // Standard key-based providers
+  { id: "openai", label: "OpenAI", kind: "key", envKey: "OPENAI_API_KEY" },
+  { id: "anthropic", label: "Anthropic", kind: "key", envKey: "ANTHROPIC_API_KEY" },
+  { id: "google", label: "Google Gemini", kind: "key", envKey: "GEMINI_API_KEY" },
+  { id: "mistral", label: "Mistral", kind: "key", envKey: "MISTRAL_API_KEY" },
+  { id: "groq", label: "Groq", kind: "key", envKey: "GROQ_API_KEY" },
+  { id: "cohere", label: "Cohere", kind: "key", envKey: "COHERE_API_KEY" },
+  { id: "perplexity", label: "Perplexity", kind: "key", envKey: "PPLX_API_KEY" },
+  { id: "deepseek", label: "DeepSeek", kind: "key", envKey: "DEEPSEEK_API_KEY" },
+  { id: "openrouter", label: "OpenRouter", kind: "key", envKey: "OPENROUTER_API_KEY" },
+  { id: "azure", label: "Azure OpenAI", kind: "key", envKey: "AZURE_OPENAI_API_KEY" },
+  // Cookie-jar providers (web session reuse) - common rotation pattern
+  { id: "chatgpt-web", label: "ChatGPT (web cookie)", kind: "cookie" },
+  { id: "claude-web", label: "Claude (web cookie)", kind: "cookie" },
+  { id: "gemini-web", label: "Gemini (web cookie)", kind: "cookie" },
+  { id: "grok-web", label: "Grok (web cookie)", kind: "cookie" },
+  { id: "perplexity-web", label: "Perplexity (web cookie)", kind: "cookie" },
+  { id: "deepseek-web", label: "DeepSeek (web cookie)", kind: "cookie" },
+  // Cloud-hosted
+  { id: "vertex", label: "Vertex AI", kind: "vertex" },
+  { id: "bedrock", label: "AWS Bedrock", kind: "bedrock" },
+];
+
+// Initialize bifrost with our provider set.
+// Key providers are registered only if their envKey is present.
+// Cookie-jar providers are registered lazily (config from ~/.omniroute/cookies.json).
+const bi = new Bifrost({
+  providers: PROVIDERS,
+  defaults: {
+    retries: 2,
+    timeoutMs: 30_000,
+  },
+});
+
+export const bifrost = bi;
+
+export function listProviders(): ProviderSpec[] {
+  return PROVIDERS.filter((p) => {
+    if (p.kind === "key" && p.envKey) return Boolean(process.env[p.envKey]);
+    return true; // cookie / cloud providers registered lazily
+  });
+}
+
+// Strong-typed passthrough. Bifrost returns a normalized ChatResponse
+// regardless of upstream provider differences.
+export async function chat(req: ChatRequest): Promise<ChatResponse> {
+  return bi.chat(req);
+}
+
+export type { ProviderSpec, ChatRequest, ChatResponse };

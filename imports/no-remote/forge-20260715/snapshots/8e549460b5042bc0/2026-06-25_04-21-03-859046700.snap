@@ -1,0 +1,133 @@
+/**
+ * Unit tests for the compression telemetry wiring (PR-006).
+ *
+ * Verifies:
+ *  1. applyCompression emits a single telemetry event with the resolved
+ *     `mode` for each of the 5 branches (rtk, lite, stacked, standard,
+ *     ultra).
+ *  2. applyStackedCompression emits a parent telemetry event AND one
+ *     reportPerEngineBreakdownTelemetry call per stacked engine.
+ *  3. The telemetry adapter is **fire-and-forget** — a thrown error in
+ *     `recordCompressionRun` must not bubble up to the caller.
+ *  4. Telemetry is no-op when `stats` is null (early-exit branches).
+ *
+ * The tests inject a stub via {@link setTestInstance} so they can assert
+ * call counts and arguments without monkey-patching the module loader.
+ */
+
+import { describe, it, beforeEach, afterEach } from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  applyCompression,
+  applyStackedCompression,
+} from "../../../open-sse/services/compression/strategySelector.ts";
+import {
+  CompressionTelemetry,
+  setTestInstance,
+  __resetDefaultCompressionTelemetryForTests,
+  type CompressionTelemetryContext,
+} from "../../../open-sse/services/compression/telemetry.ts";
+import type { CompressionStats } from "../../../open-sse/services/compression/types.ts";
+
+class StubRecorder extends CompressionTelemetry {
+  public runs: Array<{ stats: CompressionStats; ctx?: CompressionTelemetryContext }> = [];
+  public breakdown: Array<{ stats: CompressionStats; engineName: string }> = [];
+  public throwOnNext: Error | null = null;
+
+  override recordCompressionRun(
+    stats: CompressionStats,
+    ctx?: CompressionTelemetryContext,
+  ): void {
+    if (this.throwOnNext) {
+      const err = this.throwOnNext;
+      this.throwOnNext = null;
+      throw err;
+    }
+    this.runs.push({ stats, ctx });
+  }
+
+  override recordEngineBreakdown(stats: CompressionStats, engineName: string): void {
+    this.breakdown.push({ stats, engineName });
+  }
+}
+
+let stub: StubRecorder;
+
+const BODY = { messages: [
+  { role: "system", content: "You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant. You are a helpful assistant." },
+  { role: "user", content: "Hello world, I would like to ask a question. Hello world, I would like to ask a question. Hello world, I would like to ask a question. Hello world, I would like to ask a question. Hello world, I would like to ask a question." },
+] };
+
+beforeEach(() => {
+  stub = new StubRecorder();
+  setTestInstance(stub);
+});
+
+afterEach(() => {
+  __resetDefaultCompressionTelemetryForTests();
+});
+
+describe("PR-006: compression telemetry wiring", () => {
+  it("applyCompression(lite) emits a single telemetry run with mode=lite", () => {
+    const result = applyCompression(BODY, "lite", { config: { mode: "lite" } });
+    assert.ok(result, "applyCompression must return a result");
+    assert.ok(result!.stats, "stats must be present for the lite branch");
+    assert.equal(result!.stats!.mode, "lite");
+    assert.equal(stub.runs.length, 1, "expected exactly one telemetry run");
+    assert.strictEqual(stub.runs[0].stats, result!.stats);
+  });
+
+  it("applyCompression(rtk) emits a single telemetry run with mode=rtk", () => {
+    const result = applyCompression(BODY, "rtk", { config: { mode: "rtk" } });
+    assert.ok(result);
+    assert.ok(result!.stats);
+    assert.equal(result!.stats!.mode, "rtk");
+    assert.equal(stub.runs.length, 1, "expected exactly one telemetry run");
+  });
+
+  it("applyCompression(stacked) emits one parent run + per-engine breakdown", () => {
+    const result = applyCompression(BODY, "stacked", {
+      config: {
+        mode: "stacked",
+        stackedPipeline: [{ engine: "rtk" }, { engine: "caveman" }],
+      },
+    });
+    assert.ok(result);
+    assert.ok(result!.stats);
+    assert.equal(result!.stats!.mode, "stacked");
+    assert.equal(stub.runs.length, 1, "expected one parent telemetry run");
+    assert.ok(
+      stub.breakdown.length >= 2,
+      `expected >= 2 breakdown entries, got ${stub.breakdown.length}`,
+    );
+  });
+
+  it("applyStackedCompression emits one parent run + one breakdown per step", () => {
+    const result = applyStackedCompression(
+      BODY,
+      [{ engine: "rtk" }, { engine: "caveman" }],
+      undefined,
+    );
+    assert.ok(result);
+    assert.ok(result!.stats);
+    assert.equal(result!.stats!.mode, "stacked");
+    assert.equal(stub.runs.length, 1, "expected one parent run");
+    assert.equal(stub.breakdown.length, 2, "expected one breakdown per engine");
+  });
+
+  it("telemetry is fire-and-forget — a thrown error does not bubble up", () => {
+    stub.throwOnNext = new Error("recorder exploded");
+    assert.doesNotThrow(() => {
+      applyCompression(BODY, "lite", { config: { mode: "lite" } });
+    });
+  });
+
+  it("applyCompression(off) emits no telemetry (early-exit branch)", () => {
+    const result = applyCompression(BODY, "off");
+    assert.ok(result);
+    // off branch returns { body, compressed: false, stats: null } — no telemetry
+    assert.equal(result!.stats, null);
+    assert.equal(stub.runs.length, 0, "no telemetry for the off branch");
+  });
+});

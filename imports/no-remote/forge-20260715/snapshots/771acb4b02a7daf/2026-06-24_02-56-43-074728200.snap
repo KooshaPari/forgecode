@@ -1,0 +1,259 @@
+# BytePort Branch Triage Report
+
+**Date:** 2026-06-23
+**Context:** Analysis of 7 unmerged feature branches against `origin/main` (`c901fe5a`)
+**Repository:** `C:\Users\koosh\BytePort` -> `origin` = `https://github.com/KooshaPari/BytePort.git`
+
+---
+
+## 1. `feat/otel-instrumentation` -- MERGE (PR recommended)
+
+| Metric | Value |
+|--------|-------|
+| Merge-base | `c280465291b4` |
+| Commits ahead | **9 commits** |
+| Files changed | **27 files** (8 added, 1 deleted, 18 modified) |
+| Insertions | 2,411 |
+| Deletions | 47 |
+
+### Commits
+
+| Commit | Message |
+|--------|---------|
+| `4d0c55ea` | ci(BytePort): add golangci-lint configuration |
+| `e7381da0` | ci(repo): add golangci-lint configuration |
+| `1b09e4e8` | audit: add SPECS_INDEX.md, fix CI workflows, add missing gates |
+| `5ccd8596` | chore(byteport): pin CI action SHAs and update README |
+| `1d150f2c` | fix(BytePort): clean up garbage content in STATUS.md |
+| `25cfcf64` | ci(BytePort): add push/PR CI workflow |
+| `a9d3ff65` | fix(byteport): replace expired Sigstore certificate with placeholder |
+| `4d1efc80` | feat: consolidate landing content - .astro, src/data, src/pages |
+| `a2144ac2` | fix(cargo-deny): ignore unmaintained transitive advisories with rationale |
+
+### Files changed (vs origin/main)
+
+**Added:** .astro/content.d.ts, .astro/types.d.ts, .github/workflows/ci.yml, .github/workflows/doc-links.yml, .github/workflows/fr-coverage.yml, .github/workflows/lint.yml, .github/workflows/quality-gate.yml, SPECS_INDEX.md, src/data/qa-snapshot.json, src/data/readme.html, src/pages/docs/[...slug].astro, src/pages/index.astro, src/pages/otel/index.astro, src/pages/preview/[prNumber].astro, src/pages/qa/index.astro
+
+**Modified:** All existing CI workflow files (cargo-audit, cargo-deny, cargo-machete, cargo-semver-checks, ci.yaml, codeql, trufflehog), README.md, STATUS.md, crt.pem, deny.toml
+
+**Deleted:** backend/byteport/byteport-ghkey.pem
+
+### Assessment
+
+High-value, well-structured feature branch with CI/governance pipeline setup (golangci-lint, quality gate, doc-links, fr-coverage), landing page content (Astro site features), security fixes (Sigstore cert replacement, deny.toml hygiene), and SPECS_INDEX.md for regulatory traceability.
+
+### Recommendation
+
+**MERGE** via PR after rebasing onto main. Commits are cohesive and independently meaningful.
+
+---
+
+## 2. `integration/consolidate` -- MERGE (squash PR recommended)
+
+| Metric | Value |
+|--------|-------|
+| Merge-base | `4a9cebc784e7` |
+| Commits ahead | **9 commits** (3 merge, 6 substantive) |
+| Files changed | **10 files** (2 added, 8 modified) |
+| Insertions | 156 |
+| Deletions | 11 |
+
+### Commits
+
+| Commit | Message |
+|--------|---------|
+| `26785efc` | docs: add work-state header to README |
+| `c105ebb6` | Merge branch dependabot/github_actions/actions-b7707a6f17 |
+| `416106cf` | Merge branch chore-icons-byteport |
+| `228d9284` | Merge branch bp-dag-fix-2026-06-12 |
+| `d6615431` | WIP: untracked files on main before consolidation |
+| `94c297c3` | fix(byteport): security/reliability fixes across backend routes |
+| `a4c04f01` | chore(deps): bump taiki-e/install-action |
+| `3cdb59d6` | chore(brand): per-OS icon assets per #164 spec |
+| `9e91f948` | docs(spec): per-os icon spec for BytePort |
+
+### Files changed
+
+**Modified:** .github/workflows/cargo-machete.yml, README.md, backend/byteport/routes/deployment.go, routes/instances.go, routes/projects.go, backend/nvms/lib/llm.go, backend/nvms/main.go, backend/nvms/projectManager/deploy.go
+
+**Added:** backend/nvms/lib/BytePort.code-workspace, docs/requirements/BytePort-frnfr.md
+
+### Assessment
+
+Consolidation branch merging 3 sub-branches plus backend security/reliability fixes and a functional requirements document.
+
+### Recommendation
+
+**MERGE** via squash PR to flatten merge commits.
+
+---
+
+## 3. `feat/clap-ext-adopt-wave2-2026-06-12` -- MERGE (fast-forward)
+
+| Metric | Value |
+|--------|-------|
+| Merge-base | `27db26b06f17` |
+| Commits ahead | **1 commit** |
+| Files changed | **2 files** (1 added, 1 modified) |
+| Insertions | 51 |
+
+### Commit
+
+`b126ab5b` feat: adopt clap-ext (smoke-tested dependency)
+
+### Files changed
+
+- Modified: frontend/web/src-tauri/Cargo.toml (+1)
+- Added: tests/clap_ext_smoke.rs (+50)
+
+### Assessment
+
+Clean, single-purpose branch. Adds clap-ext dependency with smoke test.
+
+### Recommendation
+
+**MERGE** fast-forward. No regression risk.
+
+---
+
+## 4. `recover/byteport-stash-0-terminal-ui` -- MERGE (PR recommended)
+
+| Metric | Value |
+|--------|-------|
+| Merge-base | `372d7cef457a` |
+| Commits ahead | **1 commit** |
+| Files changed | **2 files added** |
+| Insertions | 759 |
+
+### Commit
+
+`20279662` feat(transport): add terminal_ui and ui ports (recovered stash)
+
+### Files changed
+
+- Added: crates/byteport-transport/src/ports/terminal_ui.rs (370 lines)
+- Added: crates/byteport-transport/src/ports/ui.rs (389 lines)
+
+### Assessment
+
+Recovered stash with trait-only stubs in existing crate. Self-contained.
+
+### Recommendation
+
+**MERGE** to preserve trait surface. Fast-forward or minimal PR.
+
+---
+
+## 5. `recover/byteport-stash-1-tools-cli` -- MERGE (immediate)
+
+| Metric | Value |
+|--------|-------|
+| Merge-base | `372d7cef457a` |
+| Commits ahead | **1 commit** |
+| Files changed | **1 file modified** |
+| Insertions | 2 |
+| Deletions | 2 |
+
+### Commit
+
+`1f8171fa` build(workspace): add tools/cli to workspace members (recovered stash)
+
+### Files changed
+
+- Modified: Cargo.toml (workspace members)
+
+### Assessment
+
+Single-line workspace config fix. If tools/cli exists, this is blocking.
+
+### Recommendation
+
+**MERGE immediately** -- fast-forward or direct push.
+
+---
+
+## 6. `wip/2026-06-18-byteport-local` -- CLOSE (obsolete snapshot)
+
+| Metric | Value |
+|--------|-------|
+| Merge-base | `4207f0e86f2b` |
+| Commits ahead | **2 commits** |
+| Files changed | **3,425 files** (2 added, 3,423 deleted) |
+| Insertions | 105 |
+| Deletions | 559,453 |
+
+### Commits
+
+| Commit | Message |
+|--------|---------|
+| `8e295480` | wip: pre-push snapshot 2026-06-18T02:00:13Z |
+| `d853834d` | wip: local snapshot (2878 deletions + 2 untracked) |
+
+### Files added (2)
+
+- docs/boundary/BytePort.md (template stub)
+- docs/intent/BytePort.md (template stub)
+
+### Files deleted (3,423)
+
+Entire codebase including frontend/web (~2806), backend (33), .github (11), crates/ (7), docs/ (3), src/ Astro pages, ports/, tests/, root governance files.
+
+### Assessment
+
+Destructive WIP snapshot from automated cleanup. Not intended for merge.
+
+### Recommendation
+
+**CLOSE and delete branch.** Cherry-pick the 2 doc files if needed.
+
+---
+
+## 7. `bp-dag-foundation-2026-06-12` -- CLOSE (already merged)
+
+| Metric | Value |
+|--------|-------|
+| Merge-base | `4a9cebc784e7` (same as integration/consolidate) |
+| Commits ahead | **1 commit** |
+| Files changed | **4 files modified** |
+| Insertions | 736 |
+| Deletions | 831 |
+
+### Commit
+
+`577d8795` docs(byteport): rewrite governance docs
+
+### Files changed
+
+- Modified: CHARTER.md, PLAN.md, README.md, STATUS.md
+
+### Assessment
+
+Governance docs rewrite. Content already merged into integration/consolidate via commit 228d9284.
+
+### Recommendation
+
+**CLOSE** -- content consumed by integration/consolidate. Delete branch.
+
+---
+
+## Summary
+
+| # | Branch | Action | Rationale |
+|---|--------|--------|-----------|
+| 1 | feat/otel-instrumentation | MERGE (rebase + PR) | CI pipeline, governance gates, landing content, security fixes |
+| 2 | integration/consolidate | MERGE (squash PR) | Backend fixes, brand assets, spec docs -- squash merge commits |
+| 3 | feat/clap-ext-adopt-wave2-2026-06-12 | MERGE (ff) | Clean 1-commit feature, smoke-tested |
+| 4 | recover/byteport-stash-0-terminal-ui | MERGE (PR) | Recovered trait stubs for transport layer |
+| 5 | recover/byteport-stash-1-tools-cli | MERGE (immediate) | Critical 1-line workspace config fix |
+| 6 | wip/2026-06-18-byteport-local | CLOSE | Destructive snapshot (3,423 deletions) |
+| 7 | bp-dag-foundation-2026-06-12 | CLOSE | Content already in integration/consolidate |
+
+## Execution Order
+
+1. **Immediate:** recover/byteport-stash-1-tools-cli -- fast-forward
+2. **Today:** feat/clap-ext-adopt-wave2-2026-06-12 -- fast-forward
+3. **Today:** recover/byteport-stash-0-terminal-ui -- PR and merge
+4. **This sprint:** feat/otel-instrumentation -- rebase + PR
+5. **This sprint:** integration/consolidate -- squash + PR
+6. **Cleanup:** bp-dag-foundation-2026-06-12 -- delete
+7. **Cleanup:** wip/2026-06-18-byteport-local -- delete

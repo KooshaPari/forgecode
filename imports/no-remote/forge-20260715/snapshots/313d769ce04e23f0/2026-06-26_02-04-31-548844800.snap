@@ -1,0 +1,16 @@
+[package]
+name = "byteport-cli"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "BytePort tools CLI — transport, port, codec, and UI CLI bindings"
+publish = false
+
+[dependencies]
+byteport-transport = { path = "../byteport-transport" }
+byteport-otel = { path = "../byteport-otel" }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+opentelemetry = { version = "0.27", features = ["metrics"] }
+opentelemetry_sdk = { version = "0.27", features = ["metrics"] }
+opentelemetry-stdout = { version = "0.27", features = ["metrics"] }

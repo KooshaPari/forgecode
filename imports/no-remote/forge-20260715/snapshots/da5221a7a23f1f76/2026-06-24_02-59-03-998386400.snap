@@ -1,0 +1,4 @@
+cd "C:\Users\koosh\Dev\Civis"
+git push -u origin feat/physics-integration-plan 2>&1
+echo "--- push result ---"
+git status -sb 2>&1 | head -5

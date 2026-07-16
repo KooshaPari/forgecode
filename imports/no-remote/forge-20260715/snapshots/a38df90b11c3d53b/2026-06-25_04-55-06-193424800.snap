@@ -1,0 +1,25 @@
+## Summary
+
+Remove orphan emergence phase dispatch arms from the `tick()` loop that had no corresponding method implementations, and link `disasters.rs` via `mod disasters;` to resolve the `phase_disasters` reference.
+
+## Context
+
+The `tick()` function called `self.phase_life()` but no `fn phase_life(&mut self)` was defined anywhere in `crates/engine/`. Additional emergence-phase arms (research, tech, belief, unrest, cohesion, social_mood, economic_focus_pre, stratification, institutions, economic_focus) were also prematurely wired without implementations, causing E0599 workspace-wide compile failures.
+
+Separately, `disasters.rs` defined `Simulation::phase_disasters()` via `impl Simulation` but was never declared as a module in `lib.rs`, making the method invisible to the compiler.
+
+## Changes
+
+- **`lib.rs`**: Added `pub mod disasters;` so the `impl Simulation` block in `disasters.rs` is in scope and `phase_disasters()` resolves.
+- **`engine.rs`** — `PHASE_ORDER`: Removed `"life"` entry since the phase has no implementation.
+- **`engine.rs`** — `tick()`: Removed `self.phase_life()` call; added doc comment noting the removed emergence arms.
+- **`engine.rs`** — Tests: Updated `phase_order_matches_tick_sequence` and `phase_order_includes_emergence` to match the revised `PHASE_ORDER`.
+
+## Testing
+
+- `cargo check -p civ-engine` — passes with zero errors (verified).
+- `cargo test -p civ-engine` — compilation succeeds; runtime testing still in progress due to concurrent dependency compilation (wasmtime crate). All modified tests structurally updated to match new PHASE_ORDER.
+
+## Links
+
+- Traces to workspace compile blocker: E0599 orphan method calls in run_phase dispatch.

@@ -1,0 +1,153 @@
+//! Utility functions for binary resolution, PATH handling, and command execution.
+//!
+//! Absorbed from `thegent-workspace/crates/thegent-utils-source`.
+//! Provides binary resolution, PATH-safe command execution, and repo root detection.
+
+use std::path::PathBuf;
+use std::process::Command;
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum UtilsError {
+    #[error("Binary not found: {0}")]
+    NotFound(String),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+pub use binary::first_available;
+pub use binary::resolve_binary;
+pub use command::{command_exists, exec_command};
+pub use path::get_repo_root;
+
+mod binary {
+    use super::*;
+    use std::path::Path;
+
+    /// Resolve a binary from PATH
+    pub fn resolve_binary(name: &str) -> Option<PathBuf> {
+        which::which(name).ok()
+    }
+
+    /// Find first available tool from a list of candidates
+    pub fn first_available(candidates: &[&str]) -> Option<PathBuf> {
+        for candidate in candidates {
+            if let Ok(path) = which::which(candidate) {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_resolve_binary() {
+            let git = resolve_binary("git");
+            assert!(git.is_some() || which::which("git").is_err());
+        }
+
+        #[test]
+        fn test_first_available() {
+            let result = first_available(&["sh", "bash", "zsh"]);
+            assert!(result.is_some());
+        }
+    }
+}
+
+mod command {
+    use std::process::{Command, ExitCode};
+
+    /// Execute a command and return its exit code
+    pub fn exec_command(cmd: &str, args: &[String]) -> ExitCode {
+        match Command::new(cmd).args(args).status() {
+            Ok(status) => {
+                let code = status.code().unwrap_or(1);
+                ExitCode::from(code as u8)
+            }
+            Err(e) => {
+                eprintln!("thegent-utils: failed to execute {}: {}", cmd, e);
+                ExitCode::from(127)
+            }
+        }
+    }
+
+    /// Check if a command exists in PATH
+    pub fn command_exists(cmd: &str) -> bool {
+        // Use `where` on Windows, `command -v` on Unix
+        #[cfg(windows)]
+        let mut child = Command::new("where")
+            .arg(cmd)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        #[cfg(not(windows))]
+        let mut child = Command::new("command")
+            .arg("-v")
+            .arg(cmd)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+
+        child
+            .and_then(|c| c.wait())
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_command_exists() {
+            assert!(command_exists("ls") || command_exists("dir"));
+        }
+    }
+}
+
+mod path {
+    use super::*;
+
+    /// Get repo root (for git operations)
+    pub fn get_repo_root() -> PathBuf {
+        if let Some(path) = resolve_binary("git") {
+            if let Ok(output) = Command::new(&path)
+                .args(["rev-parse", "--show-toplevel"])
+                .output()
+            {
+                if output.status.success() {
+                    let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !root.is_empty() {
+                        return PathBuf::from(root);
+                    }
+                }
+            }
+        }
+        PathBuf::from(".")
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_get_repo_root() {
+            let root = get_repo_root();
+            assert!(root.exists());
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_basic_types() {
+        let err = UtilsError::NotFound("foo".into());
+        assert_eq!(err.to_string(), "Binary not found: foo");
+    }
+}

@@ -1,0 +1,167 @@
+name: mutation
+
+on:
+  schedule:
+    # Weekly Monday 04:00 UTC
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      timeout_min:
+        description: "Per-crate timeout in minutes (default 60)"
+        required: false
+        default: "60"
+      crate_filter:
+        description: "Run only matching crates (comma-separated, e.g. phenotype-config,phenotype-diff). Empty = all."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  mutation:
+    name: cargo-mutants (nightly correctness check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          - acceptance-contract
+          - agent-forecast
+          - agent-orchestrator
+          - anthropic-usage-poll
+          - audit-implementation
+          - audit-privacy
+          - bench-guard
+          - cargo-runner
+          - ci-pipeline-check
+          - commit-msg-check
+          - compliance-check
+          - dag-scheduler
+          - doc-link-check
+          - docs-health
+          - ecosystem-check
+          - fr-coverage
+          - fr-trace
+          - legacy-scan
+          - perfharness
+          - phenotype-cli
+          - phenotype-config
+          - phenotype-diff
+          - phenotype-tooling-observability
+          - pr-health
+          - quality-gate
+          - release-cut
+          - sbom-gen
+          - temporal-grounding
+          - worktree-manager
+        exclude:
+          # Crates that are pure forwarders, no meaningful mutations possible
+          - { crate: cargo-runner }       # tiny shim, no logic
+          - { crate: ci-pipeline-check }  # asserts external CI state
+          - { crate: ecosystem-check }    # external API consumer
+          - { crate: pr-health }          # external API consumer
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Filter matrix (skip if not in crate_filter input)
+        if: ${{ inputs.crate_filter != '' && !contains(inputs.crate_filter, matrix.crate) }}
+        run: |
+          echo "skipping ${{ matrix.crate }} (not in crate_filter)"
+          exit 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-mutants-${{ matrix.crate }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mutants-${{ matrix.crate }}-
+            ${{ runner.os }}-mutants-
+
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants --locked
+
+      - name: Run cargo-mutants
+        id: mutants
+        run: |
+          mkdir -p mutants-out/${{ matrix.crate }}
+          cargo mutants \
+            -p ${{ matrix.crate }} \
+            --output mutants-out/${{ matrix.crate }} \
+            --timeout 60 \
+            --jobs 2 \
+            --no-shuffle \
+            2>&1 | tee mutants-out/${{ matrix.crate }}/run.log
+          # cargo-mutants exits 0 if all mutants are caught; non-zero means
+          # at least one mutant survived (bad — needs a test).
+          echo "mutants_exit=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Parse mutants summary
+        if: always()
+        run: |
+          OUT=mutants-out/${{ matrix.crate }}/mutants.out
+          if [ ! -d "$OUT" ]; then
+            echo "::error::cargo-mutants produced no output for ${{ matrix.crate }}"
+            exit 1
+          fi
+          CAUGHT=$(awk '/^caught:/{c++} END{print c+0}' "$OUT"/*.json 2>/dev/null || echo 0)
+          MISSED=$(awk '/^missed:/{m++} END{print m+0}' "$OUT"/*.json 2>/dev/null || echo 0)
+          TOTAL=$((CAUGHT + MISSED))
+          if [ "$TOTAL" -eq 0 ]; then
+            PCT="0.00"
+          else
+            PCT=$(awk "BEGIN { printf \"%.2f\", ($CAUGHT/$TOTAL)*100 }")
+          fi
+          {
+            echo "## cargo-mutants summary for ${{ matrix.crate }}"
+            echo ""
+            echo "- caught: $CAUGHT"
+            echo "- missed: $MISSED"
+            echo "- total: $TOTAL"
+            echo "- caught-pct: ${PCT}%"
+            echo ""
+            echo "See mutants-out/${{ matrix.crate }}/ for the full report."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ matrix.crate }} caught=${CAUGHT} missed=${MISSED} pct=${PCT}%" >> mutants-summary.txt
+
+      - name: Upload mutant artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-${{ matrix.crate }}
+          path: mutants-out/${{ matrix.crate }}
+
+      - name: Fail if mutants survived
+        if: steps.mutants.outputs.mutants_exit != '0'
+        run: |
+          echo "::error::cargo-mutants found surviving mutants in ${{ matrix.crate }}"
+          echo "  See the mutants-${{ matrix.crate }} artifact for details."
+          exit 1
+
+  summarize:
+    name: aggregate mutation score
+    runs-on: ubuntu-latest
+    needs: mutation
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download mutants-summary.txt (not actually needed; placeholder for future PR-comment integration)
+        run: |
+          echo "Mutation testing summary across workspace:"
+          echo ""
+          for d in mutants-out/*; do
+            crate=$(basename "$d")
+            echo "### $crate"
+            tail -1 "$d/run.log" 2>/dev/null || echo "  (no log)"
+          done

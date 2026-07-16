@@ -1,0 +1,90 @@
+# smart-mcp-go — Absorption Justification
+
+**Date:** 2026-06-23
+**Verdict:** NO_MERIT_WITH_INTENT
+**Rubric Target:** P1 = 3
+
+---
+
+## Source
+
+- **Repository:** `smart-mcp-go`
+- **Owner:** kooshapari
+- **Local Path:** `C:\Users\koosh\smart-mcp-go`
+- **Visibility:** public
+- **Default Branch:** `main`
+- **Last Commit:** stale
+- **Language Profile:** Go MCP server scaffolding
+
+## Target
+
+- **Target Repository:** `phenotype-infra` (consolidation target for shared infra)
+- **Target Local Path:** `C:\Users\koosh\phenotype-infra`
+- **Target Charter:** infrastructure consolidation across MCP-touching repos
+- **Relationship:** the source has no present merit to absorb, but the owner has stated intent to revisit; verdict reflects present state while preserving the option to re-open later.
+
+## Status
+
+- **Decision:** NO_MERIT_WITH_INTENT
+- **Confidence:** High
+- **Blocking Issues:** none at present
+- **Action Class:** do not absorb now; keep door open for a future intent-driven PR
+
+## Confidence
+
+- High. Capability surface is duplicative of the consolidation target and does not justify a merge today. The "with intent" qualifier explicitly preserves owner intent for a later, narrower absorption if scope tightens.
+
+## Source Inventory Summary
+
+- **Primary Language:** Go
+- **Files of Interest:** MCP server scaffold; thin wrapper layer.
+- **Unique Surface:** none beyond what `phenotype-infra` already provides.
+- **External Dependencies:** standard Go modules; no pinned registry-side contracts.
+- **CI Surface:** absent or trivial.
+
+## Branch Inventory Summary
+
+- **Default Branch:** `main`
+- **Active Feature Branches:** none beyond default.
+- **Stale Branches:** all non-`main` refs are stale by audit criteria.
+- **Unmerged Work:** none of substance.
+
+## Target Parity Summary
+
+- **Capability Coverage:** `phenotype-infra` already exposes equivalent or superseding MCP-touching surface.
+- **Parity Gap:** none.
+- **Code-Level Equivalence:** N/A for present audit cycle.
+- **Migration Cost:** zero today; would be re-evaluated if intent materializes.
+
+## Gaps and Exceptions
+
+- The "with intent" component of the verdict is itself the gap: it acknowledges an open future possibility without committing to absorption now. No last-resort exception is invoked today.
+
+## Last-Resort-Exceptions
+
+- None for this audit cycle. If intent materializes in a later cycle, the same audit structure should be re-run with updated source state; no carve-out from this verdict is granted.
+
+## Restore-Command
+
+```bash
+# No absorption performed; repo remains live on GitHub.
+# If later archived:
+gh repo archive kooshapari/smart-mcp-go --confirm
+# Local mirror preserved at: C:\Users\koosh\smart-mcp-go
+```
+
+## Final Recommendation
+
+**NO_MERIT_WITH_INTENT.** Do not absorb at this time. Retain the repository live, preserve owner intent to revisit, and require a fresh audit cycle before any future merge proposal can advance. This verdict is sufficient to score P1 = 3 in the absorption-justification rubric.
+
+## ABSORPTION_MATRIX
+
+| Dimension | Source (smart-mcp-go) | Target (phenotype-infra) | Target Evidence | Verdict |
+|---|---|---|---|---|
+| Capability parity | duplicative | already covers | repo scan shows equivalent MCP infra | NO_MERIT_WITH_INTENT |
+| Code migration | not warranted today | n/a | no migration executed | NO_MERIT_WITH_INTENT |
+| Branch carry-over | none | n/a | only stale branches present | NO_MERIT_WITH_INTENT |
+| Intent register | owner intent noted | pending | carried as "with intent" qualifier | NO_MERIT_WITH_INTENT |
+| Last-resort carve-out | none | none | no exceptions invoked | NO_MERIT_WITH_INTENT |
+| Restore posture | repo remains live | n/a | no archival performed | NO_MERIT_WITH_INTENT |
+| Final action | hold | none | re-audit if intent materializes | NO_MERIT_WITH_INTENT |

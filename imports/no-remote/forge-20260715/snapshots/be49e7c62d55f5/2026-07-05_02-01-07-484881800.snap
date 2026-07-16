@@ -1,0 +1,126 @@
+// crates/voxel/assets/shaders/triplanar_pbr.wgsl
+//
+// FR-CIV-PBR-010 — Phase-3 triplanar PBR shader
+// Sibling to substrate FR-CIV-PBR-001..009 in crates/voxel/src/material_pbr.rs
+//
+// Albedo / normal / ORM (occlusion-roughness-metallic) channels are sampled
+// from the GPU atlas built by `atlas::gpu_atlas::GreedyAtlasPacker` (see
+// crates/voxel/src/atlas/gpu_atlas.rs:224 — the WGSL artifact referenced via
+// `atlas_uv_channel` in the substrate vertex pipeline).
+//
+// Phase-3 wiring:
+//   * `albedo_tex` / `normal_tex` / `orm_tex`  — atlas UV channels (vec2)
+//   * `world_normal` / `world_pos`             — fragment inputs from vertex stage
+//   * `blend_sharpness`                        — sharpens the triplanar blend
+//   * `atlas_dimension`                         — texture-array indexing fallback
+//
+// The substrate (material_pbr.rs) compiles THIS WGSL at Bevy startup via
+// `wgpu::ShaderModuleDescriptor` labelled "triplanar_pbr". Bevy adapter sits
+// in crates/voxel/src/render/pbr_pipeline.rs (Phase-3 add).
+
+struct PbrMaterialUniforms {
+    base_color_tint: vec4<f32>,
+    metallic_factor: f32,
+    roughness_factor: f32,
+    normal_scale: f32,
+    blend_sharpness: f32,
+    atlas_dimension: vec2<u32>,
+    _pad0: u32,
+    _pad1: u32,
+};
+
+@group(0) @binding(0) var<uniform> u_material: PbrMaterialUniforms;
+
+// Atlas samplers (one per channel: albedo, normal, ORM)
+@group(1) @binding(0) var albedo_tex:  texture_2d<f32>;
+@group(1) @binding(1) var albedo_smp:  sampler;
+@group(1) @binding(2) var normal_tex:  texture_2d<f32>;
+@group(1) @binding(3) var normal_smp:  sampler;
+@group(1) @binding(4) var orm_tex:     texture_2d<f32>;
+@group(1) @binding(5) var orm_smp:     sampler;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+};
+
+struct VertexOutput {
+    @builtin(position) clip_pos: vec4<f32>,
+    @location(0) world_pos: vec3<f32>,
+    @location(1) world_normal: vec3<f32>,
+    @location(2) base_uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    out.world_pos = in.position;
+    out.world_normal = normalize(in.normal);
+    out.base_uv = in.uv;
+    out.clip_pos = vec4<f32>(in.position, 1.0);
+    return out;
+}
+
+fn triplanar_blend(n: vec3<f32>, sharpness: f32) -> vec3<f32> {
+    var w = pow(abs(n), vec3<f32>(sharpness));
+    w = w / (w.x + w.y + w.z + 1e-5);
+    return w;
+}
+
+fn sample_albedo(wpos: vec3<f32>, wn: vec3<f32>, blend_w: vec3<f32>) -> vec4<f32> {
+    let uv_x = wpos.zy;
+    let uv_y = wpos.xz;
+    let uv_z = wpos.xy;
+    let cx = textureSample(albedo_tex, albedo_smp, uv_x);
+    let cy = textureSample(albedo_tex, albedo_smp, uv_y);
+    let cz = textureSample(albedo_tex, albedo_smp, uv_z);
+    return cx * blend_w.x + cy * blend_w.y + cz * blend_w.z;
+}
+
+fn sample_normal(wpos: vec3<f32>, wn: vec3<f32>, blend_w: vec3<f32>, scale: f32) -> vec3<f32> {
+    let uv_x = wpos.zy;
+    let uv_y = wpos.xz;
+    let uv_z = wpos.xy;
+    var nx = textureSample(normal_tex, normal_smp, uv_x).xyz * 2.0 - 1.0;
+    var ny = textureSample(normal_tex, normal_smp, uv_y).xyz * 2.0 - 1.0;
+    var nz = textureSample(normal_tex, normal_smp, uv_z).xyz * 2.0 - 1.0;
+    // Re-orient sampled normals to align with dominant world axis.
+    nx = vec3<f32>(0.0, nx.y, nx.z);
+    ny = vec3<f32>(nx.x, 0.0, nx.z);
+    nz = vec3<f32>(nz.x, nz.y, 0.0);
+    var n = nx * blend_w.x + ny * blend_w.y + nz * blend_w.z;
+    n = normalize(mix(wn, n, scale));
+    return n;
+}
+
+fn sample_orm(wpos: vec3<f32>, blend_w: vec3<f32>) -> vec3<f32> {
+    let uv_x = wpos.zy;
+    let uv_y = wpos.xz;
+    let uv_z = wpos.xy;
+    let ox = textureSample(orm_tex, orm_smp, uv_x).xyz;
+    let oy = textureSample(orm_tex, orm_smp, uv_y).xyz;
+    let oz = textureSample(orm_tex, orm_smp, uv_z).xyz;
+    return ox * blend_w.x + oy * blend_w.y + oz * blend_w.z;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let wn = normalize(in.world_normal);
+    let blend_w = triplanar_blend(wn, u_material.blend_sharpness);
+
+    let base = sample_albedo(in.world_pos, wn, blend_w) * u_material.base_color_tint;
+    let nrm  = sample_normal(in.world_pos, wn, blend_w, u_material.normal_scale);
+    let orm  = sample_orm(in.world_pos, blend_w);
+
+    let ao     = orm.x;
+    let rough  = clamp(orm.y * u_material.roughness_factor, 0.04, 1.0);
+    let metal  = clamp(orm.z * u_material.metallic_factor,  0.0,  1.0);
+
+    // Substrate consumes base.rgb + nrm + (ao, rough, metal).
+    // Final lighting (PBR direct/IBL) is computed in the Bevy adapter
+    // pbr_pipeline.rs (FR-CIV-PBR-005 substrate hook).
+    let out_rgb = base.rgb * ao;
+
+    return vec4<f32>(out_rgb, base.a);
+}

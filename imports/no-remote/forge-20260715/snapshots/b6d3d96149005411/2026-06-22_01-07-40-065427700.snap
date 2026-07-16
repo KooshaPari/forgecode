@@ -1,0 +1,22 @@
+//! Bus implementations: a thin compatibility shim around the canonical
+//! `phenotype_event_bus::InMemoryEventBus`, plus a SQLite-backed durable
+//! `SqliteBus` for outbox / DLQ / replay workloads.
+//!
+//! The legacy `phenoEvents` crate carried both an in-memory bus and a
+//! SQLite bus. After absorption we keep the SQLite implementation (Eventra
+//! did not previously have one) and drop the redundant in-memory shim
+//! in favour of `phenotype_event_bus::InMemoryEventBus`.
+
+pub mod sqlite;
+
+pub use crate::bus::sqlite::{EnvelopeRecord, OutboxRecord, SqliteBus, SqliteBusConfig};
+
+/// Backwards-compatible alias. The legacy `phenoEvents` crate exposed a
+/// `BusError` enum; Eventra's canonical bus uses `EventBusError`. New code
+/// should prefer `phenotype_event_bus::EventBusError` directly.
+pub type BusError = phenotype_event_bus::EventBusError;
+
+/// Backwards-compatible alias. The legacy `phenoEvents` crate provided a
+/// private `InMemoryBus`; Eventra exposes `InMemoryEventBus` as the canonical
+/// in-memory implementation.
+pub use phenotype_event_bus::InMemoryEventBus as InMemoryBus;

@@ -1,0 +1,342 @@
+// Package tracing provides distributed-tracing primitives for phenodag:
+// OTel-style spans with attributes, a per-edge token bucket for outbound
+// rate limiting, a retry-storm circuit breaker, and context-propagation
+// helpers threaded through context.Context.
+//
+// Scope (PR-002, kooshapari/phenodag):
+//   - Span emission per node execution: start/end/error events with
+//     node_name + edge_name + attempt# attributes.
+//   - Token bucket per downstream edge: configurable rate + burst,
+//     atomic refill, non-blocking acquire.
+//   - Retry storm protection: when retry count exceeds threshold within
+//     a sliding window, the circuit opens and subsequent retries either
+//     return the cached result (if any) or fail-fast.
+//   - Context propagation: trace_id + span_id propagated across goroutines
+//     via context.Context (Go's idiomatic equivalent of tokio::task_local).
+//
+// No new module dependencies; stdlib only.
+package tracing
+
+import (
+	"sync"
+	"testing"
+	"time"
+)
+
+// ---- helpers ----
+
+// newCapturingExporter returns an Exporter and a slice that receives every
+// emitted span. Tests can assert on captured spans to validate attribute
+// schema and event ordering.
+func newCapturingExporter() (*Exporter, *[]Span) {
+	var (
+		mu     sync.Mutex
+		spans  []Span
+		clk    = time.Now
+	)
+	exp := NewExporter(func(s Span) {
+		mu.Lock()
+		defer mu.Unlock()
+		spans = append(spans, s)
+	})
+	exp.now = clk
+	return exp, &spans
+}
+
+func captured(spans *[]Span) []Span {
+	out := make([]Span, len(*spans))
+	copy(out, *spans)
+	return out
+}
+
+// ---- test 1: span emit on happy path ----
+
+func TestSpanEmitHappyPath(t *testing.T) {
+	exp, sink := newCapturingExporter()
+	SetGlobalExporter(exp)
+
+	ctx := WithTraceID(Background(), "01a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5")
+	span, end := StartSpan(ctx, "node.execute", Attrs{
+		"node_name": "L1.audit.hexa_kit.1",
+		"edge_name": "audit->report",
+		"attempt":   1,
+	})
+	if span.TraceID != "01a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5" {
+		t.Fatalf("trace_id = %q, want propagated value", span.TraceID)
+	}
+	if span.Name != "node.execute" {
+		t.Fatalf("span name = %q, want node.execute", span.Name)
+	}
+	if span.SpanID == "" {
+		t.Fatalf("span_id should be assigned")
+	}
+	if got := span.Attrs["node_name"]; got != "L1.audit.hexa_kit.1" {
+		t.Errorf("attr node_name = %v, want L1.audit.hexa_kit.1", got)
+	}
+	if got := span.Attrs["edge_name"]; got != "audit->report" {
+		t.Errorf("attr edge_name = %v, want audit->report", got)
+	}
+	if got := span.Attrs["attempt"]; got != 1 {
+		t.Errorf("attr attempt = %v, want 1", got)
+	}
+
+	end(nil) // happy path: no error
+
+	got := captured(sink)
+	if len(got) != 1 {
+		t.Fatalf("emitted %d spans, want 1", len(got))
+	}
+	final := got[0]
+	if final.Status != SpanStatusOK {
+		t.Errorf("status = %v, want OK", final.Status)
+	}
+	if final.EndTime.IsZero() {
+		t.Errorf("end time not set on close")
+	}
+	if final.StartTime.IsZero() {
+		t.Errorf("start time not set")
+	}
+}
+
+func TestSpanEmitError(t *testing.T) {
+	exp, sink := newCapturingExporter()
+	SetGlobalExporter(exp)
+
+	_, end := StartSpan(Background(), "node.execute", Attrs{"node_name": "x"})
+	end(ErrSpanFailed)
+
+	got := captured(sink)
+	if len(got) != 1 {
+		t.Fatalf("emitted %d spans, want 1", len(got))
+	}
+	if got[0].Status != SpanStatusError {
+		t.Errorf("status = %v, want Error", got[0].Status)
+	}
+	if got[0].ErrorMessage != ErrSpanFailed.Error() {
+		t.Errorf("error message = %q, want %q", got[0].ErrorMessage, ErrSpanFailed.Error())
+	}
+}
+
+// ---- test 2: token bucket burst behavior ----
+
+func TestTokenBucketBurstThenRateLimited(t *testing.T) {
+	// rate=10/sec, burst=3: 3 immediate acquires, 4th blocks / fails.
+	tb := NewTokenBucket(TokenBucketConfig{
+		Rate:  10,
+		Burst: 3,
+	})
+
+	// Initial burst: 3 acquires succeed instantly.
+	for i := 0; i < 3; i++ {
+		if !tb.TryAcquire() {
+			t.Errorf("burst acquire %d should succeed", i+1)
+		}
+	}
+	// 4th should fail (no time has passed; rate-limited).
+	if tb.TryAcquire() {
+		t.Errorf("4th acquire should fail (bucket drained)")
+	}
+	if got := tb.Available(); got != 0 {
+		t.Errorf("available = %d, want 0", got)
+	}
+	// Manually advance virtual time: 200ms at 10/sec = 2 tokens replenished.
+	tb.Advance(200 * time.Millisecond)
+	if got := tb.Available(); got != 2 {
+		t.Errorf("after 200ms at 10/s, available = %d, want 2", got)
+	}
+	// Drain again.
+	if !tb.TryAcquire() || !tb.TryAcquire() {
+		t.Errorf("post-refill acquires should succeed")
+	}
+	if tb.TryAcquire() {
+		t.Errorf("post-refill third acquire should fail")
+	}
+}
+
+func TestTokenBucketNonBlockingAcquire(t *testing.T) {
+	// Non-blocking semantics: TryAcquire must return within a microsecond
+	// regardless of bucket state (no channel waits, no sleep).
+	tb := NewTokenBucket(TokenBucketConfig{Rate: 1, Burst: 1})
+	tb.TryAcquire() // drain
+
+	done := make(chan bool, 1)
+	start := time.Now()
+	go func() {
+		_ = tb.TryAcquire() // should return false immediately
+		done <- true
+	}()
+	select {
+	case <-done:
+		if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+			t.Errorf("TryAcquire blocked for %v, want non-blocking", elapsed)
+		}
+	case <-time.After(50 * time.Millisecond):
+		t.Errorf("TryAcquire did not return within 50ms (blocking on empty bucket)")
+	}
+}
+
+// ---- test 3: retry storm → circuit opens ----
+
+func TestRetryStormOpensCircuit(t *testing.T) {
+	// threshold=3 retries within window=100ms; circuit opens at 4th.
+	g := NewRetryGuard(RetryGuardConfig{
+		Threshold:    3,
+		Window:       100 * time.Millisecond,
+		OpenFor:      1 * time.Second,
+		DegradeCache: true,
+	})
+
+	// Record 100 rapid retries (storm): each call returns CircuitOpen after
+	// the threshold is crossed.
+	cached := "cached-result"
+	var openedAt int = -1
+	for i := 0; i < 100; i++ {
+		verdict, err := g.OnRetry("edge.x", cached)
+		if err == ErrCircuitOpen {
+			if openedAt == -1 {
+				openedAt = i
+			}
+		}
+	}
+	if openedAt == -1 {
+		t.Fatalf("circuit never opened across 100 rapid retries")
+	}
+	if openedAt > 5 {
+		t.Errorf("circuit opened at retry #%d, expected within first 5 (threshold=3)", openedAt)
+	}
+
+	// After opening, with cache, we should get the cached result back.
+	verdict, err := g.OnRetry("edge.x", cached)
+	if err != ErrCircuitOpen {
+		t.Errorf("post-open err = %v, want ErrCircuitOpen", err)
+	}
+	if verdict != cached {
+		t.Errorf("post-open verdict = %q, want cached %q", verdict, cached)
+	}
+}
+
+func TestRetryGuardResetsAfterCooldown(t *testing.T) {
+	g := NewRetryGuard(RetryGuardConfig{
+		Threshold:    2,
+		Window:       50 * time.M.Millisecond,
+		OpenFor:      30 * time.Millisecond,
+		DegradeCache: false,
+	})
+	// Trip the circuit.
+	_, _ = g.OnRetry("edge.a", nil)
+	_, _ = g.OnRetry("edge.a", nil)
+	_, _ = g.OnRetry("edge.a", nil) // 3rd → open
+	if g.State("edge.a") != CircuitOpen {
+		t.Fatalf("expected CircuitOpen after threshold exceeded")
+	}
+	// Advance past cooldown.
+	g.Advance(40 * time.Millisecond)
+	if g.State("edge.a") != CircuitClosed {
+		t.Errorf("after cooldown, state = %v, want CircuitClosed", g.State("edge.a"))
+	}
+}
+
+func TestRetryGuardFailFastWithoutCache(t *testing.T) {
+	g := NewRetryGuard(RetryGuardConfig{
+		Threshold:    2,
+		Window:       100 * time.Millisecond,
+		OpenFor:      1 * time.Second,
+		DegradeCache: false,
+	})
+	_, _ = g.OnRetry("edge.b", nil)
+	_, _ = g.OnRetry("edge.b", nil)
+	_, _ = g.OnRetry("edge.b", nil) // open
+	_, err := g.OnRetry("edge.b", nil)
+	if err != ErrCircuitOpen {
+		t.Errorf("fail-fast err = %v, want ErrCircuitOpen", err)
+	}
+}
+
+// ---- test 4: context propagation ----
+
+func TestContextPropagatesTraceIDToChild(t *testing.T) {
+	parentCtx := WithTraceID(Background(), "deadbeefcafef00d")
+	parentCtx, endParent := StartSpan(parentCtx, "parent", nil)
+	defer endParent(nil)
+
+	var childTraceID, childParentSpanID string
+	done := make(chan struct{})
+	go func() {
+		// Child goroutine derives its context from the parent.
+		childSpan, endChild := StartSpan(parentCtx, "child", nil)
+		childTraceID = childSpan.TraceID
+		childParentSpanID = childSpan.ParentSpanID
+		endChild(nil)
+		close(done)
+	}()
+	<-done
+
+	if childTraceID != "deadbeefcafef00d" {
+		t.Errorf("child trace_id = %q, want deadbeefcafef00d", childTraceID)
+	}
+	if childParentSpanID == "" {
+		t.Errorf("child parent_span_id should be parent's span_id, got empty")
+	}
+	if childParentSpanID != TraceIDFromContext(parentCtx) {
+		// TraceIDFromContext returns the current span id from ctx (after StartSpan set it).
+		_ = childParentSpanID
+	}
+	// Stronger assertion: child should reference the parent's span_id as its parent.
+	parentSpanID := CurrentSpanIDFromContext(parentCtx)
+	if parentSpanID == "" {
+		t.Fatalf("parent span id missing from context")
+	}
+	if childParentSpanID != parentSpanID {
+		t.Errorf("child parent_span_id = %q, want %q (parent's span id)", childParentSpanID, parentSpanID)
+	}
+}
+
+func TestBackgroundContextGeneratesTraceID(t *testing.T) {
+	ctx := Background()
+	if id := TraceIDFromContext(ctx); id == "" {
+		t.Errorf("background ctx should have a generated trace_id")
+	}
+	if id := SpanIDFromContext(ctx); id != "" {
+		t.Errorf("background ctx should not have a span_id, got %q", id)
+	}
+}
+
+// ---- end-to-end: guard + span + token bucket compose ----
+
+func TestEndToEndCompose(t *testing.T) {
+	exp, sink := newCapturingExporter()
+	SetGlobalExporter(exp)
+
+	tb := NewTokenBucket(TokenBucketConfig{Rate: 100, Burst: 5})
+	g := NewRetryGuard(RetryGuardConfig{
+		Threshold:    2,
+		Window:       50 * time.Millisecond,
+		OpenFor:      100 * time.Millisecond,
+		DegradeCache: true,
+	})
+
+	ctx := WithTraceID(Background(), "abc123")
+	for i := 0; i < 4; i++ {
+		ctx, end := StartSpan(ctx, "edge.call", Attrs{
+			"node_name": "n1",
+			"edge_name": "a->b",
+			"attempt":   i + 1,
+		})
+		if tb.TryAcquire() {
+			_, _ = g.OnRetry("a->b", "cached")
+			end(nil)
+		} else {
+			_, err := g.OnRetry("a->b", "cached")
+			end(err)
+		}
+	}
+	got := captured(sink)
+	if len(got) != 4 {
+		t.Errorf("emitted %d spans, want 4 (one per attempt)", len(got))
+	}
+	for i, s := range got {
+		if s.Attrs["attempt"] != i+1 {
+			t.Errorf("span[%d] attempt = %v, want %d", i, s.Attrs["attempt"], i+1)
+		}
+	}
+}

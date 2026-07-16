@@ -1,0 +1,55 @@
+$ErrorActionPreference = 'SilentlyContinue'
+$exts = @('*.md','*.txt','*.json','*.toml','*.yaml','*.yml')
+$root = 'C:\Users\koosh'
+
+# Phase 1: home-root files
+Write-Host "=== Phase 1: home-root doc files ==="
+$rootFiles = Get-ChildItem -LiteralPath $root -File -Include $exts -Force -ErrorAction SilentlyContinue
+$rootHits = @($rootFiles | Select-String -Pattern 'nippon' -CaseSensitive:$false)
+Write-Host ("Home-root files: {0}; hits: {1}" -f $rootFiles.Count, $rootHits.Count)
+$rootHits | ForEach-Object {
+  Write-Host ("  {0}:L{1}: {2}" -f $_.Path, $_.LineNumber, $_.Line.Trim())
+}
+
+# Phase 2: top-level (non-recursive) files inside ONLY small/lightweight candidates.
+# Heavies excluded: Library, AppData, OneDrive, scoop, anaconda3, Downloads, .cargo,
+# .rustup, .dotnet, node_modules, npm-cache, .pnpm-store, .cache, .gradle, .m2,
+# Pictures, Videos, Music, Desktop, Templates, Links, Favorites, Saved Games, Searches,
+# Contacts, Courses, Documents, Downloads, Creative Cloud, Postman, Powercord, PrintHood,
+# SendTo, "Start Menu", Recent, "My Documents", "Local Settings", Temp, NetHood.
+$heavy = @(
+  'Library','AppData','OneDrive','scoop','anaconda3','Downloads',
+  '.cargo','.rustup','.dotnet','node_modules','npm-cache','.pnpm-store','.cache',
+  '.gradle','.m2','.bun','.android','.aws','.azure','.conda','.docker',
+  '.kube','.nuget','.expo','.factory','.harbor','.ollama',
+  'Pictures','Videos','Music','Desktop','Templates','Links','Favorites',
+  'Saved Games','Searches','Contacts','Courses','Documents','Postman','Powercord',
+  'PrintHood','SendTo','Start Menu','Recent','My Documents','Local Settings',
+  'NetHood','Creative Cloud','CreativeCloud','_pheno_absorb','_tmp-rk-check',
+  '_tc_cache','_vendor_rck','_wsm3d_audit','_fold','_audit_logs',
+  'Chat','Koofr','Moje Dokumenty','Pulpit','Pobrane','Obrazy','Muzyka','Filmy',
+  'Games','Moje','Muzyka','Obraz','Pliki','-p'
+)
+
+$candidates = Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue |
+  Where-Object { $heavy -notcontains $_.Name }
+
+Write-Host ""
+Write-Host ("=== Phase 2: top-level docs of {0} candidate dirs ===" -f $candidates.Count)
+
+$phase2Hits = 0
+foreach ($d in $candidates) {
+  $files = Get-ChildItem -LiteralPath $d.FullName -File -Include $exts -Force -ErrorAction SilentlyContinue
+  if (-not $files) { continue }
+  $hits = @($files | Select-String -Pattern 'nippon' -CaseSensitive:$false)
+  if ($hits.Count -gt 0) {
+    Write-Host ("-- {0} ({1} hit(s))" -f $d.FullName, $hits.Count)
+    foreach ($h in $hits) {
+      Write-Host ("   {0}:L{1}: {2}" -f $h.Path, $h.LineNumber, $h.Line.Trim())
+      $phase2Hits++
+    }
+  }
+}
+
+Write-Host ""
+Write-Host ("=== TOTAL: {0} hits ===" -f ($rootHits.Count + $phase2Hits))

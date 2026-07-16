@@ -1,0 +1,65 @@
+"""Annotate every member crate's Cargo.toml with [package.metadata.release-group] = <group>.
+
+Reads workspace.metadata.toml for the canonical group assignments.
+Idempotent: re-running is a no-op.
+"""
+import sys
+import tomllib
+from pathlib import Path
+
+ROOT = Path(r"C:\Users\koosh\repos\phenotype-tooling")
+META = ROOT / "workspace.metadata.toml"
+
+
+def load_groups() -> dict[str, str]:
+    with META.open("rb") as f:
+        meta = tomllib.load(f)
+    return {crate: group for group, crates in meta["release_groups"].items() for crate in crates}
+
+
+def annotate(crate: str, group: str) -> bool:
+    path = ROOT / "crates" / crate / "Cargo.toml"
+    if not path.exists():
+        return False
+    text = path.read_text(encoding="utf-8")
+    needle = f"[package.metadata.release-group]"
+    if needle in text:
+        # already annotated
+        return False
+    # find the closing ] of [package] section
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    in_pkg = False
+    inserted = False
+    for line in lines:
+        out.append(line)
+        if line.strip() == "[package]":
+            in_pkg = True
+            continue
+        if in_pkg and not inserted and line.strip() == "":
+            # blank line at end of [package] block — insert annotation before it
+            out.pop()  # remove the blank line we just appended
+            out.append(f"\n[package.metadata.release-group]\ngroup = \"{group}\"\n")
+            out.append("\n")
+            inserted = True
+            in_pkg = False
+    if not inserted:
+        # fallback: append at EOF
+        out.append(f"\n[package.metadata.release-group]\ngroup = \"{group}\"\n")
+    path.write_text("".join(out), encoding="utf-8")
+    return True
+
+
+def main() -> int:
+    groups = load_groups()
+    touched = 0
+    for crate, group in groups.items():
+        if annotate(crate, group):
+            touched += 1
+            print(f"annotated {crate} -> {group}")
+    print(f"\n{touched} crates annotated")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

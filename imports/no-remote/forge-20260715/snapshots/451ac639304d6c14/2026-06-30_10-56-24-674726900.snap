@@ -1,0 +1,395 @@
+//! Integration tests for `civis-mesh`.
+//!
+//! Covers:
+//! - Quorum happy path: N signatures accepted, N-1 rejected.
+//! - CRDT merge with concurrent edits: last-write-wins by timestamp + actor tiebreak.
+//! - Envelope round-trip with tampered ciphertext rejected.
+
+use base64::Engine;
+use civis_mesh::crdt::{merge, Dossier, FieldValue, Op};
+use civis_mesh::envelope::{decode_envelope, Envelope, EnvelopeError, Transport};
+use civis_mesh::quorum::{verify_quorum, QuorumError, Signature, SignerSet};
+use ed25519_dalek::{Signature as EdSig, SigningKey, Verifier, SECRET_KEY_LENGTH};
+use rand::rngs::OsRng;
+
+// ===========================================================================
+// Quorum tests
+// ===========================================================================
+
+fn make_signer() -> SigningKey {
+    let mut bytes = [0u8; SECRET_KEY_LENGTH];
+    rand::Rng::fill(&mut OsRng, &mut bytes);
+    SigningKey::from_bytes(&bytes)
+}
+
+/// Generate `n` signers with their public keys bundled into a `SignerSet`.
+fn make_signers(n: usize) -> (Vec<SigningKey>, SignerSet) {
+    let keys: Vec<SigningKey> = (0..n).map(|_| make_signer()).collect();
+    let set = SignerSet::from_keys(keys.iter().map(|k| k.verifying_key().to_bytes()));
+    (keys, set)
+}
+
+fn to_signature(s: &ed25519_dalek::Signature) -> Signature {
+    Signature::from_bytes(s.to_bytes())
+}
+
+#[test]
+fn quorum_accepts_exactly_n_signatures() {
+    let n = 3;
+    let (keys, set) = make_signers(n);
+    let payload = b"dossier-payload-v1";
+    let sigs: Vec<Signature> = keys
+        .iter()
+        .map(|k| to_signature(&k.sign(payload)))
+        .collect();
+
+    let result = verify_quorum(&set, payload, &sigs, n);
+    assert!(
+        result.is_ok(),
+        "expected N-of-N to verify, got: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn quorum_accepts_n_with_one_unrelated_signature() {
+    let n = 3;
+    let (keys, set) = make_signers(n);
+    let payload = b"dossier-payload-v1";
+    let mut sigs: Vec<Signature> = keys
+        .iter()
+        .map(|k| to_signature(&k.sign(payload)))
+        .collect();
+    // Add an extra (unrelated) signature — must still be accepted as long as
+    // N distinct public keys from the signers set verify.
+    let (extra_keys, _) = make_signers(1);
+    sigs.push(to_signature(&extra_keys[0].sign(payload)));
+    assert!(verify_quorum(&set, payload, &sigs, n).is_ok());
+}
+
+#[test]
+fn quorum_rejects_with_only_n_minus_one_valid_signatures() {
+    let n = 3;
+    let (keys, set) = make_signers(n);
+    let payload = b"dossier-payload-v1";
+    // Only N-1 signatures — must fail.
+    let sigs: Vec<Signature> = keys
+        .iter()
+        .take(n - 1)
+        .map(|k| to_signature(&k.sign(payload)))
+        .collect();
+    let result = verify_quorum(&set, payload, &sigs, n);
+    assert!(
+        matches!(result, Err(QuorumError::InsufficientSignatures { .. })),
+        "expected InsufficientSignatures, got: {:?}",
+        result
+    );
+}
+
+#[test]
+fn quorum_rejects_tampered_payload() {
+    let n = 2;
+    let (keys, set) = make_signers(n);
+    let payload = b"original";
+    let sigs: Vec<Signature> = keys
+        .iter()
+        .map(|k| to_signature(&k.sign(payload)))
+        .collect();
+    // Tampered payload — signatures won't match.
+    let tampered = b"evil-edit";
+    let result = verify_quorum(&set, tampered, &sigs, n);
+    assert!(
+        matches!(result, Err(QuorumError::SignatureInvalid { .. })),
+        "expected SignatureInvalid, got: {:?}",
+        result
+    );
+}
+
+#[test]
+fn quorum_rejects_duplicate_signatures() {
+    // 2 signers; both submit, but duplicates count as one.
+    let n = 2;
+    let (keys, set) = make_signers(n);
+    let payload = b"payload";
+    let only = to_signature(&keys[0].sign(payload));
+    let sigs = vec![only.clone(), only];
+    let result = verify_quorum(&set, payload, &sigs, n);
+    assert!(
+        matches!(result, Err(QuorumError::InsufficientSignatures { .. })),
+        "expected duplicates to collapse + reject, got: {:?}",
+        result
+    );
+}
+
+// ===========================================================================
+// CRDT tests
+// ===========================================================================
+
+#[test]
+fn crdt_merge_associative_idempotent_commutative() {
+    // LWW-Register + OR-Set merge must be: associative, idempotent, commutative.
+    let mut a = Dossier::new();
+    a.apply(Op::Set {
+        field: "title".into(),
+        value: FieldValue::Text("hello".into()),
+        ts: 10,
+        actor: "alice".into(),
+    });
+    a.apply(Op::Add {
+        field: "tags".into(),
+        element: "draft".into(),
+        ts: 11,
+        actor: "alice".into(),
+    });
+
+    let mut b = Dossier::new();
+    b.apply(Op::Set {
+        field: "status".into(),
+        value: FieldValue::Text("open".into()),
+        ts: 12,
+        actor: "bob".into(),
+    });
+    b.apply(Op::Add {
+        field: "tags".into(),
+        element: "urgent".into(),
+        ts: 13,
+        actor: "bob".into(),
+    });
+
+    // merge associativity: (a ⊕ b) ⊕ c == a ⊕ (b ⊕ c)
+    let mut c = Dossier::new();
+    c.apply(Op::Set {
+        field: "owner".into(),
+        value: FieldValue::Text("carol".into()),
+        ts: 14,
+        actor: "carol".into(),
+    });
+
+    let left = merge(&merge(&a, &b), &c);
+    let right = merge(&a, &merge(&b, &c));
+    assert_eq!(left, right, "merge must be associative");
+
+    // idempotent: a ⊕ a == a
+    let idem = merge(&a, &a);
+    assert_eq!(idem, a);
+
+    // commutative: a ⊕ b == b ⊕ a
+    let ab = merge(&a, &b);
+    let ba = merge(&b, &a);
+    assert_eq!(ab, ba, "merge must be commutative");
+}
+
+#[test]
+fn crdt_last_write_wins_by_timestamp_with_actor_tiebreak() {
+    let mut a = Dossier::new();
+    a.apply(Op::Set {
+        field: "title".into(),
+        value: FieldValue::Text("first".into()),
+        ts: 10,
+        actor: "alice".into(),
+    });
+
+    let mut b = Dossier::new();
+    b.apply(Op::Set {
+        field: "title".into(),
+        value: FieldValue::Text("second".into()),
+        ts: 20, // later ts wins
+        actor: "bob".into(),
+    });
+
+    let merged = merge(&a, &b);
+    assert_eq!(
+        merged.get("title"),
+        Some(&FieldValue::Text("second".into()))
+    );
+
+    // Same timestamp: actor-id tiebreak (lexicographically larger actor wins).
+    let mut c = Dossier::new();
+    c.apply(Op::Set {
+        field: "x".into(),
+        value: FieldValue::Text("c-value".into()),
+        ts: 100,
+        actor: "alice".into(),
+    });
+    let mut d = Dossier::new();
+    d.apply(Op::Set {
+        field: "x".into(),
+        value: FieldValue::Text("d-value".into()),
+        ts: 100,
+        actor: "bob".into(), // lex-larger than "alice"
+    });
+    let merged2 = merge(&c, &d);
+    assert_eq!(
+        merged2.get("x"),
+        Some(&FieldValue::Text("d-value".into())),
+        "actor-id tiebreak must select lex-larger actor on equal timestamp"
+    );
+
+    // Earlier timestamp never wins.
+    let mut e = Dossier::new();
+    e.apply(Op::Set {
+        field: "y".into(),
+        value: FieldValue::Text("loser".into()),
+        ts: 5,
+        actor: "zelda".into(),
+    });
+    let mut f = Dossier::new();
+    f.apply(Op::Set {
+        field: "y".into(),
+        value: FieldValue::Text("winner".into()),
+        ts: 6,
+        actor: "alice".into(),
+    });
+    let merged3 = merge(&e, &f);
+    assert_eq!(merged3.get("y"), Some(&FieldValue::Text("winner".into())));
+}
+
+#[test]
+fn crdt_or_set_add_remove_concurrent() {
+    // Alice adds "draft" then removes it; Bob concurrently adds "draft"
+    // (resurrecting the element). After merge: element present, since
+    // Bob's add arrived independently and remove only removes observed adds.
+    let mut a = Dossier::new();
+    a.apply(Op::Add {
+        field: "tags".into(),
+        element: "draft".into(),
+        ts: 10,
+        actor: "alice".into(),
+    });
+    a.apply(Op::Remove {
+        field: "tags".into(),
+        element: "draft".into(),
+        ts: 20,
+        actor: "alice".into(),
+    });
+
+    let mut b = Dossier::new();
+    b.apply(Op::Add {
+        field: "tags".into(),
+        element: "draft".into(),
+        ts: 15,
+        actor: "bob".into(),
+    });
+
+    let merged = merge(&a, &b);
+    // Bob's add is concurrent & independent → must survive remove.
+    let tags = merged.get_set("tags");
+    assert!(tags.contains("draft"), "concurrent add must survive remove");
+}
+
+#[test]
+fn crdt_set_idempotent_add() {
+    let mut a = Dossier::new();
+    a.apply(Op::Add {
+        field: "tags".into(),
+        element: "x".into(),
+        ts: 1,
+        actor: "alice".into(),
+    });
+    a.apply(Op::Add {
+        field: "tags".into(),
+        element: "x".into(),
+        ts: 2,
+        actor: "alice".into(),
+    });
+    let tags = a.get_set("tags");
+    assert_eq!(tags.len(), 1, "duplicate adds must be idempotent");
+}
+
+// ===========================================================================
+// Envelope tests
+// ===========================================================================
+
+#[test]
+fn envelope_round_trip_decrypts_correctly() {
+    let mut rng = OsRng;
+    let recipient_secret = x25519_dalek::StaticSecret::random_from_rng(&mut rng);
+    let recipient_public = x25519_dalek::PublicKey::from(&recipient_secret);
+
+    let transport = Transport::ephemeral_to(recipient_public);
+    let plaintext = b"hello-dossier-payload-v1";
+    let env = Envelope::seal(transport, plaintext).expect("seal");
+    let wire = env.to_wire_base64url();
+
+    // Re-create recipient transport + envelope from wire and decrypt.
+    let recipient_transport = Transport::from_recipient_secret(&recipient_secret);
+    let parsed: Envelope = Envelope::from_wire_base64url(&wire).expect("parse");
+    let pt = parsed
+        .open(&recipient_transport)
+        .expect("decrypt");
+    assert_eq!(pt, plaintext);
+}
+
+#[test]
+fn envelope_base64url_is_urlsafe_and_unpadded() {
+    let mut rng = OsRng;
+    let pub_ = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::random_from_rng(&mut rng));
+    let transport = Transport::ephemeral_to(pub_);
+    let env = Envelope::seal(transport, b"hi").unwrap();
+    let wire = env.to_wire_base64url();
+    assert!(!wire.contains('+'));
+    assert!(!wire.contains('/'));
+    assert!(!wire.contains('='), "wire must be unpadded base64url");
+    // Round trip
+    let _: Envelope =
+        Envelope::from_wire_base64url(&wire).expect("must parse unpadded base64url");
+    // Cross check: standard base64 of the same bytes DOES contain + / =
+    let raw = base64::engine::general_purpose::STANDARD.encode(wire.as_bytes());
+    // Encoded wire bytes are themselves ASCII, so standard base64 of that
+    // string still has + / =. We just confirm the wire string itself is clean.
+    let _ = raw;
+    let _ = decode_envelope; // keep symbol used (smoke)
+}
+
+#[test]
+fn envelope_tampered_ciphertext_is_rejected() {
+    let mut rng = OsRng;
+    let recipient_secret = x25519_dalek::StaticSecret::random_from_rng(&mut rng);
+    let recipient_public = x25519_dalek::PublicKey::from(&recipient_secret);
+
+    let transport = Transport::ephemeral_to(recipient_public);
+    let env = Envelope::seal(transport, b"top-secret").expect("seal");
+    let mut wire = env.to_wire_base64url();
+    // Mutate one base64url char — this flips a bit in the underlying bytes
+    // and must either flip ciphertext or the auth tag, in which case
+    // decryption fails (AEAD integrity). We flip a char in the middle.
+    let mid = wire.len() / 2;
+    let bytes = unsafe { wire.as_bytes_mut() };
+    if bytes[mid] == b'A' {
+        bytes[mid] = b'B';
+    } else {
+        bytes[mid] = b'A';
+    }
+    drop(bytes);
+
+    let parsed = Envelope::from_wire_base64url(&wire).expect("parses (random base64 may still be valid)");
+    let recipient_transport = Transport::from_recipient_secret(&recipient_secret);
+    let result = parsed.open(&recipient_transport);
+    assert!(
+        matches!(result, Err(EnvelopeError::DecryptFailed)),
+        "AEAD must reject tampered ciphertext, got: {:?}",
+        result
+    );
+}
+
+#[test]
+fn envelope_wrong_recipient_cannot_decrypt() {
+    let mut rng = OsRng;
+    let real_secret = x25519_dalek::StaticSecret::random_from_rng(&mut rng);
+    let real_pub = x25519_dalek::PublicKey::from(&real_secret);
+    let attacker_secret = x25519_dalek::StaticSecret::random_from_rng(&mut rng);
+
+    let env = Envelope::seal(Transport::ephemeral_to(real_pub), b"secret").unwrap();
+    let wire = env.to_wire_base64url();
+    let parsed = Envelope::from_wire_base64url(&wire).unwrap();
+
+    let attacker_transport = Transport::from_recipient_secret(&attacker_secret);
+    // Attacker holds the wrong X25519 secret → cannot derive the same shared
+    // secret → AEAD open fails.
+    let res = parsed.open(&attacker_transport);
+    assert!(
+        matches!(res, Err(EnvelopeError::DecryptFailed)),
+        "expected AEAD failure for wrong recipient, got: {:?}",
+        res
+    );
+}

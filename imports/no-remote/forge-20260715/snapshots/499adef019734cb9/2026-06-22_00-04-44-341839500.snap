@@ -1,0 +1,41 @@
+$ErrorActionPreference = 'Stop'
+$repo = 'phenotype-registry'
+$owner = 'KooshaPari'
+
+function Get-GhJson {
+  param([string[]]$Args)
+  $tmp = [System.IO.Path]::GetTempFileName()
+  & gh api @Args *> $tmp
+  $content = Get-Content $tmp -Raw
+  Remove-Item $tmp -Force
+  if ($null -eq $content -or $content.Trim() -eq '') { return $null }
+  $clean = [regex]::Replace($content, "\x1B\[[0-9;]*m", '')
+  return $clean
+}
+
+Write-Host "=== Workflows ==="
+$wf = Get-GhJson @('repos',"$owner/$repo",'contents','.github/workflows') | ConvertFrom-Json
+$wf | ForEach-Object { Write-Host ("WF: " + $_.name + " (" + $_.size + "b)") }
+
+Write-Host "=== Actions runs (last 5) ==="
+$runs = Get-GhJson @('repos',"$owner/$repo",'actions/runs?per_page=5') | ConvertFrom-Json
+$runs.workflow_runs | Select-Object -First 5 | ForEach-Object {
+  Write-Host ("RUN: id=" + $_.id + " name='" + $_.name + "' conclusion=" + $_.conclusion + " status=" + $_.status + " event=" + $_.event + " branch=" + $_.head_branch + " created=" + $_.created_at)
+}
+
+Write-Host "=== Commits on main (last 3) ==="
+$cm = Get-GhJson @('repos',"$owner/$repo",'commits?sha=main&per_page=3') | ConvertFrom-Json
+$cm | Select-Object -First 3 | ForEach-Object {
+  $msg = ($_.commit.message -split "`n")[0]
+  Write-Host ("CMT: " + $_.sha.Substring(0,8) + " " + $_.commit.author.date + " " + $_.commit.author.name + " - " + $msg)
+}
+
+Write-Host "=== Single workflow YAML ==="
+$wfPath = $wf[0].path
+$pathSegs = $wfPath -split '/'
+$wfJson = Get-GhJson (@('repos',"$owner/$repo",'contents') + $pathSegs)
+$wfObj = $wfJson | ConvertFrom-Json
+$bytes = [Convert]::FromBase64String($wfObj.content)
+$text = [System.Text.Encoding]::UTF8.GetString($bytes)
+Write-Host "----- file: $wfPath -----"
+Write-Host $text

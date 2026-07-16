@@ -1,0 +1,13 @@
+import json
+d=json.load(open(r'C:\Users\koosh\_open_issues.json','r',encoding='utf-8'))
+print('Total open:', len(d))
+kp=[i for i in d if i['author']['login']=='KooshaPari']
+print('By KooshaPari:', len(kp))
+others=[i for i in d if i['author']['login']!='KooshaPari']
+print('By others:', len(others))
+print('--- Koosha issues (newest 40) ---')
+for i in sorted(kp, key=lambda x: -x['number'])[:40]:
+    print(f"  #{i['number']:5d} {i['createdAt'][:10]} {i['title'][:80]}")
+print('--- Others (newest 30) ---')
+for i in sorted(others, key=lambda x: -x['number'])[:30]:
+    print(f"  #{i['number']:5d} {i['createdAt'][:10]} @{i['author']['login'][:20]:20s} {i['title'][:60]}")

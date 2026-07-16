@@ -1,0 +1,88 @@
+"""Fast: pull authoritative repo list from GitHub via gh search in pages of 100."""
+import json, subprocess, os
+
+env = {**os.environ, 'NO_COLOR': '1', 'GH_NO_COLOR': '1'}
+
+# Use REST search: /search/repositories?q=user:USERNAME&per_page=100
+# Or use gh api search. Try gh api directly with paginated curl-style.
+import urllib.parse
+
+out = []
+page = 1
+while True:
+    r = subprocess.run(
+        ['gh', 'api', f'/search/repositories?q=user:kooshapari+archived:false&per_page=100&page={page}'],
+        capture_output=True, text=True, timeout=60, env=env
+    )
+    if r.returncode != 0:
+        print('err:', r.stderr[:200]); break
+    j = json.loads(r.stdout)
+    items = j.get('items', [])
+    if not items:
+        break
+    for it in items:
+        out.append({
+            'name': it['name'],
+            'nameWithOwner': it['full_name'],
+            'owner': it['owner']['login'],
+            'isArchived': it['archived'],
+            'isFork': it['fork'],
+            'isPrivate': it['private'],
+            'description': it.get('description', ''),
+            'language': it.get('language'),
+            'sizeKB': it.get('size', 0),
+            'pushedAt': it.get('pushed_at'),
+            'updatedAt': it.get('updated_at'),
+            'stars': it.get('stargazers_count', 0),
+            'defaultBranch': it.get('default_branch', 'main'),
+            'diskUsage': it.get('size', 0),
+        })
+    print(f'page {page}: +{len(items)} (total {len(out)}), total_count={j.get("total_count")}')
+    if len(out) >= j.get('total_count', 0):
+        break
+    page += 1
+    if page > 20: break
+
+with open(r'C:\Users\koosh\_gh_search_user.json','w',encoding='utf-8') as f:
+    json.dump(out, f, indent=2)
+print(f'wrote {len(out)} repos')
+
+# Also pull pheno-org separately (the org most repos belong to)
+out2 = []
+page = 1
+while True:
+    r = subprocess.run(
+        ['gh', 'api', f'/search/repositories?q=org:pheno-org+archived:false&per_page=100&page={page}'],
+        capture_output=True, text=True, timeout=60, env=env
+    )
+    if r.returncode != 0:
+        print('err2:', r.stderr[:200]); break
+    j = json.loads(r.stdout)
+    items = j.get('items', [])
+    if not items:
+        break
+    for it in items:
+        out2.append({
+            'name': it['name'],
+            'nameWithOwner': it['full_name'],
+            'owner': it['owner']['login'],
+            'isArchived': it['archived'],
+            'isFork': it['fork'],
+            'isPrivate': it['private'],
+            'description': it.get('description', ''),
+            'language': it.get('language'),
+            'sizeKB': it.get('size', 0),
+            'pushedAt': it.get('pushed_at'),
+            'updatedAt': it.get('updated_at'),
+            'stars': it.get('stargazers_count', 0),
+            'defaultBranch': it.get('default_branch', 'main'),
+        })
+    print(f'org page {page}: +{len(items)}')
+    if len(out2) >= j.get('total_count', 0):
+        break
+    page += 1
+    if page > 20: break
+
+with open(r'C:\Users\koosh\_gh_search_org.json','w',encoding='utf-8') as f:
+    json.dump(out2, f, indent=2)
+print(f'wrote {len(out2)} pheno-org repos')

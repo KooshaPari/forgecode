@@ -1,0 +1,366 @@
+#!/usr/bin/env node
+// scripts/deps/audit.mjs — PR-014 dependency audit runner.
+//
+// Runs `npm audit --json` (zero npm deps; the npm CLI is stdlib for this work),
+// normalizes the result into a stable per-package/per-CVE shape, then emits one
+// of two sinks depending on operator configuration:
+//
+//   * DEFAULT — append a JSONL record to `.omniroute/dependency-audit.jsonl`
+//     (one line per audit run, schema-stable for ingest by the vuln-gate).
+//   * PROMETHEUS — push a per-severity counter to a Prometheus pushgateway
+//     when DEPENDENCY_AUDIT_PUSHGATEWAY is set (e.g. http://pushgw:9091).
+//
+// Exit codes:
+//   0  — clean (no HIGH/CRITICAL CVEs).
+//   1  — HIGH/CRITICAL CVE(s) present but tolerable (still writes the JSONL).
+//   2  — audit infrastructure failure (npm audit blew up, network, parse).
+//
+// This script is WINDOWS-SAFE: only `node:` stdlib is used for fs/path/process,
+// and process spawning uses `spawnSync({ shell: false })` so PowerShell parsing
+// on a developer laptop never breaks argv. It is invoked from:
+//
+//   * `npm run deps:audit` (developer ad-hoc)
+//   * `.github/workflows/dependency-audit.yml` (weekly, Monday 09:00 UTC)
+//   * `POST /api/v1/deps/audit` (admin scope, on-demand)
+
+import { spawnSync } from "node:child_process";
+import { appendFileSync, mkdirSync, existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Resolve the project root from this script. The script lives at
+// `scripts/deps/audit.mjs` so two levels up is the root regardless of CWD,
+// which keeps CI and developer ad-hoc invocations identical.
+const PROJECT_ROOT = resolve(__dirname, "..", "..");
+
+/**
+ * Severity ranking — npm uses "info|low|moderate|high|critical"; GH uses
+ * "low|medium|high|critical". We normalize everything to the npm scale and
+ * expose both via `severityNpm` / `severityGh` for downstream consumers.
+ */
+const SEVERITY_ORDER = ["info", "low", "moderate", "high", "critical"];
+
+const HIGH_OR_ABOVE = new Set(["high", "critical"]);
+
+/**
+ * Where the JSONL sink lives by default. We keep it under `.omniroute/` so it
+ * sits next to the runtime data directory but is `.gitignore`-d — see
+ * `.gitignore` for the `.omniroute/` exclusion. CI overrides via
+ * `DEPENDENCY_AUDIT_JSONL=/path/to/file.jsonl` when running in a sandbox.
+ */
+const DEFAULT_JSONL_PATH = join(PROJECT_ROOT, ".omniroute", "dependency-audit.jsonl");
+
+/**
+ * Pull the jsonl target out of env, falling back to the default path.
+ * Exported so the unit test (`tests/unit/security/audit.test.ts`) can verify
+ * the precedence order without booting the whole pipeline.
+ */
+export function resolveJsonlPath(env = process.env, projectRoot = PROJECT_ROOT) {
+  const override = env.DEPENDENCY_AUDIT_JSONL;
+  if (override && override.length > 0) return resolve(override);
+  return DEFAULT_JSONL_PATH;
+}
+
+/**
+ * Pull the pushgateway URL out of env. `null` means "do not push". The
+ * optional `job` label becomes the Prometheus job_name (defaults to
+ * `omniroute_dependency_audit`).
+ */
+export function resolvePushgateway(env = process.env) {
+  const url = env.DEPENDENCY_AUDIT_PUSHGATEWAY;
+  if (!url) return null;
+  return {
+    url: url.replace(/\/+$/, ""),
+    job: env.DEPENDENCY_AUDIT_PUSHGATEWAY_JOB || "omniroute_dependency_audit",
+  };
+}
+
+/**
+ * Spawn npm audit and capture the JSON. `npm` is PATH-resolved by the shell
+ * here; on Windows the spawn below uses `shell: false` so the `.cmd` shim
+ * isn't accidentally re-parsed by cmd.exe with bad quoting.
+ *
+ * Returns `{ ok, stdout, stderr, code }` — never throws.
+ */
+export function runNpmAudit(cwd = PROJECT_ROOT) {
+  const isWindows = process.platform === "win32";
+  const cmd = isWindows ? "npm.cmd" : "npm";
+  const result = spawnSync(cmd, ["audit", "--json", "--audit-level=none"], {
+    cwd,
+    encoding: "utf8",
+    shell: false,
+    maxBuffer: 64 * 1024 * 1024, // 64 MiB — npm audit blobs can be large for monorepos
+  });
+  return {
+    ok: result.status === 0 || (result.stdout && result.stdout.length > 0),
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    code: result.status ?? -1,
+  };
+}
+
+/**
+ * Normalize npm audit JSON into a flat per-vulnerability shape that the gate
+ * and the API route can both consume. Each `vulnerabilities` entry from npm is
+ * fanned out into one record per (package, cve/severity combo) because a single
+ * package can have multiple advisories.
+ *
+ * `nowMs` is injected so tests can pin the timestamp.
+ */
+export function parseAudit(rawJson, nowMs = Date.now()) {
+  let parsed;
+  try {
+    parsed = JSON.parse(rawJson);
+  } catch (err) {
+    return {
+      ok: false,
+      error: `npm audit output was not valid JSON: ${err && err.message ? err.message : String(err)}`,
+      vulnerabilities: [],
+      totals: emptyTotals(nowMs),
+    };
+  }
+
+  const vulnerabilities = [];
+  const vulns = parsed.vulnerabilities || {};
+  for (const [pkgName, info] of Object.entries(vulns)) {
+    if (!info || typeof info !== "object") continue;
+    const severity = normalizeSeverity(info.severity);
+    const via = Array.isArray(info.via) ? info.via : [];
+    // `via` is heterogeneous — it can contain string advisory names OR
+    // nested objects with the full advisory (CVE id, title, url, etc.).
+    // We dedupe CVE ids here so an advisory referenced twice collapses.
+    const advisoryIds = new Set();
+    const advisorySummaries = [];
+    for (const entry of via) {
+      if (typeof entry === "string") {
+        advisoryIds.add(entry);
+        advisorySummaries.push({ id: entry, title: null, url: null });
+      } else if (entry && typeof entry === "object") {
+        const id = entry.source || entry.name || entry.id || entry.cwe || "unknown";
+        advisoryIds.add(String(id));
+        advisorySummaries.push({
+          id: String(id),
+          title: entry.title || null,
+          url: entry.url || null,
+        });
+      }
+    }
+    // npm's `range` is the version range affected (e.g. "<2.0.0"). Useful in
+    // the operator UI for "do I even ship this version?".
+    const range = info.range || null;
+    const fixAvailable = info.fixAvailable ?? null;
+    // If fixAvailable is a boolean, npm has decided there is no patch path.
+    // If it is an object, it carries the resolved fixed version string.
+    let fixVersion = null;
+    let fixIsTransitiveOnly = false;
+    if (typeof fixAvailable === "object" && fixAvailable !== null) {
+      fixVersion = fixAvailable.version || null;
+      fixIsTransitiveOnly = Boolean(fixAvailable.isSemVerMajor || fixAvailable.major);
+    }
+    vulnerabilities.push({
+      packageName: pkgName,
+      severity,
+      severityRank: SEVERITY_ORDER.indexOf(severity),
+      range,
+      fixVersion,
+      fixIsTransitiveOnly,
+      advisoryIds: Array.from(advisoryIds),
+      advisorySummaries,
+      detectedAt: new Date(nowMs).toISOString(),
+    });
+  }
+
+  // Build per-severity totals — these are what the Prometheus exporter emits.
+  const totals = emptyTotals(nowMs);
+  totals.metadata = {
+    auditVersion: parsed.metadata?.vulnerabilities?.version || null,
+    dependencies: parsed.metadata?.dependencies || 0,
+    devDependencies: parsed.metadata?.devDependencies || 0,
+    totalDependencies: parsed.metadata?.totalDependencies || 0,
+    tool: "npm audit",
+  };
+
+  for (const v of vulnerabilities) {
+    totals.severityCounts[v.severity] = (totals.severityCounts[v.severity] || 0) + 1;
+    totals.total += 1;
+    if (HIGH_OR_ABOVE.has(v.severity)) totals.highOrAbove += 1;
+  }
+  return { ok: true, vulnerabilities, totals };
+}
+
+function emptyTotals(nowMs) {
+  const counts = {};
+  for (const s of SEVERITY_ORDER) counts[s] = 0;
+  return {
+    timestamp: new Date(nowMs).toISOString(),
+    severityCounts: counts,
+    total: 0,
+    highOrAbove: 0,
+    metadata: {},
+  };
+}
+
+function normalizeSeverity(severity) {
+  if (typeof severity !== "string") return "info";
+  const lower = severity.toLowerCase();
+  if (lower === "medium") return "moderate"; // normalize GitHub's "medium" → npm's "moderate"
+  if (SEVERITY_ORDER.includes(lower)) return lower;
+  return "info";
+}
+
+/**
+ * Format a Prometheus text-exposition payload for one audit run. One metric,
+ * `omniroute_dependency_vulnerabilities_total`, with `severity` and `package`
+ * labels — exactly what the spec calls for.
+ */
+export function toPrometheusPayload(auditResult, runId = randomUUID()) {
+  const lines = [
+    "# HELP omniroute_dependency_vulnerabilities_total Number of known vulnerabilities per (severity, package).",
+    "# TYPE omniroute_dependency_vulnerabilities_total counter",
+  ];
+  // Always emit a zero row per known severity so the gauge never disappears
+  // from dashboards between audit runs.
+  for (const sev of SEVERITY_ORDER) {
+    lines.push(`omniroute_dependency_vulnerabilities_total{severity="${sev}",package=""} 0`);
+  }
+  for (const v of auditResult.vulnerabilities || []) {
+    const pkg = v.packageName.replace(/"/g, "");
+    lines.push(
+      `omniroute_dependency_vulnerabilities_total{severity="${v.severity}",package="${pkg}"} 1`
+    );
+  }
+  // Also push a run metadata gauge so operators can correlate a number with
+  // a specific audit timestamp. Counters can't carry a timestamp label.
+  lines.push("# HELP omniroute_dependency_audit_last_run_seconds Unix seconds of the last audit run.");
+  lines.push("# TYPE omniroute_dependency_audit_last_run_seconds gauge");
+  const ts = Math.floor(new Date(auditResult.totals.timestamp).getTime() / 1000);
+  lines.push(`omniroute_dependency_audit_last_run_seconds{run_id="${runId}"} ${ts}`);
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * Push the Prometheus payload to a pushgateway via HTTP PUT. Uses the global
+ * `fetch` (Node 20.20.2+ has it; see .node-version). Failure here is logged
+ * but NEVER fails the audit — the JSONL sink is the authoritative record and
+ * the gate only reads the JSONL.
+ */
+export async function pushToPrometheus(pushgateway, payload, fetchImpl = globalThis.fetch) {
+  if (!pushgateway) return { pushed: false, reason: "no pushgateway configured" };
+  if (typeof fetchImpl !== "function") return { pushed: false, reason: "fetch unavailable" };
+  const url = `${pushgateway.url}/metrics/job/${encodeURIComponent(pushgateway.job)}`;
+  try {
+    const res = await fetchImpl(url, {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain; version=0.0.4" },
+      body: payload,
+    });
+    return { pushed: res.ok, status: res.status };
+  } catch (err) {
+    return { pushed: false, error: err && err.message ? err.message : String(err) };
+  }
+}
+
+/**
+ * Append one JSONL record for this audit run. Creates parent dirs. Writes
+ * happen synchronously to avoid losing data if the process is killed mid-run.
+ */
+export function appendJsonl(jsonlPath, record) {
+  const dir = dirname(jsonlPath);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  appendFileSync(jsonlPath, JSON.stringify(record) + "\n", "utf8");
+  return jsonlPath;
+}
+
+/**
+ * Build the full audit record (one JSONL line) from an npm-audit raw output
+ * string. The record carries the run id, the per-vulnerability list, and the
+ * summary totals so the gate can scan history without re-parsing npm output.
+ */
+export function buildAuditRecord(rawJson, opts = {}) {
+  const nowMs = typeof opts.nowMs === "number" ? opts.nowMs : Date.now();
+  const parsed = parseAudit(rawJson, nowMs);
+  const runId = opts.runId || randomUUID();
+  return {
+    runId,
+    schemaVersion: 1,
+    timestamp: parsed.totals.timestamp,
+    totals: parsed.totals,
+    vulnerabilities: parsed.vulnerabilities,
+    parseOk: parsed.ok,
+    parseError: parsed.error || null,
+  };
+}
+
+/**
+ * Top-level orchestrator. Returns the audit record + the resolved sinks so
+ * tests can inspect what was written where.
+ */
+export async function runAudit(opts = {}) {
+  const runId = opts.runId || randomUUID();
+  const cwd = opts.cwd || PROJECT_ROOT;
+  const spawn = opts.spawn || runNpmAudit;
+  const jsonlPath = resolveJsonlPath(opts.env || process.env, cwd);
+  const pushgateway = resolvePushgateway(opts.env || process.env);
+
+  const spawnResult = spawn(cwd);
+  if (!spawnResult.stdout && spawnResult.code !== 0) {
+    return {
+      ok: false,
+      runId,
+      jsonlPath,
+      pushgateway,
+      error: `npm audit failed (code=${spawnResult.code}): ${spawnResult.stderr.slice(0, 500)}`,
+      record: null,
+    };
+  }
+
+  const record = buildAuditRecord(spawnResult.stdout, { runId, nowMs: opts.nowMs });
+  appendJsonl(jsonlPath, record);
+
+  let pushResult = { pushed: false, reason: "skipped" };
+  if (pushgateway) {
+    const payload = toPrometheusPayload(record, runId);
+    pushResult = await pushToPrometheus(pushgateway, payload, opts.fetchImpl);
+  }
+
+  // Exit semantics:
+  //   * 0 — no high/critical CVEs (clean)
+  //   * 1 — high/critical CVEs present (still wrote JSONL)
+  //   * 2 — audit infra failure (parse error, npm audit exit non-zero with no body)
+  let exitCode = 0;
+  if (!record.parseOk) exitCode = 2;
+  else if (record.totals.highOrAbove > 0) exitCode = 1;
+
+  return {
+    ok: record.parseOk,
+    runId,
+    jsonlPath,
+    pushgateway,
+    pushResult,
+    record,
+    exitCode,
+  };
+}
+
+// CLI entry point — only invoke the orchestrator when this script is the
+// process entry point, NOT when it is `import`ed by tests.
+if (import.meta.url === `file://${process.argv[1]}` || import.meta.url.endsWith(process.argv[1])) {
+  runAudit().then((result) => {
+    if (result.record) {
+      // stdout summary keeps the developer's terminal readable; CI only
+      // scrapes the JSONL so the prose is purely informational.
+      process.stdout.write(
+        `[deps:audit] run=${result.runId} vulns=${result.record.totals.total} ` +
+          `high+=${result.record.totals.highOrAbove} jsonl=${result.jsonlPath}\n`
+      );
+    }
+    if (!result.ok && result.error) {
+      process.stderr.write(`[deps:audit] ERROR: ${result.error}\n`);
+    }
+    process.exit(result.exitCode ?? 0);
+  });
+}

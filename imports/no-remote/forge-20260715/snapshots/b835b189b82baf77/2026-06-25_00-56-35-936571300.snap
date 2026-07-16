@@ -1,0 +1,14 @@
+# _check-ps-parse.ps1 — parse-check the canonical PowerShell gate
+$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+[System.Management.Automation.Language.Parser]::ParseFile(
+    'C:\Users\koosh\repos\phenotype-tooling\bin\repo-delete-gate.ps1',
+    [ref]$tokens, [ref]$errors)
+if ($errors.Count -eq 0) {
+    'PS_PARSE_OK'
+} else {
+    foreach ($e in $errors) {
+        'PS_PARSE_ERR: ' + $e.Message
+    }
+}

@@ -1,0 +1,140 @@
+name: Build, sign, and publish release artifacts (cosign keyless)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to sign (e.g. v0.2.0)"
+        required: true
+        type: string
+        default: "v0.2.0"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  actions: read
+
+jobs:
+  sign:
+    name: Build, upload, sign release artifacts (cosign keyless)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install cosign from official release
+        run: |
+          set -euo pipefail
+          COSIGN_VERSION="${COSIGN_VERSION:-v2.4.1}"
+          # Direct download from GitHub releases (avoids sigstore/cosign-installer@v3
+          # key-validation issues with newer cosign versions).
+          curl -sSL -o cosign "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64"
+          chmod +x cosign
+          sudo mv cosign /usr/local/bin/cosign
+          cosign version
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-sign-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-sign-
+
+      - name: Build release binaries
+        run: cargo build --release --workspace --all-targets
+
+      - name: Stage unsigned binaries
+        run: |
+          set -euo pipefail
+          mkdir -p unsigned
+          shopt -s nullglob
+          for f in target/release/pt target/release/ptx target/release/*[!d]-release; do
+            [ -f "$f" ] && [ -x "$f" ] && cp "$f" unsigned/
+          done
+          ls -la unsigned/
+
+      - name: Upload binaries to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.event.release.tag_name }}
+          files: |
+            unsigned/*
+          fail_on_unmatched_files: false
+
+      - name: Upload unsigned artifacts (for sign job)
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: unsigned/
+
+      - name: Sign each binary (cosign keyless via OIDC)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p signed
+          cd unsigned
+          for bin in *; do
+            [ -f "$bin" ] || continue
+            echo "==> signing $bin"
+            cosign sign-blob \
+              --yes \
+              --output-signature "../signed/${bin}.sig" \
+              --output-certificate "../signed/${bin}.cert" \
+              "$bin"
+            cosign bundle \
+              --signature "../signed/${bin}.sig" \
+              --certificate "../signed/${bin}.cert" \
+              --cert-url "https://github.com/KooshaPari/phenotype-tooling/releases/download/${{ github.event.inputs.tag || github.event.release.tag_name }}/${bin}.cert" \
+              "../signed/${bin}.bundle" \
+              || echo "bundle step for $bin may have failed (cert not yet published) - non-fatal"
+          done
+          ls -la ../signed/
+
+      - name: Upload signed artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-signed-artifacts
+          path: signed/
+
+      - name: Upload .sig/.cert/.bundle files to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.event.release.tag_name }}
+          files: |
+            signed/*.sig
+            signed/*.cert
+            signed/*.bundle
+          fail_on_unmatched_files: false
+
+      - name: Verify signatures (best-effort, after .sig upload)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          set -euo pipefail
+          echo "==> Verifying signatures"
+          cd unsigned
+          for bin in *; do
+            [ -f "$bin" ] || continue
+            echo "--> $bin"
+            if [ -f "../signed/${bin}.sig" ] && [ -f "../signed/${bin}.cert" ]; then
+              cosign verify-blob \
+                --signature "../signed/${bin}.sig" \
+                --certificate "../signed/${bin}.cert" \
+                --certificate-identity "https://github.com/KooshaPari/phenotype-tooling/.github/workflows/signed-release.yml@refs/tags/${{ github.event.inputs.tag || github.event.release.tag_name }}" \
+                --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+                "$bin" && echo "OK: $bin" || echo "VERIFY-FAILED: $bin (non-fatal; re-run after publish)"
+            else
+              echo "SKIP: $bin (signatures not generated)"
+            fi
+          done

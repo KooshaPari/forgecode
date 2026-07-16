@@ -1,0 +1,4 @@
+$path = 'C:\Users\koosh\AppData\Local\Temp\setupnode_rel.json'
+$json = Get-Content $path -Raw
+$obj = $json | ConvertFrom-Json
+$obj[0..5] | Select-Object tag_name, published_at | Format-Table -AutoSize

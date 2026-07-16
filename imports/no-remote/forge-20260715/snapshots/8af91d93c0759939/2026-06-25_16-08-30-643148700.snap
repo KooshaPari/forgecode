@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/pheno-dag",
+]
+
+[package]
+name = "phenotype-registry"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "phenotype_registry"
+path = "src/lib.rs"
+
+[dev-dependencies]
+proptest = "1"

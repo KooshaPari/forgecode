@@ -1,0 +1,11 @@
+import subprocess, json, os
+# Maybe gh uses lipgloss and check for actual stdout handle type. Force redirect to a file.
+cmd = ["gh", "api", "repos/KooshaPari/Tracera/git/ref/heads/main"]
+with open("test_out.txt", "wb") as f:
+    r = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, text=False, timeout=60)
+print("RC:", r.returncode)
+print("STDERR:", r.stderr.decode("utf-8", "replace"))
+with open("test_out.txt", "rb") as f:
+    data = f.read()
+print("LEN:", len(data))
+print("FIRST 200:", repr(data[:200]))

@@ -1,0 +1,76 @@
+"""Find nanovms, phenocompose, byteport repos on GitHub."""
+import json, subprocess, sys, os, re
+
+def gh_api(path):
+    """Call gh api and return parsed JSON."""
+    env = os.environ.copy()
+    env["NO_COLOR"] = "1"
+    env["GH_NO_UPDATE_NOTIFIER"] = "1"
+    # Get GITHUB_TOKEN from .env file
+    try:
+        with open(os.path.expanduser("~/.env"), "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = re.match(r'^GITHUB_TOKEN=(.+)$', line.strip())
+                if m:
+                    env["GH_TOKEN"] = m.group(1)
+                    break
+    except FileNotFoundError:
+        pass
+    
+    # Use --no-color flag
+    result = subprocess.run(
+        ["gh", "api", "--no-color", path],
+        capture_output=True, timeout=30, env=env
+    )
+    # gh api outputs ANSI even with --no-color via stdout; decode as utf-8 with replacement
+    stdout = result.stdout.decode("utf-8", errors="replace")
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace")
+        print(f"gh api error ({result.returncode}): {stderr[:500]}")
+        return []
+    # Strip ANSI escape codes
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    stdout = ansi_escape.sub('', stdout)
+    # Strip leading whitespace/control chars before JSON
+    stdout = stdout.lstrip()
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError as e:
+        print(f"JSON parse error: {e}")
+        print(f"First 200 chars: {stdout[:200]}")
+        return []
+
+# Search for the 3 repos
+targets = ["nanovms", "phenocompose", "byteport", "pheno-compose"]
+all_data = gh_api("user/repos?per_page=100&sort=updated")
+if all_data:
+    print(f"\n=== All {len(all_data)} user repos ===")
+    matches = [r for r in all_data if any(t in (r.get("name","") + (r.get("description") or "")).lower() for t in targets)]
+    print(f"=== Target matches ({len(matches)}) ===")
+    for r in matches:
+        name = r.get("name", "?")
+        desc = (r.get("description") or "")[:80]
+        priv = r.get("private", False)
+        arch = r.get("archived", False)
+        lang = r.get("language") or "?"
+        print(f"  {name:40s} | {desc:80s} | priv={priv} arch={arch} lang={lang}")
+
+    # Also search org-wide
+    org_data = gh_api("orgs/kooshapari/repos?per_page=100")
+    if isinstance(org_data, list):
+        print(f"\n=== All {len(org_data)} org repos ===")
+        org_matches = [r for r in org_data if any(t in (r.get("name","") + (r.get("description") or "")).lower() for t in targets)]
+        print(f"=== Org target matches ({len(org_matches)}) ===")
+        for r in org_matches:
+            name = r.get("name", "?")
+            desc = (r.get("description") or "")[:80]
+            print(f"  {name:40s} | {desc:80s}")
+
+    # Print ALL repo names for reference
+    print(f"\n=== ALL REPO NAMES ===")
+    for r in all_data:
+        name = r.get("name", "?")
+        desc = (r.get("description") or "")[:60]
+        print(f"  {name:45s} | {desc}")
+else:
+    print("Failed to get repo data")

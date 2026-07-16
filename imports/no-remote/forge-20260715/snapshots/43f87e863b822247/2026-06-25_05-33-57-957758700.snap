@@ -1,0 +1,20 @@
+@echo off
+setlocal enabledelayedexpansion
+
+set "FILES=.editorconfig .gitignore .gitattributes .github\CODEOWNERS SECURITY.md .github\FUNDING.yml LICENSE"
+set "REPOS=phenotype-infra PhenoCompose BytePort Benchora Tracera nanovms portage phenodag vibeproxy-monitoring-unified heliosBench"
+
+for %%r in (%REPOS%) do (
+  echo ====== %%r ======
+  for %%f in (%FILES%) do (
+    set "fullpath=C:\Users\koosh\%%r\%%f"
+    if exist "!fullpath!" (
+      echo   PRESENT: %%f
+    ) else (
+      echo   MISSING: %%f
+    )
+  )
+  echo.
+)
+
+endlocal

@@ -1,0 +1,12 @@
+import path from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const repoRoot = path.resolve(__dirname, '..')
+const configPath = path.join(repoRoot, 'docs/.vitepress/config.mjs')
+const cfg = (await import(pathToFileURL(configPath).href)).default
+console.log('srcDir:', cfg.srcDir)
+console.log('outDir:', cfg.outDir)
+console.log('srcExclude:', cfg.srcExclude)
+console.log('rewrites:', cfg.rewrites)
+console.log('cleanUrls:', cfg.cleanUrls)
+console.log('ignoreDeadLinks:', cfg.ignoreDeadLinks)

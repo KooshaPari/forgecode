@@ -1,0 +1,32 @@
+[package]
+name = "gauge"
+version = "0.2.0"
+edition = "2021"
+description = "Modern benchmarking + xDD testing framework for Rust"
+license = "MIT"
+repository = "https://github.com/KooshaPari/gauge"
+readme = "README.md"
+
+[dependencies]
+criterion = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+async-trait = "0.1"
+tokio = { version = "1.0", features = ["full"] }
+proptest = "1.0"
+quickcheck = "1.0"
+
+[dev-dependencies]
+tempfile = "3.0"
+assert_cmd = "2.0"
+predicates = "3.0"
+
+[[bench]]
+name = "my_benchmark"
+harness = false
+
+[workspace]
+[workspace.package]
+
+rust-version = "1.75"

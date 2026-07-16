@@ -1,0 +1,13 @@
+{
+  "name": "pheno-harness",
+  "disposition": "AFFIRM",
+  "absorbed_into": null,
+  "status": "active",
+  "audit_artifact": "pheno-harness-2026-06-25.md",
+  "repo_path": "KooshaPari/pheno-harness",
+  "description": "Test harness for phenotype orchestration",
+  "role": "federated-tools",
+  "audited_at": "2026-06-25",
+  "lifecycle": "active",
+  "guardian": "kooshapari"
+}

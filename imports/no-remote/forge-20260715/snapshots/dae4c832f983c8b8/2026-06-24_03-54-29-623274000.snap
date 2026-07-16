@@ -1,0 +1,23 @@
+@echo off
+setlocal
+cd /d C:\Users\koosh\Civis
+
+REM Verify token
+for /f "delims=" %%i in ('gh auth token 2^>nul') do set "TOK=%%i"
+echo TOKEN_LEN=
+echo %TOK%> _tok_len_check.txt
+for %%A in (_tok_len_check.txt) do set LEN=%%~zA
+del _tok_len_check.txt
+echo Token byte count approx %LEN%
+
+REM Disable credential helper at local config level
+git config --local --unset-all credential.https://github.com.helper 2>nul
+git config --local credential.helper ""
+git config --local --get-all credential.helper
+
+REM Push using askpass
+set GIT_ASKPASS=C:\Users\koosh\Civis\_askpass.bat
+set GIT_TERMINAL_PROMPT=0
+git push -u origin fix/security-replay-path-traversal
+
+echo --- EXIT %ERRORLEVEL% ---

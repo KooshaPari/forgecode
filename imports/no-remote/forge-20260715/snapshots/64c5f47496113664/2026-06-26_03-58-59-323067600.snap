@@ -1,0 +1,21 @@
+## Summary
+Add save/load slot browser with metadata display, delete functionality, and refresh button to the Bevy client.
+
+## Context
+The existing save/load panel (FR-CIV-CLIENT-003) supported basic save/load across 5 slots but lacked slot metadata visibility and delete capability, making save management cumbersome. This completes the save-slot UX by showing per-slot tick count, population, world age, map size, settlement count, and religion, along with delete and refresh operations.
+
+## Changes
+- Added `SlotInfo` struct with full metadata fields (name, tick, world_age, map_size, population, size_bytes, settled, religion)
+- Extended `SaveLoadPanel` resource with cached slot list and refresh timestamp
+- Added `Delete(u8)` action variant for per-slot deletion via `save.delete` RPC
+- Added `Refresh` button alongside `List Saves` for explicit re-query
+- Render inline metadata below each slot button (tick, population, age, map size, size with human-readable formatting, settlements)
+- Added `fmt_opt()` helper for ergonomic optional-value display
+
+## Testing
+1. Launch the Bevy client and press F5 to open the save/load panel
+2. Click "List Saves" to populate slot metadata
+3. Verify metadata renders below each slot (tick, pop, age, map, size, settlements)
+4. Click "Refresh" to verify re-query works
+5. Use delete button to remove a saved slot
+6. Verify all RPC calls respond correctly via `save.list`, `save.delete`, `save.load`, `save.save`

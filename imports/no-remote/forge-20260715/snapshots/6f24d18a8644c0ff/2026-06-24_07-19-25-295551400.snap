@@ -1,0 +1,20 @@
+//! Tracing integration test for pheno-config.
+//!
+//! Run with:
+//!   OTEL_SDK_DISABLED=true cargo test --features tracing --test tracing_test
+
+#![cfg(feature = "tracing")]
+
+use pheno_config::ConfigBuilder;
+use tracing_test::traced_test;
+
+#[traced_test]
+#[test]
+fn build_emits_span() {
+    let span = tracing::info_span!("config_build");
+    let _enter = span.enter();
+    let result = ConfigBuilder::new().load_env("PHENO_CONFIG").build();
+    tracing::info!(?result, "build complete");
+    // Either Ok or an env error is fine; we just want to verify the span emit path
+    assert!(logs_contain("build complete"));
+}

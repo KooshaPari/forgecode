@@ -1,0 +1,1 @@
+import("./tests/unit/combo-quality-validator-reasoning.test.ts").catch(e => { console.error("ERR:", e.message); process.exit(1); });

@@ -1,0 +1,45 @@
+import re
+
+lines = open('open-sse/handlers/chatCore.ts', encoding='utf-8').read().splitlines()
+u = open('open-sse/handlers/chatCore/upstreamTimeouts.ts', encoding='utf-8').read()
+
+# Step 1: Already checked above — function is in upstreamTimeouts.ts
+
+# Step 2: Find the inline function and remove it
+removed = False
+for i in range(len(lines)-10, -1, -1):
+    if 'function isTokenExpiringSoon' in lines[i]:
+        # Read 6 lines to verify full function
+        func_text = '\n'.join(lines[i:i+6])
+        if re.search(r'function isTokenExpiringSoon\(', func_text):
+            del lines[i:i+5]
+            removed = True
+            print(f'Removed inline at line {i+1}')
+            break
+
+if not removed:
+    # Print what's there for debugging
+    for i, l in enumerate(lines):
+        if 'isTokenExpiringSoon' in l:
+            print(f'  L{i+1}: {l.strip()[:120]}')
+
+# Step 3: Add import if not present
+added_import = False
+if not any('upstreamTimeouts' in l for l in lines):
+    for i in range(min(210, len(lines)-1), -1, -1):
+        if lines[i].startswith('import') and 'from' in lines[i] and (lines[i].strip().endswith(';') or lines[i].strip().endswith('.ts\";')):
+            lines.insert(i+1, "import { isTokenExpiringSoon } from './chatCore/upstreamTimeouts.ts';")
+            added_import = True
+            print(f'Added import at line {i+2}')
+            break
+
+open('open-sse/handlers/chatCore.ts', 'w', encoding='utf-8').write('\n'.join(lines) + '\n')
+print(f'Written: {len(lines)} lines')
+
+# Verify
+c2 = open('open-sse/handlers/chatCore.ts', encoding='utf-8').read()
+u2 = open('open-sse/handlers/chatCore/upstreamTimeouts.ts', encoding='utf-8').read()
+ok = ('function isTokenExpiringSoon' not in c2) and ('function isTokenExpiringSoon' in u2) and ('upstreamTimeouts' in c2)
+print(f'chatCore: {len(c2.splitlines())} lines, func: {"function isTokenExpiringSoon" in c2}, import: {"upstreamTimeouts" in c2}')
+print(f'upstreamTimeouts: {len(u2.splitlines())} lines, func: {"function isTokenExpiringSoon" in u2}')
+print(f'SUCCESS: {ok}')

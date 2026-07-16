@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""Continuation scan of C:\\Users\\koosh for 'nippon'.
+Only scans project-like top-level dirs that weren't already processed.
+"""
+import os
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(r"C:\Users\koosh")
+MAX_FILE_BYTES = 5 * 1024 * 1024
+MAX_HITS = 50000
+TIME_BUDGET_SEC = 230
+
+SKIP_DIR_NAMES = {
+    "node_modules", ".git", "anaconda3", "heliosApp-mirror", "MCPForge_temp",
+    "_audit_logs", "_vendor_rck", "_fold", "_tc_cache", "_compute_infra_audit",
+    "_grade_owned", "_wsm3d_audit", "_audit_content_2026-06-04",
+    "_civis_audit_20260622_193526",
+    "_civis_work_20260623_161635", "_civis_work_20260623_161757",
+    "_civis_work_20260623_172456", "_civis_work_20260623_173204",
+    "_pheno_absorb", "absorb", "absorption-staging",
+    "pr111_files", ".venv", ".bun", ".cargo", ".rustup", ".nuget", ".m2",
+    ".gradle", ".docker", ".kube", ".npm", ".pnpm-store", ".next",
+    ".cache", ".claude", ".gemini", ".config", ".local", ".factory",
+    ".forge", ".cursor", ".cursor-tutor", ".augment", ".windsurf",
+    ".continue", ".codeium", ".semgrep", ".wrenai", ".lean",
+    ".mem0", ".paddleocr", ".playwright-mcp", ".cheap-llm",
+    ".openhands-state", ".railway", ".rest-client", ".spicetify2",
+    ".thumbnails", ".tracertm", ".wallaby", ".writerside", ".codegpt",
+    ".software", ".software-planning-tool", ".templateengine", ".taskkit",
+    ".supermaven", ".sonarlint", ".spicetify", ".sts4", ".safety",
+    ".ruff_cache", ".remember", ".prefs", ".psmux",
+    ".quokka", ".redhat", ".harbor", ".jfrog-vscode-extension",
+    ".klipdot", ".marscode", ".ollama", ".pi",
+    ".phenotype", ".plp",
+    "4sgm", "AgCord", "Civis", "agileplus", ".agileplus", "heliosApp",
+    "helioslab-bootstrap", "helioslab-bootstrap-bundle",
+}
+
+SKIP_DIR_PREFIXES = (
+    "_tmp", "_pheno", "_prismal", "_audit", "_civis_",
+    "_vendor_", "_tc_", "_compute_", "_grade_", "_wsm3d_",
+    "_fold", "_cu_", "_Dino", "_dino", "_DINO",
+)
+
+# Restore _tmp_ but also accept _tmp-
+SKIP_DIR_PREFIXES = tuple(sorted({p.rstrip("_") + c for p in ("_tmp_",) for c in ("_", "-")} | set(SKIP_DIR_PREFIXES)))
+# Add the rest as-is
+SKIP_DIR_PREFIXES = SKIP_DIR_PREFIXES + ("_audit",)
+
+STATE_FILE = r"C:\Users\koosh\_nippon_state.txt"
+OUTPUT_FILE = r"C:\Users\koosh\_nippon_search.out"
+
+processed_dirs = set()
+if os.path.exists(STATE_FILE):
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            processed_dirs = {l.strip() for l in f if l.strip()}
+    except OSError:
+        pass
+
+hits = []
+if os.path.exists(OUTPUT_FILE):
+    try:
+        with open(OUTPUT_FILE, "r", encoding="utf-8", errors="replace") as f:
+            for ln in f:
+                if ln.startswith("# Total hits:"):
+                    continue
+                if ln.startswith("#"):
+                    continue
+                if ln.strip():
+                    hits.append(ln.rstrip("\n"))
+    except OSError:
+        pass
+
+start_time = time.time()
+deadline = start_time + TIME_BUDGET_SEC
+aborted = False
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+def scan_file(path):
+    global aborted
+    try:
+        sz = os.path.getsize(path)
+    except OSError:
+        return
+    if sz == 0 or sz > MAX_FILE_BYTES:
+        return
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except (OSError, PermissionError):
+        return
+    if b"nippon" not in data.lower():
+        return
+    try:
+        text = data.decode("utf-8", errors="replace")
+    except Exception:
+        return
+    needle = "nippon"
+    for i, line in enumerate(text.splitlines(), 1):
+        if needle in line.lower():
+            hits.append(f"{path}:{i}:{line}")
+            if len(hits) >= MAX_HITS:
+                aborted = True
+                return
+
+def search_dir(root):
+    global aborted
+    try:
+        for entry in os.scandir(str(root)):
+            if aborted:
+                return
+            if time.time() > deadline:
+                aborted = True
+                return
+            try:
+                name = entry.name
+                if entry.is_dir(follow_symlinks=False):
+                    if name in SKIP_DIR_NAMES:
+                        continue
+                    if any(name.startswith(p) for p in SKIP_DIR_PREFIXES):
+                        continue
+                    search_dir(Path(entry.path))
+                elif entry.is_file(follow_symlinks=False):
+                    scan_file(entry.path)
+            except (OSError, PermissionError):
+                continue
+    except (OSError, PermissionError):
+        return
+
+top_entries = list(os.scandir(str(ROOT)))
+top_dirs = [e for e in top_entries if e.is_dir(follow_symlinks=False)]
+
+print(f"# Already processed dirs: {len(processed_dirs)}", file=sys.stderr)
+print(f"# Total dirs at top level: {len(top_dirs)}", file=sys.stderr)
+print(f"# Resuming with {len(hits)} existing hits", file=sys.stderr)
+
+for entry in top_dirs:
+    if aborted or len(hits) >= MAX_HITS:
+        break
+    if time.time() > deadline:
+        aborted = True
+        break
+    name = entry.name
+    if name in SKIP_DIR_NAMES:
+        continue
+    if any(name.startswith(p) for p in SKIP_DIR_PREFIXES):
+        continue
+    if name in processed_dirs:
+        continue
+    print(f"# Scanning: {name}", file=sys.stderr)
+    search_dir(Path(entry.path))
+    processed_dirs.add(name)
+    try:
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            f.write("\n".join(sorted(processed_dirs)))
+        with open(OUTPUT_FILE, "w", encoding="utf-8", errors="replace") as f:
+            f.write(f"# Total hits: {len(hits)}\n")
+            f.write("\n".join(hits))
+    except OSError:
+        pass
+
+elapsed = time.time() - start_time
+print(f"# Elapsed: {elapsed:.1f}s, hits: {len(hits)}, aborted: {aborted}", file=sys.stderr)
+
+try:
+    with open(OUTPUT_FILE, "w", encoding="utf-8", errors="replace") as f:
+        f.write(f"# Total hits: {len(hits)}\n")
+        f.write("\n".join(hits))
+except OSError:
+    pass
+
+print(f"# Wrote {len(hits)} hits to {OUTPUT_FILE}", file=sys.stderr)

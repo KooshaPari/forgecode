@@ -1,0 +1,134 @@
+"""
+Hand-port the "only in branch" files (pure additions) for each user-named branch.
+This is the safest approach: we add files that don't conflict with HEAD.
+
+Strategy:
+- For each user-named branch, find files that exist on branch but NOT in HEAD
+- Create a synthetic branch named 'upstream-port/<branch>' with those files
+- The branch is created off main, with a single commit adding the new files
+"""
+import subprocess
+import json
+import os
+import shutil
+import tempfile
+
+REPO = r'C:\Users\koosh\OmniRoute-fresh2'
+
+def run(args, cwd=None):
+    r = subprocess.run(args, capture_output=True, text=True, cwd=cwd or REPO, encoding='utf-8', errors='replace')
+    return r.stdout, r.returncode
+
+def run_input(args, input_data, cwd=None):
+    r = subprocess.run(args, input=input_data, capture_output=True, text=True, cwd=cwd or REPO, encoding='utf-8', errors='replace')
+    return r.stdout, r.returncode
+
+USER_NAMED = [
+    'upstream-pr/refactor-apikey-providers',
+    'upstream-pr/refactor-token-refresh',
+    'upstream-pr/perf-budgets',
+    'upstream-pr/threat-model',
+    'upstream-pr/openapi-redoc',
+    'upstream-pr/pr-template',
+    'upstream-pr/incident-response',
+    'upstream-pr/log-buffer-cap-2026-06-24',
+    'upstream-pr/security-sweep-2026-06-24',
+    'upstream-pr/diego-mimocode-fix',
+    'upstream-pr/bifrost-docs',
+    'upstream-pr/kill-switch-extraction',
+    'upstream-pr/l1a-dispatch-2026-06-27',
+    'upstream-pr/cherry-batch-2026-06-24',
+    'upstream-pr/cherry-batch-2-2026-06-24',
+    'upstream-pr/cherry-batch-3-clean-2026-06-25',
+    'upstream-pr/antigravity-nvidia-fallback-2026-06-24',
+    'koosha/upstream-quota-4540-2026-06-21',
+    'koosha/upstream-perf-observability-2026-06-21',
+    'koosha/upstream-backend-health-2026-06-21',
+    'koosha/upstream-routing-stability-2026-06-21',
+    'koosha/upstream-concurrency-4580-2026-06-21',
+]
+
+# Load branch-only files from prior analysis
+with open(r'C:\Users\koosh\_branch_only_files.json') as f:
+    branch_only = json.load(f)
+
+# Save summary
+summary = []
+
+for name in USER_NAMED:
+    files = branch_only[name]['only_in_branch']
+    if not files:
+        summary.append({'name': name, 'status': 'skip', 'reason': 'no_only_branch_files'})
+        continue
+
+    # Synthetic branch name
+    port_name = 'upstream-port/' + name.replace('/', '__')
+    branch_ref = f'origin/{name}'
+
+    print(f'\n=== Porting {name} ({len(files)} files) → {port_name} ===')
+
+    # Use git restore --source to add files from source branch
+    # First, ensure on main
+    out, rc = run(['git', 'checkout', 'main', '--'])
+    if rc != 0:
+        print(f'  failed to checkout main: {out[:200]}')
+        summary.append({'name': name, 'status': 'fail', 'reason': 'checkout_main'})
+        continue
+
+    # Create new branch off main
+    out, rc = run(['git', 'checkout', '-b', port_name, 'main'])
+    if rc != 0:
+        print(f'  failed to create branch: {out[:200]}')
+        summary.append({'name': name, 'status': 'fail', 'reason': 'create_branch'})
+        continue
+
+    # Add each file using git checkout source -- file
+    added = 0
+    failed = []
+    for f in files:
+        out, rc = run(['git', 'checkout', branch_ref, '--', f])
+        if rc == 0:
+            added += 1
+        else:
+            failed.append(f)
+
+    if added == 0:
+        print(f'  no files added')
+        # Go back to main and delete the empty branch
+        run(['git', 'checkout', 'main'])
+        run(['git', 'branch', '-D', port_name])
+        summary.append({'name': name, 'status': 'empty', 'added': 0})
+        continue
+
+    # Stage and commit
+    run(['git', 'add', '-A'])
+
+    # Use simple commit message (conventional format required)
+    msg = f"chore(upstream-port): bring {name} additions\n\nPorted {added} branch-only files from {branch_ref}.\nNo modifications to existing files."
+    out, rc = run_input(['git', 'commit', '-m', msg], input_data='')
+    if rc != 0:
+        print(f'  commit failed: {out[:300]}')
+        run(['git', 'checkout', 'main'])
+        run(['git', 'branch', '-D', port_name])
+        summary.append({'name': name, 'status': 'fail', 'reason': 'commit', 'added': added})
+        continue
+
+    summary.append({
+        'name': name,
+        'port_branch': port_name,
+        'status': 'success',
+        'files_added': added,
+        'files_failed': len(failed),
+        'sample_failed': failed[:5],
+    })
+    print(f'  added {added}/{len(files)} files; commit OK')
+
+    # Return to main
+    run(['git', 'checkout', 'main'])
+
+print('\n=== SUMMARY ===')
+for s in summary:
+    print(f"  {s}")
+
+with open(r'C:\Users\koosh\_port_summary.json', 'w') as f:
+    json.dump(summary, f, indent=2)

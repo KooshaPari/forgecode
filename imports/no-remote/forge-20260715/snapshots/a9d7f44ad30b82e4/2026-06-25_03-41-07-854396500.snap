@@ -1,0 +1,21 @@
+import json, os
+
+# Verify 5 disposition rows
+p = r'C:\Users\koosh\phenotype-registry\registry\disposition-index.json'
+d = json.load(open(p, encoding='utf-8'))
+rows = d['rows']
+print('schema_version:', d.get('schema_version'))
+print('updated:', d.get('updated'))
+print('total_rows:', len(rows))
+print()
+
+mine_ids = ['repo-go-nippon-archive-only', 'repo-smart-mcp-go-no-merit', 'repo-mcpkit-superseded', 'repo-phenocompose-archive', 'repo-nanovms-archive']
+mine = [r for r in rows if isinstance(r, dict) and r.get('id') in mine_ids]
+print('rows_added:', len(mine), 'of 5 expected')
+for r in mine:
+    print(' -', r.get('id'), '|', r.get('path'), '|', r.get('disposition'), '|', r.get('fsm'))
+
+print()
+print('orphan_check: any other new rows in last 5 positions?')
+for r in rows[-5:]:
+    print(' -', r.get('id', '?'), '|', r.get('path', '?'))

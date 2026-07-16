@@ -1,0 +1,14 @@
+import os
+clean = r'C:\Users\koosh\OmniRoute-clean\open-sse\executors\codex.ts'
+fresh = r'C:\Users\koosh\OmniRoute-fresh2\open-sse\executors\codex.ts'
+
+with open(clean, 'r', encoding='utf8', errors='replace') as fh:
+    c = fh.read()
+with open(fresh, 'r', encoding='utf8', errors='replace') as fh:
+    f = fh.read()
+
+for name, content in [('CLEAN', c), ('FRESH2', f)]:
+    idx = content.find('local_shell')
+    print(f'== {name} local_shell context (idx {idx}) ==')
+    print(content[max(0, idx-300):min(len(content), idx+300)])
+    print('---')

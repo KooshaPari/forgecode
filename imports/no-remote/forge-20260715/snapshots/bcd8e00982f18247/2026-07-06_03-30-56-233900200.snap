@@ -1,0 +1,119 @@
+// sse-cleanup-proxy.js
+// Transparent HTTP proxy that strips trailing SSE comment lines emitted by
+// OmniRoute/cliproxyapi after `response.completed`. Codex 0.142.5 chokes on
+// these comments (treats them as a new stream).
+//
+// Usage:  node sse-cleanup-proxy.js [listen-port]
+// Default: listens on 127.0.0.1:20130, forwards to 127.0.0.1:20128 (OmniRoute).
+
+import http from 'node:http';
+
+const LISTEN_PORT = parseInt(process.argv[2] || '20130', 10);
+const UPSTREAM_HOST = process.env.UPSTREAM_HOST || '100.96.135.160';
+const UPSTREAM_PORT = parseInt(process.env.UPSTREAM_PORT || '20128', 10);
+
+const isSseResponse = (res) => {
+  const ct = res.headers['content-type'] || '';
+  return ct.includes('text/event-stream') || ct.includes('application/x-ndjson');
+};
+
+const proxyPass = (req, res) => {
+  const upstream = http.request(
+    {
+      hostname: UPSTREAM_HOST,
+      port: UPSTREAM_PORT,
+      method: req.method,
+      path: req.url,
+      headers: { ...req.headers, host: `${UPSTREAM_HOST}:${UPSTREAM_PORT}` },
+    },
+    (uRes) => {
+      if (!isSseResponse(uRes)) {
+        // Non-streaming: pass-through unchanged.
+        res.writeHead(uRes.statusCode || 502, uRes.headers);
+        uRes.pipe(res);
+        return;
+      }
+
+      // Streaming: forward SSE line-by-line, then drop upstream after the
+      // terminal response.completed event.
+      res.writeHead(uRes.statusCode || 200, {
+        ...uRes.headers,
+        'x-sse-cleanup-proxy': 'omni-route',
+      });
+
+      let buffer = '';
+      let sawCompletion = false;
+      let trailersDropped = 0;
+
+      uRes.on('data', (chunk) => {
+        if (sawCompletion) {
+          // Drop everything after completion.
+          trailersDropped += chunk.length;
+          return;
+        }
+        buffer += chunk.toString('utf8');
+
+        // SSE events are separated by blank lines. Process complete events only.
+        let nlIdx;
+        while ((nlIdx = buffer.indexOf('\n\n')) !== -1) {
+          const event = buffer.slice(0, nlIdx);
+          buffer = buffer.slice(nlIdx + 2);
+
+          // Forward the event verbatim to the client.
+          res.write(event + '\n\n');
+
+          // Detect the terminal completion event. Codex expects no further events
+          // after this; closing the upstream socket drops the trailing
+          // `: x-omniroute-*` comment lines that trip up its SSE parser.
+          if (
+            event.includes('event: response.completed') ||
+            /"type"\s*:\s*"response\.completed"/.test(event)
+          ) {
+            sawCompletion = true;
+            // Flush any partial line still in the buffer (usually just a newline).
+            if (buffer.length > 0) {
+              res.write(buffer);
+              buffer = '';
+            }
+            res.end();
+            uRes.destroy(); // drop the rest of the upstream stream
+            return;
+          }
+        }
+      });
+
+      uRes.on('end', () => {
+        if (!sawCompletion) {
+          if (buffer.length > 0) res.write(buffer);
+          res.end();
+        }
+        if (trailersDropped > 0) {
+          process.stderr.write(
+            `[sse-cleanup] dropped ${trailersDropped} trailer bytes after response.completed\n`
+          );
+        }
+      });
+
+      uRes.on('error', (err) => {
+        if (!res.writableEnded) res.end();
+        process.stderr.write(`[sse-cleanup] upstream error: ${err.message}\n`);
+      });
+    }
+  );
+
+  upstream.on('error', (err) => {
+    if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' });
+    res.end(`upstream error: ${err.message}`);
+  });
+
+  req.pipe(upstream);
+};
+
+const server = http.createServer(proxyPass);
+server.listen(LISTEN_PORT, '127.0.0.1', () => {
+  process.stdout.write(
+    `sse-cleanup-proxy listening on http://127.0.0.1:${LISTEN_PORT}\n` +
+      `  upstream: http://${UPSTREAM_HOST}:${UPSTREAM_PORT}\n` +
+      `  drop rule: forward until event: response.completed, then close upstream\n`
+  );
+});

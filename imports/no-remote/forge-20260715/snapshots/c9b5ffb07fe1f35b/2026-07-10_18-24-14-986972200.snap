@@ -1,0 +1,38 @@
+-- Prune growth tables to last 7 days, then VACUUM
+-- Run against: C:\Users\koosh\AppData\Roaming\omniroute\storage.sqlite
+-- Tables with created_at: proxy_logs, usage_history, compression_run_telemetry,
+--                         audit_log, mcp_tool_audit, xp_audit_log, call_logs,
+--                         middleware_logs, routing_decisions
+
+BEGIN TRANSACTION;
+
+-- 7-day retention for high-volume tables
+DELETE FROM proxy_logs WHERE created_at < datetime('now', '-7 days');
+DELETE FROM usage_history WHERE created_at < datetime('now', '-7 days');
+DELETE FROM compression_run_telemetry WHERE created_at < datetime('now', '-7 days');
+DELETE FROM audit_log WHERE created_at < datetime('now', '-7 days');
+DELETE FROM mcp_tool_audit WHERE created_at < datetime('now', '-7 days');
+DELETE FROM xp_audit_log WHERE created_at < datetime('now', '-7 days');
+DELETE FROM call_logs WHERE created_at < datetime('now', '-7 days');
+DELETE FROM middleware_logs WHERE created_at < datetime('now', '-7 days');
+DELETE FROM routing_decisions WHERE created_at < datetime('now', '-7 days');
+
+-- Report counts after prune
+SELECT 'proxy_logs' AS tbl, COUNT(*) AS rows_after FROM proxy_logs
+UNION ALL SELECT 'usage_history', COUNT(*) FROM usage_history
+UNION ALL SELECT 'compression_run_telemetry', COUNT(*) FROM compression_run_telemetry
+UNION ALL SELECT 'audit_log', COUNT(*) FROM audit_log
+UNION ALL SELECT 'mcp_tool_audit', COUNT(*) FROM mcp_tool_audit
+UNION ALL SELECT 'xp_audit_log', COUNT(*) FROM xp_audit_log
+UNION ALL SELECT 'call_logs', COUNT(*) FROM call_logs
+UNION ALL SELECT 'middleware_logs', COUNT(*) FROM middleware_logs
+UNION ALL SELECT 'routing_decisions', COUNT(*) FROM routing_decisions;
+
+COMMIT;
+
+-- VACUUM must run outside a transaction in SQLite
+VACUUM;
+
+PRAGMA page_count;
+PRAGMA page_size;
+PRAGMA freelist_count;

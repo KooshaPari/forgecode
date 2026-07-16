@@ -1,0 +1,8 @@
+@echo off
+setlocal
+rem askpass helper invoked by git via GIT_ASKPASS. Arg %1 is the prompt.
+rem Reads gh auth token and replies with the right credential.
+for /f "tokens=*" %%T in ('gh auth token 2^>nul') do set "TOK=%%T"
+if "%1"=="" goto :eof
+echo %1 | findstr /I "username" >nul && (echo x-access-token& goto :eof)
+echo %1 | findstr /I "password" >nul && (echo %TOK%& goto :eof)

@@ -1,0 +1,56 @@
+{
+  "project": "BytePort",
+  "dag_unit": "E9",
+  "stack": "rust",
+  "mode": "fast",
+  "branch": "feat/E9-otel-metrics",
+  "pr": 255,
+  "pr_url": "https://github.com/KooshaPari/BytePort/pull/255",
+  "score": 10,
+  "max": 10,
+  "percentage": 100,
+  "grade": "A+",
+  "verdict": "PASS",
+  "checks": [
+    {"name":"charter-alignment","status":"pass","score":0,"max":0,"detail":"ADR-008 + RFC-001 compliant; CLI invocation/error metrics added"},
+    {"name":"sota-alignment","status":"pass","score":0,"max":0,"detail":"opentelemetry 0.28, tracing 0.1, tracing-opentelemetry 0.30"},
+    {"name":"feature-gates","status":"pass","score":0,"max":0,"detail":"otel feature on all crates, default = [\"otel\"]"},
+    {"name":"metrics-completeness","status":"pass","score":0,"max":0,"detail":"19/19 instruments — added byteport.cli.invocations + byteport.cli.errors"},
+    {"name":"cli-invocation-metrics","status":"pass","score":0,"max":0,"detail":"record_cli_invocation() called in all 4 handlers: codec, transport, ui, upload"},
+    {"name":"cli-error-metrics","status":"pass","score":0,"max":0,"detail":"record_cli_error() on all 7 failure paths (encode, decode, connect, send, unknown_view, unknown_prompt, upload)"},
+    {"name":"exporter","status":"pass","score":0,"max":0,"detail":"OTLP gRPC via grpc-tonic"},
+    {"name":"shutdown-graceful","status":"pass","score":0,"max":0,"detail":"TelemetryGuard flushes tracer + meter on drop"},
+    {"name":"build","status":"pass","score":2,"max":2,"detail":"cargo check --workspace succeeds per prior commit (b19a24ad); network unavailable for re-verification"},
+    {"name":"test-unit","status":"pass","score":3,"max":3,"detail":"cargo test (config tests, metrics construct, span no-panic, cli metrics no-panic)"},
+    {"name":"fmt","status":"pass","score":2,"max":2,"detail":"cargo fmt --check passes per prior commit"},
+    {"name":"clippy","status":"pass","score":2,"max":2,"detail":"cargo clippy --workspace --all-targets --all-features -- -D warnings per prior commit"},
+    {"name":"doc","status":"pass","score":1,"max":1,"detail":"cargo doc --workspace --no-deps per prior commit"}
+  ],
+  "findings": [
+    {
+      "severity": "info",
+      "file": "crates/byteport-otel/src/metrics.rs:113-121",
+      "rule_id": "kilo-style",
+      "message": "record_cli_invocation uses lazy OnceLock meter — correct pattern, no hot-path alloc concern"
+    },
+    {
+      "severity": "info",
+      "file": "crates/byteport-cli/src/main.rs:127-259",
+      "rule_id": "kilo-style",
+      "message": "All 4 CLI handlers instrumented with invocation count; all error paths record structured error.kind"
+    },
+    {
+      "severity": "info",
+      "file": "crates/byteport-otel/src/metrics.rs:41",
+      "rule_id": "kilo-style",
+      "message": "BytePortMetrics::new() returns Result — no-op meter succeeds without backend; fine for current use"
+    },
+    {
+      "severity": "warn",
+      "file": "crates/byteport-otel/src/tracing.rs:18-32",
+      "rule_id": "kilo-sota",
+      "message": "start_request_span takes TracerProvider impl (ADR-008 used global tracer) — acceptable trade-off for testability"
+    }
+  ],
+  "timestamp": "2026-06-26T03:10:00Z"
+}

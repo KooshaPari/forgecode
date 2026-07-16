@@ -1,0 +1,13 @@
+{
+  "project": "BytePort",
+  "stack": "rust",
+  "mode": "fast",
+  "score": 0,
+  "max": 10,
+  "percentage": 0,
+  "grade": "F",
+  "checks": [
+    {"name":"build","status":"fail","score":0,"max":2,"detail":"    Updating crates.io index  Downloading crates ... error: failed to download `dlopen2_derive v0.4.2`  Caused by: "},{"name":"test-unit","status":"fail","score":0,"max":3,"detail":" Downloading crates ... error: failed to download `dlopen2_derive v0.4.2`  Caused by:   unable to get packages from source "},{"name":"fmt","status":"fail","score":0,"max":2,"detail":"Diff in /mnt/c/Users/koosh/BytePort/crates/byteport-dag/src/dag.rs:74:          if !self.nodes.contains(&to) {              return Err(DagError::NodeNotFound(format!("{:?}", to)));          } [31m-        self.children.entry(from.clone()).or_default().push(to.clone()); "},{"name":"clippy","status":"fail","score":0,"max":2,"detail":" Downloading crates ... error: failed to download `dlopen2_derive v0.4.2`  Caused by:   unable to get packages from source "},{"name":"deny","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},{"name":"doc","status":"fail","score":0,"max":1,"detail":" Downloading crates ... error: failed to download `dlopen2_derive v0.4.2`  Caused by:   unable to get packages from source "},{"name":"test-snapshot","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},{"name":"test-fuzz","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},{"name":"coverage","status":"skipped","score":0,"max":2,"detail":"skipped in fast mode"},{"name":"audit","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},{"name":"bench","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"}
+  ],
+  "timestamp": "2026-06-26T02:39:20Z"
+}

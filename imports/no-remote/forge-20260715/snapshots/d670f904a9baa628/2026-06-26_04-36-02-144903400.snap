@@ -1,0 +1,32 @@
+@echo off
+setlocal
+set "CARGO_HOME=E:\Dev\.cargo"
+set "CARGO_TARGET_DIR=E:\civis-target"
+cd /d "C:\Users\koosh\.claude\lanes\substrate-feat-cloud-dispatch"
+
+set MAX_RETRIES=5
+set RETRY_DELAY=10
+
+:retry_loop
+cargo clippy --all-targets --all-features -- -D warnings > cargo_clippy_output_final.txt 2>&1
+set EXIT_CODE=%ERRORLEVEL%
+echo EXIT_CODE=%EXIT_CODE% >> cargo_clippy_output_final.txt
+echo FINISHED >> cargo_clippy_output_final.txt
+
+:: If exit code is 0, we are done
+if "%EXIT_CODE%"=="0" exit /b 0
+
+:: Check if it was a lock issue
+findstr /C:"lock" cargo_clippy_output_final.txt >nul 2>&1
+if errorlevel 1 exit /b %EXIT_CODE%
+
+:: Lock contention - reduce retries and wait
+set /a MAX_RETRIES=MAX_RETRIES-1
+if "%MAX_RETRIES%"=="0" exit /b %EXIT_CODE%
+
+:: Kill competing cargo processes
+taskkill /F /IM cargo.exe >nul 2>&1
+del "E:\Dev\.cargo\.package-cache" 2>nul
+del "E:\Dev\.cargo\.package-cache-mutate" 2>nul
+ping -n %RETRY_DELAY% 127.0.0.1 >nul 2>&1
+goto retry_loop

@@ -1,0 +1,52 @@
+$ErrorActionPreference = 'Continue'
+$base = 'C:/Users/koosh/Civis_fresh'
+
+function Check-Branch {
+    param([string]$branch, [string]$label)
+    Set-Location $base
+    Write-Host ""
+    Write-Host "===== $label ($branch) ====="
+    git checkout $branch 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        git checkout -b $branch "origin/$branch" 2>&1 | Out-Null
+    }
+    if ($LASTEXITCODE -ne 0) { Write-Host "  checkout FAILED ($LASTEXITCODE)"; return }
+    git log --oneline -1 | ForEach-Object { Write-Host "  $_" }
+
+    Write-Host "  --- civ-needs ---"
+    cargo check -p civ-needs --offline --color=never *> _ck.txt
+    if ($LASTEXITCODE -eq 0) {
+        $tail = (Get-Content _ck.txt -Tail 3) -join ' | '
+        Write-Host "    OK: $tail"
+    } else {
+        $errs = (Get-Content _ck.txt) -match '^error\[' | Select-Object -First 3
+        $errs | ForEach-Object { Write-Host "    $_" }
+        $summary = (Get-Content _ck.txt | Select-String -Pattern 'previous errors') | Select-Object -First 1
+        if ($summary) { Write-Host "    $summary" }
+    }
+
+    Write-Host "  --- civ-economy ---"
+    cargo check -p civ-economy --offline --color=never *> _ck.txt
+    if ($LASTEXITCODE -eq 0) {
+        $tail = (Get-Content _ck.txt -Tail 3) -join ' | '
+        Write-Host "    OK: $tail"
+    } else {
+        $errs = (Get-Content _ck.txt) -match '^error\[' | Select-Object -First 3
+        $errs | ForEach-Object { Write-Host "    $_" }
+        $summary = (Get-Content _ck.txt | Select-String -Pattern 'previous errors') | Select-Object -First 1
+        if ($summary) { Write-Host "    $summary" }
+    }
+}
+
+# Verify all branches
+Check-Branch 'fix/workspace-bevy-ref-holocron-dep' 'BASELINE: workspace fix'
+Check-Branch 'chore/governance-forge-agents' 'PR-gov: governance file'
+Check-Branch 'feat/fr-civ-life-classifiers-tick' 'PR1: lifecycle classifiers'
+Check-Branch 'feat/fr-civ-life-reproduction-params' 'PR2: reproduction params'
+Check-Branch 'feat/fr-civ-life-labor-economy' 'PR3: labor-economy'
+Check-Branch 'feat/fr-civ-life-trace-matrix' 'PR4: trace matrix'
+
+git checkout main *> $null
+Remove-Item _ck.txt -ErrorAction SilentlyContinue
+Write-Host ""
+Write-Host "===== verification complete ====="

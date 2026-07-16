@@ -1,0 +1,21 @@
+// Test if createRequire(import.meta.url) works for node:sqlite in bundled context
+const { createRequire } = require('node:module');
+const _require = createRequire(import.meta.url);
+
+try {
+  const ns = _require('node:sqlite');
+  console.log('node:sqlite via _require: OK', typeof ns.DatabaseSync);
+  const db = new ns.DatabaseSync('C:\\Users\\koosh\\AppData\\Roaming\\omniroute\\storage.sqlite');
+  console.log('Database opened via _require:', db);
+} catch (e) {
+  console.log('node:sqlite via _require FAILED:', e.message);
+}
+
+try {
+  const ns = process.getBuiltinModule('node:sqlite');
+  console.log('node:sqlite via process.getBuiltinModule: OK', typeof ns.DatabaseSync);
+  const db = new ns.DatabaseSync('C:\\Users\\koosh\\AppData\\Roaming\\omniroute\\storage.sqlite');
+  console.log('Database opened via process.getBuiltinModule:', db);
+} catch (e) {
+  console.log('process.getBuiltinModule FAILED:', e.message);
+}

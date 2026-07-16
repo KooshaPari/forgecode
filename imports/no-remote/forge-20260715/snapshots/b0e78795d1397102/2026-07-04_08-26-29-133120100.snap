@@ -1,0 +1,35 @@
+[package]
+name = "phenotype-tooling-observability"
+version.workspace = true
+edition.workspace = true
+description = "OTel/OTLP observability for the phenotype-tooling workspace — Prometheus metrics, /health endpoint, SLOs"
+
+readme = "README.md"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/KooshaPari/phenotype-tooling"
+homepage = "https://github.com/KooshaPari/phenotype-tooling"
+keywords = ["phenotype", "tooling", "cli"]
+categories = ["command-line-utilities"]
+[dependencies]
+pheno-tracing = { version = "0.4", default-features = false }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+once_cell = "1"
+prometheus = { version = "0.13", optional = true }
+axum = { version = "0.7", optional = true }
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread", "net", "signal"], optional = true }
+
+[features]
+default = []
+# Prometheus exporter + axum HTTP server for /metrics and /health
+server = ["dep:prometheus", "dep:axum", "dep:tokio"]
+
+[[bin]]
+name = "breach_sim"
+path = "src/bin/breach_sim.rs"
+
+[lib]
+path = "src/lib.rs"

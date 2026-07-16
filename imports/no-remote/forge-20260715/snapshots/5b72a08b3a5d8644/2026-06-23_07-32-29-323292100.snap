@@ -1,0 +1,51 @@
+"""Search GitHub for the missing repos in scope: nanovms, PhenoCompose, byteport.
+Use --no-color to avoid ANSI escape issues."""
+import json
+import os
+import subprocess
+import re
+
+tok = ""
+env_path = r"C:\Users\koosh\.env"
+if os.path.exists(env_path):
+    for line in open(env_path, encoding="utf-8", errors="replace"):
+        if line.startswith("GITHUB_TOKEN="):
+            tok = line.split("=", 1)[1].strip()
+            break
+
+env = dict(os.environ)
+env["NO_COLOR"] = "1"
+env["GH_TOKEN"] = tok
+if tok:
+    env["GITHUB_TOKEN"] = tok
+
+ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+queries = [
+    ("nanovms", "user:kooshapari", "nanovms"),
+    ("PhenoCompose", "user:kooshapari", "PhenoCompose"),
+    ("pheno-compose", "user:kooshapari", "pheno-compose"),
+    ("byteport", "user:kooshapari", "byteport"),
+]
+
+results = {}
+for label, owner, q in queries:
+    try:
+        r = subprocess.run(
+            ["gh", "search", "repos", q, "--owner", owner, "--limit", "5", "--json", "name,description,visibility,isArchived"],
+            capture_output=True, env=env, timeout=30,
+        )
+        out = r.stdout.decode("utf-8", errors="replace").strip()
+        raw_clean = ansi_escape.sub('', out).strip()
+        if raw_clean:
+            try:
+                results[label] = json.loads(raw_clean)
+            except Exception as e:
+                results[label] = f"PARSE_ERR: {e}; raw[:200]: {raw_clean[:200]}"
+        else:
+            err = r.stderr.decode("utf-8", errors="replace").strip()
+            results[label] = f"EMPTY (stderr: {err[:120]})"
+    except Exception as e:
+        results[label] = f"EXC: {e}"
+
+print(json.dumps(results, indent=2))

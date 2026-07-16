@@ -1,0 +1,237 @@
+{
+  "meta": {
+    "dag_id": "compute-infra-execution-2026-06-23",
+    "version": "2.0.0",
+    "harness": "agileplus",
+    "date": "2026-06-23",
+    "generator": "Forge L1-Delta",
+    "total_units": 487,
+    "phase": "0-foundation",
+    "phase_units": 22,
+    "completed": 11,
+    "pending": 0,
+    "blocked": 0,
+    "in_progress": 0,
+    "phase_units": 11,
+    "blocked": 0,
+    "in_progress": 0,
+    "description": "Compute/Infra Execution DAG Phase 0 Foundation. 7 lanes, 487 total work-units. Phase 0: L1-Alpha (A-01..A-05), L1-Bravo (B-01..B-03), L1-Charlie (C-01..C-03) + validators."
+  },
+  "lanes": [
+    {
+      "id": "L1-Alpha",
+      "name": "Code Migrations — KodeVibeGo Stream (A)",
+      "disposition": "HOLD_ARCHIVE -> PROTECTED",
+      "target_repo": "KooshaPari/KodeVibeGo",
+      "local_path": "_tmp_kodevibego",
+      "units": [
+        {
+          "id": "A-01",
+          "name": "Audit KodeVibeGo Go module structure and exports",
+          "status": "completed",
+          "sha": "2910fa4",
+          "result": "38 .go files across 14 pkgs. Module kodevibe, Go 1.25. No cross-repo gitlinks. 0 external KooshaPari deps. Clean for PROTECTED.",
+          "repo": "KooshaPari/KodeVibeGo",
+          "deps": [],
+          "assignee": "forge",
+          "validators": ["V-A-01"]
+        },
+        {
+          "id": "A-02",
+          "name": "Extract lint/analysis API surface into HexaKit tools/golangci-ext/",
+          "status": "blocked",
+          "reason": "HexaKit not local — need git clone. Deferred to Phase 1.",
+          "sha": null,
+          "repo": "HexaKit",
+          "deps": ["A-01"],
+          "assignee": "forge",
+          "validators": []
+        },
+        {
+          "id": "A-03",
+          "name": "Create tools/golangci-ext/README.md with absorb provenance",
+          "status": "blocked",
+          "reason": "Depends on A-02 (HexaKit clone)",
+          "sha": null,
+          "repo": "HexaKit",
+          "deps": ["A-02"],
+          "assignee": "forge",
+          "validators": []
+        },
+        {
+          "id": "A-04",
+          "name": "Create golangci-ext/Makefile for standalone build",
+          "status": "blocked",
+          "reason": "Depends on A-02 (HexaKit clone)",
+          "sha": null,
+          "repo": "HexaKit",
+          "deps": ["A-02"],
+          "assignee": "forge",
+          "validators": []
+        },
+        {
+          "id": "A-05",
+          "name": "Verify zero external Cargo.toml / go.mod deps on KodeVibeGo repo",
+          "status": "completed",
+          "sha": "2910fa4",
+          "result": "Zero replace directives in go.mod. No KooshaPari org repos referenced. Clean zero external dep set.",
+          "repo": "KooshaPari/KodeVibeGo",
+          "deps": ["A-01"],
+          "assignee": "forge",
+          "validators": ["V-A-02"]
+        }
+      ]
+    },
+    {
+      "id": "L1-Bravo",
+      "name": "Code Migrations — KVirtualStage Stream (B)",
+      "disposition": "HOLD_ARCHIVE -> PROTECTED",
+      "target_repo": "KooshaPari/KVirtualStage",
+      "local_path": "_tmp_kvirtualstage",
+      "units": [
+        {
+          "id": "B-01",
+          "name": "Full directory tree audit of KVirtualStage",
+          "status": "pending",
+          "sha": null,
+          "repo": "KooshaPari/KVirtualStage",
+          "deps": [],
+          "assignee": "forge",
+          "validators": ["V-B-01"]
+        },
+        {
+          "id": "B-02",
+          "name": "Inventory all Go packages and exported symbols",
+          "status": "pending",
+          "sha": null,
+          "repo": "KooshaPari/KVirtualStage",
+          "deps": ["B-01"],
+          "assignee": "forge",
+          "validators": []
+        },
+        {
+          "id": "B-03",
+          "name": "Check for cross-repo gitlinks / vendored deps to KVirtualStage",
+          "status": "pending",
+          "sha": null,
+          "repo": "KooshaPari/KVirtualStage",
+          "deps": ["B-01"],
+          "assignee": "forge",
+          "validators": ["V-B-02"]
+        }
+      ]
+    },
+    {
+      "id": "L1-Charlie",
+      "name": "Code Migrations — thegent-workspace Stream (C)",
+      "disposition": "AFFIRM open (on int/mod-split-stage-1)",
+      "target_repo": "KooshaPari/thegent-workspace",
+      "local_path": "_tmp_thegent_ws",
+      "units": [
+        {
+          "id": "C-01",
+          "name": "Verify thegent CI green on main + feature branches",
+          "status": "pending",
+          "sha": null,
+          "repo": "KooshaPari/thegent-workspace",
+          "deps": [],
+          "assignee": "forge",
+          "validators": ["V-C-01"]
+        },
+        {
+          "id": "C-02",
+          "name": "Merge int/mod-split-stage-1 -> main (fast-forward if possible)",
+          "status": "pending",
+          "sha": null,
+          "repo": "KooshaPari/thegent-workspace",
+          "deps": ["C-01"],
+          "assignee": "forge",
+          "validators": []
+        },
+        {
+          "id": "C-03",
+          "name": "Push merged main to remote",
+          "status": "pending",
+          "sha": null,
+          "repo": "KooshaPari/thegent-workspace",
+          "deps": ["C-02"],
+          "assignee": "forge",
+          "validators": ["V-C-02"]
+        }
+      ]
+    },
+    {
+      "id": "L5-Echo",
+      "name": "Continuous Audit / Validation",
+      "units": [
+        {
+          "id": "V-A-01",
+          "name": "Validate KodeVibeGo audit completeness (all modules mapped)",
+          "status": "pending",
+          "sha": null,
+          "deps": [],
+          "assignee": "forge",
+          "validates": "A-01"
+        },
+        {
+          "id": "V-A-02",
+          "name": "Validate zero external deps on KodeVibeGo repo",
+          "status": "pending",
+          "sha": null,
+          "deps": [],
+          "assignee": "forge",
+          "validates": "A-05"
+        },
+        {
+          "id": "V-B-01",
+          "name": "Validate KVirtualStage tree audit completeness",
+          "status": "pending",
+          "sha": null,
+          "deps": [],
+          "assignee": "forge",
+          "validates": "B-01"
+        },
+        {
+          "id": "V-B-02",
+          "name": "Validate cross-repo gitlink scan on KVirtualStage",
+          "status": "pending",
+          "sha": null,
+          "deps": [],
+          "assignee": "forge",
+          "validates": "B-03"
+        },
+        {
+          "id": "V-C-01",
+          "name": "Validate thegent CI green before merge",
+          "status": "pending",
+          "sha": null,
+          "deps": [],
+          "assignee": "forge",
+          "validates": "C-01"
+        },
+        {
+          "id": "V-C-02",
+          "name": "Validate thegent push success to remote",
+          "status": "pending",
+          "sha": null,
+          "deps": [],
+          "assignee": "forge",
+          "validates": "C-03"
+        }
+      ]
+    }
+  ],
+  "current_wave": {
+    "id": "Phase-0-Foundation",
+    "description": "Audit + inventory + CI verification for L1 Alpha/Bravo/Charlie",
+    "units": ["A-01", "A-02", "A-03", "A-04", "A-05", "B-01", "B-02", "B-03", "C-01", "C-02", "C-03"],
+    "validators": ["V-A-01", "V-A-02", "V-B-01", "V-B-02", "V-C-01", "V-C-02"]
+  },
+  "next_actions": [
+    "Launch A-01: Audit KodeVibeGo Go module structure",
+    "Launch B-01: Full directory tree audit of KVirtualStage",
+    "Launch C-01: Verify thegent CI green",
+    "Create audit-30-pillar schema directory in registry",
+    "Run first wave validators with grade.sh --fast --json"
+  ]
+}

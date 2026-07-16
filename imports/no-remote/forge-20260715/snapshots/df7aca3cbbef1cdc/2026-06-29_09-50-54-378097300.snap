@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+"""Verify all 6 derived CSVs and print distribution report."""
+import csv, sys
+from pathlib import Path
+from collections import Counter
+
+dl = Path(r'C:\Users\koosh\Downloads')
+suffix = '_v4'
+
+def load_csv(fn):
+    path = dl / fn.replace('.csv', f'{suffix}.csv')
+    if not path.exists():
+        path = dl / fn
+    if not path.exists():
+        return None, f'MISSING: {path}'
+    try:
+        with open(path, 'r', encoding='utf-8-sig', newline='') as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+        return rows, path
+    except Exception as e:
+        return None, f'ERROR: {path}: {e}'
+
+# Load all 6
+report = {}
+
+for fn in ['traces_full.csv', 'traces_lite.csv', 'turn_metrics.csv',
+           'conversation_graph.csv', 'artifact_graph.csv', 'optimization_opportunities.csv']:
+    rows, path_or_err = load_csv(fn)
+    if rows is None:
+        report[fn] = {'error': path_or_err}
+    else:
+        report[fn] = {'rows': len(rows), 'path': str(path_or_err), 'cols': len(rows[0]) if rows else 0}
+
+# Distribution for full
+full_rows, _ = load_csv('traces_full.csv')
+if full_rows:
+    by_src = Counter(r.get('source','') for r in full_rows)
+    by_drv = Counter(r.get('driver_type','') for r in full_rows)
+    by_bkt = Counter(r.get('bucket','') for r in full_rows)
+    by_band = Counter(r.get('compression_potential_band','') for r in full_rows)
+    report['full_dist'] = {
+        'source': dict(by_src),
+        'driver': dict(by_drv),
+        'bucket': dict(by_bkt),
+        'compression_band': dict(by_band),
+    }
+    sent_t = sum(int(r.get('sent_tokens') or 0) for r in full_rows)
+    input_t = sum(int(r.get('input_tokens') or 0) for r in full_rows)
+    output_t = sum(int(r.get('output_tokens') or 0) for r in full_rows)
+    cache_read_t = sum(int(r.get('cache_read_input_tokens') or 0) for r in full_rows)
+    cache_crt_t = sum(int(r.get('cache_creation_input_tokens') or 0) for r in full_rows)
+    report['full_tokens'] = {
+        'sent_tokens': sent_t,
+        'input_tokens': input_t,
+        'output_tokens': output_t,
+        'cache_read_input_tokens': cache_read_t,
+        'cache_creation_input_tokens': cache_crt_t,
+    }
+
+# Distribution for optimization
+opt_rows, _ = load_csv('optimization_opportunities.csv')
+if opt_rows:
+    by_lane = Counter(r.get('recommended_execution_lane','') for r in opt_rows)
+    by_conf = Counter(r.get('confidence','') for r in opt_rows)
+    total_sent = sum(int(r.get('sent_tokens') or 0) for r in opt_rows)
+    total_min = sum(int(r.get('estimated_min_required_tokens') or 0) for r in opt_rows)
+    total_red = sum(int(r.get('estimated_total_reduction') or 0) for r in opt_rows)
+    report['opt_dist'] = {
+        'lane': dict(by_lane),
+        'confidence': dict(by_conf),
+        'total_sent_tokens': total_sent,
+        'total_min_required_tokens': total_min,
+        'total_estimated_reduction': total_red,
+    }
+
+# Lite distribution
+lite_rows, _ = load_csv('traces_lite.csv')
+if lite_rows:
+    report['lite'] = {
+        'rows': len(lite_rows),
+        'sources': dict(Counter(r.get('source','') for r in lite_rows)),
+        'drivers': dict(Counter(r.get('driver_type','') for r in lite_rows)),
+        'buckets': dict(Counter(r.get('bucket','') for r in lite_rows)),
+    }
+
+# Print
+print('='*65)
+print('  FINAL DATASET DISTRIBUTION REPORT')
+print('='*65)
+print()
+
+for fn, data in report.items():
+    if isinstance(data, dict) and 'error' in data:
+        print(f'  {fn}: ERROR - {data["error"]}')
+        continue
+    if 'rows' in data:
+    if 'rows' in data and 'cols' in data:
+        print(f'    Rows: {data["rows"]:,}  Columns: {data["cols"]}  Path: {data["path"]}
+    if fn == 'full_dist':
+        print(f'    Source:       {data["source"]}')
+        print(f'    Driver:       {data["driver"]}')
+        print(f'    Bucket:       {data["bucket"]}')
+        print(f'    Comp Band:    {data["compression_band"]}')
+    if fn == 'full_tokens':
+        print(f'    Tokens (Full):')
+        for k, v in data.items():
+            print(f'      {k:30s} : {v:>15,}')
+    if fn == 'opt_dist':
+        print(f'    Lane:         {data["lane"]}')
+        print(f'    Confidence:   {data["confidence"]}')
+        for k in ['total_sent_tokens', 'total_min_required_tokens', 'total_estimated_reduction']:
+            print(f'      {k:30s} : {data[k]:>15,}')
+    if fn == 'lite':
+        print(f'    Sources:      {data["sources"]}')
+        print(f'    Drivers:      {data["drivers"]}')
+        print(f'    Buckets:      {data["buckets"]}')
+    print()

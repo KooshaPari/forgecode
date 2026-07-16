@@ -1,0 +1,375 @@
+/**
+ * DAG Live Status — client-side event stream, polling, and view-mode toggle.
+ *
+ * F26 — DAG renderer: live status (consumes from F9 events)
+ *
+ * Provides:
+ *  - DagStatusSimulator: simulated F9 event feed with random transitions
+ *  - Live status indicator (dots + last-updated timestamp)
+ *  - View-mode toggle (live ↔ static)
+ *  - Per-node badge rendering based on status
+ *  - Polling tick with configurable interval (default 30s)
+ *  - Status history tracking (statusHistory array per node)
+ *  - F9 event schema with fromStatus tracking
+ */
+
+(function () {
+  "use strict";
+
+  // ── Status display config matching the TS types ──────────────────────
+
+  var STATUS_BADGE = {
+    pending:       { label: "pending",     color: "#8a8a93", bg: "rgba(138,138,147,0.15)" },
+    "in-progress": { label: "in-prog",     color: "#7ebab5", bg: "rgba(126,186,181,0.15)" },
+    completed:     { label: "completed",   color: "#22c55e", bg: "rgba(34,197,94,0.15)" },
+    failed:        { label: "failed",      color: "#ef4444", bg: "rgba(239,68,68,0.15)" },
+    blocked:       { label: "blocked",     color: "#eab308", bg: "rgba(234,179,8,0.15)" },
+  };
+
+  var STATUS_ORDER = ["pending", "in-progress", "completed", "failed", "blocked"];
+
+  // ── Status indicator colours for the live dot ───────────────────────
+
+  var LIVE_DOT_COLORS = {
+    active: "#22c55e",
+    polling: "#7ebab5",
+    paused: "#8a8a93",
+  };
+
+  // ── DagStatusSimulator ─────────────────────────────────────────────
+
+  /**
+   * Simulated F9 event feed. Emits random status transitions at a
+   * configurable interval. In production this would connect to a WebSocket
+   * or SSE endpoint from the F9 execution engine.
+   */
+  function createSimulator(nodeIds, intervalMs) {
+    intervalMs = intervalMs || 8000;
+    var timer = null;
+    var nodeIndex = 0;
+    var statusCycle = [
+      "in-progress", "completed", "failed", "blocked",
+      "in-progress", "completed",
+    ];
+    var cycleIndex = 0;
+    var listeners = [];
+
+    function notify(event) {
+      for (var i = 0; i < listeners.length; i++) {
+        try { listeners[i](event); } catch (_) {}
+      }
+    }
+
+    var currentStatusMap = {};
+    // Initialize all nodes as pending
+    for (var i = 0; i < nodeIds.length; i++) {
+      currentStatusMap[nodeIds[i]] = "pending";
+    }
+
+    return {
+      onEvent: function (cb) {
+        listeners.push(cb);
+        return function () {
+          var idx = listeners.indexOf(cb);
+          if (idx !== -1) listeners.splice(idx, 1);
+        };
+      },
+      getCurrentStatus: function (nodeId) {
+        return currentStatusMap[nodeId] || "pending";
+      },
+      setCurrentStatus: function (nodeId, status) {
+        currentStatusMap[nodeId] = status;
+      },
+      start: function (initialStatusMap) {
+        if (initialStatusMap) {
+          for (var id in initialStatusMap) {
+            if (initialStatusMap.hasOwnProperty(id)) {
+              currentStatusMap[id] = initialStatusMap[id];
+            }
+          }
+        }
+        if (timer !== null) return;
+        timer = setInterval(function () {
+          var nodeId = nodeIds[nodeIndex % nodeIds.length];
+          var newStatus = statusCycle[cycleIndex % statusCycle.length];
+          var fromStatus = currentStatusMap[nodeId] || "pending";
+          currentStatusMap[nodeId] = newStatus;
+          nodeIndex++;
+          cycleIndex++;
+          notify({
+            type: "status-change",
+            payload: {
+              nodeId: nodeId,
+              fromStatus: fromStatus,
+              newStatus: newStatus,
+              timestamp: new Date().toISOString(),
+            },
+          });
+        }, intervalMs);
+      },
+      stop: function () {
+        if (timer !== null) {
+          clearInterval(timer);
+          timer = null;
+        }
+      },
+      get running() { return timer !== null; },
+      reset: function () {
+        nodeIndex = 0;
+        cycleIndex = 0;
+        notify({ type: "reset", payload: null });
+      },
+      emit: function (event) { notify(event); },
+    };
+  }
+
+  // ── LiveStatusUI ───────────────────────────────────────────────────
+
+  /**
+   * Manages the live-status indicator bar, view-mode toggle, and polling
+   * updates in the DAG renderer page.
+   */
+  function LiveStatusUI(dagData, opts) {
+    opts = opts || {};
+    this.pollMs = opts.pollMs || 30000;
+    this.simIntervalMs = opts.simIntervalMs || 8000;
+    this.dagData = dagData;
+    this.viewMode = "live";
+    this.isPolling = false;
+    this.lastPollAt = null;
+    this.lastUpdateAt = null;
+    this.onUpdateCallbacks = [];
+    this.nodeStatusMap = {};
+    this.nodeLastUpdatedMap = {};
+    this.nodeStatusHistoryMap = {};
+    this.simulator = null;
+
+    // Build initial status map
+    for (var i = 0; i < dagData.nodes.length; i++) {
+      var n = dagData.nodes[i];
+      this.nodeStatusMap[n.id] = n.status;
+      this.nodeLastUpdatedMap[n.id] = n.lastUpdated || null;
+      this.nodeStatusHistoryMap[n.id] = (n.statusHistory && n.statusHistory.slice()) || [];
+  }
+
+  LiveStatusUI.prototype = {
+    // ── Subscriptions ───────────────────────────────────────────────
+    onUpdate: function (cb) {
+      this.onUpdateCallbacks.push(cb);
+      var self = this;
+      return function () {
+        var idx = self.onUpdateCallbacks.indexOf(cb);
+        if (idx !== -1) self.onUpdateCallbacks.splice(idx, 1);
+      };
+    },
+
+    _notify: function () {
+      for (var i = 0; i < this.onUpdateCallbacks.length; i++) {
+        try { this.onUpdateCallbacks[i](this); } catch (_) {}
+      }
+    },
+
+    // ── View mode toggle ────────────────────────────────────────────
+    setViewMode: function (mode) {
+      if (this.viewMode === mode) return;
+      this.viewMode = mode;
+      if (mode === "live") {
+        this.startPolling();
+      } else {
+        this.stopPolling();
+        this.stopSimulator();
+      }
+      this._notify();
+    },
+
+    // ── Polling ────────────────────────────────────────────────────
+    startPolling: function () {
+      if (this.isPolling) return;
+      this.isPolling = true;
+      this.lastPollAt = new Date().toISOString();
+      var self = this;
+
+      // Start the simulator in live mode
+      if (!this.simulator) {
+        var nodeIds = this.dagData.nodes.map(function (n) { return n.id; });
+        this.simulator = createSimulator(nodeIds, this.simIntervalMs);
+        this.simulator.onEvent(function (event) {
+          self._handleSimulatorEvent(event);
+        });
+      }
+      this.simulator.start();
+
+      this._notify();
+    },
+
+    stopPolling: function () {
+      if (!this.isPolling) return;
+      this.isPolling = false;
+      this.stopSimulator();
+      this._notify();
+    },
+
+    stopSimulator: function () {
+      if (this.simulator) {
+        this.simulator.stop();
+      }
+    },
+
+    // ── Simulated event handling ────────────────────────────────────
+    _handleSimulatorEvent: function (event) {
+      if (event.type === "reset") {
+        // Reset all nodes to pending
+        for (var i = 0; i < this.dagData.nodes.length; i++) {
+          var n = this.dagData.nodes[i];
+          this.nodeStatusMap[n.id] = "pending";
+          this.nodeLastUpdatedMap[n.id] = new Date().toISOString();
+        }
+        this.lastUpdateAt = new Date().toISOString();
+        this.lastPollAt = new Date().toISOString();
+        this._notify();
+        return;
+      }
+
+      if (event.type !== "status-change" || !event.payload) return;
+
+      var payload = event.payload;
+      var nodeId = payload.nodeId;
+      var oldStatus = this.nodeStatusMap[nodeId] || "pending";
+      this.nodeStatusMap[nodeId] = payload.newStatus;
+      this.nodeLastUpdatedMap[nodeId] = payload.timestamp;
+
+      // Track status history
+      var historyEntry = {
+        date: payload.timestamp,
+        from: payload.fromStatus || oldStatus,
+        to: payload.newStatus,
+        note: "Live status update (F9 event)",
+      };
+      if (!this.nodeStatusHistoryMap[nodeId]) {
+        this.nodeStatusHistoryMap[nodeId] = [];
+      }
+      this.nodeStatusHistoryMap[nodeId].push(historyEntry);
+
+      this.lastUpdateAt = payload.timestamp;
+      this.lastPollAt = payload.timestamp;
+      this._notify();
+    },
+
+    // ── Status history query ───────────────────────────────────────
+    getNodeStatusHistory: function (nodeId) {
+      return this.nodeStatusHistoryMap[nodeId] || [];
+    },
+
+    getStatusHistoryCount: function (nodeId) {
+      var h = this.nodeStatusHistoryMap[nodeId];
+      return h ? h.length : 0;
+    },
+    },
+
+    // ── Manual status update ───────────────────────────────────────
+    updateNodeStatus: function (nodeId, newStatus, fromStatus) {
+      var oldStatus = this.nodeStatusMap[nodeId] || "pending";
+      this.nodeStatusMap[nodeId] = newStatus;
+      var now = new Date().toISOString();
+      this.nodeLastUpdatedMap[nodeId] = now;
+
+      // Track status history
+      var historyEntry = {
+        date: now,
+        from: fromStatus || oldStatus,
+        to: newStatus,
+        note: "Manual status update",
+      };
+      if (!this.nodeStatusHistoryMap[nodeId]) {
+        this.nodeStatusHistoryMap[nodeId] = [];
+      }
+      this.nodeStatusHistoryMap[nodeId].push(historyEntry);
+
+      this.lastUpdateAt = now;
+      this.lastPollAt = now;
+      this._notify();
+    },
+
+    // ── Query ──────────────────────────────────────────────────────
+    getNodeStatus: function (nodeId) {
+      return this.nodeStatusMap[nodeId] || "pending";
+    },
+
+    getNodeLastUpdated: function (nodeId) {
+      return this.nodeLastUpdatedMap[nodeId] || null;
+    },
+
+    // ── Formatting helpers ──────────────────────────────────────────
+    formatTimestamp: function (iso) {
+      if (!iso) return "—";
+      var d = new Date(iso);
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    },
+
+    formatRelativeTime: function (iso) {
+      if (!iso) return "—";
+      var diff = Date.now() - new Date(iso).getTime();
+      var sec = Math.floor(diff / 1000);
+      if (sec < 5) return "just now";
+      if (sec < 60) return sec + "s ago";
+      var min = Math.floor(sec / 60);
+      if (min === 1) return "1m ago";
+      if (min < 60) return min + "m ago";
+      var hr = Math.floor(min / 60);
+      return hr + "h ago";
+    },
+
+    statusSummary: function () {
+      var counts = { pending: 0, "in-progress": 0, completed: 0, failed: 0, blocked: 0 };
+      for (var i = 0; i < this.dagData.nodes.length; i++) {
+        var id = this.dagData.nodes[i].id;
+        var s = this.nodeStatusMap[id] || "pending";
+        counts[s] = (counts[s] || 0) + 1;
+      }
+      return counts;
+    },
+
+    destroy: function () {
+      this.stopSimulator();
+      this.onUpdateCallbacks = [];
+    },
+  };
+
+  // ── Helpers ──────────────────────────────────────────────────────
+
+  function escapeHtml(str) {
+    var d = document.createElement("div");
+    d.textContent = str;
+    return d.innerHTML;
+  }
+
+  // ── Render utilities for live-status indicators ───────────────────
+
+  /**
+   * Render the status badge SVG circle (or text badge) for a node.
+   * Used by dag-renderer.js when re-rendering node status.
+   */
+  function renderStatusBadge(status) {
+    var cfg = STATUS_BADGE[status] || STATUS_BADGE.pending;
+    return cfg;
+  }
+
+  function renderLiveDot(mode) {
+    var color = LIVE_DOT_COLORS[mode] || LIVE_DOT_COLORS.paused;
+    return (
+      '<span class="inline-block w-2 h-2 rounded-full" style="background:' +
+      color + ";box-shadow:0 0 6px " + color + '"></span>'
+    );
+  }
+
+  // ── Public API ───────────────────────────────────────────────────
+
+  window.DagLiveStatus = {
+    LiveStatusUI: LiveStatusUI,
+    createSimulator: createSimulator,
+    STATUS_BADGE: STATUS_BADGE,
+    renderStatusBadge: renderStatusBadge,
+    renderLiveDot: renderLiveDot,
+    STATUS_ORDER: STATUS_ORDER,
+  };
+})();

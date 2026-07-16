@@ -1,0 +1,4 @@
+cd "C:\Users\koosh\Dev\Civis\.worktrees\wt-physics-impl"
+git reset -- crates/engine/src/engine.rs
+git reset -- crates/engine/src/replay.rs
+git diff --cached --name-only

@@ -1,0 +1,36 @@
+#!/usr/bin/env python3
+"""Fetch cline/cline PR #11986 (forcefully enable ClinePass), PR #11990 (test
+fix), PR #11974 (wording), then dump bodies + file diffs to stdout. Also
+list the current main-branch files most likely to contain the ClinePass
+endpoint and key name."""
+import json, subprocess, sys
+
+def gh(path):
+    r = subprocess.run(
+        ["gh", "api", path],
+        capture_output=True, text=True, encoding="utf-8", shell=False
+    )
+    if r.returncode != 0:
+        print(f"FAIL gh api {path}: {r.stderr.strip()}", file=sys.stderr)
+        return None
+    return json.loads(r.stdout)
+
+def emit_pr(num):
+    pr = gh(f"repos/cline/cline/pulls/{num}")
+    if not pr:
+        return
+    print(f"\n========== PR #{num} ==========")
+    print(f"title:   {pr.get('title')}")
+    print(f"state:   {pr.get('state')}  merged: {pr.get('merged')}  url: {pr.get('html_url')}")
+    print(f"branch:  head={pr.get('head',{}).get('ref')}  base={pr.get('base',{}).get('ref')}")
+    print(f"\n--- BODY ---\n{pr.get('body') or '(empty)'}")
+    files = gh(f"repos/cline/cline/pulls/{num}/files?per_page=200")
+    if files:
+        print(f"\n--- FILES ({len(files)}) ---")
+        for f in files:
+            print(f"\n=== {f['filename']}  +{f['additions']} -{f['deletions']} ===")
+            patch = f.get('patch') or '(no patch)'
+            print(patch)
+
+for n in (11986, 11990, 11974):
+    emit_pr(n)

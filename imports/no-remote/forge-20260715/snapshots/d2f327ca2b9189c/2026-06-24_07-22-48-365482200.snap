@@ -1,0 +1,667 @@
+#!/usr/bin/env bash
+# grade.sh — Absorption-justification audit grading engine
+# Usage: grade.sh <audit-markdown-path>
+#
+# Parses a single absorption-justification markdown file and grades it
+# against the 7 pillars defined in schema.json. Emits a JSON grade report
+# on stdout. Uses only bash + grep -E (no jq, awk, python).
+#
+# Schema authority: registry/audit-absorption-justification/schema.json
+# Max score: 14   (3+3+2+2+1+2+1)
+
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+  echo "Usage: $0 <audit-markdown-path>" >&2
+  echo "  Grades an absorption-justification markdown against the 7-pillar schema." >&2
+  echo "  Outputs a JSON grade report on stdout." >&2
+  exit 2
+fi
+
+AUDIT="$1"
+
+if [[ ! -f "$AUDIT" ]]; then
+  echo "Error: audit file not found: $AUDIT" >&2
+  exit 2
+fi
+
+# Locate project root by searching upward from the audit file (fall back to cwd)
+# We use the audit file's directory + parents to locate the registry.
+AUDIT_DIR="$(cd "$(dirname "$AUDIT")" && pwd 2>/dev/null || dirname "$AUDIT")"
+PROJECT_ROOT=""
+candidate="$AUDIT_DIR"
+while [[ -n "$candidate" && "$candidate" != "/" && "$candidate" != "." ]]; do
+  if [[ -d "$candidate/registry" ]]; then
+    PROJECT_ROOT="$candidate"
+    break
+  fi
+  candidate="$(dirname "$candidate")"
+done
+if [[ -z "$PROJECT_ROOT" ]]; then
+  PROJECT_ROOT="$(pwd)"
+fi
+
+REGISTRY="$PROJECT_ROOT/registry"
+PROJECTS_DIR="$REGISTRY/projects"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+# has_section <name>
+#   Tests for an H2 section heading (case-insensitive, spaces/dashes normalized).
+has_section() {
+  local name="$1"
+  # Matches `^## <name>` allowing the H2 marker to be followed by EOL or space.
+  # Section names in the schema use mixed case; we compare lower-cased forms.
+  local lower
+  lower=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+  grep -Eiq "^##[[:space:]]+${lower}([[:space:]]|$)" "$AUDIT"
+}
+
+# section_body <name>
+#   Prints the body of an H2 section (everything after its heading until
+#   the next H2 or EOF). Used to verify a section is non-empty / substantive.
+section_body() {
+  local name="$1"
+  local lower
+  lower=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+  awk -v IGNORECASE=1 -v sec="$lower" '
+    BEGIN { in_sec = 0 }
+    /^##[[:space:]]/ {
+      h = tolower($0)
+      sub(/^##[[:space:]]+/, "", h)
+      sub(/[[:space:]].*$/, "", h)
+      if (in_sec && h != "") { exit }
+      if (h == sec) { in_sec = 1; next }
+    }
+    in_sec { print }
+  ' "$AUDIT"
+}
+
+# matrix_rows
+#   Emits the data rows of the ABSORPTION_MATRIX table (excluding the
+#   header and separator rows). Each row on stdout is "field1|field2|...".
+matrix_rows() {
+  awk '
+    /^##[[:space:]]+ABSORPTION_MATRIX/ { in_mat = 1; next }
+    in_mat && /^##[[:space:]]/ { in_mat = 0 }
+    in_mat && /^\|/ {
+      # Drop the markdown table separator row (---|---|---...)
+      if ($0 !~ /^[[:space:]]*\|[[:space:]]*-+/) {
+        # Trim leading/trailing pipes, collapse internal pipes into a delimiter
+        gsub(/^\|[[:space:]]*/, "")
+        gsub(/[[:space:]]*\|$/, "")
+        gsub(/[[:space:]]*\|[[:space:]]*/, "|")
+        print
+      }
+    }
+  ' "$AUDIT"
+}
+
+# matrix_header
+#   Emits the header row of the ABSORPTION_MATRIX as "col1|col2|...".
+matrix_header() {
+  awk '
+    /^##[[:space:]]+ABSORPTION_MATRIX/ { in_mat = 1; next }
+    in_mat && /^##[[:space:]]/ { in_mat = 0 }
+    in_mat && /^\|/ {
+      if ($0 !~ /^[[:space:]]*\|[[:space:]]*-+/) {
+        gsub(/^\|[[:space:]]*/, "")
+        gsub(/[[:space:]]*\|$/, "")
+        gsub(/[[:space:]]*\|[[:space:]]*/, "|")
+        print
+        exit
+      }
+    }
+  ' "$AUDIT"
+}
+
+# json_str <text>
+#   Escape a string for inclusion as a JSON value (handles ", \, control chars).
+json_str() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/ }"
+  s="${s//$'\r'/ }"
+  s="${s//$'\t'/ }"
+  printf '%s' "$s"
+}
+
+# grade_letter <pct>
+#   Map a percentage (0-100) to a letter grade using standard thresholds.
+grade_letter() {
+  local pct="$1"
+  if [[ "$pct" -ge 95 ]]; then echo "A+"
+  elif [[ "$pct" -ge 90 ]]; then echo "A"
+  elif [[ "$pct" -ge 85 ]]; then echo "B+"
+  elif [[ "$pct" -ge 80 ]]; then echo "B"
+  elif [[ "$pct" -ge 70 ]]; then echo "C"
+  elif [[ "$pct" -ge 60 ]]; then echo "D"
+  else echo "F"
+  fi
+}
+
+# grade_level <pct>
+#   Map a percentage to the L0..L4 level used by the absorption schema.
+grade_level() {
+  local pct="$1"
+  if (( $(echo "$pct >= 82.14" | bc -l 2>/dev/null || echo 0) )); then echo "L4"
+  elif (( $(echo "$pct >= 71.42" | bc -l 2>/dev/null || echo 0) )); then echo "L3"
+  elif (( $(echo "$pct >= 50"    | bc -l 2>/dev/null || echo 0) )); then echo "L2"
+  elif (( $(echo "$pct >= 21.42" | bc -l 2>/dev/null || echo 0) )); then echo "L1"
+  else echo "L0"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Project name extraction
+# ---------------------------------------------------------------------------
+
+# Try H1 (`# <name> — Absorption Justification`) first, then `Repository:` line.
+PROJECT=""
+if PROJECT=$(grep -E '^#[[:space:]]+' "$AUDIT" | head -1 | sed -E 's/^#[[:space:]]+//; s/[[:space:]]+—.*$//; s/[[:space:]]+- Absorption.*$//; s/[[:space:]]+Absorption.*$//' | xargs); then
+  :
+fi
+if [[ -z "$PROJECT" ]]; then
+  PROJECT=$(grep -E '\*\*Repository:\*\*' "$AUDIT" | head -1 | sed -E 's/.*\*\*Repository:\*\*[[:space:]]*`?//; s/`$//; s/[[:space:]].*$//' | xargs || true)
+fi
+if [[ -z "$PROJECT" ]]; then
+  PROJECT=$(basename "$AUDIT" .md)
+fi
+
+# ---------------------------------------------------------------------------
+# Pillar 1 — manifest-completeness (weight 3)
+#   All 5 mandatory H2 sections must exist; bonus credit for optionals.
+# ---------------------------------------------------------------------------
+
+P1_SCORE=0
+P1_MAX=3
+P1_DETAILS=""
+P1_STATUS="fail"
+
+mandatory=("Source" "Target" "Status" "Last-Resort-Exceptions" "Restore-Command")
+optional=("Confidence" "Source Inventory Summary" "Branch Inventory Summary" "Target Parity Summary" "Gaps and Exceptions" "Final Recommendation")
+
+mandatory_found=0
+mandatory_list=""
+missing_list=""
+for sec in "${mandatory[@]}"; do
+  if has_section "$sec"; then
+    mandatory_found=$((mandatory_found + 1))
+    if [[ -n "$mandatory_list" ]]; then mandatory_list="$mandatory_list, "
+    fi
+    mandatory_list="${mandatory_list}$sec"
+  else
+    if [[ -n "$missing_list" ]]; then missing_list="$missing_list, "
+    fi
+    missing_list="${missing_list}$sec"
+  fi
+done
+
+optional_found=0
+for sec in "${optional[@]}"; do
+  if has_section "$sec"; then
+    optional_found=$((optional_found + 1))
+  fi
+done
+
+if [[ $mandatory_found -eq 5 ]]; then
+  # Full credit: 5/5 mandatory + at least 2 optionals present
+  if [[ $optional_found -ge 2 ]]; then
+    P1_SCORE=3
+    P1_STATUS="pass"
+    P1_DETAILS="all 5 mandatory sections present; $optional_found/6 optional sections present"
+  else
+    # Partial: 5/5 mandatory but few optionals -> 2/3
+    P1_SCORE=2
+    P1_STATUS="partial"
+    P1_DETAILS="all 5 mandatory sections present; only $optional_found/6 optional sections present"
+  fi
+elif [[ $mandatory_found -ge 3 ]]; then
+  # Partial: 3-4 of 5 -> 1/3
+  P1_SCORE=1
+  P1_STATUS="partial"
+  P1_DETAILS="$mandatory_found/5 mandatory sections present (missing: $missing_list)"
+else
+  P1_SCORE=0
+  P1_STATUS="fail"
+  P1_DETAILS="only $mandatory_found/5 mandatory sections present (missing: $missing_list)"
+fi
+
+# ---------------------------------------------------------------------------
+# Pillar 2 — parity-evidence (weight 3)
+#   ABSORPTION_MATRIX must include a "Target Evidence" column AND every
+#   non-NO_MERIT row must cite something (commit SHA, file path, artifact,
+#   or test run).
+# ---------------------------------------------------------------------------
+
+P2_SCORE=0
+P2_MAX=3
+P2_DETAILS=""
+P2_STATUS="fail"
+
+HDR=$(matrix_header)
+if [[ -z "$HDR" ]]; then
+  P2_DETAILS="no ABSORPTION_MATRIX table found"
+  P2_STATUS="fail"
+else
+  # Split header by '|' and check for 'Target Evidence' column
+  HDR_LOWER=$(echo "$HDR" | tr '[:upper:]' '[:lower:]')
+  HAS_EVIDENCE_COL="false"
+  if echo "$HDR_LOWER" | grep -Eq '(^|\|)target[[:space:]]+evidence(\||$)'; then
+    HAS_EVIDENCE_COL="true"
+  fi
+
+  # Examine body rows for evidence citations
+  ROWS=$(matrix_rows)
+  ROW_COUNT=0
+  EVIDENCED_ROWS=0
+  UNEVIDENCED_ROWS=0
+  if [[ -n "$ROWS" ]]; then
+    while IFS= read -r row; do
+      [[ -z "$row" ]] && continue
+      ROW_COUNT=$((ROW_COUNT + 1))
+      # Look for an evidence-like cell: SHA, path with slash or backslash,
+      # artifact reference, or "test run".
+      if echo "$row" | grep -Eq '[0-9a-f]{7,}|/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+|[A-Za-z]:\\\\[A-Za-z0-9_\\\\.-]+|test[[:space:]]+run|artifact'; then
+        EVIDENCED_ROWS=$((EVIDENCED_ROWS + 1))
+      else
+        UNEVIDENCED_ROWS=$((UNEVIDENCED_ROWS + 1))
+      fi
+    done <<< "$ROWS"
+  fi
+
+  if [[ "$HAS_EVIDENCE_COL" == "true" && $ROW_COUNT -gt 0 ]]; then
+    if [[ $UNEVIDENCED_ROWS -eq 0 ]]; then
+      P2_SCORE=3
+      P2_STATUS="pass"
+      P2_DETAILS="Target Evidence column present; all $ROW_COUNT rows carry citations"
+    elif [[ $UNEVIDENCED_ROWS -lt $ROW_COUNT ]]; then
+      P2_SCORE=2
+      P2_STATUS="partial"
+      P2_DETAILS="Target Evidence column present; $EVIDENCED_ROWS/$ROW_COUNT rows have citations ($UNEVIDENCED_ROWS missing)"
+    else
+      P2_SCORE=1
+      P2_STATUS="partial"
+      P2_DETAILS="Target Evidence column present but no rows carry concrete citations"
+    fi
+  elif [[ "$HAS_EVIDENCE_COL" == "true" ]]; then
+    P2_SCORE=1
+    P2_STATUS="partial"
+    P2_DETAILS="Target Evidence column present but matrix is empty"
+  else
+    P2_SCORE=0
+    P2_STATUS="fail"
+    P2_DETAILS="ABSORPTION_MATRIX missing 'Target Evidence' column"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Pillar 3 — branch-coverage (weight 2)
+#   Branch Inventory Summary must enumerate branches, and each non-main
+#   branch with unique content should have a corresponding matrix row.
+# ---------------------------------------------------------------------------
+
+P3_SCORE=0
+P3_MAX=2
+P3_DETAILS=""
+P3_STATUS="fail"
+
+BIS=$(section_body "Branch Inventory Summary")
+if [[ -z "$BIS" ]]; then
+  P3_DETAILS="no Branch Inventory Summary section"
+  P3_STATUS="fail"
+else
+  # Count branches listed (lines matching "- **{name} Branch:**" or similar)
+  # Patterns we accept: "**Active Feature Branches:**", "**Stale Branches:**",
+  # "**Default Branch:**", "- *branch-name*", etc.
+  ACTIVE_COUNT=$(echo "$BIS" | grep -Eic '(active[[:space:]]+feature[[:space:]]+branches|stale[[:space:]]+branches|unmerged[[:space:]]+work|default[[:space:]]+branch)' || true)
+
+  # Check the matrix has at least one row mentioning branch carry-over
+  ROWS=$(matrix_rows)
+  HAS_BRANCH_ROW="false"
+  if echo "$ROWS" | grep -Eiq 'branch[[:space:]]+carry'; then
+    HAS_BRANCH_ROW="true"
+  fi
+
+  if [[ $ACTIVE_COUNT -ge 1 && "$HAS_BRANCH_ROW" == "true" ]]; then
+    P3_SCORE=2
+    P3_STATUS="pass"
+    P3_DETAILS="Branch Inventory Summary present and matrix has branch carry-over row"
+  elif [[ $ACTIVE_COUNT -ge 1 ]]; then
+    P3_SCORE=1
+    P3_STATUS="partial"
+    P3_DETAILS="Branch Inventory Summary present but matrix lacks branch carry-over row"
+  else
+    P3_SCORE=0
+    P3_STATUS="fail"
+    P3_DETAILS="Branch Inventory Summary missing branch enumeration fields"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Pillar 4 — last-resort-justification (weight 2)
+#   Last-Resort-Exceptions section must contain explicit rebuttal of:
+#     - why target cannot absorb the exception
+#     - what residual gap remains
+#     - why archival-not-deletion is insufficient
+# ---------------------------------------------------------------------------
+
+P4_SCORE=0
+P4_MAX=2
+P4_DETAILS=""
+P4_STATUS="fail"
+
+LRE=$(section_body "Last-Resort-Exceptions")
+if [[ -z "$LRE" ]]; then
+  P4_DETAILS="no Last-Resort-Exceptions section"
+  P4_STATUS="fail"
+else
+  # If LRE explicitly states "None" (no exception invoked), this is fully
+  # justified for the no-exception case -> full credit.
+  LRE_LOWER=$(echo "$LRE" | tr '[:upper:]' '[:lower:]')
+  if echo "$LRE_LOWER" | grep -Eq '^[[:space:]]*[-*]?[[:space:]]*none[[:space:]]*[.!]?[[:space:]]*$'; then
+    P4_SCORE=2
+    P4_STATUS="pass"
+    P4_DETAILS="Last-Resort-Exceptions explicitly declares 'None' (no exception invoked, fully justified)"
+  else
+    # Real exception invoked: look for the three rebuttal elements
+    REBUT=0
+    if echo "$LRE_LOWER" | grep -Eq 'cannot[[:space:]]+absorb|can.?t[[:space:]]+absorb|unable[[:space:]]+to[[:space:]]+absorb|will not absorb'; then
+      REBUT=$((REBUT + 1))
+    fi
+    if echo "$LRE_LOWER" | grep -Eq 'residual[[:space:]]+gap|remaining[[:space:]]+gap|gap[[:space:]]+remains'; then
+      REBUT=$((REBUT + 1))
+    fi
+    if echo "$LRE_LOWER" | grep -Eq 'archival.{0,20}insufficient|insufficient.{0,20}archival|delete.{0,20}insufficient|insufficient.{0,20}delet'; then
+      REBUT=$((REBUT + 1))
+    fi
+
+    if [[ $REBUT -ge 3 ]]; then
+      P4_SCORE=2
+      P4_STATUS="pass"
+      P4_DETAILS="Last-Resort-Exceptions carries all 3 rebuttal elements (why-not-absorb, residual-gap, why-archival-insufficient)"
+    elif [[ $REBUT -ge 1 ]]; then
+      P4_SCORE=1
+      P4_STATUS="partial"
+      P4_DETAILS="Last-Resort-Exceptions carries $REBUT/3 rebuttal elements"
+    else
+      P4_SCORE=0
+      P4_STATUS="fail"
+      P4_DETAILS="Last-Resort-Exceptions invoked but lacks required rebuttal structure"
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Pillar 5 — restore-command-validity (weight 1)
+#   Restore-Command must be verifiable: either `mv .archive/X .` OR
+#   `git clone <remote-url>` plus a recorded bundle SHA-256 checksum.
+# ---------------------------------------------------------------------------
+
+P5_SCORE=0
+P5_MAX=1
+P5_DETAILS=""
+P5_STATUS="fail"
+
+RC=$(section_body "Restore-Command")
+if [[ -z "$RC" ]]; then
+  P5_DETAILS="no Restore-Command section"
+  P5_STATUS="fail"
+else
+  RC_LOWER=$(echo "$RC" | tr '[:upper:]' '[:lower:]')
+  HAS_MV="false"
+  HAS_CLONE="false"
+  HAS_SHA256="false"
+  if echo "$RC_LOWER" | grep -Eq 'mv[[:space:]]+\.archive/[^[:space:]]+[[:space:]]+\.'; then
+    HAS_MV="true"
+  fi
+  if echo "$RC_LOWER" | grep -Eq 'git[[:space:]]+clone[[:space:]]+'; then
+    HAS_CLONE="true"
+  fi
+  if echo "$RC_LOWER" | grep -Eq 'sha-?256[[:space:]]*[:=]'; then
+    HAS_SHA256="true"
+  fi
+
+  if [[ "$HAS_MV" == "true" || ( "$HAS_CLONE" == "true" && "$HAS_SHA256" == "true" ) ]]; then
+    P5_SCORE=1
+    P5_STATUS="pass"
+    if [[ "$HAS_MV" == "true" ]]; then
+      P5_DETAILS="Restore-Command uses verifiable 'mv .archive/...' form"
+    else
+      P5_DETAILS="Restore-Command uses 'git clone' + recorded SHA-256 checksum"
+    fi
+  else
+    P5_SCORE=0
+    P5_STATUS="fail"
+    P5_DETAILS="Restore-Command lacks verifiable form (need 'mv .archive/X .' OR 'git clone' + SHA-256)"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Pillar 6 — registry-integration (weight 2)
+#   Project card exists at registry/projects/<Name>.json with status set
+#   to archived/active, absorbed_into populated when applicable, and/or
+#   disposition set per disposition-index.
+# ---------------------------------------------------------------------------
+
+P6_SCORE=0
+P6_MAX=2
+P6_DETAILS=""
+P6_STATUS="fail"
+
+# Look for a project card. The PROJECT name extracted from the audit may
+# have trailing punctuation; try a few candidate filenames.
+CARD=""
+for candidate in "$PROJECT" "${PROJECT,,}" "$(echo "$PROJECT" | tr '[:upper:]' '[:lower:]')"; do
+  if [[ -f "$PROJECTS_DIR/$candidate.json" ]]; then
+    CARD="$PROJECTS_DIR/$candidate.json"
+    break
+  fi
+done
+
+# Also try reading the registry/components.lock or a manifest referenced in the audit
+if [[ -z "$CARD" ]]; then
+  # Try owner/name split from the Repository: line
+  REPO_FIELD=$(grep -E '\*\*Repository:\*\*' "$AUDIT" | head -1 | sed -E 's/.*\*\*Repository:\*\*[[:space:]]*`?//; s/`$//' | xargs || true)
+  if [[ -n "$REPO_FIELD" && "$REPO_FIELD" == */* ]]; then
+    leaf="${REPO_FIELD##*/}"
+    leaf="${leaf,,}"
+    if [[ -f "$PROJECTS_DIR/$leaf.json" ]]; then
+      CARD="$PROJECTS_DIR/$leaf.json"
+    fi
+  fi
+fi
+
+if [[ -n "$CARD" && -f "$CARD" ]]; then
+  CARD_CONTENT=$(cat "$CARD")
+  HAS_STATUS="false"
+  if echo "$CARD_CONTENT" | grep -Eiq '"status"[[:space:]]*:[[:space:]]*"(archived|active)"'; then
+    HAS_STATUS="true"
+  fi
+
+  DISPOSITION_FILE="$REGISTRY/disposition-index.json"
+  HAS_DISPOSITION="false"
+  if [[ -f "$DISPOSITION_FILE" ]]; then
+    if grep -Eiq "\"($PROJECT|${PROJECT,,})\"[[:space:]]*:[[:space:]]*\"(AFFIRM|ARCHIVE_ONLY)\"" "$DISPOSITION_FILE"; then
+      HAS_DISPOSITION="true"
+    fi
+  fi
+
+  if [[ "$HAS_STATUS" == "true" && "$HAS_DISPOSITION" == "true" ]]; then
+    P6_SCORE=2
+    P6_STATUS="pass"
+    P6_DETAILS="project card present with status='archived|active' and disposition indexed"
+  elif [[ "$HAS_STATUS" == "true" ]]; then
+    P6_SCORE=1
+    P6_STATUS="partial"
+    P6_DETAILS="project card present with valid status, but disposition not indexed"
+  else
+    P6_SCORE=1
+    P6_STATUS="partial"
+    P6_DETAILS="project card present at $(basename "$CARD") but lacks status field"
+  fi
+else
+  P6_DETAILS="no project card found at $PROJECTS_DIR/$PROJECT.json"
+  P6_STATUS="fail"
+fi
+
+# ---------------------------------------------------------------------------
+# Pillar 7 — deletion-gate-tooling-coverage (weight 1)
+#   Audit must reference bin/repo-delete-gate.sh OR .ps1 OR explicitly
+#   explain why the gate is not required.
+# ---------------------------------------------------------------------------
+
+P7_SCORE=0
+P7_MAX=1
+P7_DETAILS=""
+P7_STATUS="fail"
+
+REF_GATE="false"
+if grep -Eiq 'bin/repo-delete-gate\.(sh|ps1)' "$AUDIT"; then
+  REF_GATE="true"
+fi
+
+EXPLAINED="false"
+if grep -Eiq 'gate[[:space:]]+(is[[:space:]]+)?not[[:space:]]+required|no[[:space:]]+deletion[[:space:]]+gate|override[[:space:]]+recorded|already[[:space:]]+returns[[:space:]]+404|manual[[:space:]]+operator[[:space:]]+override' "$AUDIT"; then
+  EXPLAINED="true"
+fi
+
+if [[ "$REF_GATE" == "true" ]]; then
+  P7_SCORE=1
+  P7_STATUS="pass"
+  P7_DETAILS="audit references bin/repo-delete-gate.sh|.ps1"
+elif [[ "$EXPLAINED" == "true" ]]; then
+  P7_SCORE=1
+  P7_STATUS="pass"
+  P7_DETAILS="audit explicitly explains why deletion gate is not required"
+else
+  P7_SCORE=0
+  P7_STATUS="fail"
+  P7_DETAILS="audit does not reference bin/repo-delete-gate.sh|.ps1 and does not explain why"
+fi
+
+# ---------------------------------------------------------------------------
+# Aggregate
+# ---------------------------------------------------------------------------
+
+SCORE=$((P1_SCORE + P2_SCORE + P3_SCORE + P4_SCORE + P5_SCORE + P6_SCORE + P7_SCORE))
+MAX=$((P1_MAX + P2_MAX + P3_MAX + P4_MAX + P5_MAX + P6_MAX + P7_MAX))
+
+# Integer percentage (score*100 / max), then refine to 2 decimals via bash math
+if [[ $MAX -gt 0 ]]; then
+  # Use printf to compute 2-decimal percentage without floating-point tools
+  PCT_INT=$(( SCORE * 100 / MAX ))
+  PCT_REM=$(( SCORE * 10000 / MAX - PCT_INT * 100 ))
+  PCT_STR=$(printf '%d.%02d' "$PCT_INT" "$PCT_REM")
+else
+  PCT_STR="0.00"
+fi
+
+LETTER=$(grade_letter "$PCT_INT")
+LEVEL=$(grade_level "$PCT_STR")
+
+# Schema authority (path to schema file used for grading)
+SCHEMA_PATH="$REGISTRY/audit-absorption-justification/schema.json"
+SCHEMA_REL="registry/audit-absorption-justification/schema.json"
+
+# Timestamp (UTC, ISO-8601)
+TS=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u)
+
+# Build JSON on stdout
+cat <<JSON
+{
+  "schema": "absorption-justification-audit",
+  "schema_version": "1.0.0",
+  "schema_authority": "$(json_str "$SCHEMA_REL")",
+  "project": "$(json_str "$PROJECT")",
+  "audit_file": "$(json_str "$AUDIT")",
+  "score": $SCORE,
+  "max": $MAX,
+  "percentage": $PCT_STR,
+  "grade_letter": "$LETTER",
+  "grade_level": "$LEVEL",
+  "grade_boundaries": {
+    "L4": "11.5-14 (Excellent: Absorption fully justified)",
+    "L3": "10.0-11.49 (On Track: Minor gaps in justification)",
+    "L2": "7.0-9.99 (Needs Improvement: Substantive gaps)",
+    "L1": "3.0-6.99 (Critical Foundation Needed)",
+    "L0": "0.0-2.99 (Unacceptable: Absorption not justified)"
+  },
+  "pillars": [
+    {
+      "id": 1,
+      "name": "manifest-completeness",
+      "weight": $P1_MAX,
+      "score": $P1_SCORE,
+      "max": $P1_MAX,
+      "status": "$P1_STATUS",
+      "detail": "$(json_str "$P1_DETAILS")"
+    },
+    {
+      "id": 2,
+      "name": "parity-evidence",
+      "weight": $P2_MAX,
+      "score": $P2_SCORE,
+      "max": $P2_MAX,
+      "status": "$P2_STATUS",
+      "detail": "$(json_str "$P2_DETAILS")"
+    },
+    {
+      "id": 3,
+      "name": "branch-coverage",
+      "weight": $P3_MAX,
+      "score": $P3_SCORE,
+      "max": $P3_MAX,
+      "status": "$P3_STATUS",
+      "detail": "$(json_str "$P3_DETAILS")"
+    },
+    {
+      "id": 4,
+      "name": "last-resort-justification",
+      "weight": $P4_MAX,
+      "score": $P4_SCORE,
+      "max": $P4_MAX,
+      "status": "$P4_STATUS",
+      "detail": "$(json_str "$P4_DETAILS")"
+    },
+    {
+      "id": 5,
+      "name": "restore-command-validity",
+      "weight": $P5_MAX,
+      "score": $P5_SCORE,
+      "max": $P5_MAX,
+      "status": "$P5_STATUS",
+      "detail": "$(json_str "$P5_DETAILS")"
+    },
+    {
+      "id": 6,
+      "name": "registry-integration",
+      "weight": $P6_MAX,
+      "score": $P6_SCORE,
+      "max": $P6_MAX,
+      "status": "$P6_STATUS",
+      "detail": "$(json_str "$P6_DETAILS")"
+    },
+    {
+      "id": 7,
+      "name": "deletion-gate-tooling-coverage",
+      "weight": $P7_MAX,
+      "score": $P7_SCORE,
+      "max": $P7_MAX,
+      "status": "$P7_STATUS",
+      "detail": "$(json_str "$P7_DETAILS")"
+    }
+  ],
+  "timestamp": "$(json_str "$TS")"
+}
+JSON
+
+# Exit code: 0 if L3 or above (pct >= 71.42), 1 otherwise.
+# We compare against PCT_INT (truncated integer) for a stable, dependency-free check.
+if [[ $PCT_INT -lt 71 ]]; then
+  exit 1
+fi
+exit 0

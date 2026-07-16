@@ -1,0 +1,11 @@
+$env:CARGO_TARGET_DIR = 'E:/civis-target'
+$out = 'C:\Users\koosh\AppData\Local\Temp\civis-check-final.out'
+$err = 'C:\Users\koosh\AppData\Local\Temp\civis-check-final.err'
+Remove-Item $out,$err -ErrorAction SilentlyContinue
+Set-Location 'C:\Users\koosh\Dev\Civis\.worktrees\wt-unblock2'
+$p = Start-Process -FilePath 'cargo.exe' -ArgumentList 'check','--workspace' -WorkingDirectory 'C:\Users\koosh\Dev\Civis\.worktrees\wt-unblock2' -RedirectStandardOutput $out -RedirectStandardError $err -NoNewWindow -PassThru -Wait
+Write-Host "EXITCODE=$($p.ExitCode)"
+Write-Host "--- STDOUT TAIL ---"
+if (Test-Path $out) { Get-Content $out -Tail 40 }
+Write-Host "--- STDERR TAIL ---"
+if (Test-Path $err) { Get-Content $err -Tail 40 }

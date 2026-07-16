@@ -1,0 +1,420 @@
+//! Request → parse → dispatch → response coverage for JSON-RPC methods and
+//! parsers not exercised by `crates/server/src/jsonrpc.rs` unit tests (FR-CIV-TEST-007).
+
+use civ_server::jsonrpc::{
+    dispatch_request, error_code, parse_damage_params, parse_load_scenario_params,
+    parse_place_voxel_params, parse_request, parse_reset_seed, parse_set_policy_params,
+    parse_set_speed_params, parse_spawn_civilian_params, parse_spawn_entity_params,
+    DispatchContext, DispatchEffect, JsonRpcParseError, OutcomeFields,
+};
+use serde_json::json;
+use tempfile::TempDir;
+
+fn test_ctx() -> DispatchContext {
+    DispatchContext {
+        tick: 42,
+        population: Some(100),
+        snapshot: None,
+        require_role: false,
+        speed_multiplier: 2,
+        connection_role: None,
+        saves_dir: None,
+        emergence: None,
+        researched: vec!["pottery".to_owned()],
+        in_progress_tech: Some("masonry".to_owned()),
+        last_tick_ms: 1.5,
+        outcome_fields: None,
+    }
+}
+
+fn dispatch_raw(raw: &str, ctx: DispatchContext) -> civ_server::jsonrpc::DispatchPlan {
+    let req = parse_request(raw).expect("valid request");
+    dispatch_request(req, ctx)
+}
+
+// ── health ───────────────────────────────────────────────────────────────────
+
+#[test]
+fn dispatch_health_returns_tick() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":1,"method":"health","params":{}}"#,
+        test_ctx(),
+    );
+    assert_eq!(plan.effect, DispatchEffect::None);
+    assert_eq!(plan.response.result, Some(json!({ "tick": 42 })));
+}
+
+// ── sim.load_scenario ────────────────────────────────────────────────────────
+
+#[test]
+fn dispatch_load_scenario_plans_effect() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":2,"method":"sim.load_scenario","params":{"preset":"baseline","seed":99}}"#,
+        test_ctx(),
+    );
+    assert_eq!(
+        plan.effect,
+        DispatchEffect::LoadScenario {
+            preset: "baseline".to_owned(),
+            seed: 99,
+        }
+    );
+    assert_eq!(
+        plan.response.result,
+        Some(json!({ "preset": "baseline", "seed": 99, "tick": 0 }))
+    );
+}
+
+#[test]
+fn dispatch_load_scenario_rejects_missing_preset() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":3,"method":"sim.load_scenario","params":{}}"#,
+        test_ctx(),
+    );
+    let err = plan.response.error.expect("expected failure");
+    assert_eq!(err.code, error_code::INVALID_PARAMS);
+    assert!(err.message.contains("preset"));
+}
+
+#[test]
+fn parse_load_scenario_params_accepts_preset_and_seed() {
+    let params = json!({ "preset": "three-race-balanced", "seed": 7 });
+    assert_eq!(
+        parse_load_scenario_params(Some(&params)).unwrap(),
+        ("three-race-balanced".to_owned(), 7)
+    );
+}
+
+#[test]
+fn parse_load_scenario_params_rejects_missing_object() {
+    assert!(parse_load_scenario_params(None).is_err());
+}
+
+// ── sim.inspect_tile / sim.diplomacy_action ────────────────────────────────
+
+#[test]
+fn dispatch_inspect_tile_returns_stub_coords() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":4,"method":"sim.inspect_tile","params":{"x":3,"y":7}}"#,
+        test_ctx(),
+    );
+    assert_eq!(
+        plan.response.result,
+        Some(json!({ "x": 3, "y": 7, "stub": true }))
+    );
+}
+
+#[test]
+fn dispatch_diplomacy_action_echoes_params() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":5,"method":"sim.diplomacy_action","params":{"action":"declare_war","target_faction":2}}"#,
+        test_ctx(),
+    );
+    assert_eq!(
+        plan.response.result,
+        Some(json!({
+            "action": "declare_war",
+            "target_faction": 2,
+            "stub": true,
+            "tick": 42,
+        }))
+    );
+}
+
+// ── sim.load_replay ──────────────────────────────────────────────────────────
+
+#[test]
+fn dispatch_load_replay_plans_effect() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":5,"method":"sim.load_replay","params":{"path":"replays/run.civreplay"}}"#,
+        test_ctx(),
+    );
+    assert_eq!(
+        plan.effect,
+        DispatchEffect::LoadReplay {
+            path: "replays/run.civreplay".to_owned(),
+        }
+    );
+    assert_eq!(
+        plan.response.result,
+        Some(json!({ "loaded": true, "tick": 42 }))
+    );
+}
+
+// ── sim.tech_state (context fields) ─────────────────────────────────────────
+
+#[test]
+fn dispatch_tech_state_reflects_context_research() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":6,"method":"sim.tech_state","params":{}}"#,
+        test_ctx(),
+    );
+    let result = plan.response.result.expect("success");
+    assert_eq!(result.get("researched").and_then(|v| v.as_array()).map(|a| a.len()), Some(1));
+    assert_eq!(
+        result.get("in_progress").and_then(|v| v.as_str()),
+        Some("masonry")
+    );
+    assert_eq!(result.get("tick").and_then(|v| v.as_u64()), Some(42));
+}
+
+// ── save.load / save.list ────────────────────────────────────────────────────
+
+#[test]
+fn dispatch_load_slot_plans_effect() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":6,"method":"save.load","params":{"slot_name":"slot-2"}}"#,
+        test_ctx(),
+    );
+    assert_eq!(
+        plan.effect,
+        DispatchEffect::LoadSlot {
+            slot_name: "slot-2".to_owned(),
+        }
+    );
+    assert_eq!(
+        plan.response.result,
+        Some(json!({ "loaded": true, "slot_name": "slot-2" }))
+    );
+}
+
+#[test]
+fn dispatch_load_slot_rejects_invalid_slot() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":7,"method":"save.load","params":{"slot_name":"slot-9"}}"#,
+        test_ctx(),
+    );
+    let err = plan.response.error.expect("expected failure");
+    assert_eq!(err.code, error_code::INVALID_PARAMS);
+}
+
+#[test]
+fn dispatch_save_list_without_dir_returns_internal_error() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":8,"method":"save.list","params":{}}"#,
+        test_ctx(),
+    );
+    let err = plan.response.error.expect("expected failure");
+    assert_eq!(err.code, error_code::INTERNAL_ERROR);
+    assert!(err.message.contains("Save directory unavailable"));
+}
+
+#[test]
+fn dispatch_save_list_with_dir_returns_array() {
+    let dir = TempDir::new().expect("tempdir");
+    let mut ctx = test_ctx();
+    ctx.saves_dir = Some(dir.path().to_path_buf());
+
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":9,"method":"save.list","params":{}}"#,
+        ctx,
+    );
+    assert!(plan.response.result.is_some());
+    assert!(plan.response.result.unwrap().is_array());
+}
+
+// ── sim.outcome / sim.perf / sim.god_action ──────────────────────────────────
+
+#[test]
+fn dispatch_outcome_uses_precomputed_fields() {
+    let mut ctx = test_ctx();
+    ctx.outcome_fields = Some(OutcomeFields {
+        tag: "victory".to_owned(),
+        reason: "domination".to_owned(),
+        tick: 99,
+    });
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":10,"method":"sim.outcome","params":{}}"#,
+        ctx,
+    );
+    assert_eq!(
+        plan.response.result,
+        Some(json!({ "outcome": "victory", "reason": "domination", "tick": 99 }))
+    );
+}
+
+#[test]
+fn dispatch_outcome_defaults_to_ongoing() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":11,"method":"sim.outcome","params":{}}"#,
+        test_ctx(),
+    );
+    assert_eq!(
+        plan.response.result,
+        Some(json!({ "outcome": "ongoing", "reason": "", "tick": 42 }))
+    );
+}
+
+#[test]
+fn dispatch_perf_returns_stub_metrics() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":12,"method":"sim.perf","params":{}}"#,
+        test_ctx(),
+    );
+    let result = plan.response.result.expect("success");
+    assert_eq!(result.get("tick").and_then(|v| v.as_u64()), Some(42));
+    assert_eq!(result.get("last_tick_ms").and_then(|v| v.as_f64()), Some(1.5));
+    assert_eq!(result.get("agent_count").and_then(|v| v.as_u64()), Some(100));
+    assert_eq!(result.get("stub").and_then(|v| v.as_bool()), Some(true));
+}
+
+#[test]
+fn dispatch_god_action_plans_effect() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":13,"method":"sim.god_action","params":{"action":"spawn_food","x":0.5,"y":0.25,"magnitude":10.0}}"#,
+        test_ctx(),
+    );
+    assert_eq!(
+        plan.effect,
+        DispatchEffect::GodAction {
+            action: "spawn_food".to_owned(),
+            x: Some(0.5),
+            y: Some(0.25),
+            target_faction: None,
+            magnitude: Some(10.0),
+        }
+    );
+}
+
+#[test]
+fn dispatch_god_action_rejects_missing_params() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":14,"method":"sim.god_action"}"#,
+        test_ctx(),
+    );
+    let err = plan.response.error.expect("expected failure");
+    assert_eq!(err.code, error_code::INVALID_PARAMS);
+}
+
+// ── subscription methods (WS-only) ───────────────────────────────────────────
+
+#[test]
+fn dispatch_subscribe_methods_require_websocket() {
+    for (id, method) in [
+        (15, "sim.subscribe"),
+        (16, "sim.unsubscribe"),
+        (17, "sim.update_subscription"),
+    ] {
+        let raw = format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"{method}","params":{{}}}}"#);
+        let plan = dispatch_raw(&raw, test_ctx());
+        let err = plan.response.error.expect("expected failure");
+        assert_eq!(err.code, error_code::INTERNAL_ERROR);
+        assert!(err.message.contains("WebSocket"));
+    }
+}
+
+// ── sim.queue_research (empty tech) ────────────────────────────────────────────
+
+#[test]
+fn dispatch_queue_research_rejects_empty_tech() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":18,"method":"sim.queue_research","params":{"tech":""}}"#,
+        test_ctx(),
+    );
+    let err = plan.response.error.expect("expected failure");
+    assert_eq!(err.code, error_code::INVALID_PARAMS);
+    assert!(err.message.contains("tech"));
+}
+
+// ── sim.command unknown action ───────────────────────────────────────────────
+
+#[test]
+fn dispatch_sim_command_unknown_action_returns_method_not_found() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":19,"method":"sim.command","params":{"action":"explode"}}"#,
+        test_ctx(),
+    );
+    let err = plan.response.error.expect("expected failure");
+    assert_eq!(err.code, error_code::METHOD_NOT_FOUND);
+}
+
+// ── sim.place_voxel dispatch + parser errors ─────────────────────────────────
+
+#[test]
+fn dispatch_place_voxel_plans_effect() {
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":20,"method":"sim.place_voxel","params":{"x":1,"y":2,"z":3,"material":5}}"#,
+        test_ctx(),
+    );
+    assert_eq!(
+        plan.effect,
+        DispatchEffect::PlaceVoxel {
+            x: 1,
+            y: 2,
+            z: 3,
+            material: 5,
+        }
+    );
+}
+
+#[test]
+fn dispatch_place_voxel_requires_operator_when_enforced() {
+    let mut ctx = test_ctx();
+    ctx.require_role = true;
+    let plan = dispatch_raw(
+        r#"{"jsonrpc":"2.0","id":21,"method":"sim.place_voxel","params":{"x":0,"y":0,"z":0}}"#,
+        ctx,
+    );
+    let err = plan.response.error.expect("expected failure");
+    assert_eq!(err.code, error_code::FORBIDDEN);
+}
+
+#[test]
+fn parse_place_voxel_params_rejects_missing_coords() {
+    assert!(parse_place_voxel_params(Some(&json!({ "x": 1 }))).is_err());
+}
+
+#[test]
+fn parse_spawn_entity_params_rejects_unknown_kind() {
+    let params = json!({ "kind": "spaceship", "x": 0.5, "y": 0.5 });
+    let err = parse_spawn_entity_params(Some(&params)).expect_err("invalid kind");
+    assert_eq!(err.code, error_code::INVALID_PARAMS);
+}
+
+#[test]
+fn parse_damage_params_rejects_missing_params() {
+    assert!(parse_damage_params(None).is_err());
+}
+
+// ── parse_request error paths ───────────────────────────────────────────────
+
+#[test]
+fn parse_request_rejects_batch_invalid_version_and_unknown_method() {
+    assert!(matches!(
+        parse_request(r#"[{"jsonrpc":"2.0","id":1,"method":"health"}]"#),
+        Err(JsonRpcParseError::InvalidRequest { .. })
+    ));
+    assert!(matches!(
+        parse_request(r#"{"jsonrpc":"1.0","id":1,"method":"health"}"#),
+        Err(JsonRpcParseError::InvalidRequest { .. })
+    ));
+    assert!(matches!(
+        parse_request(r#"{"jsonrpc":"2.0","id":1,"method":"sim.not_a_method"}"#),
+        Err(JsonRpcParseError::MethodNotFound { .. })
+    ));
+}
+
+#[test]
+fn parse_reset_seed_rejects_missing_seed() {
+    let err = parse_reset_seed(Some(&json!({}))).expect_err("missing seed");
+    assert_eq!(err.code, error_code::INVALID_PARAMS);
+}
+
+#[test]
+fn parse_set_policy_rejects_negative_scarcity() {
+    let err = parse_set_policy_params(Some(&json!({ "scarcity_multiplier": -0.5 })))
+        .expect_err("negative scarcity");
+    assert_eq!(err.code, error_code::INVALID_PARAMS);
+}
+
+#[test]
+fn parse_set_speed_rejects_invalid_multiplier() {
+    let err = parse_set_speed_params(Some(&json!({ "multiplier": 3 }))).expect_err("invalid speed");
+    assert_eq!(err.code, error_code::INVALID_PARAMS);
+}
+
+#[test]
+fn parse_spawn_civilian_params_rejects_missing_y() {
+    let err = parse_spawn_civilian_params(Some(&json!({ "x": 0.5 }))).expect_err("missing y");
+    assert_eq!(err.code, error_code::INVALID_PARAMS);
+}

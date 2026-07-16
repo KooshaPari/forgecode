@@ -1,0 +1,188 @@
+"""Code trace API routes — builds UICodeTraceChain for the frontend panel."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Annotated, Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from tracertm.api.config.rate_limiting import enforce_rate_limit
+from tracertm.api.deps import auth_guard, get_db
+from tracertm.repositories.item_repository import ItemRepository
+from tracertm.repositories.link_repository import LinkRepository
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+router = APIRouter(prefix="/api/v1/analysis", tags=["analysis", "code-trace"])
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_VIEW_TO_TRACE_TYPE: dict[str, str] = {
+    "UI": "ui",
+    "CODE": "code",
+    "REQUIREMENT": "requirement",
+    "CONCEPT": "concept",
+    # Fallback for lower-case / legacy view names
+    "ui": "ui",
+    "code": "code",
+    "requirement": "requirement",
+    "concept": "concept",
+}
+
+
+def _trace_type(view: str) -> str:
+    return _VIEW_TO_TRACE_TYPE.get(view, "code")
+
+
+def _confidence_for_link(link_type: str) -> float:
+    """Map link type to a confidence score."""
+    _MAP: dict[str, float] = {
+        "implements": 0.95,
+        "satisfies": 0.95,
+        "derives": 0.85,
+        "refines": 0.80,
+        "traces": 0.75,
+        "contains": 0.90,
+        "depends_on": 0.70,
+    }
+    return _MAP.get(link_type, 0.65)
+
+
+def _strategy_for_link(link_type: str) -> str:
+    """Map link type to an equivalence strategy label."""
+    _MAP: dict[str, str] = {
+        "implements": "explicit_annotation",
+        "satisfies": "explicit_annotation",
+        "derives": "structural",
+        "refines": "semantic_similarity",
+        "traces": "naming_pattern",
+    }
+    return _MAP.get(link_type, "manual_link")
+
+
+def _build_level(item: Any, confidence: float, strategy: str) -> dict[str, Any]:
+    """Serialize one item into a TraceLevel dict."""
+    trace_type = _trace_type(getattr(item, "view", "code") or "code")
+    meta: dict[str, Any] = getattr(item, "item_metadata", None) or {}
+
+    level: dict[str, Any] = {
+        "id": str(item.id),
+        "type": trace_type,
+        "title": item.title or "(untitled)",
+        "description": item.description,
+        "confidence": confidence,
+        "strategy": strategy,
+        "isConfirmed": True,
+    }
+
+    if trace_type == "ui":
+        level["componentName"] = meta.get("component_name") or item.title
+        level["componentPath"] = meta.get("component_path") or meta.get("file_path")
+        level["screenshot"] = meta.get("screenshot")
+
+    elif trace_type == "code":
+        file_path = meta.get("file_path") or meta.get("filePath")
+        symbol_name = meta.get("symbol_name") or meta.get("symbolName") or item.title
+        level["codeRef"] = {
+            "symbolName": symbol_name,
+            "symbolType": meta.get("symbol_type", "function"),
+            "filePath": file_path,
+            "startLine": meta.get("start_line") or meta.get("startLine"),
+            "endLine": meta.get("end_line") or meta.get("endLine"),
+            "signature": meta.get("signature"),
+        }
+
+    elif trace_type == "requirement":
+        level["requirementId"] = str(item.external_id or item.id)
+        level["businessValue"] = meta.get("business_value") or item.description
+
+    return level
+
+
+# ---------------------------------------------------------------------------
+# Endpoint
+# ---------------------------------------------------------------------------
+
+
+@router.get("/code-trace/{component_id}")
+async def get_code_trace(
+    request: Request,
+    component_id: str,
+    project_id: str | None = None,
+    claims: Annotated[dict[str, Any], Depends(auth_guard)] = None,
+    db: Annotated[AsyncSession, Depends(get_db)] = None,
+) -> dict[str, Any]:
+    """Return a UICodeTraceChain for the given component / item ID.
+
+    The chain is built by:
+    1. Fetching the root item (the UI component or code symbol).
+    2. Walking outbound links to collect the connected requirement/concept items.
+    3. Walking inbound links to collect any upstream UI items.
+    4. Assembling all nodes in view order: ui → code → requirement → concept.
+    """
+    enforce_rate_limit(request, claims)
+
+    # Validate UUID
+    try:
+        uuid.UUID(component_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="component_id must be a valid UUID") from exc
+
+    items_repo = ItemRepository(db)
+    links_repo = LinkRepository(db)
+
+    root = await items_repo.get_by_id(component_id, project_id)
+    if root is None:
+        raise HTTPException(status_code=404, detail=f"Item {component_id!r} not found")
+
+    # Fetch directly linked items (both directions)
+    outbound_links = await links_repo.get_by_source(component_id)
+    inbound_links = await links_repo.get_by_target(component_id)
+
+    # Build levels list
+    levels: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    async def _add_item(item: Any, confidence: float, strategy: str) -> None:
+        item_id = str(item.id)
+        if item_id in seen_ids:
+            return
+        seen_ids.add(item_id)
+        levels.append(_build_level(item, confidence, strategy))
+
+    # Inbound: items that point TO this component (e.g. a UI layer above code)
+    for link in inbound_links:
+        upstream = await items_repo.get_by_id(str(link.source_item_id))
+        if upstream is not None:
+            await _add_item(upstream, _confidence_for_link(link.link_type), _strategy_for_link(link.link_type))
+
+    # Root item itself
+    await _add_item(root, 1.0, "explicit_annotation")
+
+    # Outbound: items this component links TO (e.g. requirements, concepts)
+    for link in outbound_links:
+        downstream = await items_repo.get_by_id(str(link.target_item_id))
+        if downstream is not None:
+            await _add_item(downstream, _confidence_for_link(link.link_type), _strategy_for_link(link.link_type))
+
+    # Sort by trace type priority: ui → code → requirement → concept
+    _TYPE_ORDER = {"ui": 0, "code": 1, "requirement": 2, "concept": 3}
+    levels.sort(key=lambda lvl: _TYPE_ORDER.get(lvl["type"], 99))
+
+    overall_confidence = (
+        sum(lvl["confidence"] for lvl in levels) / len(levels) if levels else 0.0
+    )
+
+    return {
+        "id": component_id,
+        "name": root.title or "(untitled)",
+        "description": root.description,
+        "levels": levels,
+        "overallConfidence": round(overall_confidence, 4),
+        "lastUpdated": datetime.now(UTC).isoformat(),
+    }

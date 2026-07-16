@@ -1,0 +1,4 @@
+SELECT COUNT(*) FROM call_logs WHERE timestamp < datetime('now','-7 days');
+SELECT COUNT(*) FROM call_logs WHERE timestamp < '2026-06-19 11:18:53';
+SELECT COUNT(*) FROM proxy_logs WHERE timestamp < datetime('now','-7 days');
+SELECT COUNT(*) FROM usage_history WHERE timestamp < datetime('now','-7 days');

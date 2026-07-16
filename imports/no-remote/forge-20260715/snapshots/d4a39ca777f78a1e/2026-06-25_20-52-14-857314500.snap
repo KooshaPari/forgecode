@@ -1,0 +1,340 @@
+use crate::error::{CredentialError, Result};
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use url::Url;
+
+/// Configuration for the credential manager
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialConfig {
+    pub storage: StorageConfig,
+    pub oauth: OAuthConfig,
+    pub session: SessionConfig,
+    pub mfa: MfaConfig,
+    pub injection: InjectionConfig,
+    pub security: SecurityConfig,
+    pub logging: LoggingConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageConfig {
+    pub vault_path: PathBuf,
+    pub session_path: PathBuf,
+    pub backup_dir: PathBuf,
+    pub auto_backup: bool,
+    pub backup_interval_hours: u64,
+    pub max_backups: u32,
+    pub pool_size: u32,
+    pub connection_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthConfig {
+    pub providers: Vec<OAuthProvider>,
+    pub redirect_uri: Url,
+    pub refresh_threshold: Duration,
+    pub client_timeout: Duration,
+    pub max_retries: u32,
+    pub retry_delay_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthProvider {
+    pub name: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub auth_url: Url,
+    pub token_url: Url,
+    pub user_info_url: Option<Url>,
+    pub scopes: Vec<String>,
+    pub additional_params: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionConfig {
+    pub jwt_secret: String,
+    pub access_token_lifetime: Duration,
+    pub refresh_token_lifetime: Duration,
+    pub cleanup_interval: Duration,
+    pub max_sessions_per_user: u32,
+    pub enable_rotation: bool,
+    pub rotation_interval: Duration,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MfaConfig {
+    pub totp_issuer: String,
+    pub totp_algorithm: String,
+    pub totp_digits: u32,
+    pub totp_step: u64,
+    pub totp_window: u8,
+    pub backup_codes_count: u32,
+    pub backup_code_length: u32,
+    pub requirement_policy: MfaRequirementPolicy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MfaRequirementPolicy {
+    Optional,
+    Required,
+    RequiredForPrivileged,
+    RiskBased,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InjectionConfig {
+    pub enabled: bool,
+    pub allowed_targets: Vec<String>,
+    pub timeout: Duration,
+    pub max_attempts: u32,
+    pub safety_checks: SafetyChecksConfig,
+    pub audit_logging: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SafetyChecksConfig {
+    pub verify_target: bool,
+    pub check_suspicious_processes: bool,
+    pub validate_context: bool,
+    pub rate_limit: RateLimitConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitConfig {
+    pub max_requests_per_minute: u32,
+    pub burst_size: u32,
+    pub penalty_duration: Duration,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityConfig {
+    pub key_derivation: KeyDerivationConfig,
+    pub encryption: EncryptionConfig,
+    pub password_policy: PasswordPolicy,
+    pub audit: AuditConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyDerivationConfig {
+    pub algorithm: String,
+    pub memory_cost: u32,
+    pub time_cost: u32,
+    pub parallelism: u32,
+    pub salt_length: u32,
+    pub output_length: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncryptionConfig {
+    pub algorithm: String,
+    pub key_size: u32,
+    pub nonce_size: u32,
+    pub tag_size: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PasswordPolicy {
+    pub min_length: u32,
+    pub require_uppercase: bool,
+    pub require_lowercase: bool,
+    pub require_numbers: bool,
+    pub require_special_chars: bool,
+    pub disallow_common: bool,
+    pub max_age_days: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditConfig {
+    pub enabled: bool,
+    pub log_path: PathBuf,
+    pub log_format: String,
+    pub events: Vec<String>,
+    pub retention_days: u32,
+    pub max_file_size_mb: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoggingConfig {
+    pub level: String,
+    pub format: String,
+    pub file_path: Option<PathBuf>,
+    pub console: bool,
+    pub rotation: LogRotationConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogRotationConfig {
+    pub enabled: bool,
+    pub max_file_size_mb: u32,
+    pub max_files: u32,
+    pub compress: bool,
+}
+
+impl CredentialConfig {
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        let config: CredentialConfig = serde_json::from_str(&content)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let content = serde_json::to_string_pretty(self)?;
+        std::fs::write(path, content)?;
+        Ok(())
+    }
+
+    pub fn default() -> Self {
+        Self {
+            storage: StorageConfig {
+                vault_path: PathBuf::from("data/vault.db"),
+                session_path: PathBuf::from("data/sessions.db"),
+                backup_dir: PathBuf::from("data/backups"),
+                auto_backup: true,
+                backup_interval_hours: 24,
+                max_backups: 7,
+                pool_size: 10,
+                connection_timeout_secs: 30,
+            },
+            oauth: OAuthConfig {
+                providers: vec![],
+                redirect_uri: Url::parse("http://localhost:8080/callback").unwrap(),
+                refresh_threshold: Duration::from_secs(300),
+                client_timeout: Duration::from_secs(30),
+                max_retries: 3,
+                retry_delay_ms: 1000,
+            },
+            session: SessionConfig {
+                jwt_secret: base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &[0u8; 32]),
+                access_token_lifetime: Duration::from_secs(3600),
+                refresh_token_lifetime: Duration::from_secs(2592000),
+                cleanup_interval: Duration::from_secs(300),
+                max_sessions_per_user: 10,
+                enable_rotation: true,
+                rotation_interval: Duration::from_secs(86400),
+            },
+            mfa: MfaConfig {
+                totp_issuer: "phenotype-infra".to_string(),
+                totp_algorithm: "SHA1".to_string(),
+                totp_digits: 6,
+                totp_step: 30,
+                totp_window: 1,
+                backup_codes_count: 10,
+                backup_code_length: 8,
+                requirement_policy: MfaRequirementPolicy::Optional,
+            },
+            injection: InjectionConfig {
+                enabled: true,
+                allowed_targets: vec!["kvirtualdesktop.*".to_string()],
+                timeout: Duration::from_secs(10),
+                max_attempts: 3,
+                safety_checks: SafetyChecksConfig {
+                    verify_target: true,
+                    check_suspicious_processes: true,
+                    validate_context: true,
+                    rate_limit: RateLimitConfig {
+                        max_requests_per_minute: 60,
+                        burst_size: 10,
+                        penalty_duration: Duration::from_secs(300),
+                    },
+                },
+                audit_logging: true,
+            },
+            security: SecurityConfig {
+                key_derivation: KeyDerivationConfig {
+                    algorithm: "Argon2id".to_string(),
+                    memory_cost: 65536,
+                    time_cost: 3,
+                    parallelism: 4,
+                    salt_length: 32,
+                    output_length: 32,
+                },
+                encryption: EncryptionConfig {
+                    algorithm: "AES-256-GCM".to_string(),
+                    key_size: 32,
+                    nonce_size: 12,
+                    tag_size: 16,
+                },
+                password_policy: PasswordPolicy {
+                    min_length: 12,
+                    require_uppercase: true,
+                    require_lowercase: true,
+                    require_numbers: true,
+                    require_special_chars: true,
+                    disallow_common: true,
+                    max_age_days: Some(90),
+                },
+                audit: AuditConfig {
+                    enabled: true,
+                    log_path: PathBuf::from("logs/audit.log"),
+                    log_format: "JSON".to_string(),
+                    events: vec![
+                        "login".into(), "logout".into(), "vault_access".into(),
+                        "credential_injection".into(), "oauth_flow".into(), "mfa_challenge".into(),
+                    ],
+                    retention_days: 365,
+                    max_file_size_mb: 100,
+                },
+            },
+            logging: LoggingConfig {
+                level: "info".to_string(),
+                format: "json".to_string(),
+                file_path: Some(PathBuf::from("logs/credential_manager.log")),
+                console: true,
+                rotation: LogRotationConfig {
+                    enabled: true,
+                    max_file_size_mb: 50,
+                    max_files: 10,
+                    compress: true,
+                },
+            },
+        }
+    }
+
+    pub fn test_config<P: AsRef<Path>>(temp_dir: P) -> Self {
+        let base_path = temp_dir.as_ref();
+        let mut config = Self::default();
+        config.storage.vault_path = base_path.join("vault.db");
+        config.storage.session_path = base_path.join("sessions.db");
+        config.storage.backup_dir = base_path.join("backups");
+        config.logging.file_path = Some(base_path.join("test.log"));
+        config.security.audit.log_path = base_path.join("audit.log");
+        config.logging.level = "debug".to_string();
+        config
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if self.storage.vault_path.as_os_str().is_empty() {
+            return Err(CredentialError::Config("Vault path cannot be empty".to_string()));
+        }
+        if self.storage.session_path.as_os_str().is_empty() {
+            return Err(CredentialError::Config("Session path cannot be empty".to_string()));
+        }
+        if self.session.jwt_secret.is_empty() {
+            return Err(CredentialError::Config("JWT secret cannot be empty".to_string()));
+        }
+        if self.session.access_token_lifetime.as_secs() == 0 {
+            return Err(CredentialError::Config("Access token lifetime must be > 0".to_string()));
+        }
+        Ok(())
+    }
+
+    pub fn get_oauth_provider(&self, name: &str) -> Option<&OAuthProvider> {
+        self.oauth.providers.iter().find(|p| p.name == name)
+    }
+
+    pub fn add_oauth_provider(&mut self, provider: OAuthProvider) -> Result<()> {
+        if self.oauth.providers.iter().any(|p| p.name == provider.name) {
+            return Err(CredentialError::Config(format!("OAuth provider '{}' already exists", provider.name)));
+        }
+        self.oauth.providers.push(provider);
+        Ok(())
+    }
+
+    pub fn remove_oauth_provider(&mut self, name: &str) -> Result<()> {
+        let idx = self.oauth.providers.iter().position(|p| p.name == name)
+            .ok_or_else(|| CredentialError::Config(format!("OAuth provider '{}' not found", name)))?;
+        self.oauth.providers.remove(idx);
+        Ok(())
+    }
+}

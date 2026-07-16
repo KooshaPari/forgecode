@@ -1,0 +1,251 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { fileURLToPath } from "node:url";
+// @ts-expect-error — Next.js route handler has no type declarations
+import { GET, OPTIONS } from "../../../../src/app/api/v1/deps/route.ts";
+
+/**
+ * Tests for `GET /api/v1/deps` (PR-014).
+ *
+ * The route reads from `dependency-audit.jsonl` and projects the latest
+ * audit record into a dashboard-friendly shape. We exercise:
+ *
+ *   - OPTIONS preflight (CORS headers)
+ *   - GET with no JSONL yet (returns ok=true with zeroed vulns)
+ *   - GET with a single well-formed audit record
+ *   - GET with multiple records (must read the LAST line)
+ *   - GET with a corrupt trailing line (must skip it and read the prior one)
+ *   - GET with env override (DEPENDENCY_AUDIT_JSONL) honored
+ */
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(__dirname, "..", "..", "..", "..");
+
+function tempDir(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "omniroute-deps-api-test-"));
+}
+
+function clean(dir: string): void {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // ignore
+  }
+}
+
+function writeJsonl(dir: string, records: unknown[]): string {
+  const file = path.join(dir, "audit.jsonl");
+  fs.writeFileSync(file, records.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
+  return file;
+}
+
+const SAMPLE_RECORD = {
+  runId: "run-1",
+  schemaVersion: 1,
+  timestamp: "2026-06-23T09:00:00.000Z",
+  totals: {
+    timestamp: "2026-06-23T09:00:00.000Z",
+    severityCounts: { info: 0, low: 0, moderate: 1, high: 1, critical: 0 },
+    total: 2,
+    highOrAbove: 1,
+    metadata: {
+      auditVersion: "2",
+      dependencies: 100,
+      devDependencies: 30,
+      totalDependencies: 130,
+      tool: "npm audit",
+    },
+  },
+  vulnerabilities: [
+    {
+      packageName: "lodash",
+      severity: "high",
+      range: "<4.17.21",
+      fixVersion: "4.17.21",
+      fixIsTransitiveOnly: false,
+      advisoryIds: ["GHSA-p6mc-m468-83gw"],
+      detectedAt: "2026-06-23T09:00:00.000Z",
+    },
+    {
+      packageName: "axios",
+      severity: "moderate",
+      range: "<1.7.0",
+      fixVersion: "1.7.0",
+      fixIsTransitiveOnly: false,
+      advisoryIds: ["GHSA-xxxx"],
+      detectedAt: "2026-06-23T09:00:00.000Z",
+    },
+  ],
+};
+
+test("OPTIONS: returns 204 with CORS headers", async () => {
+  const res = await OPTIONS();
+  assert.equal(res.status, 204);
+  assert.ok(res.headers.get("Access-Control-Allow-Methods"));
+});
+
+test("GET: returns ok=true with zeroed vulns when JSONL is absent", async () => {
+  const dir = tempDir();
+  const empty = path.join(dir, "does-not-exist.jsonl");
+  const prev = process.env.DEPENDENCY_AUDIT_JSONL;
+  process.env.DEPENDENCY_AUDIT_JSONL = empty;
+  try {
+    const res = await GET(new Request("http://localhost/api/v1/deps"));
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.lastRun, null);
+    assert.equal(body.totals.total, 0);
+    assert.equal(body.totals.highOrAbove, 0);
+    assert.equal(body.gate.highestSeverity, "none");
+    assert.deepEqual(body.outdated, []);
+  } finally {
+    if (prev === undefined) delete process.env.DEPENDENCY_AUDIT_JSONL;
+    else process.env.DEPENDENCY_AUDIT_JSONL = prev;
+    clean(dir);
+  }
+});
+
+test("GET: projects the last record's severityCounts, totals, and outdated list", async () => {
+  const dir = tempDir();
+  const file = writeJsonl(dir, [SAMPLE_RECORD]);
+  const prev = process.env.DEPENDENCY_AUDIT_JSONL;
+  process.env.DEPENDENCY_AUDIT_JSONL = file;
+  try {
+    const res = await GET(new Request("http://localhost/api/v1/deps"));
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.lastRun?.runId, "run-1");
+    assert.equal(body.totals.total, 2);
+    assert.equal(body.totals.highOrAbove, 1);
+    assert.equal(body.vulns.high, 1);
+    assert.equal(body.vulns.moderate, 1);
+    assert.equal(body.gate.highestSeverity, "high");
+    assert.equal(body.outdated.length, 2); // both vulns have fixVersion
+    const lodash = body.outdated.find((o: any) => o.packageName === "lodash");
+    assert.equal(lodash.wantedVersion, "4.17.21");
+  } finally {
+    if (prev === undefined) delete process.env.DEPENDENCY_AUDIT_JSONL;
+    else process.env.DEPENDENCY_AUDIT_JSONL = prev;
+    clean(dir);
+  }
+});
+
+test("GET: returns the LAST record when multiple are present", async () => {
+  const dir = tempDir();
+  const newer = { ...SAMPLE_RECORD, runId: "run-2", totals: { ...SAMPLE_RECORD.totals, total: 99, highOrAbove: 5 } };
+  const file = writeJsonl(dir, [SAMPLE_RECORD, newer]);
+  const prev = process.env.DEPENDENCY_AUDIT_JSONL;
+  process.env.DEPENDENCY_AUDIT_JSONL = file;
+  try {
+    const res = await GET(new Request("http://localhost/api/v1/deps"));
+    const body = await res.json();
+    assert.equal(body.lastRun?.runId, "run-2");
+    assert.equal(body.totals.total, 99);
+    assert.equal(body.totals.highOrAbove, 5);
+  } finally {
+    if (prev === undefined) delete process.env.DEPENDENCY_AUDIT_JSONL;
+    else process.env.DEPENDENCY_AUDIT_JSONL = prev;
+    clean(dir);
+  }
+});
+
+test("GET: tolerates a corrupt trailing line in the JSONL", async () => {
+  const dir = tempDir();
+  const file = path.join(dir, "audit.jsonl");
+  fs.writeFileSync(file, JSON.stringify(SAMPLE_RECORD) + "\n{not-json\n", "utf8");
+  const prev = process.env.DEPENDENCY_AUDIT_JSONL;
+  process.env.DEPENDENCY_AUDIT_JSONL = file;
+  try {
+    const res = await GET(new Request("http://localhost/api/v1/deps"));
+    const body = await res.json();
+    assert.equal(body.lastRun?.runId, "run-1");
+  } finally {
+    if (prev === undefined) delete process.env.DEPENDENCY_AUDIT_JSONL;
+    else process.env.DEPENDENCY_AUDIT_JSONL = prev;
+    clean(dir);
+  }
+});
+
+test("GET: returns CORS headers on success responses", async () => {
+  const dir = tempDir();
+  const empty = path.join(dir, "x.jsonl");
+  const prev = process.env.DEPENDENCY_AUDIT_JSONL;
+  process.env.DEPENDENCY_AUDIT_JSONL = empty;
+  try {
+    const res = await GET(new Request("http://localhost/api/v1/deps"));
+    assert.ok(res.headers.get("Access-Control-Allow-Methods"));
+  } finally {
+    if (prev === undefined) delete process.env.DEPENDENCY_AUDIT_JSONL;
+    else process.env.DEPENDENCY_AUDIT_JSONL = prev;
+    clean(dir);
+  }
+});
+
+test("GET: includes sink metadata (path + size) for operator dashboards", async () => {
+  const dir = tempDir();
+  const file = writeJsonl(dir, [SAMPLE_RECORD]);
+  const prev = process.env.DEPENDENCY_AUDIT_JSONL;
+  process.env.DEPENDENCY_AUDIT_JSONL = file;
+  try {
+    const res = await GET(new Request("http://localhost/api/v1/deps"));
+    const body = await res.json();
+    assert.ok(body.sink.path);
+    assert.ok(body.sink.sizeBytes > 0);
+    assert.equal(body.sink.path, path.resolve(file));
+  } finally {
+    if (prev === undefined) delete process.env.DEPENDENCY_AUDIT_JSONL;
+    else process.env.DEPENDENCY_AUDIT_JSONL = prev;
+    clean(dir);
+  }
+});
+
+test("GET: surfaces the refresh hint for on-demand audit", async () => {
+  const dir = tempDir();
+  const empty = path.join(dir, "x.jsonl");
+  const prev = process.env.DEPENDENCY_AUDIT_JSONL;
+  process.env.DEPENDENCY_AUDIT_JSONL = empty;
+  try {
+    const res = await GET(new Request("http://localhost/api/v1/deps"));
+    const body = await res.json();
+    assert.match(body.refreshEndpoint, /POST \/api\/v1\/deps\/audit/);
+  } finally {
+    if (prev === undefined) delete process.env.DEPENDENCY_AUDIT_JSONL;
+    else process.env.DEPENDENCY_AUDIT_JSONL = prev;
+    clean(dir);
+  }
+});
+
+test("GET: handles zero-vulnerability audits (totals all zero, gate=none)", async () => {
+  const dir = tempDir();
+  const clean2 = {
+    ...SAMPLE_RECORD,
+    runId: "clean",
+    totals: {
+      ...SAMPLE_RECORD.totals,
+      total: 0,
+      highOrAbove: 0,
+      severityCounts: { info: 0, low: 0, moderate: 0, high: 0, critical: 0 },
+    },
+    vulnerabilities: [],
+  };
+  const file = writeJsonl(dir, [clean2]);
+  const prev = process.env.DEPENDENCY_AUDIT_JSONL;
+  process.env.DEPENDENCY_AUDIT_JSONL = file;
+  try {
+    const res = await GET(new Request("http://localhost/api/v1/deps"));
+    const body = await res.json();
+    assert.equal(body.totals.total, 0);
+    assert.equal(body.totals.highOrAbove, 0);
+    assert.equal(body.gate.highestSeverity, "none");
+    assert.deepEqual(body.outdated, []);
+  } finally {
+    if (prev === undefined) delete process.env.DEPENDENCY_AUDIT_JSONL;
+    else process.env.DEPENDENCY_AUDIT_JSONL = prev;
+    clean(dir);
+  }
+});

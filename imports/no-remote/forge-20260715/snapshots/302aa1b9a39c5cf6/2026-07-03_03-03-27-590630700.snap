@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Fetch repo sizes via gh API and rank by size."""
+import json, subprocess, sys
+
+candidates = json.load(open('audit_candidates.json', encoding='utf-8'))
+
+results = []
+for c in candidates:
+    name = c['name']
+    path = c['path']
+    sys.stdout.write(f'Querying {path}...\n')
+    sys.stdout.flush()
+    try:
+        proc = subprocess.run(
+            ['gh', 'api', f'repos/{path}'],
+            capture_output=True, text=True, timeout=20
+        )
+        if proc.returncode != 0:
+            sys.stdout.write(f'  -> ERROR rc={proc.returncode}: {proc.stderr[:200]}\n')
+            results.append({**c, 'size_kb': 0, 'archived_remote': None, 'pushed_at': '?', 'error': True})
+            sys.stdout.flush()
+            continue
+        data = json.loads(proc.stdout)
+        size_kb = data.get('size', 0)
+        archived = data.get('archived', False)
+        pushed = data.get('pushed_at', '?')
+        results.append({**c, 'size_kb': size_kb, 'archived_remote': archived, 'pushed_at': pushed})
+        sys.stdout.write(f'  -> {size_kb} KB, archived={archived}, pushed={pushed}\n')
+        sys.stdout.flush()
+    except subprocess.TimeoutExpired:
+        sys.stdout.write(f'  -> TIMEOUT\n')
+        results.append({**c, 'size_kb': 0, 'archived_remote': None, 'pushed_at': '?', 'error': True})
+        sys.stdout.flush()
+    except json.JSONDecodeError as e:
+        sys.stdout.write(f'  -> JSON ERROR: {e}\n')
+        results.append({**c, 'size_kb': 0, 'archived_remote': None, 'pushed_at': '?', 'error': True})
+        sys.stdout.flush()
+
+results.sort(key=lambda r: r.get('size_kb', 0), reverse=True)
+
+with open('audit_candidates_with_size.json', 'w', encoding='utf-8') as f:
+    json.dump(results, f, indent=2)
+
+sys.stdout.write('\nAll candidates sorted by size (top 15):\n')
+sys.stdout.flush()
+for i, r in enumerate(results[:15], 1):
+    err = ' [ERR]' if r.get('error') else ''
+    arc = ' [REMOTE-ARCHIVED]' if r.get('archived_remote') else ''
+    sys.stdout.write(f'{i:2d}. {r["name"]:30s} {r["size_kb"]:>7d} KB | fsm={r["fsm"]:12s} disp={r["disp"]:18s}{arc}{err}\n')
+sys.stdout.flush()

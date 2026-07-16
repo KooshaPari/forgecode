@@ -1,0 +1,110 @@
+@echo off
+REM ============================================================================
+REM  omniroute-dev.cmd - thin wrapper around the OmniRoute-fresh2 checkout
+REM
+REM  ARCHITECTURE (one source of truth):
+REM    C:\Users\koosh\OmniRoute-fresh2\   ← source + dev workspace + runtime
+REM    C:\Users\koosh\omniroute-dev.cmd   ← this file (delegates only)
+REM    C:\Users\koosh\OmniRoute-clean\    ← git-only PR staging, NEVER a runtime
+REM    C:\Users\koosh\.bun\install\global\node_modules\omniroute\
+REM                                       ← deprecated tarball pkg; do not edit
+REM
+REM  Strategy: this wrapper just runs node bin/omniroute.mjs in the fork. The
+REM  fork IS the runtime - no tarball install, no copy/sync step, no second
+REM  copy of code. The fork's package.json already declares the bin field, so
+REM  `bun link` from inside the fork would put omniroute directly on PATH.
+REM
+REM  Why this wrapper exists: until bun-link is set up, this is the cheapest
+REM  way to make `omniroute-dev` on PATH resolve to the fork without copying
+REM  any files. 33 lines of cmd beats 216 lines of file-list sync logic.
+REM
+REM  Subcommands:
+REM    omniroute-dev pull         git pull --ff-only + bun install in the fork
+REM    omniroute-dev where        show fork path, entry bin, version
+REM    omniroute-dev help         this help
+REM    omniroute-dev <anything>   passthrough to fork's bin/omniroute.mjs
+REM
+REM  Daily workflow:
+REM    1. edit code in C:\Users\koosh\OmniRoute-fresh2
+REM    2. (optionally) omniroute-dev pull to sync with upstream
+REM    3. restart any running omniroute processes (kill node, relaunch)
+REM    4. omniroute-dev <subcmd> - automatically picks up the fresh code
+REM
+REM  Cherry-picking for upstream PRs:
+REM    git -C C:\Users\koosh\OmniRoute-clean checkout -b fix/foo upstream/main
+REM    git -C C:\Users\koosh\OmniRoute-clean cherry-pick <fresh2-sha>
+REM    git -C C:\Users\koosh\OmniRoute-clean push origin fix/foo
+REM    gh pr create --repo diegosouzapw/OmniRoute --head KooshaPari:fix/foo
+REM
+REM  Anti-patterns (do NOT do):
+REM    - Editing C:\Users\koosh\OmniRoute-clean\ directly (PR staging only).
+REM    - Editing files under C:\Users\koosh\.bun\install\global\node_modules\
+REM      (deprecated tarball pkg; changes there will be wiped on bun install).
+REM    - Copying codex.ts (or any other file) from one place to another.
+REM      Edit once in OmniRoute-fresh2, done.
+REM ============================================================================
+
+setlocal EnableExtensions EnableDelayedExpansion
+
+set "OMNIROUTE_REPO=C:\Users\koosh\OmniRoute-fresh2"
+set "OMNIROUTE_BIN=%OMNIROUTE_REPO%\bin\omniroute.mjs"
+set "OMNIROUTE_BUN=C:\Users\koosh\AppData\Roaming\npm\bun.cmd"
+
+REM Load host env if present (OMNIROUTE_* keys, ENCRYPTION_KEY, API_KEYs)
+if exist "C:\Users\koosh\.omniroute\.env" (
+  for /f "usebackq tokens=1,* delims==" %%A in ("C:\Users\koosh\.omniroute\.env") do (
+    if not "%%A"=="" if not "%%A:~0,1"=="#" set "%%A=%%B"
+  )
+)
+
+REM ----- dispatch subcommands -------------------------------------------------
+if /i "%~1"=="pull"   goto :pull
+if /i "%~1"=="update" goto :pull
+if /i "%~1"=="where"  goto :where
+if /i "%~1"=="help"   goto :help
+if /i "%~1"=="--help" goto :help
+if /i "%~1"=="-h"     goto :help
+
+REM default: passthrough to the fork's bin/omniroute.mjs
+if not exist "%OMNIROUTE_BIN%" (
+  echo [omniroute-dev] FATAL: %OMNIROUTE_BIN% not found
+  echo                Run: cd /d %OMNIROUTE_REPO% ^&^& git pull ^&^& bun install
+  exit /b 1
+)
+node "%OMNIROUTE_BIN%" %*
+endlocal & exit /b %errorlevel%
+
+:pull
+echo Pulling latest from fork's upstream tracking branch...
+git -C "%OMNIROUTE_REPO%" pull --ff-only || goto :pull_fail
+echo Running bun install in fork...
+call "%OMNIROUTE_BUN%" install --no-audit --no-fund --silent
+endlocal & exit /b %errorlevel%
+
+:pull_fail
+echo.
+echo [omniroute-dev] git pull failed. Likely you have local edits or
+echo                  the fork is on a feature branch without an upstream.
+echo                  Try:  git -C "%OMNIROUTE_REPO%" status
+exit /b 1
+
+:where
+echo Fork repo:  %OMNIROUTE_REPO%
+echo Entry bin:  %OMNIROUTE_BIN%
+node "%OMNIROUTE_BIN%" --version 2>nul
+endlocal & exit /b 0
+
+:help
+echo.
+echo  omniroute-dev - thin wrapper around C:\Users\koosh\OmniRoute-fresh2
+echo.
+echo  Routing:
+echo    omniroute-dev pull     git pull + bun install in the fork
+echo    omniroute-dev where    show fork path and version
+echo    omniroute-dev ^<subcmd^>  passthrough to fork's bin/omniroute.mjs
+echo.
+echo  This wrapper replaces the previous omniroute-dev-backup.cmd launcher.
+echo  There is no separate "installed" copy of omniroute - the fork IS the
+echo  runtime. Edit code in %OMNIROUTE_REPO%, restart the server, done.
+echo.
+endlocal & exit /b 0

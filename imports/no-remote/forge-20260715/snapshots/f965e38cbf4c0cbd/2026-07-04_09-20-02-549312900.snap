@@ -1,0 +1,311 @@
+# IMPLEMENTATION_PLAN.md
+
+> **Status:** Staged plan with concrete first PRs. Builds on `RESEARCH_AUDIT.md`, `EVAL_ARCHITECTURE.md`, `TRACE_EVALSET_PLAN.md`, `MODEL_MATRIX.md`, `RISKS.md`.
+> **Naming convention:** forks we own use `-dev` in bin/path names (`forge-dev`, `omniroute-dev`, `pheno-serve-dev`, `codex-dev`). Canonical source: `docs/ARCHITECTURE_LAYERS.md`.
+> **Model SKUs:** see `state/hf_scrape/2026-07-04/locked_shortlist.md` for the locked picks per `docs/adrs/0005-locked-baseline-march-2026-cutoff.md`. **No model SKU is asserted in this plan**; PR #4 below just shows the *shape* of a sweep command.
+> **Cloud baseline routing:** `forge-dev → omniroute-dev → OpenRouter`, per ADR 0005. Self-hosted → `pheno-serve-dev` → SGLang/vLLM/llama.cpp.
+> **Recency cutoff:** 2026-03-01 per ADR 0004 rule #6 and ADR 0005. Models older than that require explicit justification.
+> **Execution rule:** No PR merges core harness changes without a benchmark artifact in `bench/results/`.
+
+---
+
+## 0. Stages
+
+| # | Stage | Type | Depends on |
+|---|---|---|---|
+| 1 | TB 2.1 lift + TB 3.x watch | Eval | nothing |
+| 2 | Intent-graph Stage A — passive recording | Harness | nothing |
+| 3 | Perf suite (`perf/*`) | Harness + serving | Stage 2 |
+| 4 | Self-improvement loop (`harness/self_improvement/`) | Meta | Stage 1 + Stage 2 + Stage 3 |
+| 5 | DeepSWE integration | Eval | Stage 1 |
+| 6 | SWE-bench Verified regression | Eval | Stage 1 |
+| 7 | Model × engine matrix sweep | Eval + serving | Stage 3 |
+| 8 | Trace-derived per-role eval set | Eval | Stage 2 |
+| 9 | Intent-graph Stage B–E (deterministic tools, planning, multi-agent, strong re-entry) | Harness | Stage 2 + Stage 8 |
+| 10 | Stage 2 (codex fork work) | Repo | **gated on user sign-off after Stage 5 or 7** |
+
+---
+
+## 1. Stage 1 — TB 2.1 lift + TB 3.x watch
+
+**Why first:** pheno-harness's `eval/tbench.py` already runs TB 2.0 honestly. Adding 2.1 is a one-driver extension. TB 3.x is a watch because it's pre-release.
+
+**Files to add / modify:**
+
+- **NEW** `pheno-harness/eval/tbench_v21.py` — mirrors `eval/tbench.py` but binds `terminal-bench@2.1` task list. Same metric set.
+- **NEW** `pheno-harness/eval/tbench_v3_watch.py` — gated by `PHENO_ENABLE_TB3=1`. Skips by default. Logs a daily "TB 3.x compat" status row.
+- **MODIFY** `pheno-harness/config/harbor_tbench_models.yaml` — add `terminal-bench@2.1` and `terminal-bench@3.x` task lists under new keys `tb21_tasks` and `tb3_tasks`.
+- **MODIFY** `pheno-harness/eval/HARBOR.md` — note TB 2.1 status + TB 3.x watch.
+
+**Acceptance:**
+- `python scripts/run_tbench_v21.py --subset 16` produces `bench/results/tbench/21/<run_id>.json` with same manifest as TB 2.0.
+- `python scripts/run_tbench_v21.py --subset full` exits 0 on dry-run (no real model call needed; just task binding).
+- TB 3.x watch writes a one-line "compat status" row daily.
+
+**Risk:** TB 2.1 task list may not yet be in the Harbor registry on the day of run. Mitigation: fall back to TB 2.0 if TB 2.1 is missing; report `tbench_21_status: missing` in the run manifest.
+
+**Subagent use:** none. Single-agent work; depends on pheno-harness internals.
+
+---
+
+## 2. Stage 2 — Intent-graph Stage A (passive recording)
+
+**Why now:** zero behavior change. We add observability so all future eval runs produce a `.graph.json` that intent-graph Stages B–E will execute against. No destabilization risk.
+
+**Files to add / modify:**
+
+- **NEW** `pheno-harness/harness/intent_graph/__init__.py`
+- **NEW** `pheno-harness/harness/intent_graph/recorder.py` — wraps every tool call and model call into a typed graph node.
+- **NEW** `pheno-harness/harness/intent_graph/dag.py` — DAG node/edge schema (see `EVAL_ARCHITECTURE.md` §4.2).
+- **MODIFY** `pheno-harness/pheno/harbor_util.py` — call recorder at every tool/model boundary.
+- **MODIFY** `pheno-harness/eval/tbench.py`, `eval/route_matrix.py` — emit `<run_id>.graph.json` after each run.
+
+**Acceptance:**
+- Re-run `python scripts/run_tbench_route_matrix.py --subset 4` and confirm `bench/results/tbench/<run_id>.graph.json` exists and is valid JSON.
+- Replay the `.graph.json` against a different model binding produces a comparable trace (still metrics-instrumented; not yet plan-execution).
+
+**Subagent use:** none. Core-harness change; main thread only.
+
+---
+
+## 3. Stage 3 — Perf suite
+
+**Why here:** depends on Stage 2's recorder for harness_overhead measurement.
+
+**Files to add:**
+
+- `pheno-harness/perf/__init__.py`
+- `pheno-harness/perf/profiler.py` — psutil + pynvml + GPUtil. Always-on wrapper used by every eval run.
+- `pheno-harness/perf/ttft_probe.py`
+- `pheno-harness/perf/cache_probe.py`
+- `pheno-harness/perf/harness_overhead.py`
+- `pheno-harness/perf/parallel_sweep.py`
+- `pheno-harness/perf/report.py`
+- `pheno-harness/scripts/run_perf_suite.py` — orchestrator
+- `pheno-harness/config/model_engine_matrix.yaml` — full matrix
+- `pheno-harness/config/disk_budget.yaml`
+
+**Acceptance:**
+- `python scripts/run_perf_suite.py --tier T1 --engine sglang --model <from v2_shortlist.md>` produces `bench/results/perf/<date>_T1_sglang_<model>.json` with TTFT, ITL, tokens/sec, cache hit, harness overhead, and resource peaks.
+- `python scripts/run_perf_suite.py --parallel 8 --tier T0` sweeps N ∈ {1, 2, 4, 8} and writes one row per N.
+
+**Probe overhead reporting:** every probe run is paired with a no-probe reference run. Diff is reported in the manifest as `probe_overhead_ms`.
+
+**Subagent use:** **yes.** Each probe file is small and independent. Dispatch one subagent per file. Main thread composes `perf/report.py`.
+
+---
+
+## 4. Stage 4 — Self-improvement loop
+
+**Why here:** depends on Stage 1 (signals), Stage 2 (per-turn record), Stage 3 (resource signals).
+
+The brief explicitly contrasts "just told to RLVRAF" with a **garden-managed** loop. This stage implements the spine. Pheno-harness already has pieces (`verifier/risky_action.py`, `eval/nested_rlvr.py`, `training/nightly_dpo.py`, `training/train_sub1b.py`, `training/distill_12b.py`) — this stage adds the **gate logic** and the **clock**.
+
+**Files to add:**
+
+- `pheno-harness/harness/self_improvement/__init__.py`
+- `pheno-harness/harness/self_improvement/signals.py` — emit per-task, per-lane, per-route-kind, per-role, per-engine aggregates.
+- `pheno-harness/harness/self_improvement/gates.py` — holdout, regression, safety, budget, reproducibility gates. Each gate is independently testable.
+- `pheno-harness/harness/self_improvement/retention.py` — 30-day rolling archive + cold-storage layout.
+- `pheno-harness/harness/self_improvement/promotion.py` — lane promotion only after two consecutive green windows.
+- `pheno-harness/scripts/run_self_improvement_tick.py` — daily cron entrypoint.
+- **MODIFY** `pheno-harness/config/eval_pillars.yaml` — add promotion thresholds per role.
+- **MODIFY** `pheno-harness/verifier/harness.py` — wire gates into the verifier.
+
+**Acceptance:**
+- `python scripts/run_self_improvement_tick.py --dry-run` reads the last 7 days of eval results, applies all gates, and reports pass/fail per lane without mutating state.
+- A synthetic failing run (intentionally injected) trips the regression gate.
+- A synthetic unsafe run (intentionally injected) trips the safety gate.
+
+**Subagent use:** **yes.** signals / gates / retention / promotion are independent modules. Dispatch as parallel subagents after the spec is locked.
+
+**Loop tick (daily, cron):**
+1. Aggregate last 24 h of eval results.
+2. Run all gates.
+3. If any gate fails → emit a "garden alert" with the failing lane + role + diff vs. previous tick. **No automatic promotion.**
+4. If all gates pass for two consecutive ticks → emit a "promotion candidate" row. Promotion still requires human approval via PR.
+
+This is the "garden-managed" property: the loop observes and proposes, a human (or a meta-model with risk budget) decides.
+
+---
+
+## 5. Stage 5 — DeepSWE integration
+
+**Why after Stage 1:** the DeepSWE driver follows the same pattern as TB 2.0/2.1.
+
+**Files to add:**
+
+- `pheno-harness/eval/deepswe.py`
+- `pheno-harness/config/deepswe_models.yaml`
+- `pheno-harness/scripts/run_deepswe.py`
+- **MODIFY** `pheno-harness/pheno/harbor_util.py` — handle DeepSWE's separate verifier (post-v1.1) and Pier ≥ 0.3.0 requirement.
+
+**Acceptance:**
+- `python scripts/run_deepswe.py --subset 16 --env modal` produces `bench/results/deepswe/<run_id>.json`.
+- Pier version pinned in `requirements` block; missing Pier aborts the run with a clear error.
+
+**Subagent use:** **partial.** Driver can be built in parallel with Stage 6; the run itself is serial.
+
+---
+
+## 6. Stage 6 — SWE-bench Verified / Lite regression
+
+**Why:** TB 2.0/2.1/DeepSWE all skew toward recent code; SWE-bench Verified / Lite are older and well-instrumented regression baselines.
+
+**Files to add:**
+
+- `pheno-harness/eval/swebench_verified.py` — frozen 200-task subset (defined in `pheno-harness/config/swebench_models.yaml`).
+- `pheno-harness/eval/swebench_lite.py` — full 300-task run, weekly.
+- `pheno-harness/scripts/run_swebench_regression.py`
+- **MODIFY** `pheno-harness/training/eval_holdout.yaml` — add SWE-bench Verified subset to the holdout.
+
+**Acceptance:**
+- `python scripts/run_swebench_regression.py` produces `bench/results/swebench/<run_id>.json` with `pass@1`, `regressions`, and per-task wall time.
+- The regression gate in `harness/self_improvement/gates.py` reads from this directory.
+
+**Subagent use:** **yes.** Can run in parallel with Stage 5 build-out.
+
+---
+
+## 7. Stage 7 — Model × engine matrix sweep
+
+**Why last among the eval+perf stages:** depends on the perf suite, the matrix YAML, and a stable vLLM/SGLang/TRT-LLM toolchain.
+
+**Files to add / modify:**
+
+- **MODIFY** `pheno-harness/scripts/kv_bakeoff.py` — extend to a full T0–T4 × engine matrix.
+- **MODIFY** `pheno-harness/scripts/run_tbench_model_matrix.py` — same.
+- **NEW** `pheno-harness/config/m1_fallback.yaml` — MLX / llama.cpp worker for M1 Pro.
+- **NEW** `pheno-harness/scripts/run_m1_fallback_smoke.py`
+
+**Acceptance:**
+- Per-tier sweep writes one row per (model, engine, quantization) cell.
+- M1 Pro smoke writes one row per (model, format) cell.
+- All rows tagged with the full reproducibility manifest.
+
+**Subagent use:** **yes.** Each tier (T0, T1, T2, T3, T4, T5, M1) can be a separate subagent. Main thread joins the results into `bench/results/perf/<date>_matrix_summary.json`.
+
+---
+
+## 8. Stage 8 — Trace-derived per-role eval set
+
+**Why after Stage 2:** the intent-graph recorder makes per-turn replays possible.
+
+**Files to add / modify:**
+
+- **MODIFY** `pheno-harness/traces/ingest.py` — add `infer_role(trace) -> role_id`.
+- **MODIFY** `pheno-harness/traces/motion.py` — emit per-role aggregates.
+- **NEW** `pheno-harness/eval/role_suite.py`
+- **NEW** `pheno-harness/scripts/build_trace_spec.py`
+- **NEW** `pheno-harness/scripts/run_role_eval.py`
+- **NEW** `pheno-harness/config/role_eval_models.yaml`
+- **NEW** `pheno-harness/bench/fixtures/trace_replay/` — inbox → classified → approved → golden pipeline (see `TRACE_EVALSET_PLAN.md` §6).
+
+**Acceptance:**
+- 30 approved specs in `bench/fixtures/trace_replay/`.
+- 4 role suites scoring: `solo_engineer`, `coding_subagent`, `reviewer`, `planner_manager`.
+- All replays emit `.graph.json` (from Stage 2) so they're replayable.
+
+**Subagent use:** **partial.** Spec classification is a script. Spec review is human. Golden runs are serial.
+
+---
+
+## 9. Stage 9 — Intent-graph Stages B–E
+
+**Why last:** full architectural transition. Stages A and B reduce cost without behavior change; C–D add the planner and multi-agent fan-out; E adds strong re-entry.
+
+**Files to add (over Stages 2):**
+
+- `pheno-harness/harness/intent_graph/planner.py`
+- `pheno-harness/harness/intent_graph/tools.py` — deterministic tool registry.
+- `pheno-harness/harness/intent_graph/scheduler.py`
+- `pheno-harness/harness/intent_graph/replay.py`
+
+**Acceptance per sub-stage:**
+- **B:** deterministic tool execution reduces cost ≥ 20 % vs. chat-loop baseline (measured on TB 2.0 16-task subset).
+- **C:** planner emits a valid DAG on ≥ 80 % of TB 2.0 tasks; failure falls back to chat loop.
+- **D:** sub-agent fan-out reduces wall time ≥ 30 % on tasks with ≥ 3 independent reads.
+- **E:** strong re-entry fires only on `post` predicate failure; recovers ≥ 50 % of such failures.
+
+**Subagent use:** **partial.** Tools can be parallelized. Planner is main-thread (it touches the core chat loop).
+
+---
+
+## 10. Stage 10 — Codex fork (gated)
+
+**Gating:** user sign-off required after **Stage 5 (DeepSWE)** or **Stage 7 (matrix sweep)** completes successfully. Do not start without explicit approval.
+
+**Scope (preview):**
+- Mirror Stages 1–9 against the codex fork.
+- Same eval suites; different harness substrate.
+- The matrix YAML, the trace-derived evalset, the perf suite, and the self-improvement loop transfer; the intent-graph Stages B–E require codex-internal refactors.
+
+---
+
+## 11. First PRs (concrete, ordered)
+
+PRs are sized so each one is benchmarkable end-to-end.
+
+| PR | Title | Files | Stages | Risk |
+|---|---|---|---|---|
+| #1 | `audit: research + architecture deliverables` | `audit/*.md` | — | none (docs only) |
+| #2 | `eval(tbench): add TB 2.1 driver + TB 3.x watch` | `eval/tbench_v21.py`, `eval/tbench_v3_watch.py`, `config/harbor_tbench_models.yaml`, `eval/HARBOR.md` | 1 | low |
+| #3 | `harness: passive intent-graph recorder (Stage A)` | `harness/intent_graph/{recorder,dag}.py`, `pheno/harbor_util.py`, `eval/{tbench,route_matrix}.py` | 2 | low |
+| #4 | `perf: add TTFT/ITL/cache/harness-overhead/parallel probes` | `perf/*`, `scripts/run_perf_suite.py`, `config/model_engine_matrix.yaml` | 3 | low |
+| #5 | `harness: self-improvement gates + retention + promotion` | `harness/self_improvement/*`, `scripts/run_self_improvement_tick.py`, `config/eval_pillars.yaml` | 4 | medium |
+| #6 | `eval: DeepSWE driver (113 tasks, Pier ≥ 0.3.0)` | `eval/deepswe.py`, `config/deepswe_models.yaml`, `scripts/run_deepswe.py` | 5 | low |
+| #7 | `eval: SWE-bench Verified + Lite regression` | `eval/swebench_{verified,lite}.py`, `scripts/run_swebench_regression.py`, `training/eval_holdout.yaml` | 6 | low |
+| #8 | `eval+perf: full model × engine matrix sweep` | `config/model_engine_matrix.yaml`, `config/m1_fallback.yaml`, scripts | 7 | medium |
+| #9 | `eval: per-role trace suite + spec builder` | `traces/ingest.py`, `eval/role_suite.py`, scripts, fixtures | 8 | medium |
+| #10 | `harness: intent-graph Stages B–E` | `harness/intent_graph/{planner,tools,scheduler,replay}.py` | 9 | high |
+| #11 | **GATED:** codex fork migration of Stages 1–9 | TBD | 10 | TBD |
+
+---
+
+## 12. Acceptance / verification gates per PR
+
+Per the brief's "every benchmark run must be reproducible from config, commit hash, model id, provider, hardware profile, and environment variables":
+
+- Each PR adds or extends `bench/results/<suite>/<run_id>.manifest.json` and a `scoreboard.md` roll-up.
+- Each PR runs the existing suite baseline **before** and **after** the change and includes both manifests in the PR description.
+- A PR that regresses any pillar score in `config/eval_pillars.yaml` by more than the threshold is auto-blocked.
+- A PR that introduces a new dependency updates `requirements.txt` (or equivalent) and is verified to install cleanly on a fresh Windows + Python environment.
+
+---
+
+## 13. Subagent dispatch plan
+
+Parallelizable work goes to subagents via the `task` tool. The main thread always owns:
+
+- Core harness changes (intent-graph Stages B–E, recorder integration).
+- The eval scoreboard roll-up.
+- The reproducibility contract enforcement.
+
+Subagents own:
+
+- Independent driver implementations (Stage 3 probes, Stage 5/6 eval drivers).
+- Per-tier model sweeps (Stage 7).
+- Independent self-improvement modules (Stage 4 signals / gates / retention / promotion).
+- Spec pipeline stages (Stage 8 T1–T7, with T3 review as human gate).
+
+Subagent hand-off contract: each subagent returns file paths (relative to `pheno-harness/`) and a 5-line summary. Main thread composes the scoreboard from those artifacts.
+
+---
+
+## 14. Roll-out calendar (suggested)
+
+| Week | Focus | Exit criteria |
+|---|---|---|
+| W1 | PR #1, #2 | TB 2.1 driver runs; TB 3.x watch reports daily |
+| W2 | PR #3 | `.graph.json` produced by every eval run |
+| W3 | PR #4 | First perf-suite numbers published for one T1 cell |
+| W4 | PR #5 | Self-improvement tick dry-run is green on synthetic data |
+| W5 | PR #6, #7 | DeepSWE 16-task subset + SWE-bench Verified regression live |
+| W6 | PR #8 | First matrix sweep (T0 + T1) complete |
+| W7 | PR #9 | 30 approved trace specs + 4 role suites scoring |
+| W8 | PR #10 (B) | Deterministic tools reduce TB 2.0 cost ≥ 20 % |
+| W9 | PR #10 (C–D) | Planner + multi-agent fan-out live; TB 2.0 wall time −30 % on multi-read tasks |
+| W10 | PR #10 (E) | Strong re-entry live; recovery rate measured |
+| W11 | PR #11 — **gated** on user approval | codex fork plan signed off |
+
+This is a suggestion, not a contract. Slack in W3/W4/W5 is expected as the perf suite reveals hardware limits.

@@ -1,0 +1,11 @@
+import json
+with open('_sapanw_issues.json') as f:
+    data = json.load(f)
+for issue in data:
+    n = issue['number']
+    title = issue['title']
+    labels = [l['name'] for l in issue.get('labels', [])]
+    created = issue['createdAt']
+    body_len = len(issue.get('body', '') or '')
+    print(f'#{n} [{created}] labels={labels} bodyLen={body_len}')
+    print(f'   {title}')

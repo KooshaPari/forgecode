@@ -1,0 +1,1 @@
+Get-Content -Path 'C:\Users\koosh\omniroute-dev\omniroute.mjs' -Encoding UTF8 | ForEach-Object { $lineNum = [System.Threading.Interlocked]::Increment([ref]0); Write-Host "$lineNum<|>$_" }

@@ -1,0 +1,105 @@
+/**
+ * Simulated F9-style status event emitter for the DAG live status renderer.
+ *
+ * F26 — DAG renderer: live status (consumes from F9 events)
+ *
+ * In production this would connect to a WebSocket or SSE endpoint from
+ * the F9 execution engine. Here we simulate plausible status changes
+ * to demonstrate the live-update UI.
+ */
+
+import type {
+  DagNodeStatus,
+  DagStatusEvent,
+  DagStatusChangePayload,
+} from "./types.ts";
+
+export type StatusEventCallback = (event: DagStatusEvent) => void;
+
+/**
+ * Simulated F9 event stream for DAG unit status changes.
+ */
+export class DagStatusEmitter {
+  private intervalId: ReturnType<typeof setInterval> | null = null;
+  private listeners: Set<StatusEventCallback> = new Set();
+  private nodeIndex = 0;
+  private nodeIds: string[] = [];
+  private statusCycle: DagNodeStatus[] = [
+    "in-progress",
+    "completed",
+    "failed",
+    "blocked",
+    "in-progress",
+    "completed",
+  ];
+  private cycleIndex = 0;
+
+  constructor(nodeIds: string[]) {
+    this.nodeIds = nodeIds;
+  }
+
+  /** Register a callback that fires on each event. */
+  onEvent(cb: StatusEventCallback): () => void {
+    this.listeners.add(cb);
+    return () => this.listeners.delete(cb);
+  }
+
+  /** Start emitting simulated status events at the given interval (ms). */
+  start(intervalMs = 8_000): void {
+    if (this.intervalId !== null) return;
+    this.intervalId = setInterval(() => {
+      this.emitNext();
+    }, intervalMs);
+  }
+
+  /** Stop emitting events. */
+  stop(): void {
+    if (this.intervalId !== null) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+  }
+
+  get running(): boolean {
+    return this.intervalId !== null;
+  }
+
+  /** Manually emit an event (useful for testing or external trigger). */
+  emit(event: DagStatusEvent): void {
+    for (const cb of this.listeners) {
+      try {
+        cb(event);
+      } catch {
+        // silently ignore listener errors
+      }
+    }
+  }
+
+  /** Reset the internal simulation counter. */
+  reset(): void {
+    this.nodeIndex = 0;
+    this.cycleIndex = 0;
+    this.emit({ type: "reset", payload: null });
+  }
+
+  // ── Private ──────────────────────────────────────────────────────
+
+  private emitNext(): void {
+    if (this.nodeIds.length === 0) return;
+
+    const nodeId = this.nodeIds[this.nodeIndex % this.nodeIds.length];
+    const newStatus =
+      this.statusCycle[this.cycleIndex % this.statusCycle.length];
+
+    this.nodeIndex++;
+    this.cycleIndex++;
+
+    const payload: DagStatusChangePayload = {
+      nodeId,
+      newStatus,
+      timestamp: new Date().toISOString(),
+    };
+
+    this.emit({ type: "status-change", payload });
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "models": [
+    {
+      "context_window": 512000,
+      "default_reasoning_level": "medium",
+      "visibility": "list",
+      "shell_type": "shell_command",
+      "display_name": "Main (OmniRoute combo)",
+      "supported_reasoning_levels": [
+        {
+          "description": "Disable reasoning",
+          "effort": "minimal"
+        },
+        {
+          "description": "Light reasoning for simple tasks",
+          "effort": "low"
+        },
+        {
+          "description": "Balanced reasoning for most tasks",
+          "effort": "medium"
+        },
+        {
+          "description": "Maximum reasoning effort",
+          "effort": "high"
+        }
+      ],
+      "slug": "Main",
+      "priority": 10,
+      "max_context_window": 512000,
+      "minimal_client_version": "0.0.0",
+      "description": "OmniRoute Main combo: routes fill-first across MiniMax, Codex, Opencode-go/deepseek-v4-flash, and the Free Combo.",
+      "supported_in_api": true
+    },
+    {
+      "context_window": 1000000,
+      "default_reasoning_level": "medium",
+      "visibility": "list",
+      "shell_type": "shell_command",
+      "display_name": "minimax m3",
+      "supported_reasoning_levels": [
+        {
+          "description": "Disable reasoning",
+          "effort": "minimal"
+        },
+        {
+          "description": "Light reasoning for simple tasks",
+          "effort": "low"
+        },
+        {
+          "description": "Balanced reasoning for most tasks",
+          "effort": "medium"
+        },
+        {
+          "description": "Maximum reasoning effort",
+          "effort": "high"
+        }
+      ],
+      "slug": "minimax-m3",
+      "priority": 20,
+      "max_context_window": 1000000,
+      "minimal_client_version": "0.0.0",
+      "description": "minimax-M3 via direct minimax-rs upstream.",
+      "supported_in_api": true
+    },
+    {
+      "context_window": 272000,
+      "default_reasoning_level": "medium",
+      "visibility": "list",
+      "shell_type": "shell_command",
+      "display_name": "gpt-5-codex",
+      "supported_reasoning_levels": [
+        {
+          "description": "Disable reasoning",
+          "effort": "minimal"
+        },
+        {
+          "description": "Light reasoning for simple tasks",
+          "effort": "low"
+        },
+        {
+          "description": "Balanced reasoning for most tasks",
+          "effort": "medium"
+        },
+        {
+          "description": "Maximum reasoning effort",
+          "effort": "high"
+        }
+      ],
+      "slug": "gpt-5-codex",
+      "priority": 30,
+      "max_context_window": 272000,
+      "minimal_client_version": "0.0.0",
+      "description": "OpenAI gpt-5-codex (routed through OmniRoute when not specified).",
+      "supported_in_api": true
+    },
+    {
+      "context_window": 128000,
+      "default_reasoning_level": "medium",
+      "visibility": "list",
+      "shell_type": "shell_command",
+      "display_name": "gpt-4o",
+      "supported_reasoning_levels": [
+        {
+          "description": "Disable reasoning",
+          "effort": "minimal"
+        },
+        {
+          "description": "Light reasoning for simple tasks",
+          "effort": "low"
+        },
+        {
+          "description": "Balanced reasoning for most tasks",
+          "effort": "medium"
+        },
+        {
+          "description": "Maximum reasoning effort",
+          "effort": "high"
+        }
+      ],
+      "slug": "gpt-4o",
+      "priority": 40,
+      "max_context_window": 128000,
+      "minimal_client_version": "0.0.0",
+      "description": "OpenAI gpt-4o (default fallback for Codex to keep warnings quiet).",
+      "supported_in_api": true
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+# E1 Recovery Manifest
+
+**Unit:** E1 — Recover terminal UI worktree  
+**Branch:** `recover/E1-terminal-ui-worktree`  
+**Epic:** epic_E — BytePort: terminal UI, tools CLI, otel, governance  
+**Recovered:** 2026-06-25  
+
+## Source
+
+The terminal UI work originated from stash side-219 on a now-retired branch
+(`chore/l4-64-byteport-hex-2026-06-11`). It was partially recovered to
+`chore/A11-recover-byteport-stash-0-terminal-ui` and merged into `origin/main`
+via commit `68c4ec2c`.
+
+## Recovered Files
+
+| File | Lines | Description |
+|------|-------|-------------|
+| `crates/byteport-transport/src/ports/ui.rs` | 389 | Generic `UiPort` trait with `UiView`, `PromptMessage`, `PromptResponse`, `UiError`, and `MockUiAdapter` for testing |
+| `crates/byteport-transport/src/ports/terminal_ui.rs` | 370 | `TerminalUiAdapter` — TTY/REPL adapter implementing `UiPort` with interactive and non-interactive modes |
+| `crates/byteport-transport/src/ports/mod.rs` | 5 | Module wiring (`pub mod ui; pub mod terminal_ui;`) |
+
+## Recovery Status
+
+- [x] Terminal UI trait surface recovered
+- [x] `UiPort` trait with view/prompt abstraction
+- [x] `TerminalUiAdapter` — stdin/stdout implementation
+- [x] `MockUiAdapter` — test double with configurable responses
+- [x] Full test suite (30+ tests covering all prompt kinds, edge cases)
+- [x] Files verified on `origin/main` via commit `68c4ec2c`

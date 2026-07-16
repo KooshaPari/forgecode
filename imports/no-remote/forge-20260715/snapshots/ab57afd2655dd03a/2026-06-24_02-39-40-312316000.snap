@@ -1,0 +1,41 @@
+name: Cargo Deny
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "deny.toml"
+      - ".github/workflows/cargo-deny.yml"
+  push:
+    branches:
+      - feature/tracera-core-phase-0-1-2-3
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**"
+      - "deny.toml"
+      - ".github/workflows/cargo-deny.yml"
+  schedule:
+    - cron: "27 10 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny:
+    name: cargo-deny
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595
+        with:
+          tool: cargo-deny
+
+      - name: Run cargo-deny
+        run: cargo deny --manifest-path Cargo.toml check

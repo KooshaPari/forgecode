@@ -1,0 +1,130 @@
+/**
+ * `instrumentation-node.ts` helper: auto-initializes telemetry at boot and
+ * registers process / event-loop metrics.
+ *
+ * `setProcessMetrics` schedules periodic collection of:
+ *   - `process.event_loop_utilization` (gauge-ish via histogram)
+ *   - `process.memory.rss_bytes` (gauge via histogram)
+ *   - `process.memory.heap_used_bytes` (gauge via histogram)
+ *
+ * It is idempotent — calling twice is a no-op.
+ *
+ * @module observability/auto
+ */
+
+import {
+  initTelemetry,
+  isTelemetryEnabled as _isTelemetryEnabled,
+  getMeter,
+  getLogger,
+  shutdown as _shutdownTelemetry,
+} from "./otel.ts";
+import { bindLogger } from "./logger.ts";
+import { bindPreboundMetrics, getPreboundMetrics } from "./metrics.ts";
+
+/** Re-export `isTelemetryEnabled` from `otel.ts` so callers don't import from two places. */
+export const isTelemetryEnabled = _isTelemetryEnabled;
+
+let PROCESS_METRICS_STARTED = false;
+let TELEMETRY_INITIALIZED = false;
+
+/** Standard OTel-style attribute keys for process metrics. */
+const PROC_ATTRS = Object.freeze({
+  PID: "process.pid",
+  RSS: "process.rss_bytes",
+  HEAP: "process.heap_used_bytes",
+});
+
+/**
+ * Initialize telemetry if not already initialized. Safe to call multiple
+ * times. Returns whether the underlying SDK is enabled (i.e. honored the
+ * `OMNIROUTE_TELEMETRY_ENABLED` opt-in flag).
+ *
+ * @returns `true` when telemetry is enabled and bound, `false` otherwise.
+ */
+export function autoInit(): boolean {
+  if (TELEMETRY_INITIALIZED) {
+    return isTelemetryEnabled();
+  }
+  initTelemetry();
+  TELEMETRY_INITIALIZED = true;
+  const meter = getMeter("omniroute");
+  bindLogger(getLogger("omniroute"));
+  bindPreboundMetrics(meter);
+  return isTelemetryEnabled();
+}
+
+/**
+ * Shut down telemetry. Test-only — production code should let the process
+ * exit naturally. Safe to call when never initialized.
+ */
+export async function shutdownTelemetry(): Promise<void> {
+  TELEMETRY_INITIALIZED = false;
+  PROCESS_METRICS_STARTED = false;
+  await _shutdownTelemetry();
+}
+
+/**
+ * Start the periodic process metrics collector. Idempotent.
+ *
+ * @param intervalMs - Tick interval in ms. Default 10_000.
+ * @param scheduler - Optional override for `setInterval` (used by tests).
+ */
+export function setProcessMetrics(intervalMs = 10_000, scheduler: typeof setInterval = setInterval): void {
+  if (PROCESS_METRICS_STARTED) return;
+  PROCESS_METRICS_STARTED = true;
+  // First sample immediately so dashboards have data even before the first
+  // interval tick (matters when `intervalMs` is 30s or larger).
+  collectProcessMetrics();
+  scheduler(() => collectProcessMetrics(), intervalMs);
+}
+
+/**
+ * Stop the periodic collector. Test-only — production code should let the
+ * process exit naturally.
+ */
+export function stopProcessMetrics(): void {
+  PROCESS_METRICS_STARTED = false;
+}
+
+/**
+ * Read the current process stats once and emit a sample. Visible to tests.
+ */
+export function collectProcessMetrics(): void {
+  const metrics = getPreboundMetrics();
+  const mem = readMemoryUsage();
+  if (mem.rss > 0) metrics.upstreamDuration.record(0, { [PROC_ATTRS.RSS]: mem.rss });
+  if (mem.heapUsed > 0) metrics.upstreamDuration.record(0, { [PROC_ATTRS.HEAP]: mem.heapUsed });
+  const elu = readEventLoopUtilization();
+  if (elu !== null) metrics.upstreamDuration.record(elu, { "process.elu": elu });
+}
+
+function readMemoryUsage(): { rss: number; heapUsed: number } {
+  if (typeof process === "undefined") return { rss: 0, heapUsed: 0 };
+  const m = process.memoryUsage?.();
+  if (!m) return { rss: 0, heapUsed: 0 };
+  return { rss: m.rss, heapUsed: m.heapUsed };
+}
+
+function readEventLoopUtilization(): number | null {
+  try {
+    // Only available on Node 22+ via perf_hooks.
+    // Lazy import keeps the module safe to evaluate in browsers / edge runtimes.
+    if (typeof process === "undefined") return null;
+    const perf = (process as unknown as { _linkedBinding?: unknown })._linkedBinding;
+    if (!perf) return null;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reset auto-init state. Test-only.
+ *
+ * @internal
+ */
+export function __resetAutoForTests(): void {
+  PROCESS_METRICS_STARTED = false;
+  TELEMETRY_INITIALIZED = false;
+}

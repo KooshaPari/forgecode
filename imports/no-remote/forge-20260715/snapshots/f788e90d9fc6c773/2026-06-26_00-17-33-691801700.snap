@@ -1,0 +1,35 @@
+## Summary
+Lift recovered tools CLI crate (`byteport-cli`) into a PR branch, providing a developer CLI for codec, transport, UI, and upload operations via the `byteport-transport` crate.
+
+## Context
+This is the final step of E4 (lift recovered tools CLI to branch + open PR), following E3 which recovered the `byteport-cli` crate from stash-1. The crate exercises all `byteport-transport` port abstractions (codec, wire transport, terminal UI, mock UI, S3 upload) through a `clap`-based command-line interface.
+
+## Changes
+- **`crates/byteport-cli/`** — new crate with a `clap` CLI binary supporting 4 subcommand families:
+  - `codec encode/decode` — hex encode/decode via `WireCodecAdapter`
+  - `transport ping` — in-memory wire transport send/receive via `WireTransportAdapter`
+  - `ui view/prompt` — terminal UI view rendering + mock prompt flow
+  - `upload` — S3 upload instruction generation via `S3UploadTransport`
+- **`Cargo.toml`** — added `crates/byteport-cli` to workspace members
+- **`README.md`** — added work-state header section
+- **`Cargo.lock`** — updated for workspace changes
+
+## Testing
+```bash
+# Verify compilation
+cargo check --package byteport-cli
+
+# Run CLI help
+cargo run --package byteport-cli -- --help
+
+# Test individual subcommands
+cargo run --package byteport-cli -- codec encode "hello"
+cargo run --package byteport-cli -- codec decode "68656c6c6f"
+cargo run --package byteport-cli -- ui view dashboard
+cargo run --package byteport-cli -- upload my-file.txt --content-type text/plain --content-length 1024
+```
+
+## Links
+- Epic: epic_E — BytePort: terminal UI, tools CLI, otel, governance
+- Recovery: `recover/E3-tools-cli-worktree` (PR #249)
+- Labels: `area:compute-infra`, `epic-e`

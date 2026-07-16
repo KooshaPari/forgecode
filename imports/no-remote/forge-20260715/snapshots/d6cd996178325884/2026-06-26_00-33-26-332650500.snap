@@ -1,0 +1,76 @@
+# BytePort Worklog
+
+### 2026-06-25 — B11: Delete local NVMS implementation after repoint
+
+**consolidate(B11): delete local NVMS implementation after repoint**
+
+- Deleted all files under `backend/nvms/` (Go module), `backend/nvms.rs`, `backend/odin.nvms` (70 files total)
+- Updated `Taskfile.yml` and `justfile` to remove stale `backend/nvms` references
+- Branch: `consolidate/B11-delete-nvms-impl`
+- PR: [#247](https://github.com/KooshaPari/BytePort/pull/247)
+- Labels: `area:compute-infra`
+- Epic: epic_B — Cross-repo consolidation & L1 grading
+- Base: `epic/B10-repoint-nvms-parser` (PR #230, stacked)
+- Grade: 0/10 (F) — pre-existing failures (network-dep `dlopen2_derive`, fmt drift, resolver `3`)
+
+---
+
+### 2026-06-25 — A21: Refresh README work-state header
+
+**docs(A21): add work-state header to README**
+
+- Inserted `> **Work state:** ACTIVE` blockquote after `<!-- AI-DD-META:END -->`
+- Removed verbose `## Work state` section (merged into STATUS.md)
+- Branch: `docs/A21-readme-workstate`
+- PR: [#246](https://github.com/KooshaPari/BytePort/pull/246)
+- Epic: epic_A — Hygiene garden & branch slim
+
+---
+
+## Recent Entries
+
+### 2026-06-25 — A23: Reconcile 3 byteport-sladge doc branches
+
+**docs(A23): reconcile 3 byteport-sladge doc branches into single location**
+
+- Source branches consolidated:
+  - `docs/byteport-sladge-current` (7 session files: `20260506-byteport-sladge-refresh/`)
+  - `docs/byteport-sladge-pem-current` (7 session files: `20260507-byteport-sladge-pem-refresh/`)
+  - `docs/sladge-badge` (governance worklog entry)
+- Created `docs/sladge/README.md` reconciliation index
+- Rebased onto latest `main` and force-pushed
+- Branch: `docs/reconcile-sladge-docs-A23`
+- PR: [#222](https://github.com/KooshaPari/BytePort/pull/222)
+- Labels: `area:compute-infra`, `size:L`
+- Epic: epic_A — Hygiene garden & branch slim
+
+---
+
+### 2026-06-25 — E2: Lift recovered terminal UI to branch + open PR
+
+**recover(E2): lift recovered terminal UI DAG foundation to proper PR**
+
+- Verified E1 recovery branch `recover/E1-terminal-ui-worktree` (PR #248, merged)
+- E1 recovered worktree with `byteport-dag` crate: dag, topo, scheduler, schema, serialize modules
+- The DAG foundation was independently absorbed into `main` via Phase-6 merge
+- Created clean branch `recover/E2-terminal-ui-pr` from `origin/main`
+- Ran grade.sh --fast on BytePort and captured JSON report
+- PR: [#(auto)](https://github.com/KooshaPari/BytePort/pull/POST_CREATE)
+- Labels: `area:compute-infra`, `epic-e`
+- Epic: epic_E — BytePort: terminal UI, tools CLI, otel, governance
+- Status: DAG foundation (crate:byteport-dag) successfully lifted to main; E2 documents completion
+
+---
+
+---
+
+## Categories
+
+- **ARCHITECTURE**: ADRs, library extraction, design patterns
+- **DUPLICATION**: Cross-project duplication identification
+- **DEPENDENCIES**: External deps, forks, modernization
+- **INTEGRATION**: External integrations, MCP, plugins
+- **PERFORMANCE**: Optimization, benchmarking
+- **RESEARCH**: Starred repo analysis, audits
+- **GOVERNANCE**: Policy, evidence, quality gates
+

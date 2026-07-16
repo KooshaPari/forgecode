@@ -1,0 +1,60 @@
+<script lang="ts">
+  import { readTextFile, writeTextFile, mkdir, exists } from "@tauri-apps/plugin-fs";
+  import { open } from "@tauri-apps/plugin-dialog";
+
+  let status = $state("Ready.");
+  let busy = $state(false);
+
+  async function handleOpen() {
+    busy = true;
+    try {
+      const path = await open({
+        multiple: false,
+        directory: false,
+        title: "Choose a text file",
+      });
+      if (typeof path === "string") {
+        const text = await readTextFile(path);
+        status = `Loaded: ${path} (${text.length} chars)`;
+      } else {
+        status = "Open cancelled.";
+      }
+    } catch (err) {
+      status = `Error: ${String(err)}`;
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function handleCreate() {
+    busy = true;
+    try {
+      const dir = "melosviz-output";
+      const dirOk = await exists(dir);
+      if (!dirOk) {
+        await mkdir(dir, { recursive: true });
+      }
+      const file = `${dir}/note.txt`;
+      const stamp = new Date().toISOString();
+      await writeTextFile(file, `Created by Melosviz at ${stamp}\n`);
+      status = `Wrote: ${file}`;
+    } catch (err) {
+      status = `Error: ${String(err)}`;
+    } finally {
+      busy = false;
+    }
+  }
+</script>
+
+<main class="container">
+  <h1>Melosviz</h1>
+  <p>
+    Audio-driven visual spec. This scaffold wires Tauri 2 (Rust) to a Svelte +
+    Vite frontend and exercises the fs + dialog plugins.
+  </p>
+  <div style="display: flex; gap: 0.75rem;">
+    <button onclick={handleOpen} disabled={busy}>Open text file</button>
+    <button onclick={handleCreate} disabled={busy}>Write note</button>
+  </div>
+  <div class="status">{status}</div>
+</main>

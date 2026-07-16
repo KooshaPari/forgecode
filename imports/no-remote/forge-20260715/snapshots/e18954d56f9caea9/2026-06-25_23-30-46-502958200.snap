@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Print survey summary for the 3 known repos + check pheno-specs status."""
+import json
+import subprocess
+import sys
+import re
+from pathlib import Path
+
+base = Path(r"C:\Users\koosh\phenotype-registry")
+for repo in ("Tracera", "AuthKit", "Eidolon"):
+    meta_p = base / f"_tmp_{repo.lower()}_meta.json"
+    br_p = base / f"_tmp_{repo.lower()}_branches.json"
+    if not meta_p.exists() or not br_p.exists():
+        print(f"  {repo}: missing files")
+        continue
+    m = json.loads(meta_p.read_text(encoding="utf-8"))
+    b = json.loads(br_p.read_text(encoding="utf-8"))
+    branches = b if isinstance(b, list) else b.get("items") or b.get("branches") or []
+    active = [x for x in branches if not (x.get("name", "").startswith("archive/") or x.get("name", "") in ("main", "master"))]
+    print(f"=== {repo} ===")
+    print(f"  id:                {m.get('id')}")
+    print(f"  full_name:         {m.get('full_name')}")
+    print(f"  description:       {m.get('description')}")
+    print(f"  archived:          {m.get('archived')}")
+    print(f"  size_kb:           {m.get('size')}")
+    print(f"  default_branch:    {m.get('default_branch')}")
+    print(f"  language:          {m.get('language')}")
+    print(f"  stargazers:        {m.get('stargazers_count')}")
+    print(f"  pushed_at:         {m.get('pushed_at')}")
+    print(f"  created_at:        {m.get('created_at')}")
+    print(f"  branches total:    {len(branches)}")
+    print(f"  branches active:   {len(active)}")
+    print(f"  top 3 branches:    {[b['name'] for b in branches[:3]]}")
+    print()
+
+# Check pheno-specs separately
+print("=== pheno-specs status ===")
+out = subprocess.run(
+    ["gh", "api", "repos/KooshaPari/pheno-specs"],
+    capture_output=True, text=True, shell=True
+)
+print(f"  exit_code: {out.returncode}")
+print(f"  stderr:    {out.stderr.strip()[:120]}")
+print(f"  stdout:    {out.stdout.strip()[:200]}")

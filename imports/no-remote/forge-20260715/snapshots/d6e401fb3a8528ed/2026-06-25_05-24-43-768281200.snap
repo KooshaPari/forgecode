@@ -1,0 +1,5 @@
+ci(REPLACE_NAME): add cargo-deny block-release workflow
+
+Per phenotype-org standard (deny-blocks-release).
+Refs: phenotype-org-audits DAG-012 (71-pillar L51-L60 supply chain)
+Refs: computer-use lane Tier 3.2

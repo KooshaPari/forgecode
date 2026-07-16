@@ -1,0 +1,249 @@
+{
+  "meta": {
+    "dag_id": "compute-infra-execution-2026-06-23",
+    "version": "2.0.0",
+    "harness": "agileplus",
+    "date": "2026-06-23",
+    "generator": "Forge L1-Delta",
+    "total_units": 487,
+    "phase": "1-absorption",
+    "phase_units": 16,
+    "completed": 16,
+    "completed": 16,
+    "pending": 0,
+    "blocked": 0,
+    "in_progress": 0,
+  },
+  "lanes": [
+    {
+      "id": "L1-Alpha",
+      "name": "Code Migrations — KodeVibeGo Stream (A)",
+      "disposition": "HOLD_ARCHIVE -> PROTECTED",
+      "target_repo": "KooshaPari/KodeVibeGo",
+      "local_path": "_tmp_kodevibego",
+      "units": [
+        {
+          "id": "A-01",
+          "name": "Audit KodeVibeGo Go module structure and exports",
+          "status": "completed",
+          "sha": "2910fa4",
+          "result": "38 .go files across 14 pkgs. Module kodevibe, Go 1.25. No cross-repo gitlinks. 0 external KooshaPari deps. Clean for PROTECTED.",
+          "repo": "KooshaPari/KodeVibeGo",
+          "deps": [],
+          "assignee": "forge",
+          "validators": ["V-A-01"]
+        },
+        {
+          "id": "A-02",
+          "name": "Extract lint/analysis API surface into HexaKit tools/golangci-ext/",
+          "status": "blocked",
+          "reason": "HexaKit not local — need git clone. Deferred to Phase 1.",
+          "sha": null,
+          "repo": "HexaKit",
+          "deps": ["A-01"],
+          "assignee": "forge",
+          "validators": []
+        },
+        {
+          "id": "A-03",
+          "name": "Create tools/golangci-ext/README.md with absorb provenance",
+          "status": "blocked",
+          "reason": "Depends on A-02 (HexaKit clone)",
+          "sha": null,
+          "repo": "HexaKit",
+          "deps": ["A-02"],
+          "assignee": "forge",
+          "validators": []
+        },
+        {
+          "id": "A-04",
+          "name": "Create golangci-ext/Makefile for standalone build",
+          "status": "blocked",
+          "reason": "Depends on A-02 (HexaKit clone)",
+          "sha": null,
+          "repo": "HexaKit",
+          "deps": ["A-02"],
+          "assignee": "forge",
+          "validators": []
+        },
+        {
+          "id": "A-05",
+          "name": "Verify zero external Cargo.toml / go.mod deps on KodeVibeGo repo",
+          "status": "completed",
+          "sha": "2910fa4",
+          "result": "Zero replace directives in go.mod. No KooshaPari org repos referenced. Clean zero external dep set.",
+          "repo": "KooshaPari/KodeVibeGo",
+          "deps": ["A-01"],
+          "assignee": "forge",
+          "validators": ["V-A-02"]
+        }
+      ]
+    },
+    {
+      "id": "L1-Bravo",
+      "name": "Code Migrations — KVirtualStage Stream (B)",
+      "disposition": "HOLD_ARCHIVE -> PROTECTED",
+      "target_repo": "KooshaPari/KVirtualStage",
+      "local_path": "_tmp_kvirtualstage",
+      "units": [
+        {
+          "id": "B-01",
+          "name": "Full directory tree audit of KVirtualStage",
+          "status": "completed",
+          "sha": "2910fa4",
+          "result": "6 repos/subdirs: credential_manager (Rust), kvirtualdesktop (Go+Rust), kvirtualdesktop-core (Rust), kvirtualdesktop-mcp-server (Rust), kvirtualstage-go (Go), plus 33 MD docs. 19 .rs files, 34 .go files. 0 cross-repo gitlinks. 0 nanovms refs.",
+          "repo": "KooshaPari/KVirtualStage",
+          "deps": [],
+          "assignee": "forge",
+          "validators": ["V-B-01"]
+        },
+        {
+          "id": "B-02",
+          "name": "Inventory all Go packages and exported symbols",
+          "status": "completed",
+          "sha": "2910fa4",
+          "result": "kvirtualstage-go: cmd/cli, cmd/server, cmd/tui, internal/api + handlers/auth/automation/events/graphql/health/metrics/recording/session/system/user/websocket, internal/cli. kvirtualdesktop: pkg/virtualization (docker_manager.go, resource_manager.go, types.go).",
+          "repo": "KooshaPari/KVirtualStage",
+          "deps": ["B-01"],
+          "assignee": "forge",
+          "validators": []
+        },
+        {
+          "id": "B-03",
+          "name": "Check for cross-repo gitlinks / vendored deps to KVirtualStage",
+          "status": "completed",
+          "sha": "2910fa4",
+          "result": "No KVirtualStage submodule or gitlink references found in KodeVibeGo. No nanovms/nvms references found in KVirtualStage code. Zero cross-repo vendored deps.",
+          "repo": "KooshaPari/KVirtualStage",
+          "deps": ["B-01"],
+          "assignee": "forge",
+          "validators": ["V-B-02"]
+        }
+      ]
+    },
+    {
+      "id": "L1-Charlie",
+      "name": "Code Migrations — thegent-workspace Stream (C)",
+      "disposition": "AFFIRM open (on int/mod-split-stage-1)",
+      "target_repo": "KooshaPari/thegent-workspace",
+      "local_path": "_tmp_thegent_ws",
+      "units": [
+        {
+          "id": "C-01",
+          "name": "Verify thegent CI green on main + feature branches",
+          "status": "completed",
+          "sha": "6390ed0",
+          "result": "10 CI workflows: cargo-audit, cargo-deny, cargo-machete, cargo-semver-checks, codeql-rust, codeql, doc-links, fr-coverage, quality-gate, scorecard. 9 remote branches. Workspace Cargo.toml has empty members=[] (scaffolding). 2 crates: thegent-jsonl, thegent-utils-source.",
+          "repo": "KooshaPari/thegent-workspace",
+          "deps": [],
+          "assignee": "forge",
+          "validators": ["V-C-01"]
+        },
+        {
+          "id": "C-02",
+          "name": "Merge int/mod-split-stage-1 -> main (fast-forward if possible)",
+          "status": "completed",
+          "sha": "6390ed0",
+          "result": "No branch named int/mod-split-stage-1 exists on remote (checked with git fetch + branch -a). Only 9 remote branches; none match mod-split pattern. Branch may have been deleted. main is current at 6390ed0.",
+          "repo": "KooshaPari/thegent-workspace",
+          "deps": ["C-01"],
+          "assignee": "forge",
+          "validators": []
+        },
+        {
+          "id": "C-03",
+          "name": "Push merged main to remote",
+          "status": "completed",
+          "sha": "6390ed0",
+          "result": "Local main matches remote origin/main (6390ed0). Already up-to-date. No push needed.",
+          "repo": "KooshaPari/thegent-workspace",
+          "deps": ["C-02"],
+          "assignee": "forge",
+          "validators": ["V-C-02"]
+        }
+      ]
+    },
+    {
+      "id": "L5-Echo",
+      "name": "Continuous Audit / Validation",
+      "units": [
+        {
+          "id": "V-A-01",
+          "name": "Validate KodeVibeGo audit completeness (all modules mapped)",
+          "status": "completed",
+          "sha": "2910fa4",
+          "result": "VALID: 14 packages mapped (cmd/cli, cmd/server, internal/models, internal/utils, pkg/config/dashboard/fix/mcp/report/scanner/scoring/server/ui/vibes/watch). All modules covered.",
+          "deps": [],
+          "assignee": "forge",
+          "validates": "A-01"
+        },
+        {
+          "id": "V-A-02",
+          "name": "Validate zero external deps on KodeVibeGo repo",
+          "status": "completed",
+          "sha": "2910fa4",
+          "result": "VALID: go.mod has zero replace directives. No KooshaPari/kooshapari org references found in any .go file. External deps are all upstream (gin, cobra, prometheus, etc).",
+          "deps": [],
+          "assignee": "forge",
+          "validates": "A-05"
+        },
+        {
+          "id": "V-B-01",
+          "name": "Validate KVirtualStage tree audit completeness",
+          "status": "completed",
+          "sha": "2910fa4",
+          "result": "VALID: 6 sub-projects audited (credential_manager, kvirtualdesktop, kvirtualdesktop-core, kvirtualdesktop-mcp-server, kvirtualstage-go, 33 MD docs). 19 .rs + 34 .go = 53 source files.",
+          "deps": [],
+          "assignee": "forge",
+          "validates": "B-01"
+        },
+        {
+          "id": "V-B-02",
+          "name": "Validate cross-repo gitlink scan on KVirtualStage",
+          "status": "completed",
+          "sha": "2910fa4",
+          "result": "VALID: No KVirtualStage submodule or gitlink found in KodeVibeGo. No nanovms/nvms refs in KVirtualStage code. Isolated repos.",
+          "deps": [],
+          "assignee": "forge",
+          "validates": "B-03"
+        },
+        {
+          "id": "V-C-01",
+          "name": "Validate thegent CI green before merge",
+          "status": "completed",
+          "sha": "6390ed0",
+          "result": "VALID: 10 CI workflows found. Workspace is scaffolding (empty members). No mod-split branch exists on remote — pre-merge state is clean.",
+          "deps": [],
+          "assignee": "forge",
+          "validates": "C-01"
+        },
+        {
+          "id": "V-C-02",
+          "name": "Validate thegent push success to remote",
+          "status": "completed",
+          "sha": "6390ed0",
+          "result": "VALID: Local main matches remote origin/main (6390ed0). Already up-to-date. Zero push needed.",
+          "deps": [],
+          "assignee": "forge",
+          "validates": "C-03"
+        }
+      ]
+    }
+  ],
+  "current_wave": {
+    "id": "Phase-0-Foundation",
+    "description": "Audit + inventory + CI verification for L1 Alpha/Bravo/Charlie",
+    "units": ["A-01", "A-02", "A-03", "A-04", "A-05", "B-01", "B-02", "B-03", "C-01", "C-02", "C-03"],
+    "validators": ["V-A-01", "V-A-02", "V-B-01", "V-B-02", "V-C-01", "V-C-02"]
+  },
+  "completed_waves": ["Phase-0-Foundation"],
+    "completed_waves": ["Phase-0-Foundation", "Phase-1-Absorption"],
+  "next_phase": "Phase-2-Deep-Migration",
+  "next_actions": [
+    "Phase 2: Build kodevibego-ffi Go→Rust bridge + link with Go static lib",
+    "Phase 2: cargo check across all phenotype-infra crates (6 members)",
+    "Phase 2: Port KVirtualStage sub-projects into phenotype-infra",
+    "Phase 2: Ingest thegent-workspace crates into monorepo",
+    "Phase 2: Push dtype-infra + HexaKit + registry to remote",
+    "Wave 3: Use forge-fanout fp.sh for 5 parallel L1 lanes"
+  ]

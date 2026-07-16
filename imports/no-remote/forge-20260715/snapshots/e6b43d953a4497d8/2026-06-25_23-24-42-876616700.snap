@@ -1,0 +1,73 @@
+/**
+ * src/lib/observability/index.ts
+ *
+ * Barrel export for the observability subsystem.
+ *
+ * Public API:
+ *   - SLO definitions + evaluation      (`slo`)
+ *   - In-memory error-budget tracking   (`budget`)
+ *   - SQLite-backed persistence         (`budgetStore`)
+ *   - Multi-window burn-rate alerts     (`burnRateAlerts`)
+ *
+ * Anything not re-exported here is internal to the subsystem.
+ */
+
+export {
+  evaluateSlo,
+  isValidSliValue,
+  isValidSloTarget,
+  windowDays,
+  windowMs,
+  type EvaluateSloOptions,
+  type SloDefinition,
+  type SloEvaluation,
+  type SloWindow,
+  type SliMeasurement,
+  type SliQuery,
+} from "./slo.ts";
+
+export {
+  DEFAULT_WINDOW_DAYS,
+  ErrorBudget,
+  defaultSloDefinition,
+  type ErrorBudgetOptions,
+  type ErrorBudgetSnapshot,
+  type ErrorRateSamples,
+  type BudgetStatus,
+} from "./budget.ts";
+
+export {
+  deleteBudget,
+  listActiveBudgets,
+  loadBudget,
+  loadLatestBudget,
+  pruneExpiredBudgets,
+  rehydrateBudget,
+  saveBudget,
+  saveBudgetSnapshot,
+} from "./budgetStore.ts";
+
+export {
+  DEFAULT_THRESHOLDS,
+  evaluateBudgetBurnRates,
+  evaluateBurnRates,
+  evaluateWithOtelGate,
+  highestSeverity,
+  isOtelAlertsDisabled,
+  suppressionHeadroom,
+  type AlertSeverity,
+  type BurnRateAlert,
+  type BurnRateThreshold,
+  type EvaluateBurnRateOptions,
+} from "./burnRateAlerts.ts";
+
+export {
+  newSpanContext,
+  parseTraceparent,
+  ProxySpanError,
+  traceContextFromRequest,
+  withProxySpan,
+  type SpanContext,
+  type WithSpanOptions,
+  type WithSpanResult,
+} from "./trace.ts";

@@ -1,0 +1,8 @@
+Post-incident-readiness progress (2026-06-25): All sanitized preflight tooling for the 2026-06-20 secret rotation + purge is now in place via the engagement PRs (#91, #93, #60, #61, #217, #218, #366, #67, #69, #367, #368, #369, #365, #370). The pheno-dag execution engine + cross-repo grade dashboard (PR #370) plus the daily 06:17 UTC auditor fleet (PR #366) provide ongoing regression detection for any future secret-pattern drift.
+
+Per ADR-029, the tracker remains OPEN until the rotation checklist is complete:
+- GitHub PATs (alerts 23, 21) - operator action required on GitHub console
+- Cloudflare account API token (alert 16) - operator action required on Cloudflare console
+- Provider handoff items per docs/operations/provider-rotation-handoff-2026-06-20.md
+
+Cross-ref: AGENTS.md 'Dmouse92 -> KooshaPari migration (ADR-029)'. All automated readiness gates (incident-purge-readiness.py, incident-reopen-readiness.py, retained-history-secret-scan.py) are GREEN per the post-merge runs in PRs #346-#351 and #354.

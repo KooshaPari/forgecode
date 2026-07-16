@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Self-audit: confirm the scanner detects known-bad patterns.
+
+This script:
+  1. Writes a temp file with several known anti-patterns.
+  2. Runs the scanner against the repo.
+  3. Asserts the scanner flags them with the expected rules.
+  4. Removes the temp file.
+  5. Re-runs and asserts the scanner returns to clean state.
+"""
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent.parent
+SCANNER = ROOT / "tools" / "legacy-enforcement" / "scanner" / "legacy_tooling_scanner.py"
+POLICY = ROOT / "tools" / "legacy-enforcement" / "policy" / "rules.yaml"
+TEMP = ROOT / "tests" / "_audit_temp.ts"
+TMP_JSON = Path("C:/tmp/audit.json")
+TMP_MD = Path("C:/tmp/audit.md")
+
+TEMP.parent.mkdir(parents=True, exist_ok=True)
+TMP_JSON.parent.mkdir(parents=True, exist_ok=True)
+
+# Seed a file with several known anti-patterns.
+TEMP.write_text(
+    '// Self-audit: confirm scanner catches forbidden patterns\n'
+    'console.log("audit test");\n'
+    'debugger;\n'
+    'const AKIA1234567890ABCDEF = "secret";\n',
+    encoding="utf-8",
+)
+
+def run_scan(expect_blocking: bool) -> dict:
+    r = subprocess.run(
+        [
+            sys.executable, str(SCANNER),
+            "--repo-root", str(ROOT),
+            "--policy", str(POLICY),
+            "--output-json", str(TMP_JSON),
+            "--output-md", str(TMP_MD),
+        ],
+        capture_output=True, text=True,
+    )
+    expected_rc = 1 if expect_blocking else 0
+    assert r.returncode == expected_rc, (
+        f"scanner should exit {expected_rc}, got {r.returncode}\n"
+        f"stdout: {r.stdout}\nstderr: {r.stderr}"
+    )
+    return json.loads(TMP_JSON.read_text(encoding="utf-8"))
+
+# Phase 1: temp file present. console.log (LT-001) and debugger (LT-002)
+# are both medium-severity, so the scanner does not block on them.
+result1 = run_scan(expect_blocking=False)
+rules1 = {f["rule_id"] for f in result1["findings"]}
+files1 = {f["file"] for f in result1["findings"]}
+expected_rules = {"LT-001", "LT-002"}
+assert expected_rules.issubset(rules1), (
+    f"expected {expected_rules} to all fire; got {rules1}"
+)
+assert any(f == "tests/_audit_temp.ts" for f in files1), (
+    f"expected findings to be in tests/_audit_temp.ts; got {files1}"
+)
+print(f"phase 1 OK: {len(result1['findings'])} findings, rules={sorted(rules1)}")
+
+# Cleanup.
+TEMP.unlink()
+
+# Phase 2: temp file removed, scanner should be clean.
+result2 = run_scan(expect_blocking=False)
+assert result2["totals"]["critical"] == 0
+assert result2["totals"]["high"] == 0
+print(f"phase 2 OK: clean state, totals={result2['totals']}")
+
+print("self-audit: PASS")

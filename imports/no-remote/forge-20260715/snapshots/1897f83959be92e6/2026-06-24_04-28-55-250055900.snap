@@ -1,0 +1,8 @@
+import subprocess, json, os
+cmd = ["gh", "api", "repos/KooshaPari/Tracera/git/ref/heads/main"]
+env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb", "GITHUB_TOKEN": os.environ.get("GITHUB_TOKEN", "")}
+# Also try to detect: if gh thinks it's a TTY, force it not to be
+r = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env)
+print("RC:", r.returncode)
+print("STDOUT[:200]:", repr(r.stdout[:200]))
+print("STDERR:", r.stderr)

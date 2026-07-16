@@ -1,0 +1,58 @@
+"""Update findings/2026-06-24-eval-bench-qa-v2.json: add P22+P25 for BytePort,
+bump version to v2.3, and recompute aggregates. Idempotent."""
+import json
+from pathlib import Path
+
+p = Path(r"C:\Users\koosh\phenotype-org-audits\findings\2026-06-24-eval-bench-qa-v2.json")
+d = json.loads(p.read_text(encoding="utf-8"))
+
+# 1. Update top-level version
+d["version"] = "v2.3"
+
+# 2. Find BytePort and update its pillars (don't add a duplicate!)
+byteport = next((r for r in d["repos"] if r["name"] == "BytePort"), None)
+if byteport is None:
+    raise SystemExit("BytePort not found in repos")
+if byteport["pillar_status"]["P22"]["earned"] == 1 and byteport["pillar_status"]["P25"]["earned"] == 1:
+    print("BytePort already at v2.3; nothing to do")
+else:
+    byteport["pillar_status"]["P22"]["earned"] = 1
+    byteport["pillar_status"]["P22"]["evidence"] = (
+        "Taskfile.yml 'hygiene-toolchains' task runs cargo-machete + cargo-deny; "
+        "P22 inherited from baseline + BytePort Pillar-CI workflow runs deny."
+    )
+    byteport["pillar_status"]["P25"]["earned"] = 1
+    byteport["pillar_status"]["P25"]["evidence"] = (
+        "Taskfile.yml 'hygiene-toolchains' (cargo-deny + cargo-machete + npm audit + "
+        "tsc --noEmit + cross-toolchain anti-pattern grep). Hygiene + ci tasks now depend on it."
+    )
+    byteport["score_total"] = sum(p["earned"] for p in byteport["pillar_status"].values())
+    byteport["score_max"] = len(byteport["pillar_status"])
+    byteport["score_pct"] = round(byteport["score_total"] / byteport["score_max"] * 100, 1)
+    byteport["head_sha"] = "32b7cc11"
+    byteport["notable"] = (
+        "DAG-T3-008b: BytePort now rolls P22 + P25 hygiene bundle via Taskfile.yml. "
+        "40 tasks registered. hygiene + ci tasks depend on hygiene-toolchains."
+    )
+    print(f"BytePort: score {byteport['score_total']}/{byteport['score_max']} ({byteport['score_pct']}%)")
+
+# 3. Update per-pillar counts in summary
+pillar_counts = {f"P{i}": 0 for i in range(1, 26)}
+for r in d["repos"]:
+    for k, v in r["pillar_status"].items():
+        if k in pillar_counts:
+            pillar_counts[k] += v["earned"]
+d["summary"]["pillar_counts"] = pillar_counts
+total_earned = sum(pillar_counts.values())
+total_possible = len(d["repos"]) * 25
+d["summary"]["aggregate"]["total_earned_pillars"] = total_earned
+d["summary"]["aggregate"]["total_possible_pillars"] = total_possible
+d["summary"]["aggregate"]["fleet_score_pct"] = round(total_earned / total_possible * 100, 1)
+d["summary"]["aggregate"]["version"] = "v2.3"
+d["summary"]["aggregate"]["changelog"] = (
+    "v2.3: BytePort P22 + P25 earned (DAG-T3-008b). 13 repos, 25 pillars."
+)
+
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+print(f"aggregate: {total_earned}/{total_possible} = {d['summary']['aggregate']['fleet_score_pct']}%")
+print("OK")

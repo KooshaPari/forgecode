@@ -1,0 +1,90 @@
+# phenotype-infra — Absorption Justification
+
+**Date:** 2026-06-23
+**Verdict:** AFFIRM_CONSOLIDATION_TARGET
+**Rubric Target:** P1 = 3
+
+---
+
+## Source
+
+- **Repository:** `phenotype-infra`
+- **Owner:** kooshapari
+- **Local Path:** `C:\Users\koosh\phenotype-infra`
+- **Visibility:** public
+- **Default Branch:** `main`
+- **Last Commit:** active
+- **Language Profile:** Mixed infrastructure codebase (primary consolidation target)
+
+## Target
+
+- **Target Repository:** `phenotype-infra` (self — consolidation target)
+- **Target Local Path:** `C:\Users\koosh\phenotype-infra`
+- **Target Charter:** infrastructure consolidation across the phenotype ecosystem
+- **Relationship:** the source is the consolidation target itself; this audit affirms the target's role rather than proposing a merge.
+
+## Status
+
+- **Decision:** AFFIRM_CONSOLIDATION_TARGET
+- **Confidence:** High
+- **Blocking Issues:** none
+- **Action Class:** retain and continue as consolidation target
+
+## Confidence
+
+- High. `phenotype-infra` is the designated consolidation target. The audit affirms its continued role; no absorption action is proposed against itself.
+
+## Source Inventory Summary
+
+- **Primary Language:** Mixed (Go / config / docs)
+- **Files of Interest:** consolidation-target scaffolding, shared infra utilities, registry contracts.
+- **Unique Surface:** N/A — the source is the target.
+- **External Dependencies:** managed within the consolidation scope.
+- **CI Surface:** present and load-bearing.
+
+## Branch Inventory Summary
+
+- **Default Branch:** `main`
+- **Active Feature Branches:** managed as part of normal target operations.
+- **Stale Branches:** to be pruned per target's own housekeeping.
+- **Unmerged Work:** tracked within the target's normal workflow.
+
+## Target Parity Summary
+
+- **Capability Coverage:** N/A — source is the target.
+- **Parity Gap:** N/A.
+- **Code-Level Equivalence:** N/A.
+- **Migration Cost:** zero (no migration).
+
+## Gaps and Exceptions
+
+- None. The affirmation carries no carve-outs; the target continues to operate under its own charter.
+
+## Last-Resort-Exceptions
+
+- None. The affirmation is the baseline posture for a consolidation target and does not invoke any exception.
+
+## Restore-Command
+
+```bash
+# No absorption or deletion performed; the target remains live.
+# Restore posture is governed by the target's own CI and registry contracts.
+# If a rollback were ever required, the target's normal revert / branch
+# workflow applies.
+```
+
+## Final Recommendation
+
+**AFFIRM_CONSOLIDATION_TARGET.** Continue to operate `phenotype-infra` as the consolidation target. No source-repo merge is proposed into it from itself. Other repositories' verdicts in this audit cycle reference this target where appropriate. This verdict is sufficient to score P1 = 3 in the absorption-justification rubric.
+
+## ABSORPTION_MATRIX
+
+| Dimension | Source (phenotype-infra) | Target (phenotype-infra) | Target Evidence | Verdict |
+|---|---|---|---|---|
+| Capability parity | self | self | target charter covers role | AFFIRM_CONSOLIDATION_TARGET |
+| Code migration | n/a | n/a | no self-merge | AFFIRM_CONSOLIDATION_TARGET |
+| Branch carry-over | tracked in target | tracked in target | normal target workflow | AFFIRM_CONSOLIDATION_TARGET |
+| Downstream impact | receives from siblings | n/a | other verdicts reference this target | AFFIRM_CONSOLIDATION_TARGET |
+| Last-resort carve-out | none | none | no exceptions invoked | AFFIRM_CONSOLIDATION_TARGET |
+| Restore posture | governed by target CI | n/a | target's own revert path | AFFIRM_CONSOLIDATION_TARGET |
+| Final action | continue | n/a | retain as consolidation target | AFFIRM_CONSOLIDATION_TARGET |

@@ -1,0 +1,493 @@
+from typing import Any, AsyncIterator
+
+"""Pytest configuration and fixtures."""
+
+import asyncio
+from contextlib import asynccontextmanager
+import os
+import tempfile
+from pathlib import Path
+
+import pytest
+import pytest_asyncio
+from sqlalchemy import Engine, create_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import sessionmaker
+
+# pytest_asyncio and pytest_benchmark are loaded by root conftest / auto-discovery
+pytest_plugins = ()
+
+# Avoid MCP metrics bind conflicts during test collection.
+os.environ["TRACERTM_MCP_METRICS_PORT"] = "0"
+os.environ["PYTEST_RUNNING"] = "1"
+_mcp_tmp_dir = Path(".pytest_mcp_tmp")
+_mcp_tmp_dir.mkdir(exist_ok=True)
+_mcp_skills_dir = _mcp_tmp_dir / "skills"
+_mcp_skills_dir.mkdir(exist_ok=True)
+os.environ.setdefault("TRACERTM_MCP_FILESYSTEM_ROOT", str(_mcp_tmp_dir))
+os.environ.setdefault("TRACERTM_MCP_SKILLS_ROOTS", str(_mcp_skills_dir))
+os.environ.setdefault("TRACERTM_MCP_OPENAPI_SPEC", "frontend/apps/web/public/specs/openapi.json")
+os.environ.setdefault("TRACERTM_MCP_PROXY_TARGETS", "http://127.0.0.1:4000/api/v1/mcp")
+os.environ.setdefault("TRACERTM_MCP_NAMESPACE", "tracertm")
+os.environ.setdefault("TRACERTM_MCP_TOOL_TRANSFORMS", "{}")
+os.environ.setdefault("TRACERTM_MCP_VERSION_GTE", "0.0.0")
+os.environ.setdefault("TRACERTM_MCP_VERSION_LT", "9999.0.0")
+os.environ.setdefault("TRACERTM_MCP_SESSION_STATE_REDIS", "redis://localhost:6379/0")
+os.environ.setdefault("TRACERTM_MCP_STRUCTURED_LOGGING", "true")
+os.environ.setdefault("TRACERTM_MCP_TELEMETRY_ENABLED", "true")
+os.environ.setdefault("TRACERTM_MCP_METRICS_ENABLED", "true")
+os.environ.setdefault("TRACERTM_MCP_METRICS_HOST", "127.0.0.1")
+os.environ.setdefault("TRACERTM_MCP_PERF_MONITORING", "true")
+os.environ.setdefault("TRACERTM_MCP_ENHANCED_ERRORS", "true")
+os.environ.setdefault("TRACERTM_MCP_RATE_LIMIT_ENABLED", "true")
+
+try:
+    from router import TOOL_REGISTRY, ArchRouter, ToolRegistry
+except ImportError:
+    # Router module not available in test environment
+    ArchRouter = None
+    ToolRegistry = None
+    tool_registry: Any = None
+TOOL_REGISTRY_LOCAL: Any = TOOL_REGISTRY if "TOOL_REGISTRY" in dir() else tool_registry
+
+# Import models to register them with SQLAlchemy
+try:
+    # Import ALL models to ensure they're registered with Base.metadata
+    # This is critical - SQLAlchemy only creates tables for imported models
+    from tracertm.models.base import Base
+    from tracertm.models.project import Project
+    from tracertm.models.link import Link  # Must import Link before Item
+    from tracertm.models.item import Item
+    from tracertm.models.agent import Agent
+    from tracertm.models.agent_event import AgentEvent
+    from tracertm.models.agent_lock import AgentLock
+    from tracertm.models.event import Event
+    from tracertm.models.problem import Problem, ProblemActivity
+    from tracertm.models.process import Process, ProcessExecution
+except ImportError:
+    Base = None
+
+
+def _build_sync_engine() -> None:
+    db_url = os.getenv("TEST_SYNC_DATABASE_URL")
+    temp_path = None
+    if db_url is None:
+        temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        temp_path = temp_db.name
+        temp_db.close()
+        db_url = f"sqlite:///{temp_path}"
+
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    if Base is not None:
+        Base.metadata.create_all(engine)
+    return engine, temp_path
+
+
+@pytest.fixture
+def _db_session(db_session: Any) -> None:
+    """Alias for db_session for backwards compatibility."""
+    return db_session
+
+
+@pytest.fixture
+def db_session() -> None:
+    """Synchronous SQLAlchemy session for tests expecting sync operations."""
+    engine, temp_path = _build_sync_engine()
+    SessionLocal = sessionmaker(bind=engine)
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        try:
+            session.rollback()
+        finally:
+            session.close()
+            if Base is not None:
+                Base.metadata.drop_all(engine)
+            engine.dispose()
+            if temp_path:
+                try:
+                    Path(temp_path).unlink()
+                except Exception:
+                    pass
+
+
+@pytest_asyncio.fixture(scope="session")
+async def test_db_engine() -> None:
+    """Create test database engine with SQLite (file-based for sync/async compatibility)."""
+    # Use file-based SQLite for both async and sync access
+    # In-memory databases can't be reliably shared between async and sync engines
+    db_url = os.getenv("TEST_DATABASE_URL")
+
+    if db_url is None:
+        # Create a temporary file-based database
+        temp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        db_path = temp_db.name
+        temp_db.close()
+        db_url = f"sqlite+aiosqlite:///{db_path}"
+
+    engine = create_async_engine(
+        db_url,
+        echo=False,
+        future=True,
+    )
+
+    # Create all tables
+    if Base is not None:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+    yield engine
+
+    # Cleanup
+    try:
+        async with engine.begin() as conn:
+            if Base is not None:
+                await conn.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
+    finally:
+        # Clean up temp file if it was created (run in thread to avoid ASYNC240)
+        if not os.getenv("TEST_DATABASE_URL"):
+            try:
+                p = Path(db_url.replace("sqlite+aiosqlite:///", ""))
+                await asyncio.to_thread(p.unlink)
+            except Exception:
+                pass
+
+
+@pytest_asyncio.fixture(scope="function")
+async def async_db_session(db_session: Any) -> None:
+    """For tests expecting an async session, reuse the synchronous session to avoid greenlet issues."""
+    yield db_session
+
+
+@pytest.fixture
+def project_factory(db_session: Any) -> None:
+    """Factory for creating test projects using ProjectRepository.
+
+    This ensures projects are created using the same code path as production,
+    providing more realistic test coverage.
+    """
+
+    def create_project(name: Any = "Test Project", description: Any = "Test project", metadata: Any = None) -> None:
+        from tracertm.models.project import Project
+
+        project = Project(name=name, description=description, metadata=metadata or {})
+        db_session.add(project)
+        db_session.flush()
+        return project
+
+    return create_project
+
+
+@pytest.fixture
+def item_factory(db_session: Any) -> None:
+    """Factory for creating test items using ItemRepository.
+
+    This ensures items are created using the same code path as production,
+    providing more realistic test coverage.
+    """
+
+    def create_item(
+        project_id: Any,
+        title: Any = "Test Item",
+        view: Any = "FEATURE",
+        item_type: Any = "feature",
+        status: Any = "todo",
+        **kwargs: Any,
+    ) -> None:
+        from tracertm.models.item import Item
+
+        item = Item(project_id=project_id, title=title, view=view, item_type=item_type, status=status, **kwargs)
+        db_session.add(item)
+        db_session.flush()
+        return item
+
+    return create_item
+
+
+@pytest.fixture
+def router() -> None:
+    """Create router instance."""
+    if ArchRouter is None:
+        pytest.skip("router module not available")
+    assert ArchRouter is not None  # narrow type after skip
+    return ArchRouter()
+
+
+@pytest.fixture
+def registry() -> None:
+    """Create registry instance."""
+    if ToolRegistry is None or TOOL_REGISTRY is None:
+        pytest.skip("router module not available")
+    assert ToolRegistry is not None and TOOL_REGISTRY is not None  # narrow type after skip
+    return ToolRegistry(TOOL_REGISTRY)
+
+
+@pytest.fixture
+def tool_registry_dict() -> None:
+    """Get tool registry dictionary."""
+    return TOOL_REGISTRY
+
+
+@pytest.fixture
+def sample_routes() -> None:
+    """Sample routes for testing."""
+    return {
+        "test_route_1": {
+            "description": "Test route 1",
+            "tools": ["tool1", "tool2"],
+        },
+        "test_route_2": {
+            "description": "Test route 2",
+            "tools": ["tool3", "tool4"],
+        },
+    }
+
+
+# ============================================================
+# TUI Testing Infrastructure
+# ============================================================
+
+try:
+    from textual.app import App, ComposeResult
+    from textual.pilot import Pilot
+    from textual.widgets import Static
+
+    TEXTUAL_AVAILABLE = True
+except ImportError:
+    TEXTUAL_AVAILABLE = False
+
+
+if TEXTUAL_AVAILABLE:
+
+    class TextualTestApp(App):
+        """Test application for mounting widgets in isolation.
+
+        This app provides a minimal container for testing Textual widgets
+        that require an app context to initialize properly.
+        """
+
+        def __init__(self, widget: Any = None, *args: Any, **kwargs: Any) -> None:
+            """Initialize test app.
+
+            Args:
+                widget: Widget to mount in the app (optional)
+            """
+            super().__init__(*args, **kwargs)
+            self._test_widget = widget
+
+        def compose(self) -> ComposeResult:
+            """Compose the app with the test widget if provided."""
+            if self._test_widget is not None:
+                yield self._test_widget
+            else:
+                yield Static("Test App")
+
+
+@pytest_asyncio.fixture
+async def textual_app() -> None:
+    """Provides a Textual application context for widget testing.
+
+    This fixture creates a test app and provides a pilot for interaction.
+
+    Usage:
+        async def test_widget(textual_app):
+            widget = MyWidget()
+            async with textual_app(widget) as pilot:
+                assert widget.is_mounted
+                await pilot.pause()
+
+    Returns:
+        Context manager that yields a Pilot for the test app
+    """
+    if not TEXTUAL_AVAILABLE:
+        pytest.skip("Textual not available")
+
+    async def _create_app_context(widget: Any = None) -> None:
+        """Create app context with widget mounted."""
+        app = TextualTestApp(widget=widget)
+        async with app.run_test() as pilot:
+            yield pilot
+
+    return _create_app_context
+
+
+@pytest.fixture
+def textual_app_context() -> None:
+    """Enhanced Textual application context fixture for comprehensive widget testing.
+
+    Provides both app and pilot instances for tests that need full app lifecycle control.
+    Supports both async context manager and direct instantiation patterns.
+
+    Usage:
+        @pytest.mark.asyncio
+        async def test_widget(textual_app_context):
+            async with textual_app_context() as (app, pilot):
+                widget = MyWidget()
+                await app.mount(widget)
+                await pilot.pause()
+                assert widget.is_mounted
+
+    Returns:
+        Async context manager yielding (app, pilot) tuple
+    """
+    if not TEXTUAL_AVAILABLE:
+        pytest.skip("Textual not available")
+
+    @contextlib.asynccontextmanager
+    async def _create_context() -> None:
+        """Create app context and return (app, pilot) tuple."""
+        app = TextualTestApp()
+        async with app.run_test() as pilot:
+            yield (app, pilot)
+
+    return _create_context
+
+
+@pytest.fixture
+def mounted_widget() -> None:
+    """Synchronous fixture for widgets that need to be in an app context.
+
+    This is a workaround for tests that call methods requiring query_one()
+    but don't actually need async interaction.
+
+    Usage:
+        def test_widget(mounted_widget):
+            widget = SyncStatusWidget()
+            mounted_widget(widget)  # Mounts and composes widget
+            # Widget is now ready for testing
+
+    Returns:
+        Function that mounts a widget and waits for composition
+    """
+    if not TEXTUAL_AVAILABLE:
+        pytest.skip("Textual not available")
+
+    def _mount_widget(widget: Any) -> None:
+        """Mount widget in a test app synchronously.
+
+        This simulates the widget being mounted without needing
+        an async context. Useful for testing reactive attributes
+        and methods that call query_one().
+
+        Args:
+            widget: Widget to mount
+
+        Returns:
+            The mounted widget
+        """
+        # Create a minimal app
+        app = TextualTestApp(widget=widget)
+
+        # Manually trigger compose to create child widgets
+        # This allows query_one() to work without full app run
+        widget._parent = app
+        widget.app = app
+
+        # Compose the widget to create its children
+        children = list(widget.compose())
+        for child in children:
+            child._parent = widget
+            child.app = app
+            # If child has compose, call it too
+            if hasattr(child, "compose"):
+                grandchildren = list(child.compose())
+                for gc in grandchildren:
+                    gc._parent = child
+                    gc.app = app
+
+        # Store children for query_one to find
+        widget._nodes = children
+
+        return widget
+
+    return _mount_widget
+
+
+# ============================================================
+# Context Manager Testing Infrastructure
+# ============================================================
+
+
+@pytest.fixture
+def verify_context_cleanup() -> None:
+    """Fixture to verify that context managers properly call __exit__.
+
+    This helps catch resource leaks where __exit__ isn't being called.
+
+    Usage:
+        def test_context_manager(verify_context_cleanup):
+            mock_context = MagicMock()
+            mock_context.__enter__ = MagicMock(return_value=None)
+            mock_context.__exit__ = MagicMock(return_value=None)
+
+            with mock_context:
+                pass
+
+            # Verify __exit__ was called
+            verify_context_cleanup(mock_context)
+
+    Args:
+        Callable that returns verification function
+    """
+
+    def _verify(mock_context: Any) -> None:
+        """Verify that __exit__ was called on a context manager mock.
+
+        Args:
+            mock_context: MagicMock object with __exit__ attribute
+
+        Raises:
+            AssertionError: If __exit__ was not called
+        """
+        if hasattr(mock_context, "__exit__"):
+            # Verify __exit__ was called
+            if hasattr(mock_context.__exit__, "assert_called"):
+                mock_context.__exit__.assert_called()
+            elif hasattr(mock_context.__exit__, "call_count"):
+                assert mock_context.__exit__.call_count > 0, (
+                    "Context manager __exit__ was never called - resource leak detected!"
+                )
+
+    return _verify
+
+
+@pytest.fixture
+def verify_async_context_cleanup() -> None:
+    """Fixture to verify that async context managers properly call __aexit__.
+
+    This helps catch resource leaks where __aexit__ isn't being called.
+
+    Usage:
+        async def test_async_context_manager(verify_async_context_cleanup):
+            mock_context = AsyncMock()
+            mock_context.__aenter__ = AsyncMock(return_value=None)
+            mock_context.__aexit__ = AsyncMock(return_value=None)
+
+            async with mock_context:
+                pass
+
+            # Verify __aexit__ was called
+            verify_async_context_cleanup(mock_context)
+    """
+
+    def _verify(mock_context: Any) -> None:
+        """Verify that __aexit__ was called on an async context manager mock.
+
+        Args:
+            mock_context: AsyncMock object with __aexit__ attribute
+
+        Raises:
+            AssertionError: If __aexit__ was not called
+        """
+        if hasattr(mock_context, "__aexit__"):
+            # Verify __aexit__ was called
+            if hasattr(mock_context.__aexit__, "assert_called"):
+                mock_context.__aexit__.assert_called()
+            elif hasattr(mock_context.__aexit__, "call_count"):
+                assert mock_context.__aexit__.call_count > 0, (
+                    "Async context manager __aexit__ was never called - resource leak detected!"
+                )
+
+    return _verify

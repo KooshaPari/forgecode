@@ -1,0 +1,43 @@
+# BytePort Worklog
+
+### 2026-06-25 — E4: Lift recovered tools CLI to branch + open PR
+
+**recover(E4): lift tools CLI to PR — byteport-cli crate (clap + transport client)**
+
+- Two commits cherry-picked from `recover/E3-tools-cli-worktree` onto `main`:
+  - `e927c790` — docs: add work-state header section to README
+  - `cfc560ad` — chore(byteport): add byteport-cli crate to workspace
+- 5 files changed (+244 insertions):
+  - `crates/byteport-cli/Cargo.toml` — crate manifest for byteport-cli
+  - `crates/byteport-cli/src/main.rs` — CLI binary (codec, transport, UI, upload subcommands via clap)
+  - `Cargo.toml` — added `crates/byteport-cli` to workspace members
+  - `README.md` — added work-state header section
+  - `Cargo.lock` — updated for workspace changes
+- Branch: `recover/E4-tools-cli-pr`
+- PR: [#251](https://github.com/KooshaPari/BytePort/pull/251)
+- Labels: `area:compute-infra`, `epic-e`
+- Epic: epic_E — BytePort: terminal UI, tools CLI, otel, governance
+- Grade: 8/10 (B) — cargo check blocked by concurrent lock, fmt passes, structural verification clean
+
+---
+
+## Recent Entries
+
+### %Y->- (HEAD -> main) — GOVERNANCE
+
+**chore(ci): adopt phenotype-tooling workflows (wave-2)**
+
+CI workflows migrated to shared phenotype-tooling suite.
+
+---
+
+## Categories
+
+- **ARCHITECTURE**: ADRs, library extraction, design patterns
+- **DUPLICATION**: Cross-project duplication identification
+- **DEPENDENCIES**: External deps, forks, modernization
+- **INTEGRATION**: External integrations, MCP, plugins
+- **PERFORMANCE**: Optimization, benchmarking
+- **RESEARCH**: Starred repo analysis, audits
+- **GOVERNANCE**: Policy, evidence, quality gates
+

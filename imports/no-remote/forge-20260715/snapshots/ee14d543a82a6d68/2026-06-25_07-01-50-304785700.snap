@@ -1,0 +1,473 @@
+---
+import "../../styles/globals.css";
+import dagData from "../../../data/dag-data.json";
+import type { DagData, DagNode, DagEdge } from "../../lib/dag/types.ts";
+import { STATUS_BADGE } from "../../lib/dag/types.ts";
+
+const data = dagData as DagData;
+const basePath = import.meta.env.BASE_URL === "/" ? "" : import.meta.env.BASE_URL.replace(/\/$/, "");
+
+function statusColor(status: DagNode["status"]): string {
+  return STATUS_BADGE[status].color;
+}
+
+function statusBg(status: DagNode["status"]): string {
+  return STATUS_BADGE[status].bg;
+}
+
+function statusLabel(status: DagNode["status"]): string {
+  return STATUS_BADGE[status].label;
+}
+
+function relTime(iso: string | null): string {
+  if (!iso) return "never";
+  const d = new Date(iso);
+  const diff = Date.now() - d.getTime();
+  const sec = Math.floor(diff / 1000);
+  if (sec < 5) return "just now";
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hrs = Math.floor(min / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+// Topological layers for vertical layout (Kahn's algorithm)
+function layoutLayers(nodes: DagNode[], edges: DagEdge[]): DagNode[][] {
+  const inDegree: Record<string, number> = {};
+  const adj: Record<string, string[]> = {};
+  for (const n of nodes) {
+    inDegree[n.id] = 0;
+    adj[n.id] = [];
+  }
+  for (const e of edges) {
+    adj[e.from].push(e.to);
+    inDegree[e.to]++;
+  }
+
+  const layers: DagNode[][] = [];
+  const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+  let remaining = nodes.map((n) => n.id);
+
+  while (remaining.length > 0) {
+    const layer: string[] = [];
+    for (const id of remaining) {
+      if (inDegree[id] === 0) layer.push(id);
+    }
+    if (layer.length === 0) {
+      // cycle fallback — put all remaining in one layer
+      layers.push(remaining.map((id) => nodeMap.get(id)!).filter(Boolean));
+      break;
+    }
+    layers.push(layer.map((id) => nodeMap.get(id)!).filter(Boolean));
+    for (const id of layer) {
+      for (const next of adj[id]) {
+        inDegree[next]--;
+      }
+    }
+    remaining = remaining.filter((id) => !layer.includes(id));
+  }
+  return layers;
+}
+
+const layers = layoutLayers(data.nodes, data.edges);
+const initialDataJson = JSON.stringify(data);
+const badgeCfgJson = JSON.stringify(STATUS_BADGE);
+---
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DAG Renderer · Projects Hub</title>
+    <meta name="description" content="Phenotype Epic F — DAG foundation live status renderer with F9 event integration." />
+  </head>
+  <body class="min-h-screen">
+    <main class="max-w-7xl mx-auto px-6 py-8">
+      <nav class="mono text-xs text-[var(--muted)] mb-4">
+        <a href={`${basePath}/`} class="hover:text-[var(--accent)]">projects</a>
+        <span class="mx-1">/</span>
+        <span>dag</span>
+      </nav>
+
+      <header class="mb-8 flex flex-wrap items-baseline justify-between gap-4">
+        <div>
+          <h1 class="text-3xl font-bold" id="dag-title">{data.title}</h1>
+          <p class="text-[var(--muted)] text-sm mt-1" id="dag-desc">{data.description}</p>
+        </div>
+        <div class="flex items-center gap-3 mono text-xs">
+          <!-- View mode toggle -->
+          <button id="view-toggle"
+                  class="px-3 py-1.5 rounded border transition hover:text-[var(--accent)]"
+                  style="border-color: var(--border);">
+            ⏸ static view
+          </button>
+          <!-- Live indicator -->
+          <span id="live-indicator" class="flex items-center gap-1.5 px-3 py-1.5 rounded border"
+                style="border-color: var(--border); color: var(--accent);">
+            <span class="inline-block w-2 h-2 rounded-full" style="background: var(--accent);" id="live-dot"></span>
+            <span id="live-label">live</span>
+          </span>
+          <span id="poll-timestamp" class="text-[var(--muted)]">—</span>
+        </div>
+      </header>
+
+      <!-- DAG canvas -->
+      <section class="dag-canvas" id="dag-container">
+
+        <!-- Legend -->
+        <div class="dag-legend" id="dag-legend">
+          <span class="mono text-xs uppercase tracking-wider text-[var(--muted)] mr-2">Status:</span>
+          {(["pending", "in-progress", "completed", "failed", "blocked"] as const).map((s) => {
+            const cfg = STATUS_BADGE[s];
+            return (
+              <span class="dag-legend-item">
+                <span class="dag-badge" style={`background: ${cfg.bg}; color: ${cfg.color}; border: 1px solid ${cfg.color};`}>
+                  {cfg.label}
+                </span>
+              </span>
+            );
+          })}
+        </div>
+
+        <!-- Layer-based node grid -->
+        <div class="dag-layers" id="dag-layers">
+          {layers.map((layer, li) => (
+            <div class="dag-layer">
+              <div class="dag-layer-label mono text-[10px] uppercase tracking-wider text-[var(--muted)]">
+                Layer {li + 1}
+              </div>
+              <div class="dag-layer-nodes">
+                {layer.map((node) => {
+                  const cfg = STATUS_BADGE[node.status];
+                  return (
+                    <article class="dag-node"
+                             data-node-id={node.id}
+                             data-status={node.status}
+                             data-last-updated={node.lastUpdated ?? ""}
+                             style={`border-color: ${cfg.color};`}>
+                      <div class="dag-node-header">
+                        <span class="dag-node-id mono text-[10px] uppercase tracking-wider opacity-60">{node.id}</span>
+                        <span class="dag-badge dag-status-badge"
+                              style={`background: ${cfg.bg}; color: ${cfg.color}; border: 1px solid ${cfg.color};`}>
+                          {statusLabel(node.status)}
+                        </span>
+                      </div>
+                      <p class="dag-node-label">{node.label}</p>
+                      <div class="dag-node-footer">
+                        <span class="dag-timestamp mono text-[10px] text-[var(--muted)]" title={node.lastUpdated ?? ""}>
+                          updated {relTime(node.lastUpdated)}
+                        </span>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <!-- Edge list (collapsible) -->
+        <details class="dag-edges-details">
+          <summary class="mono text-xs text-[var(--accent)] cursor-pointer mb-2">
+            {data.edges.length} edges
+          </summary>
+          <ul class="dag-edges-list">
+            {data.edges.map((e) => (
+              <li class="mono text-xs text-[var(--muted)]">{e.from} → {e.to}</li>
+            ))}
+          </ul>
+        </details>
+      </section>
+
+      <footer class="mt-10 pt-6 border-t text-xs text-[var(--muted)] mono" style="border-color: var(--border);">
+        F26 — DAG live status renderer · polling: 30s · powered by simulated F9 event stream
+      </footer>
+    </main>
+
+    <style is:global>
+      .dag-canvas {
+        border: 1px solid var(--border);
+        border-radius: 0.75rem;
+        background: var(--card);
+        padding: 1.5rem;
+        min-height: 400px;
+      }
+      .dag-legend {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 1.5rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid var(--border);
+      }
+      .dag-legend-item {
+        display: inline-flex;
+      }
+      .dag-badge {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.68rem;
+        padding: 0.2rem 0.45rem;
+        border-radius: 0.25rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+      }
+      .dag-layers {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+      .dag-layer {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .dag-layer-label {
+        padding: 0.25rem 0;
+      }
+      .dag-layer-nodes {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+      .dag-node {
+        flex: 1 1 200px;
+        max-width: 280px;
+        border: 1px solid;
+        border-radius: 0.6rem;
+        background: var(--accent-wash);
+        padding: 0.85rem 1rem;
+        transition: border-color .2s, box-shadow .2s, transform .2s;
+      }
+      .dag-node:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+      }
+      .dag-node-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.4rem;
+      }
+      .dag-node-id {
+        color: var(--muted);
+      }
+      .dag-node-label {
+        font-size: 0.875rem;
+        line-height: 1.4;
+        margin: 0.3rem 0;
+        color: var(--fg);
+      }
+      .dag-node-footer {
+        margin-top: 0.5rem;
+        padding-top: 0.35rem;
+        border-top: 1px solid var(--border);
+      }
+      .dag-timestamp {
+        display: block;
+      }
+      .dag-edges-details {
+        margin-top: 1.5rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--border);
+      }
+      .dag-edges-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.35rem 1rem;
+        list-style: none;
+        padding: 0.5rem 0 0 0;
+      }
+      .dag-edges-list li {
+        font-size: 0.75rem;
+        color: var(--muted);
+      }
+
+      /* Dimmed style for static mode */
+      .dag-node.dimmed {
+        opacity: 0.5;
+        filter: grayscale(0.5);
+      }
+      .dag-node.dimmed:hover {
+        opacity: 0.7;
+        filter: grayscale(0.3);
+      }
+    </style>
+
+    <script is:inline>
+      (function () {
+        // ── Bootstrap DAG live status ──────────────────────────────
+        const DAG_DATA = JSON.parse(<%- JSON.stringify(initialDataJson) %>);
+        const BADGE_CFG = JSON.parse(<%- JSON.stringify(badgeCfgJson) %>);
+        const POLL_INTERVAL = 30000;
+        const F9_SIM_INTERVAL = 8000;
+
+        /** @type {Map<string, any>} */
+        const nodeMap = new Map(DAG_DATA.nodes.map(function (n) { return [n.id, n]; }));
+
+        // DOM refs
+        var container = document.getElementById("dag-layers");
+        var toggleBtn = document.getElementById("view-toggle");
+        var liveIndicator = document.getElementById("live-indicator");
+        var liveDot = document.getElementById("live-dot");
+        var liveLabel = document.getElementById("live-label");
+        var pollTs = document.getElementById("poll-timestamp");
+
+        var viewMode = "live";
+        var pollTimer = null;
+        var emitterTimer = null;
+        var eventCount = 0;
+
+        // ── Helpers ────────────────────────────────────────────────
+
+        function relTime(s) {
+          if (!s) return "never";
+          var diff = Date.now() - new Date(s).getTime();
+          var sec = Math.floor(diff / 1000);
+          if (sec < 5) return "just now";
+          if (sec < 60) return sec + "s ago";
+          var min = Math.floor(sec / 60);
+          if (min < 60) return min + "m ago";
+          var hrs = Math.floor(min / 60);
+          if (hrs < 24) return hrs + "h ago";
+          return Math.floor(hrs / 24) + "d ago";
+        }
+
+        function updatePollDisplay() {
+          pollTs.textContent = "updated " + relTime(new Date().toISOString());
+        }
+
+        function refreshNodeDom(nodeId) {
+          var node = nodeMap.get(nodeId);
+          if (!node) return;
+          var el = container.querySelector('[data-node-id="' + nodeId + '"]');
+          if (!el) return;
+
+          var cfg = BADGE_CFG[node.status];
+          var badge = el.querySelector(".dag-status-badge");
+          if (badge) {
+            badge.textContent = cfg.label;
+            badge.style.background = cfg.bg;
+            badge.style.color = cfg.color;
+            badge.style.borderColor = cfg.color;
+          }
+          var ts = el.querySelector(".dag-timestamp");
+          if (ts) {
+            ts.textContent = "updated " + relTime(node.lastUpdated);
+            ts.title = node.lastUpdated || "";
+          }
+          el.dataset.status = node.status;
+          el.style.borderColor = cfg.color;
+
+          if (viewMode === "static") {
+            el.classList.add("dimmed");
+          } else {
+            el.classList.remove("dimmed");
+          }
+        }
+
+        function refreshAllNodes() {
+          var ids = Array.from(nodeMap.keys());
+          for (var i = 0; i < ids.length; i++) {
+            refreshNodeDom(ids[i]);
+          }
+        }
+
+        // Simulate F9 status change event
+        function simulateStatusChange() {
+          var pending = [];
+          for (var i = 0; i < DAG_DATA.nodes.length; i++) {
+            var n = DAG_DATA.nodes[i];
+            if (n.status === "pending" || n.status === "in-progress") {
+              pending.push(n);
+            }
+          }
+          if (pending.length === 0) return;
+
+          var pick = pending[Math.floor(Math.random() * pending.length)];
+          var statuses = ["in-progress", "completed", "failed", "blocked"];
+          var newStatus = statuses[Math.floor(Math.random() * statuses.length)];
+
+          var node = nodeMap.get(pick.id);
+          if (node) {
+            node.status = newStatus;
+            node.lastUpdated = new Date().toISOString();
+            refreshNodeDom(node.id);
+          }
+          eventCount++;
+          updatePollDisplay();
+        }
+
+        // ── Polling + F9 Sim ───────────────────────────────────────
+
+        function startPolling() {
+          if (pollTimer !== null) return;
+          pollTimer = setInterval(function () {
+            simulateStatusChange();
+          }, POLL_INTERVAL);
+
+          emitterTimer = setInterval(function () {
+            if (viewMode === "live" && Math.random() > 0.5) {
+              simulateStatusChange();
+            }
+          }, F9_SIM_INTERVAL);
+
+          liveDot.style.background = "var(--accent)";
+          liveLabel.textContent = "live";
+          liveIndicator.style.color = "var(--accent)";
+          refreshAllNodes();
+        }
+
+        function stopPolling() {
+          if (pollTimer !== null) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+          }
+          if (emitterTimer !== null) {
+            clearInterval(emitterTimer);
+            emitterTimer = null;
+          }
+          liveDot.style.background = "var(--muted)";
+          liveLabel.textContent = "paused";
+          liveIndicator.style.color = "var(--muted)";
+        }
+
+        // ── View mode toggle ───────────────────────────────────────
+
+        function setViewMode(mode) {
+          viewMode = mode;
+          if (mode === "live") {
+            toggleBtn.textContent = "⏸ static view";
+            startPolling();
+          } else {
+            toggleBtn.textContent = "▶ live view";
+            stopPolling();
+          }
+          refreshAllNodes();
+        }
+
+        toggleBtn.addEventListener("click", function () {
+          setViewMode(viewMode === "live" ? "static" : "live");
+        });
+
+        // ── Init ────────────────────────────────────────────────────
+        updatePollDisplay();
+        startPolling();
+
+        // Expose for console debugging
+        window.__dag = {
+          nodeMap: nodeMap,
+          viewMode: function () { return viewMode; },
+          setViewMode: setViewMode,
+          simulateStatusChange: simulateStatusChange,
+          refreshAllNodes: refreshAllNodes,
+          eventCount: function () { return eventCount; },
+        };
+      })();
+    </script>
+  </body>
+</html>

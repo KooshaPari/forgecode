@@ -1,0 +1,27 @@
+import re
+import json
+import shutil
+
+# Read the grade.json
+src = r"C:\Users\koosh\_compute_infra_audit\tmp\phenocompose_grade\.grade-reports\grade.json"
+dst = r"C:\Users\koosh\_compute_infra_audit\reports\B1_grade_baseline_PhenoCompose.json"
+
+with open(src, "r", encoding="utf-8") as f:
+    raw = f.read()
+
+# Strip ANSI escape codes
+ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+clean = ansi_escape.sub('', raw)
+
+# Parse and fix project name
+data = json.loads(clean)
+data["project"] = "PhenoCompose"
+
+with open(dst, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2)
+
+print(f"Saved clean JSON to {dst}")
+print(f"Project: {data['project']}")
+print(f"Stack: {data['stack']}")
+print(f"Score: {data['score']}/{data['max']} ({data['percentage']}%)")
+print(f"Grade: {data['grade']}")

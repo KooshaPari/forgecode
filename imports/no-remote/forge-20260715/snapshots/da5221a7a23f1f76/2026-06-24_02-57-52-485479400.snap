@@ -1,0 +1,40 @@
+cd "C:\Users\koosh\Dev\Civis"
+git diff --cached --stat
+echo "--- committing ---"
+git -c user.email=merge-agent@civis.local -c user.name="merge-agent" commit -m "docs(design): physics integration plan - per-layer wiring + phased WBS + DAG
+
+Companion to PHYSICS_COUPLING_SUBSTRATE.md (PR #706). Maps the
+12-layer x 6-field coupling matrix (40 cells) to 14 concrete edit
+sites in crates/engine + crates/* (S1-S14) and lays out a 5-sprint
+WBS + DAG that replaces every silo'd direct-API coupling with
+reads/writes through the shared PhysicsFields { T, M, E, F, P, B }
+substrate.
+
+Contents:
+- S0: status of the 14 silo'd call-sites (S1-S14)
+- S1: civ-physics-substrate crate skeleton (the new crate to add)
+- S2: per-layer wiring table (12 layers x read fn, write fn, lag,
+  feedback, edit site)
+- S2.1: 40-cell coupling matrix mapped to edit sites
+- S3: phased WBS (Sprints 0-4) with 32 acceptance tasks
+- S4: mermaid DAG (3-stage substrate interleave)
+- S5: edit-site cheat sheet (14 sites in code)
+- S6: invariants + tests (conservation, Class-4, tripwires,
+  coupling audit, replay determinism)
+- S7: risks + rollback plan (5 independently-revertible sprints)
+- S8: open questions for review
+- S9: references
+
+Key edit sites: crates/engine/src/{religion.rs, language.rs,
+faction_emergence.rs, emergence.rs, engine.rs}, crates/economy/
+src/extraction.rs, crates/tactics/src/war_bridge.rs, crates/
+diplomacy/src/lib.rs, crates/laws/src/lib.rs, crates/research/
+src/lib.rs, crates/climate/src/lib.rs, crates/ai/src/lib.rs.
+
+Gating test: phase_order_includes_emergence at
+crates/engine/src/engine.rs:3320-3342 currently panics
+('PHASE_ORDER must include emergence') - Sprint 0 makes it pass.
+
+Refs: PHYSICS_COUPLING_SUBSTRATE.md, ADR-020."
+echo "--- result ---"
+git log --oneline -3

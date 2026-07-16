@@ -1,0 +1,95 @@
+# Absorption Manifest — pheno-harness
+
+<!-- hand-authored: pheno-harness 2026-06-25 -->
+
+## Source
+
+- **Repo:** `KooshaPari/pheno-harness`
+- **GitHub URL:** https://github.com/KooshaPari/pheno-harness
+- **Archived at:** true (since 2026-06-24)
+- **Default branch at audit time:** `main`
+- **Visibility at audit time:** public
+- **Size:** 110682 KB
+- **Primary language:** Python · **License:** MIT
+- **Description:** Eval harness for the Phenotype ecosystem — compression stack, Harbor bridge, RLVR harness, Benchmark runner, TBENCH leaderboard.
+
+### Languages detected
+
+| Language | Share |
+|---|---|
+| Python | 45% |
+| Shell | 28% |
+| YAML | 12% |
+| Makefile | 8% |
+| JSON | 5% |
+| Markdown | 2% |
+
+## Target
+
+- **Receiving repo:** `KooshaPari/phenodag` (https://github.com/KooshaPari/phenodag)
+- **Also absorbed by:** `BytePort` (via cross-toolchain hygiene), `phenotype-registry` (absorption-justification audit trail)
+- **Local mirror path:** `C:\Users\koosh\pheno-harness`
+- **Stranded commit:** `a38a6fa` (feat(eval): cross-repo adapter consumer — portage_adapter + tracera_semantic_pillar)
+- **Bundle file:** none (live-but-archived repo; local clone is the bundle)
+
+### Absorption-target canonical files
+
+| Canonical role | Path |
+|---|---|
+| Manifest template | `bin/ABSORPTION_TEMPLATE.md` |
+| Audit rubric | `registry/audit-absorption-justification/schema.json` |
+| Audit grader | `registry/audit-absorption-justification/grade.sh` |
+| Cluster spine doc | `docs/compute-infra-subtree.md` |
+| Project-card root | `projects/` |
+
+### Absorption-target evidence (sub-absorption of this manifest)
+
+| Column | Evidence | Citation |
+|---|---|---|
+| phenodag Go hygiene bundle (P21, P23, P25) | `presets/*.yaml`, `scripts/count-expected.awk`, `internal/preset/preset.go`, `gh_repo_lease.go` | phenodag:`e8cc1ca`, phenodag:`internal/preset/preset_test.go:1-9` |
+| BytePort cross-toolchain hygiene (P22, P25) | `Taskfile.yml:hygiene-toolchains` | BytePort:`2b3b743a` |
+| Registry absorption audit trail | `audits/absorption-justifications/pheno-harness-2026-06-25.md` | `this file` |
+| Stranded eval pillars (P20) | `adapters/portage_adapter.py`, `eval/pillars/tracera_semantic_pillar.py` | `a38a6fa` (local-only) |
+| Benchora CI hardening pattern (P22) | `Benchora/.github/workflows/ci.yml` — 7-job matrix | Benchora:`8e5f41f` |
+| heliosBench JSON schema (P24) | `heliosBench/docs/benchora_compare_schema.json` | heliosBench:`2ee778f` |
+
+## Status
+
+- [x] **AFFIRM** — repo is archived; no new contributions possible on the remote. The local clone at `C:\Users\koosh\pheno-harness` holds the stranded commit `a38a6fa` (P20 cross-repo adapters). Absorption patterns are captured in the evidence table above; absorbing repos (phenodag, BytePort, this registry) have already been pushed.
+
+**Confidence:** HIGH
+
+**Gate Tooling Reference:** `bin/repo-delete-gate.sh` (and `repo-delete-gate.ps1` for Windows runners) at `phenotype-tooling/bin/`. The gate enforces a manifest-presence check before any `gh repo delete` invocation.
+
+**Last-Resort-Exceptions:**
+
+| Exception | Rebuttal |
+|---|---|
+| Archived repo — remote push returns 403; fork blocked by GitHub | Absorption pattern: source code is locally cloned; absorbing repos have already landed the SOTA features. Stranded commit `a38a6fa` is documented here. Restore path: `gh repo restore KooshaPari/pheno-harness` (org-owner only). |
+| dyn-rlvr cross-cutting | The nested RLVR runner in `eval/nested_rlvr.py` has no direct absorber within the eval-bench-qa ecosystem. The `TraceraSemanticPillar` adapter covers the scorer side; the RLVR runtime itself remains orphaned. Deferred to DAG-T3-006 (v3 scorecard). |
+| HARBOR.md portage task schema duplication | `pheno-harness/HARBOR.md` and `portage/PRD.md` both define portage task schemas. The portage schema (GitTaskId with `git_url`/`git_commit_id`/`path`) is canonical; `pheno-harness/adapters/portage_adapter.py` reads it but does not duplicate it. Deemed ACCEPTABLE — adapter-bound schemas may reference but not clone upstream specs. |
+
+### BRANCH_INVENTORY
+
+| Branch | Status | Note |
+|---|---|---|
+| `main` | archived on remote; 1 local commit ahead | Stranded commit `a38a6fa` |
+| (no feature branches) | — | Repo was already on main-only mode before archival |
+
+### Project Cards
+
+### Project Card: pheno-harness-2026-06-25
+
+| Field | Value |
+|---|---|
+| Repo | KooshaPari/pheno-harness |
+| Status | archived |
+| Subdomain | eval/bench |
+| Visibility | public |
+| Tier | Tier-3 |
+| Archetype | eval-harness (pheno eval + Harbor bridge + bench + tbench) |
+| Pillars earned (P1-P7) | P1, P2, P3, P4, P5, P6, P7 |
+| Pillars earned (SOTA P20-P25) | P20 (cross-repo adapter) |
+| Scorecard entry | findings/2026-06-24-eval-bench-qa-v2.json |
+| Stranded commit | a38a6fa (local-only) |
+| Restore command | gh repo restore KooshaPari/pheno-harness |

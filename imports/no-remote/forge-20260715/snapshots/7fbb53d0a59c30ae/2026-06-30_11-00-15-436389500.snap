@@ -1,0 +1,296 @@
+{
+  "unit_id": "B9",
+  "pool": "registry-pool",
+  "target_repo": "phenotype-registry",
+  "audit_date": "2026-06-30",
+  "mode": "read-only",
+  "spec_status": "no-prompt-file",
+  "spec_note": "The dispatch named registry-pool/B9, but scaffolding/phase1/registry-pool__B9.md does not exist. Per DAG (dags/compute_infra_dag.yaml:115) B9 is a nanovms consolidate unit; registry-pool owns B1-B6 (audits), B19-B24 (dashboards), B44-B45 (docs). This unit therefore ran a read-only audit of phenotype-registry as the user explicitly directed (target repo: phenotype-registry; read-only mode; write path under registry-pool/B9/).",
+
+  "git": {
+    "is_worktree": true,
+    "current_branch": "config/A18-license-adoption",
+    "main_branch_sha": "0a811781a7be80e58576fcaa7839d94f9bd375a2",
+    "head_sha": "49fa8a160356d86bbf4b7d7ac52dd8047807a6c0",
+    "commits_ahead_of_main": 3,
+    "remote": "https://github.com/KooshaPari/phenotype-registry.git",
+    "total_remote_branches": 87,
+    "total_local_branches": 4,
+    "stale_branches_over_30d": 2,
+    "stale_branches_list": [
+      {"branch": "origin/feat/journey-impl", "last_commit": "2026-05-01"},
+      {"branch": "origin/pr-11", "last_commit": "2026-05-02"}
+    ],
+    "active_local_branches": [
+      {"branch": "main", "last_commit": "2026-06-29"},
+      {"branch": "B2-grade-PhenoCompose", "last_commit": "2026-06-29"},
+      {"branch": "B3-grade-BytePort", "last_commit": "2026-06-29"},
+      {"branch": "config/A18-license-adoption", "last_commit": "2026-06-30"}
+    ],
+    "uncommitted_changes": [
+      "Cargo.toml (workspace.package license added)",
+      "LICENSE-APACHE (placeholder replaced with full Apache-2.0 text)",
+      "package.json (untracked minor edits)",
+      "NOTICE (untracked new file)",
+      "agileplus-specs/005-compute-infra-hardening/ (untracked new dir for A18)"
+    ],
+    "stashes": 0,
+    "recent_commit_subjects": [
+      "49fa8a1 fix(registry): patch Benchora + nanovms-2026-06-28 to 14/14 L4",
+      "71a4b62 feat(registry): expand pheno-* fleet + Benchora/nanovms cards",
+      "32152a1 B3: Add BytePort L1 grade report (2026-06-29)",
+      "0a81178 Merge branch 'main' of https://github.com/KooshaPari/phenotype-registry",
+      "54b08c9 chore(registry): realign ecosystem map to current owned-repo reality (#375)"
+    ]
+  },
+
+  "structure": {
+    "top_level_dirs_and_files": 77,
+    "key_workspace_members": ["crates/pheno-dag"],
+    "key_directories": [
+      "catalog", "projects", "audits", "agileplus-specs", "docs",
+      "crates", "workflows_present_in_.github", "scripts", "tools",
+      "fuzz", "okf", "scaffold", "patches", "tests", "dashboard",
+      "registry", "grades", "worklogs", "audits/absorption-justifications",
+      "audits/phenotype-org-audits"
+    ],
+    "languages_detected": ["rust", "typescript (docs-only vitepress)", "shell", "yaml", "python"],
+    "package_json_role": "docs-only (vitepress)",
+    "project_card_count": 74,
+    "absorption_audit_files": 22,
+    "ci_workflows": 15
+  },
+
+  "standards_authority_files": {
+    "SOTA.md": {
+      "status": "template (unfilled placeholders)",
+      "evidence": "SOTA.md uses {{PROJECT_NAME}}, {{DATE}}, {{TECH_CHOICE}} etc. on every dimension",
+      "concern": "Standards spine required to be authoritative per DOMAIN_ROLES.md and DAG meta.standards_authority=phenotype-registry, yet the SOTA itself is a literal HexaKit genesis template — no concrete content has been authored for phenotype-registry as a repo (it is the registry hub, not a typical app, so this may be intentional, but it is undocumented)."
+    },
+    "DOMAIN_ROLES.md": {
+      "status": "populated (current)",
+      "lines": 80,
+      "key_finding": "platform row references 'nanovms crate (in tooling)' which is consistent with catalog/registry.yaml (status=active) and audits/absorption-justifications/nanovms-2026-06-30.md (AFFIRM) but conflicts with projects/nanovms.json (status=archived)."
+    },
+    "LANGUAGE_PLACEMENT.md": {
+      "status": "populated (current)",
+      "lines": 62
+    },
+    "BOUNDARY_OWNERS.md": {
+      "status": "populated (current)",
+      "lines": 265
+    },
+    "ECOSYSTEM_MAP.md": {
+      "status": "explicitly self-labeled stale as of 2026-06-28",
+      "evidence": "ECOSYSTEM_MAP.md lines 3-9: 'NARRATIVE MAP STALE (as of 2026-06-28). The role tables below use an older 111-repo taxonomy and still reference EXCLUDED / archived / deleted repos ... For current owned-repo reality, use the machine catalog catalog/registry.yaml (88 owned repos, validated)'",
+      "machine_catalog_sot": "catalog/registry.yaml (88 owned repos)"
+    },
+    "catalog/registry.yaml": {
+      "status": "current and validated",
+      "entries": 88,
+      "schema_version": "2026-06-28",
+      "validator": "scripts/validate-catalog.py",
+      "ci": ".github/workflows/registry-validate.yml"
+    }
+  },
+
+  "absorption_fleet_status": {
+    "GRADES_md_summary": "Fleet average 14.00/14 (100.00%). Grade distribution: {'L4': 21}. 22 absorption-justification audits all at L4 (highest tier).",
+    "recent_audits": [
+      "nanovms-2026-06-30.md (verdict AFFIRM, confidence 0.92 HIGH) — adds a 3rd nanovms audit on top of 2026-06-23 and 2026-06-28",
+      "pheno-runtime-config-2026-06-29.md",
+      "pheno-context-2026-06-29.md",
+      "Benchora-2026-06-28.md (14/14 L4 after patch in 49fa8a1)"
+    ]
+  },
+
+  "key_findings": [
+    {
+      "id": "F1-CRITICAL-resolver3",
+      "severity": "critical",
+      "title": "Cargo.toml uses invalid resolver='3' — all cargo-based grade checks fail 0/17 = F",
+      "evidence": "Cargo.toml:2 has 'resolver = \"3\"'. Valid options are '1' or '2'. cargo rejects the manifest, so every cargo-derived check returns 0/2 or 0/3: build, test-unit, fmt, clippy, doc, test-snapshot, test-fuzz, coverage. Confirmed at HEAD (49fa8a1) and at main (0a81178) — introduced by PR #370 (commit 4616b35 'feat(registry): absorption-justification fleet + cross-repo grade dashboard'), 2026-06-25. .grade-reports/grade.json shows score:0/17 grade:F (timestamp 2026-06-30T04:27:41Z). Likely intended was 'resolver = \"2\"' (edition 2021 default with features).",
+      "blast_radius": "Registry's own grade is broken. Any repo that consumes registry metadata or uses these same templates inherits the defect. Validator/auditor lookups over registry as a standards hub cannot trust grade.json until patched.",
+      "remediation_pointer": "Patch Cargo.toml:2 'resolver = \"3\"' -> 'resolver = \"2\"' (preferred for edition 2021 with features= support). Then re-run bash grade.sh --json."
+    },
+    {
+      "id": "F2-HIGH-deny-toml-unexpected-keys",
+      "severity": "high",
+      "title": "deny.toml uses cargo-deny v0.16+ keys that the installed cargo-deny cannot parse",
+      "evidence": "deny.toml:27 'wildcard-dependencies = \"allow\"' is unexpected; cargo-deny version in use does not recognize it. deny.toml:4 '[dependencies]' with 'warn-on-unused' is also unrecognized (new schema is a different layout). .grade-reports/deny.raw records these errors. Blocks deny (security license/advisory gate) and incidentally makes the audit pillar non-passing.",
+      "remediation_pointer": "Either downgrade deny.toml to old schema or upgrade cargo-deny binary. Recommend upgrading deny to current schema (drop wildcard-dependencies, move warn-on-unused to top-level or [graph])."
+    },
+    {
+      "id": "F3-HIGH-nanovms-status-3way-conflict",
+      "severity": "high",
+      "title": "nanovms status disagrees across 3 SSOT candidate files",
+      "evidence_cards": {
+        "projects/nanovms.json:5": "\"status\": \"archived\"",
+        "catalog/registry.yaml:475": "  - id: nanovms ... status: active ... tier: federated-service ... role: platform",
+        "audits/absorption-justifications/nanovms-2026-06-30.md": "verdict AFFIRM, 'retained active Go/TS infra surface'"
+      },
+      "also_at_variance_with": [
+        "DOMAIN_ROLES.md platform row (nanovms crate in tooling, consistent with active/federated)",
+        "ECOSYSTEM_MAP.md 'shared-lib' row (nanovms 3-tier VMM listed as live)",
+        "audits/absorption-justifications/GRADES.md shows 'nanovms-2026-06-30.md 14/14 L4'"
+      ],
+      "blast_radius": "Cross-repo consumers cannot resolve 'is nanovms absorpable or not'. Validator-loop auto-units from grade deltas can flip dispositions. ADR-049 references 'phenotype-infra/crates/nanovms-core' as canonical, but the top-level projects card still asserts archived.",
+      "remediation_pointer": "Reconcile by either (a) updating projects/nanovms.json to {status:'active', archived:false, disposition:'AFFIRM'} to match catalog + audit, or (b) updating catalog/registry.yaml + 3 audits if there's a real plan to archive. Recommend (a) — audits are recent and explicit, and DOMAIN_ROLES.md already implies active."
+    },
+    {
+      "id": "F4-MEDIUM-uncommitted-changes-on-A18-branch",
+      "severity": "medium",
+      "title": "config/A18-license-adoption has meaningful uncommitted changes",
+      "evidence": "git status --short: 'M Cargo.toml', 'M LICENSE-APACHE', 'M package.json', '?? NOTICE', '?? agileplus-specs/005-compute-infra-hardening/'. Diff context: Cargo.toml adds [workspace.package] license and [package] license.workspace=true. LICENSE-APACHE swaps a 2-line placeholder for the full 201-line Apache-2.0 text. package.json has minor edits. Plus untracked NOTICE (Apache §4(d) attribution file) and a new agileplus-specs/005-... tree for A18 work packages.",
+      "blast_radius": "If the auditor is responsible for `config/A18-license-adoption`, the working tree has uncommitted state tied to A18 (apache license adoption). The A18 spec at agileplus-specs/005-compute-infra-hardening/A18-license-adoption/spec.md (lines 33, 40) flags this registry as 'placeholder Apache' — these uncommitted edits are the in-progress fix. Any push or merge must include them.",
+      "remediation_pointer": "Stage + commit these changes under a single conventional-commits message e.g. 'feat(registry, A18): adopt Apache-2.0 LICENSE + NOTICE + dual-license manifest' before merging config/A18-license-adoption."
+    },
+    {
+      "id": "F5-MEDIUM-sota-md-is-template",
+      "severity": "medium",
+      "title": "SOTA.md is a literal unfilled template (no concrete content) at the standards spine",
+      "evidence": "Every dimension in SOTA.md uses {{TOKEN}} placeholders: {{PROJECT_NAME}}, {{DATE}}, {{TECH_CHOICE}}, {{DX_CHOICE}}, {{UX_CHOICE}}, etc. Yet DAG yaml meta.standards_authority='phenotype-registry' and DOMAIN_ROLES.md line 3 declares 'Authority: phenotype-registry'. The hub documents authority but does not exercise its own SOTA format.",
+      "note": "This may be intentional for the 'index/governance' repo (vs. an app repo), but it is not documented as an exception in any ADR or rules file.",
+      "remediation_pointer": "Either (a) author an actual SOTA.md describing registry's own choices, or (b) add an ADR/decision noting this repo is exempt from the SOTA template because it is an index, not a runtime substrate."
+    },
+    {
+      "id": "F6-LOW-branch-hygiene-good",
+      "severity": "info",
+      "title": "Branch hygiene is healthy: only 2/87 remote branches >30 days old",
+      "evidence": "Of 87 remote branches, 85 were updated within 30d. The 2 stale are origin/feat/journey-impl (2026-05-01) and origin/pr-11 (2026-05-02). Epic-A branch-slim hygiene gate is functionally satisfied; the 2 leftovers are not work-surfacing.",
+      "remediation_pointer": "Optional cleanup; not blocking."
+    },
+    {
+      "id": "F7-LOW-status-md-stale",
+      "severity": "info",
+      "title": "STATUS.md is 10 days stale (last regenerated 2026-06-20)",
+      "evidence": "STATUS.md line 3 'Generated: 2026-06-20 18:45 PDT'. The current branch (config/A18-license-adoption) is 2026-06-30 and active work has occurred since (Benchora+nanovms 14/14 L4 patches, B2/B3 grade commits, hybrid B-grade merge, A18 in-flight).",
+      "remediation_pointer": "Run scripts/l7-weekly-refresh.sh (note STATUS.md line 318 marks this as 'PENDING FIRST RUN' scheduled 2026-06-22 09:00 PDT) to regenerate STATUS.md."
+    },
+    {
+      "id": "F8-LOW-ecosystem-map-narrative-stale",
+      "severity": "info",
+      "title": "ECOSYSTEM_MAP.md (narrative) is self-labeled stale; machine catalog is SSOT",
+      "evidence": "Lines 3-9 declare narrative stale as of 2026-06-28; catalog/registry.yaml is the validated 88-owned-repo source. Phase 2 of regenerate is tracked but pending.",
+      "remediation_pointer": "When regenerating narrative, defer to catalog/registry.yaml schema_version=2026-06-28."
+    },
+    {
+      "id": "F9-LOW-advisories-cant-parse-CVSS4",
+      "severity": "info",
+      "title": "Cargo advisory DB parse warning on libcrux-psq CVSS:4.0 entry (informational)",
+      "evidence": ".grade-reports/audit.raw: 'parse error: TOML parse error ... unsupported CVSS version: 4.0'. The bundled cargo-audit version does not yet parse CVSS v4 vectors. Not a registry bug; tooling-side.",
+      "remediation_pointer": "Update cargo-audit / advisory-db sync once upstream ships CVSS4 support."
+    },
+    {
+      "id": "F10-OBS-catalog-v3-has-references-that-may-misalign",
+      "severity": "info",
+      "title": "projects/phenotype-org-audits.json cross-ref includes a '#version=v3' fragment on a non-versioned file path",
+      "evidence": "projects/phenotype-org-audits.json:4 lists '...2026-06-24-eval-bench-qa-v2.json#version=v3' — the JSON file is named ...-v2.json but a fragment v3 is asserted. Validator-friendly APIs cannot resolve this fragment reliably.",
+      "remediation_pointer": "Either rename the artifact to ...-v3.json or remove the fragment from the projects card."
+    }
+  ],
+
+  "grade_summary": {
+    "score": 0,
+    "max": 17,
+    "percentage": 0,
+    "grade_letter": "F",
+    "timestamp": "2026-06-30T04:27:41Z",
+    "failing_checks": [
+      "build", "test-unit", "fmt", "clippy", "deny",
+      "doc", "test-snapshot", "test-fuzz", "coverage"
+    ],
+    "root_cause": "Cargo.toml resolver='3' invalid; deny.toml uses unknown keys (cargo-deny version mismatch)"
+  },
+
+  "absorption_fleet_pillar_results": {
+    "fleet_average_pct": 100.0,
+    "fleet_distribution": {"L4": 21},
+    "all_at_l4": true,
+    "consumers_via_audits_dir": "audits/absorption-justifications/*.md (22 audits)"
+  },
+
+  "dag_cross_references": {
+    "epic": "B (Cross-repo consolidation & L1 grading)",
+    "actual_b9_per_dag": {
+      "id": "B9",
+      "repo_in_dag": "nanovms",
+      "type": "consolidate",
+      "title": "Re-point PhenoCompose NVMS module to consume phenotype-tooling/nanovms/"
+    },
+    "related_units_in_registry_pool": [
+      "B1: Run grade.sh on phenotype-infra",
+      "B2: Run grade.sh on PhenoCompose",
+      "B3: Run grade.sh on BytePort",
+      "B4: Run grade.sh on nanovms-archive",
+      "B5: Run grade.sh on phenotype-tooling",
+      "B6: Diff grade deltas across 5 repos; publish dashboard",
+      "B19-B24: Cross-repo grade dashboard (VitePress)",
+      "B44: Update ECOSYSTEM_MAP.md 'compute/infra' section",
+      "B45: Update BOUNDARY_OWNERS.md (nanovms re-extracted owner)"
+    ]
+  },
+
+  "suggested_auto_added_units": [
+    {
+      "id": "registry-pool-AUTO-1",
+      "title": "Patch Cargo.toml resolver=3 -> resolver=2 to unbreak registry grade",
+      "type": "fix",
+      "repo": "phenotype-registry",
+      "source": "auditor-loop",
+      "evidence": "F1-CRITICAL-resolver3",
+      "est_effort": "5 minutes (single-line change + grade.sh rerun)"
+    },
+    {
+      "id": "registry-pool-AUTO-2",
+      "title": "Modernize deny.toml to current cargo-deny schema (drop wildcard-dependencies; relocate warn-on-unused)",
+      "type": "fix",
+      "repo": "phenotype-registry",
+      "source": "auditor-loop",
+      "evidence": "F2-HIGH-deny-toml-unexpected-keys",
+      "est_effort": "15-30 min + verify with cargo deny check"
+    },
+    {
+      "id": "registry-pool-AUTO-3",
+      "title": "Reconcile nanovms status across projects/ + catalog/ + audits/ (3-way conflict)",
+      "type": "config",
+      "repo": "phenotype-registry",
+      "source": "auditor-loop",
+      "evidence": "F3-HIGH-nanovms-status-3way-conflict",
+      "est_effort": "30 min ADR + single-status update"
+    },
+    {
+      "id": "registry-pool-AUTO-4",
+      "title": "Commit in-flight A18 license-adoption changes on config/A18-license-adoption",
+      "type": "config",
+      "repo": "phenotype-registry",
+      "source": "auditor-loop",
+      "evidence": "F4-MEDIUM-uncommitted-changes-on-A18-branch",
+      "est_effort": "5 min: stage + commit + push"
+    },
+    {
+      "id": "registry-pool-AUTO-5",
+      "title": "Regenerate STATUS.md (currently 10d stale)",
+      "type": "docs",
+      "repo": "phenotype-registry",
+      "source": "auditor-loop",
+      "evidence": "F7-LOW-status-md-stale",
+      "est_effort": "5 min"
+    }
+  ],
+
+  "delivery_status": "delivered",
+  "audit_subagent_inputs_consumed": [
+    "DAG: dags/compute_infra_dag.yaml (B9 records nanovms-typed consolidate; registry-pool owns dashboards+audits)",
+    "Decisions: scaffolding/decisions.json (depth=all345)",
+    "Audits history: registry-pool/B1/grade.json + grade_output.txt (2026-06-27 prior run)"
+  ],
+  "files_written": [
+    "C:/Users/koosh/_compute_infra_audit/audits/2026-06-30/registry-pool/B9/report.json",
+    "C:/Users/koosh/_compute_infra_audit/audits/2026-06-30/registry-pool/B9/_branch_age.py (scratch)"
+  ],
+  "files_modified_outside_audit_dir": [],
+  "files_written_to_target_repo": [],
+  "git_write_performed": false,
+  "git_push_performed": false
+}

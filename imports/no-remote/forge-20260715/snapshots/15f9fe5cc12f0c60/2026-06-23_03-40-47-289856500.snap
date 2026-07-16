@@ -1,0 +1,158 @@
+import subprocess, sys, time, os
+sys.stdout.reconfigure(encoding='utf-8')
+
+GIT_DIR = r'C:\Users\koosh\Civis'
+
+# Branches to rebase onto main (all 22 conflicting) 
+# Ordered by smallest ahead count first (easiest)
+branches = [
+    'chore/reconcile-main-divergence',      # 4 ahead
+    'feat/language-emergence',              # 8
+    'feat/religion-emergence',              # 8
+    'chore/ci-workflow-fix',                # 8
+    'feat/voxel-bridge',                    # 9
+    'docs/adr-014-016-emergence',           # 10
+    'feat/daily-path-system',               # 15
+    'chore/fog-coverage',                   # 12
+    'feat/diplomacy-engine-v2',             # 12
+    'feat/population-demographics',         # 13
+    'feat/faction-emergence-v2',            # 14
+    'feat/lod-dirty-remesh',                # 14
+    'chore/bench-baseline',                 # 16
+    'feat/emergence-dashboard-v3',          # 17
+    'feat/appstate-machine-v2',             # 17
+    'feat/audio-era-system',                # 17
+    'feat/fluid-ca-dirty-v2',              # 18
+    'chore/dep-security-fix',              # 19
+    'feat/server-jsonrpc-extend',          # 22
+    'fix/clippy-warnings',                  # 80
+    'feat/p-w1-bevy-gameplay-026',         # 92
+    'feat/p-w1-bevy-item-027',             # 145
+]
+
+results = {'rebase_ok': [], 'conflict': [], 'fetch_fail': [], 'other': []}
+
+for branch in branches:
+    print(f'\n===== {branch} =====')
+    
+    # Delete local branch if exists
+    subprocess.run(['git', 'branch', '-D', branch], capture_output=True, text=True, cwd=GIT_DIR)
+    subprocess.run(['git', 'branch', '-D', f'origin/{branch}'], capture_output=True, text=True, cwd=GIT_DIR)
+    
+    # Fetch the remote branch with shallow depth
+    r = subprocess.run(
+        ['git', 'fetch', 'origin', f'{branch}'],
+        capture_output=True, text=True, timeout=60, cwd=GIT_DIR
+    )
+    if r.returncode != 0:
+        stderr = r.stderr.strip()
+        if 'Could not find' in stderr or 'not found' in stderr.lower():
+            print(f'  [FETCH FAIL] Branch not found on remote')
+            results['fetch_fail'].append(branch)
+        else:
+            print(f'  [FETCH FAIL] {stderr[:120]}')
+            results['fetch_fail'].append(branch)
+        continue
+    
+    # Verify the remote tracking ref was created
+    r2 = subprocess.run(
+        ['git', 'rev-parse', f'origin/{branch}'],
+        capture_output=True, text=True, timeout=10, cwd=GIT_DIR
+    )
+    if r2.returncode != 0:
+        print(f'  [FETCH FAIL] No origin/{branch} ref after fetch')
+        results['fetch_fail'].append(branch)
+        continue
+    
+    # Checkout
+    r3 = subprocess.run(
+        ['git', 'checkout', '-b', branch, f'origin/{branch}'],
+        capture_output=True, text=True, timeout=15, cwd=GIT_DIR
+    )
+    if r3.returncode != 0:
+        print(f'  [CHECKOUT FAIL] {r3.stderr.strip()[:120]}')
+        results['other'].append((branch, 'checkout fail'))
+        continue
+    
+    # Get commit count before rebase
+    r_commits = subprocess.run(
+        ['git', 'rev-list', '--count', f'{branch}..origin/main'],
+        capture_output=True, text=True, timeout=10, cwd=GIT_DIR
+    )
+    behind_count = r_commits.stdout.strip()
+    
+    r_commits2 = subprocess.run(
+        ['git', 'rev-list', '--count', f'origin/main..{branch}'],
+        capture_output=True, text=True, timeout=10, cwd=GIT_DIR
+    )
+    ahead_count = r_commits2.stdout.strip()
+    
+    print(f'  Checked out. Behind main by {behind_count} commits, ahead by {ahead_count}')
+    
+    # Attempt rebase onto main
+    r = subprocess.run(
+        ['git', 'rebase', 'main'],
+        capture_output=True, text=True, timeout=120, cwd=GIT_DIR
+    )
+    
+    if r.returncode == 0:
+        # Rebase succeeded! Force push
+        print(f'  [REBASE OK] Rebasing successful!')
+        
+        # Check if any new commits were actually created
+        r_diff = subprocess.run(
+            ['git', 'rev-list', '--count', f'origin/{branch}..{branch}'],
+            capture_output=True, text=True, timeout=10, cwd=GIT_DIR
+        )
+        new_commits = r_diff.stdout.strip()
+        print(f'  New commits after rebase: {new_commits}')
+        
+        if new_commits and int(new_commits) > 0:
+            r_push = subprocess.run(
+                ['git', 'push', 'origin', branch, '--force'],
+                capture_output=True, text=True, timeout=30, cwd=GIT_DIR
+            )
+            if r_push.returncode == 0:
+                print(f'  [PUSH OK] Force pushed rebased branch')
+                results['rebase_ok'].append(branch)
+            else:
+                print(f'  [PUSH FAIL] {r_push.stderr.strip()[:120]}')
+                results['other'].append((branch, 'push fail'))
+        else:
+            print(f'  [SKIP] No new commits needed')
+            results['rebase_ok'].append(f'{branch} (no changes needed)')
+    else:
+        # Rebase failed - conflict or other error
+        output = r.stdout + '\n' + r.stderr
+        output_lower = output.lower()
+        if 'conflict' in output_lower or 'could not apply' in output_lower:
+            print(f'  [CONFLICT] Rebase conflict - needs manual resolution')
+            subprocess.run(['git', 'rebase', '--abort'], capture_output=True, text=True, cwd=GIT_DIR)
+            results['conflict'].append(branch)
+        else:
+            print(f'  [ERROR] {output[:300]}')
+            subprocess.run(['git', 'rebase', '--abort'], capture_output=True, text=True, cwd=GIT_DIR)
+            results['other'].append((branch, output[:100]))
+    
+    # Go back to main
+    subprocess.run(['git', 'checkout', 'main'], capture_output=True, text=True, cwd=GIT_DIR)
+    time.sleep(0.3)
+
+print('\n' + '=' * 70)
+print('FINAL REBASE RESULTS:')
+print(f'  Successfully rebased and pushed: {len(results["rebase_ok"])}')
+for b in results['rebase_ok']:
+    print(f'    [+] {b}')
+print(f'  Still have conflicts (local manual needed): {len(results["conflict"])}')
+for b in results['conflict']:
+    print(f'    [!] {b}')
+print(f'  Fetch failures: {len(results["fetch_fail"])}')
+for b in results['fetch_fail']:
+    print(f'    [X] {b}')
+print(f'  Other errors: {len(results["other"])}')
+for b, e in results['other']:
+    print(f'    [?] {b}: {e}')
+
+print()
+success_rate = len(results['rebase_ok']) / max(1, len(branches) - len(results['fetch_fail'])) * 100
+print(f'Success rate: {success_rate:.0f}% ({len(results["rebase_ok"])}/{len(branches) - len(results["fetch_fail"])})')

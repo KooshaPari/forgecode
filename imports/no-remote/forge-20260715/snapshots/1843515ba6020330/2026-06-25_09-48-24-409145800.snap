@@ -1,0 +1,46 @@
+## Summary
+
+Add live status updating to the DAG renderer with F9-style event stream, status history tracking, and a view-mode toggle for live auto-refresh.
+
+## Context
+
+This is unit F26 in the Phenotype Epic F (DAG foundation + automation). It builds on peer units F24 (interactive graph), F25 (filters), F27 (drill-down), F28 (cost), and F29 (buckets) to add real-time status visualization to the DAG renderer. The live status system uses a simulated F9 event feed that randomly transitions nodes, with a full status history trail.
+
+## Changes
+
+- **F9 event schema enhancement**: `fromStatus` field added to `DagStatusChangePayload` for tracking state transitions
+- **Status history**: `StatusHistoryEntry` interface and `statusHistory` array per `DagNode` tracking chronological status transitions
+- **Live status indicator bar**: shows connection state (connected/idle/paused), last update timestamp, and polling interval
+- **Per-node status badges**: color-coded (pending, in-progress, completed, failed, blocked) with distinct fill colors
+- **"Last updated" timestamp**: displayed per-node in the drill-down detail panel metadata section
+- **View-mode toggle**: button switches between live auto-refresh (with simulated F9 events) and static/manual refresh mode
+- **dag-data.json**: nodes updated with `statusHistory` arrays containing chronological transition entries
+- **DagStore**: `updateNodeStatus`, `batchUpdate`, `resetAll` all append to `statusHistory` for audit trail
+- **Client-side module**: `dag-live-status.js` updated with status history tracking and `fromStatus` in simulator events
+- **Static asset**: copied to `public/scripts/dag-live-status.js` for browser access
+- **6 new tests**: covering statusHistory append, preservation across updates, batchUpdate history, resetAll history, and fromStatus field in emitter events
+
+### Key Implementation Details
+
+- The DagStatusEmitter tracks current status per node internally and emits `fromStatus` with every `status-change` event
+- The DagStore appends a `StatusHistoryEntry` on every update (single, batch, or reset) with the exact transition
+- The live status bar identifies three states: Connected (polling active), Idle (live mode but between polls), Paused (static mode)
+- Polling interval defaults to 30s with simulated events every 8s for demo purposes
+
+## Testing
+
+```bash
+cd sites/projects-landing
+bun run vitest run tests/dag-live-status.test.ts
+```
+
+All 24 tests pass (18 original + 6 new F26 tests):
+- 6 DagStore tests (including 4 new statusHistory tests)
+- 10 DagStatusEmitter tests (including 2 new fromStatus tests)
+- 2 data schema validity tests
+
+## Links
+
+- Part of Epic F — DAG Foundation & Automation
+- Area: compute-infra
+- Depends on: F24 (interactive graph), F25 (filters), F27 (drill-down), F28 (cost), F29 (buckets)

@@ -1,0 +1,121 @@
+import json, os, sys
+
+repos = [
+    ("phenotype-registry", "phenotype-registry"),
+    ("phenotype-infra", "phenotype-infra"),
+    ("PhenoCompose", "PhenoCompose"),
+    ("BytePort", "BytePort"),
+]
+
+results = {}
+for label, dirname in repos:
+    path = os.path.expanduser(f"~/{dirname}/.grade-reports/grade.json")
+    try:
+        with open(path) as f:
+            d = json.load(f)
+        results[label] = d
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"[ERROR] Could not load {label}: {e}")
+        sys.exit(1)
+
+# Summary table
+print("=" * 100)
+print("  B12 DELTA DASHBOARD \u2014 Cross-Repo Grade Comparison")
+print("=" * 100)
+print()
+print(f"{'Check':<20} {'Registry':<12} {'Infra':<12} {'Compose':<12} {'BytePort':<12} {'Status':<10}")
+print("-" * 100)
+
+# All check names pooled
+all_checks = set()
+for r in results.values():
+    for c in r["checks"]:
+        all_checks.add(c["name"])
+all_checks = sorted(all_checks)
+
+fail_count_by_check = {}
+for check in all_checks:
+    statuses = {}
+    for label in ["phenotype-registry", "phenotype-infra", "PhenoCompose", "BytePort"]:
+        d = results[label]
+        match = [c for c in d["checks"] if c["name"] == check]
+        if match:
+            statuses[label] = match[0]
+        else:
+            statuses[label] = None
+
+    fails = sum(1 for s in statuses.values() if s and s["status"] == "fail")
+    fail_count_by_check[check] = fails
+
+    row = f"{check:<20}"
+    for label in ["phenotype-registry", "phenotype-infra", "PhenoCompose", "BytePort"]:
+        s = statuses[label]
+        if s is None:
+            row += f"{'N/A':<12}"
+        elif s["status"] == "pass":
+            row += f"{'PASS':<12}"
+        else:
+            row += f"{'FAIL':<12}"
+
+    if fails == 0:
+        row += f"{'ALL OK':<10}"
+    elif fails == 4:
+        row += f"{'ALL FAIL':<10}"
+    else:
+        row += f"{f'{fails} FAILS':<10}"
+
+    print(row)
+
+print("-" * 100)
+print()
+
+print(f"{'TOTAL':<20}", end="")
+for label in ["phenotype-registry", "phenotype-infra", "PhenoCompose", "BytePort"]:
+    d = results[label]
+    print(f"{d['score']}/{d['max']} ({d['percentage']}%)         ", end="")
+print()
+print(f"{'GRADE':<20}", end="")
+for label in ["phenotype-registry", "phenotype-infra", "PhenoCompose", "BytePort"]:
+    d = results[label]
+    print(f"{d['grade']:<20}", end="")
+print()
+print(f"{'STACK':<20}", end="")
+for label in ["phenotype-registry", "phenotype-infra", "PhenoCompose", "BytePort"]:
+    d = results[label]
+    print(f"{d['stack']:<20}", end="")
+print()
+
+print()
+print("=" * 100)
+print("  WEAKEST PILLARS (by fail count across repos)")
+print("=" * 100)
+sorted_fails = sorted(fail_count_by_check.items(), key=lambda x: (-x[1], x[0]))
+for check, count in sorted_fails:
+    if count == 0:
+        break
+    bar = "#" * count + "." * (4 - count)
+    print(f"  {check:<20} {count}/4 fails  [{bar}]")
+
+print()
+print("=" * 100)
+print("  FAILURE ANALYSIS \u2014 Root Causes")
+print("=" * 100)
+print()
+
+for label in ["phenotype-registry", "phenotype-infra", "PhenoCompose", "BytePort"]:
+    d = results[label]
+    print(f"--- {label} (Grade: {d['grade']}, Score: {d['score']}/{d['max']}) ---")
+    for c in d["checks"]:
+        if c["status"] == "fail" and c.get("detail"):
+            detail = c["detail"][:120].replace("\n", " ")
+            print(f"  {c['name']}: {detail}")
+    print()
+
+any_fail = any(d["score"] / max(d["max"], 1) * 100 < 85 for d in results.values())
+print("=" * 100)
+if any_fail:
+    failing = [label for label in ["phenotype-registry", "phenotype-infra", "PhenoCompose", "BytePort"] if results[label]["percentage"] < 85]
+    print(f"  RESULT: FAIL \u2014 {len(failing)} repo(s) below 85% threshold: {', '.join(failing)}")
+else:
+    print("  RESULT: PASS \u2014 All repos meet 85% threshold")
+print("=" * 100)

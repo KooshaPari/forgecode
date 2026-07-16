@@ -1,0 +1,254 @@
+#!/usr/bin/env node
+/**
+ * PII redaction for log shipping.
+ *
+ * Streams input (stdin or files) to stdout, replacing sensitive tokens
+ * with stable redaction markers. Pure Node.js stdlib — no `npm install`.
+ *
+ * Recognised patterns (in order, longest match wins per position):
+ *
+ *   1. Anthropic API keys (sk-ant-...)     → [REDACTED_API_KEY]
+ *   2. Google API keys (AIza...)           → [REDACTED_API_KEY]
+ *   3. GitHub tokens (ghp_/gho_/ghu_/...)  → [REDACTED_API_KEY]
+ *   4. OpenAI keys (sk-..., sk-proj-...)   → [REDACTED_API_KEY]
+ *   5. AWS access keys (AKIA/ASIA)         → [REDACTED_AWS_KEY]
+ *   6. Bearer tokens                       → [REDACTED_BEARER]
+ *   7. Email addresses                     → [REDACTED_EMAIL]
+ *   8. Generic api_key=value pairs         → [REDACTED_API_KEY]
+ *   9. IPv4 addresses                      → [REDACTED_IPV4]
+ *   10. IPv6 addresses                     → [REDACTED_IPV6]
+ *
+ * Provider-specific patterns are listed BEFORE the generic `sk-` rule so
+ * that an `sk-ant-...` key counts as `ANTHROPIC_KEY` (not `OPENAI_KEY`)
+ * for the per-call summary.
+ *
+ * Why stable markers: downstream log-search queries reference the
+ * redaction markers (e.g. "show me all log lines with [REDACTED_IPV4]"),
+ * which makes the redaction reversible by anyone with the original
+ * vault lookup, but never by a log-search reader alone.
+ *
+ * CLI:
+ *   node scripts/sre/redact-logs.mjs < input.log > output.log
+ *   node scripts/sre/redact-logs.mjs --file access.log --output out.log
+ *   node scripts/sre/redact-logs.mjs --strict    # exit non-zero on any match
+ *
+ * Library:
+ *   import { redact, redactString, RedactTransform } from "./scripts/sre/redact-logs.mjs";
+ *
+ * @see docs/sre/INDEX.md (PR-011)
+ */
+
+import { createReadStream, createWriteStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
+import { Transform } from "node:stream";
+import process from "node:process";
+
+// ── Pattern catalogue ─────────────────────────────────────────────────────────
+//
+// Each pattern is [name, regex, marker]. The regex uses the `g` flag so we can
+// iterate with `matchAll`. Order matters: longer / more specific patterns go
+// first so an `sk-ant-...` key counts as ANTHROPIC_KEY instead of OPENAI_KEY.
+
+export const REDACT_PATTERNS = Object.freeze([
+  // 1. Anthropic keys: sk-ant-api03-... / sk-ant-... (must beat the generic sk-)
+  [
+    "ANTHROPIC_KEY",
+    /\bsk-ant-[A-Za-z0-9_\-]{20,}\b/g,
+    "[REDACTED_API_KEY]",
+  ],
+  // 2. Google API keys: AIza... (39 chars total)
+  [
+    "GOOGLE_KEY",
+    /\bAIza[A-Za-z0-9_\-]{35}\b/g,
+    "[REDACTED_API_KEY]",
+  ],
+  // 3. GitHub tokens (classic + fine-grained + PAT prefixes)
+  [
+    "GITHUB_TOKEN",
+    /\b(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9]{30,}\b/g,
+    "[REDACTED_API_KEY]",
+  ],
+  // 4. OpenAI keys: sk-..., sk-proj-..., proj-... (after the more specific rules above)
+  [
+    "OPENAI_KEY",
+    /\bsk-(?:proj-)?[A-Za-z0-9_\-]{20,}\b|\bproj-[A-Za-z0-9_\-]{20,}\b/g,
+    "[REDACTED_API_KEY]",
+  ],
+  // 5. AWS access keys — AKIA / ASIA prefixes, 20 chars total
+  [
+    "AWS_KEY",
+    /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
+    "[REDACTED_AWS_KEY]",
+  ],
+  // 6. Bearer tokens — Authorization: Bearer xxxx (16+ chars)
+  [
+    "BEARER",
+    /(?:Bearer|Authorization:\s*Bearer)\s+([A-Za-z0-9._\-+/=]{16,})/g,
+    "[REDACTED_BEARER]",
+  ],
+  // 7. Email — RFC 5322-ish; rejects obvious junk but stays compact.
+  [
+    "EMAIL",
+    /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,24}\b/g,
+    "[REDACTED_EMAIL]",
+  ],
+  // 8. Generic api_key / apiKey / password= value pairs (12+ char secret)
+  [
+    "GENERIC_KEY",
+    /\b(?:api[_-]?key|apikey|password|passwd|pwd|secret|token|auth)\s*[:=]\s*['"]?([A-Za-z0-9._\-+/=]{12,})['"]?/gi,
+    "[REDACTED_API_KEY]",
+  ],
+  // 9. IPv4 (incl. port) — strict octet bounds
+  [
+    "IPV4",
+    /\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d?\d)(?::\d{1,5})?\b/g,
+    "[REDACTED_IPV4]",
+  ],
+  // 10. IPv6 — full, compressed, ::1, ::ffff:1.2.3.4
+  //     Uses a single broad alternation so any address containing `::` or
+  //     2+ hex-colon groups is recognised.
+  [
+    "IPV6",
+    /\b(?:(?:[A-Fa-f0-9]{1,4}:){2,7}[A-Fa-f0-9]{1,4}|::1|::|(?:[A-Fa-f0-9]{1,4}:){1,7}:|:(?::[A-Fa-f0-9]{1,4}){1,7})\b/g,
+    "[REDACTED_IPV6]",
+  ],
+]);
+
+// ── Library API ──────────────────────────────────────────────────────────────
+
+/**
+ * Redact all PII tokens in a string. Returns the redacted string and the
+ * match counts so the caller can decide whether to fail in strict mode.
+ *
+ * @param {string} input
+ * @returns {{ output: string, counts: Record<string, number> }}
+ */
+export function redactString(input) {
+  if (typeof input !== "string" || input.length === 0) {
+    return { output: input ?? "", counts: {} };
+  }
+  const counts = {};
+  let output = input;
+  for (const [name, regex, marker] of REDACT_PATTERNS) {
+    output = output.replace(regex, () => {
+      counts[name] = (counts[name] ?? 0) + 1;
+      return marker;
+    });
+  }
+  return { output, counts };
+}
+
+/**
+ * Redact a single line. Convenience wrapper around redactString that does
+ * not allocate an intermediate object for the counts.
+ *
+ * @param {string} line
+ * @returns {string}
+ */
+export function redact(line) {
+  return redactString(line).output;
+}
+
+/**
+ * Build a Transform stream that redacts each chunk of input as it arrives.
+ * Counts are accumulated on the stream instance (`.counts`).
+ *
+ * Implements BOTH the Node.js stream API (`_transform`/`_flush`) and the
+ * WHATWG Readable/Writable stream API (`readable`/`writable` properties)
+ * so callers can use either `.pipe()` or `pipeThrough(...)`.
+ */
+export class RedactTransform extends Transform {
+  constructor(options = {}) {
+    super({ ...options, decodeStrings: false });
+    this.counts = {};
+  }
+  _transform(chunk, _encoding, callback) {
+    try {
+      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      const { output, counts } = redactString(text);
+      for (const [name, n] of Object.entries(counts)) {
+        this.counts[name] = (this.counts[name] ?? 0) + n;
+      }
+      callback(null, output);
+    } catch (err) {
+      callback(err);
+    }
+  }
+}
+
+// ── CLI ──────────────────────────────────────────────────────────────────────
+
+function parseArgs(argv) {
+  const args = { files: [], output: null, strict: false, help: false };
+  for (let i = 2; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === "--file") {
+      args.files.push(argv[++i]);
+    } else if (a === "--output" || a === "-o") {
+      args.output = argv[++i];
+    } else if (a === "--strict") {
+      args.strict = true;
+    } else if (a === "--help" || a === "-h") {
+      args.help = true;
+    } else {
+      process.stderr.write(`unknown argument: ${a}\n`);
+      process.exit(2);
+    }
+  }
+  return args;
+}
+
+function printHelp() {
+  process.stdout.write(`Usage: redact-logs.mjs [options]
+
+Options:
+  --file <path>      Read from file (repeatable). Defaults to stdin.
+  --output, -o <p>   Write to file. Defaults to stdout.
+  --strict           Exit non-zero if any PII is detected.
+  --help, -h         Show this help.
+
+Library:
+  import { redact, redactString, RedactTransform } from "./scripts/sre/redact-logs.mjs";
+`);
+}
+
+async function main() {
+  const args = parseArgs(process.argv);
+  if (args.help) {
+    printHelp();
+    return;
+  }
+
+  const transform = new RedactTransform();
+  const sources = args.files.length > 0 ? args.files.map((f) => createReadStream(f, "utf8")) : [process.stdin];
+  const sink = args.output ? createWriteStream(args.output, "utf8") : process.stdout;
+
+  try {
+    await pipeline(sources[0], transform, sink).catch((err) => {
+      // Pipeline rejects with the first error; surface it.
+      throw err;
+    });
+  } catch (err) {
+    process.stderr.write(`redact-logs: ${err.message}\n`);
+    process.exit(1);
+  }
+
+  const totals = transform.counts;
+  if (Object.keys(totals).length > 0) {
+    const summary = Object.entries(totals)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(" ");
+    process.stderr.write(`redact-logs: redacted ${summary}\n`);
+    if (args.strict) {
+      process.exit(3);
+    }
+  }
+}
+
+// Only run as CLI when this module is the entrypoint (not when imported as a
+// library). `import.meta.url === pathToFileURL(process.argv[1]).href` is the
+// canonical ESM check.
+import { pathToFileURL } from "node:url";
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}

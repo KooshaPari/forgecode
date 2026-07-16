@@ -1,0 +1,24 @@
+import time
+
+ts = time.time()
+
+# Read main.rs
+with open(r"C:\Users\koosh\repos\phenotype-tooling\crates\phenotype-cli\src\main.rs") as f:
+    main_content = f.read()
+
+# Read Cargo.toml (cli)
+with open(r"C:\Users\koosh\repos\phenotype-tooling\crates\phenotype-cli\Cargo.toml") as f:
+    cargo_content = f.read()
+
+# Output
+out = f"TIMESTAMP: {ts}\n"
+out += "=" * 50 + "\n"
+out += "MAIN.RS:\n"
+out += "=" * 50 + "\n"
+out += main_content
+out += "\n" + "=" * 50 + "\n"
+out += "CARGO.TOML (phenotype-cli):\n"
+out += "=" * 50 + "\n"
+out += cargo_content
+
+print(out)

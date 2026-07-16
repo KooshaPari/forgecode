@@ -1,0 +1,222 @@
+/**
+ * DAG renderer tests.
+ *
+ * Uses Bun's built-in test runner (bun test).
+ * Tests the layout algorithm, DAG data integrity, and drill-down detail fields.
+ */
+
+import { describe, it, expect } from "bun:test";
+import dagData from "../data/dag-data.json";
+
+interface DagNode {
+  id: string;
+  label: string;
+  status: string;
+  type?: string;
+  epic?: string;
+  repo?: string;
+  acceptanceCriteria?: string[];
+  auditLog?: { date: string; from: string; to: string; note: string }[];
+  links?: { label: string; url: string }[];
+}
+interface DagEdge {
+  from: string;
+  to: string;
+}
+interface DagData {
+  title: string;
+  description: string;
+  nodes: DagNode[];
+  edges: DagEdge[];
+}
+
+const data = dagData as DagData;
+
+describe("DAG data integrity", () => {
+  it("has a title and description", () => {
+    expect(data.title).toBeTruthy();
+    expect(data.description).toBeTruthy();
+  });
+
+  it("has at least one node", () => {
+    expect(data.nodes.length).toBeGreaterThan(0);
+  });
+
+  it("all nodes have unique ids", () => {
+    const ids = data.nodes.map((n) => n.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("all nodes have valid status values", () => {
+    const valid = new Set(["completed", "in-progress", "pending", "failed"]);
+    for (const n of data.nodes) {
+      expect(valid.has(n.status)).toBe(true);
+    }
+  });
+
+  it("all edge references point to existing node ids", () => {
+    const ids = new Set(data.nodes.map((n) => n.id));
+    for (const e of data.edges) {
+      expect(ids.has(e.from)).toBe(true);
+      expect(ids.has(e.to)).toBe(true);
+    }
+  });
+
+  it("has no duplicate edges", () => {
+    const edgeSet = new Set(data.edges.map((e) => `${e.from}->${e.to}`));
+    expect(edgeSet.size).toBe(data.edges.length);
+  });
+});
+
+describe("DAG topology", () => {
+  // Kahn's algorithm: if it produces all node ids, the graph is acyclic
+  it("is acyclic (topological sort produces all nodes)", () => {
+    const inDeg: Record<string, number> = {};
+    const adj: Record<string, string[]> = {};
+    const ids = new Set(data.nodes.map((n) => n.id));
+
+    for (const id of ids) {
+      inDeg[id] = 0;
+      adj[id] = [];
+    }
+    for (const e of data.edges) {
+      if (!ids.has(e.from) || !ids.has(e.to)) continue;
+      adj[e.from].push(e.to);
+      inDeg[e.to] = (inDeg[e.to] || 0) + 1;
+    }
+
+    const queue = Object.keys(inDeg).filter((id) => inDeg[id] === 0);
+    const order: string[] = [];
+    while (queue.length) {
+      const id = queue.shift()!;
+      order.push(id);
+      for (const nid of adj[id] || []) {
+        inDeg[nid]--;
+        if (inDeg[nid] === 0) queue.push(nid);
+      }
+    }
+
+    expect(order.length).toBe(ids.size);
+  });
+
+  it("has at least one root node (no incoming edges)", () => {
+    const hasIncoming = new Set(data.edges.map((e) => e.to));
+    const roots = data.nodes.filter((n) => !hasIncoming.has(n.id));
+    expect(roots.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("DAG status distribution", () => {
+  it("has at least one node in each non-pending status that is represented", () => {
+    const counts: Record<string, number> = {};
+    for (const n of data.nodes) {
+      counts[n.status] = (counts[n.status] || 0) + 1;
+    }
+    // total should match
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    expect(total).toBe(data.nodes.length);
+  });
+});
+
+describe("DAG drill-down detail fields", () => {
+  it("all nodes have a type field", () => {
+    for (const n of data.nodes) {
+      expect(n.type).toBeTruthy();
+      expect(["spec", "impl", "tooling", "render", "qa", "docs"]).toContain(n.type);
+    }
+  });
+
+  it("all nodes have an epic field", () => {
+    for (const n of data.nodes) {
+      expect(n.epic).toBeTruthy();
+      expect(typeof n.epic).toBe("string");
+    }
+  });
+
+  it("all nodes have a repo field", () => {
+    for (const n of data.nodes) {
+      expect(n.repo).toBeTruthy();
+      expect(typeof n.repo).toBe("string");
+    }
+  });
+
+  it("all completed or in-progress nodes have at least one acceptance criterion", () => {
+    for (const n of data.nodes) {
+      if (n.status === "completed" || n.status === "in-progress") {
+        expect(n.acceptanceCriteria).toBeTruthy();
+        expect(n.acceptanceCriteria!.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("all acceptance criteria are non-empty strings", () => {
+    for (const n of data.nodes) {
+      if (n.acceptanceCriteria) {
+        for (const ac of n.acceptanceCriteria) {
+          expect(typeof ac).toBe("string");
+          expect(ac.length).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
+  it("audit log entries have valid structure", () => {
+    const validStatuses = new Set(["pending", "in-progress", "completed", "failed"]);
+    for (const n of data.nodes) {
+      if (n.auditLog) {
+        for (const entry of n.auditLog) {
+          expect(typeof entry.date).toBe("string");
+          expect(entry.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+          expect(validStatuses.has(entry.from)).toBe(true);
+          expect(validStatuses.has(entry.to)).toBe(true);
+          expect(typeof entry.note).toBe("string");
+        }
+      }
+    }
+  });
+
+  it("links have valid structure", () => {
+    for (const n of data.nodes) {
+      if (n.links) {
+        for (const link of n.links) {
+          expect(typeof link.label).toBe("string");
+          expect(link.label.length).toBeGreaterThan(0);
+          expect(typeof link.url).toBe("string");
+          expect(link.url.startsWith("http")).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("all nodes have an auditLog array", () => {
+    for (const n of data.nodes) {
+      expect(Array.isArray(n.auditLog)).toBe(true);
+    }
+  });
+
+  it("all nodes have a links array", () => {
+    for (const n of data.nodes) {
+      expect(Array.isArray(n.links)).toBe(true);
+    }
+  });
+
+  it("all nodes have an acceptanceCriteria array", () => {
+    for (const n of data.nodes) {
+      expect(Array.isArray(n.acceptanceCriteria)).toBe(true);
+    }
+  });
+
+  it("deep-link targets exist for all node IDs", () => {
+    const ids = new Set(data.nodes.map((n) => n.id));
+    // Every node id should be a valid deep-link target
+    for (const n of data.nodes) {
+      expect(ids.has(n.id)).toBe(true);
+    }
+  });
+
+  it("F27-like unit IDs follow the pattern (f## or F##)", () => {
+    for (const n of data.nodes) {
+      expect(n.id).toMatch(/^f\d+$/);
+    }
+  });
+});

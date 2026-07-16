@@ -1,0 +1,60 @@
+@echo off
+setlocal enabledelayedexpansion
+
+set OUTPUT_FILE=_cargo_check_full.txt
+set MAX_RETRIES=10
+set ATTEMPT=1
+
+:RETRY
+echo === CARGO CHECK ATTEMPT %ATTEMPT% ===
+echo === CARGO CHECK ATTEMPT %ATTEMPT% ===>>%OUTPUT_FILE%
+
+:: Run cargo check with timeout (30 minutes) and redirect output
+del _cargo_check_temp.txt 2>nul
+del _cargo_check_err.txt 2>nul
+
+:: Use a trick - start cargo check in background, wait with timeout
+start /b /wait cmd /c "cargo check" >>_cargo_check_temp.txt 2>_cargo_check_err.txt
+set EXIT_CODE=!ERRORLEVEL!
+
+:: Check output
+type _cargo_check_err.txt>>%OUTPUT_FILE%
+type _cargo_check_temp.txt>>%OUTPUT_FILE%
+echo Exit code: !EXIT_CODE!>>%OUTPUT_FILE%
+echo.>>%OUTPUT_FILE%
+
+:: Check if blocking on file lock
+set IS_LOCK=0
+findstr /C:"Blocking waiting for file lock" _cargo_check_err.txt >nul 2>&1
+if !ERRORLEVEL! equ 0 set IS_LOCK=1
+
+if !EXIT_CODE! neq 0 (
+    if !IS_LOCK! equ 1 (
+        echo File lock detected! Killing processes and retrying...
+        powershell -Command "Get-Process cargo,rustc,rustup,git -ErrorAction SilentlyContinue | Stop-Process -Force"
+        timeout /t 10 /nobreak >nul
+        set /a ATTEMPT+=1
+        if !ATTEMPT! leq %MAX_RETRIES% goto RETRY
+    ) else (
+        echo Real compilation error found.
+        echo Last 50 lines of output:
+        powershell -Command "Get-Content _cargo_check_temp.txt, _cargo_check_err.txt | Select-Object -Last 50"
+        goto END
+    )
+) else (
+    echo Cargo check succeeded!
+    echo Last 50 lines of output:
+    powershell -Command "Get-Content _cargo_check_temp.txt, _cargo_check_err.txt | Select-Object -Last 50"
+    goto END
+)
+
+:END
+if %ATTEMPT% gtr %MAX_RETRIES% (
+    echo Exceeded max retries.
+    echo Last 50 lines:
+    powershell -Command "Get-Content _cargo_check_temp.txt, _cargo_check_err.txt | Select-Object -Last 50"
+)
+
+del _cargo_check_temp.txt 2>nul
+del _cargo_check_err.txt 2>nul
+endlocal

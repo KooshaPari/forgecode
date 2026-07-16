@@ -1,0 +1,23 @@
+import os
+clean = r'C:\Users\koosh\OmniRoute-clean\open-sse\executors\codex.ts'
+fresh = r'C:\Users\koosh\OmniRoute-fresh2\open-sse\executors\codex.ts'
+
+print('-- CLEAN --')
+with open(clean, 'r', encoding='utf8', errors='replace') as fh:
+    c = fh.read()
+print('chars:', len(c), 'lines:', c.count(chr(10)))
+print('local_shell count:', c.count('local_shell'))
+print('claude.cli count:', c.count('claude.cli'))
+
+print()
+print('-- FRESH2 --')
+with open(fresh, 'r', encoding='utf8', errors='replace') as fh:
+    f = fh.read()
+print('chars:', len(f), 'lines:', f.count(chr(10)))
+print('local_shell count:', f.count('local_shell'))
+print('claude.cli count:', f.count('claude.cli'))
+
+print()
+print('-- DIFF SUMMARY --')
+print('local_shell CLEAN vs FRESH2:', c.count('local_shell'), 'vs', f.count('local_shell'))
+print('claude.cli CLEAN vs FRESH2:', c.count('claude.cli'), 'vs', f.count('claude.cli'))

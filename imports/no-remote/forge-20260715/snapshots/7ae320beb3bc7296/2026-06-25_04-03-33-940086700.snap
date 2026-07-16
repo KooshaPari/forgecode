@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Run grade.sh --json --fast on a target repo
+set -euo pipefail
+REPO="$1"
+cd "/mnt/c/Users/koosh/$REPO" || { echo "ERROR: cannot cd to $REPO"; exit 1; }
+echo "=== Grading: $REPO ==="
+export PATH="/usr/bin:/usr/local/bin:/usr/lib/cargo/bin:$HOME/.cargo/bin:/usr/sbin:/sbin"
+cargo --version 2>&1 || echo "cargo missing"
+bash /mnt/c/Users/koosh/phenotype-registry/grade.sh --json --fast 2>&1 || true
+echo "=== GRADE JSON ==="
+cat .grade-reports/grade.json 2>/dev/null || echo "NO grade.json"
+echo "=== END ==="

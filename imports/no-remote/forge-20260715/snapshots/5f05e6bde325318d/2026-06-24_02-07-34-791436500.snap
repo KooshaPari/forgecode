@@ -1,0 +1,104 @@
+$ErrorActionPreference = 'Stop'
+$exts = @('*.md','*.txt','*.json','*.toml','*.yaml','*.yml')
+$root = 'C:\Users\koosh'
+$skipNames = @(
+  'node_modules','.git','.venv','.tox','__pycache__','target','build','dist','vendor',
+  '.idea','.vscode','.next','.cache','.npm','.pnpm-store','.gradle','.m2',
+  'scoop','anaconda3','AppData','OneDrive','Library','Downloads','Creative Cloud',
+  '.cargo','.rustup','.dotnet','Temp','tmp','logs'
+)
+
+# Candidate roots — derived from the home dir listing
+$candidates = @(
+  '.forge','.phenotype','.thegent','.mcp','.output','.software','.software-planning-tool',
+  'forge','plans','pheno','pheno-absorb','pheno-harness','pheno-specs','phenodag',
+  'phenotype-infra','phenotype-infra-ci-fix','phenotype-journeys','phenotype-org-audits',
+  'phenotype-registry','phenotype-registry-pr172-check','phenotype-sdk',
+  'PhenoCompose','PhenoFastMCP-rust','PhenoMCP-main','PhenoMCP-pr164','PhenoMCPServers',
+  'PhenoObservability','PhenoObservability-cve-openssl-0.10.80','PhenoObservability-pr178',
+  'phenodocs-fix','phenokits-deny-fix','phenokits-fix','phenoproc-fix','phenoroutermonitor-fix',
+  'repo','repos','audit-repos','archive-migration','authvault-cve-13RjMo',
+  'absorption-staging','absorb','absorb-kits','agileplus',
+  'agslag-9e28f7bf0d879ae9ac87707a33537332b1ef1fa4',
+  'ansel','Benchora','BytePort','Civis','CodeWatch','Contacts','Courses','coursera','cp',
+  'DINOForge-UnityDoorstop','Dino','dino-warfare-airforce','dinoshot',
+  'Documents','Eidolon','files','findings','gamedev','go','heliosApp-mirror','heliosBench',
+  'helioslab-bootstrap','ideaProjects','jobhunt','kits','kitty-specs','kmobile','kmobile-inv',
+  'KooshaPari-Planify','KooshaPari-Planify2','laycua','MCPForge_temp','muuri-test','nanovms',
+  'OmniRoute-main-check','OmniRoute-upstream','omni-edit','phase4-handoff','platform-tools',
+  'playcua_ci_test','pluggedin-app','portage','Postman','Projects','Ready','rich-cli-kit',
+  'scrape-windows','scripts','secret-triage','Sidekick-ci-fix','sidekick-deny-fix','source',
+  'substrate','teach','tests','thegent-partial','Tracera','tutor',
+  'vibeproxy-monitoring-unified','webWork','wsm-decomp','wt-civis-attach','wt-fp-pr82-3',
+  '_audit_logs','_civis_audit_20260622_193526','_civis_work_20260623_161635',
+  '_civis_work_20260623_161757','_civis_work_20260623_172456','_civis_work_20260623_173204',
+  '_compute_infra_audit','_fold','_pheno_absorb','_tc_cache','_tmp-rk-check','_vendor_rck',
+  '_wsm3d_audit'
+)
+
+# Background jobs: one per candidate
+$jobs = @()
+$results = New-Object System.Collections.Generic.List[object]
+
+foreach ($name in $candidates) {
+  $full = Join-Path $root $name
+  if (-not (Test-Path -LiteralPath $full)) { continue }
+  $jobs += Start-Job -ScriptBlock {
+    param($full, $exts, $skipNames)
+    try {
+      $params = @{
+        Path = $full
+        Recurse = $true
+        File = $true
+        Include = $exts
+        Force = $true
+        ErrorAction = 'SilentlyContinue'
+      }
+      $files = Get-ChildItem @params | Where-Object {
+        $skip = $false
+        $rel = $_.FullName
+        foreach ($s in $skipNames) {
+          if ($rel -match ('\\' + [regex]::Escape($s) + '(\\|$)')) { $skip = $true; break }
+        }
+        -not $skip
+      }
+      if ($files.Count -eq 0) { return @() }
+      $hits = $files | Select-String -Pattern 'nippon' -CaseSensitive:$false -List
+      return @($hits | ForEach-Object {
+        [pscustomobject]@{ Path = $_.Path; Line = $_.LineNumber; Text = $_.Line.Trim() }
+      })
+    } catch {
+      return @([pscustomobject]@{ Error = $_.Exception.Message; Path = $full })
+    }
+  } -ArgumentList $full, $exts, $skipNames
+}
+
+# Wait with progress
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+while (($jobs | Where-Object State -eq 'Running').Count -gt 0 -and $sw.Elapsed.TotalMinutes -lt 4) {
+  Start-Sleep -Seconds 5
+  Write-Host ("  ... {0} jobs still running, elapsed {1:F0}s" -f (($jobs | Where-Object State -eq 'Running').Count), $sw.Elapsed.TotalSeconds)
+}
+
+# Collect whatever finished; stop the rest
+foreach ($j in $jobs) {
+  if ($j.State -eq 'Running') { Stop-Job $j }
+  $r = Receive-Job $j -Keep -ErrorAction SilentlyContinue
+  if ($r) {
+    foreach ($hit in $r) { $results.Add($hit) }
+  }
+  Remove-Job $j -Force
+}
+
+# Also scan root-level scratch files
+$rootFiles = Get-ChildItem -LiteralPath $root -File -Include $exts -Force -ErrorAction SilentlyContinue
+foreach ($f in $rootFiles) {
+  $hits = Select-String -Path $f.FullName -Pattern 'nippon' -CaseSensitive:$false
+  foreach ($h in $hits) {
+    $results.Add([pscustomobject]@{ Path = $f.FullName; Line = $h.LineNumber; Text = $h.Line.Trim() })
+  }
+}
+
+"=== TOTAL HITS: $($results.Count) ==="
+$results | Sort-Object Path,Line | Format-Table -AutoSize -Wrap Path,Line,Text
+"=== END ==="

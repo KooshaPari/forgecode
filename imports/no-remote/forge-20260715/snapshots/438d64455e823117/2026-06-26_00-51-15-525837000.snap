@@ -1,0 +1,356 @@
+// src/discovery/providers.ts — provider discovery for 16+ LLM access surfaces.
+//
+// Reads free-form env vars at runtime (no provider secrets baked in) and emits a
+// normalized ProviderReport. Backed by WebCookies/email-password sources
+// documented in docs/research/UNLIMITED_LLM_ACCESS.md.
+//
+// Each provider gets:
+//   - a free-form `cookieEnv` or `apiKeyEnv` the user populates locally
+//   - a stable `providerId` (matches @maximhq/bifrost IDs where available)
+//   - `kind`: web-cookie | api-key | oauth-device-code | local-runtime
+//   - `status`: detected | configured | not-configured
+//
+// This is the *replacement* for the ad-hoc "use `Bun.env.X`" scattered across
+// the old Next.js codebase. It centralizes config probing in one place so the
+// UI / CLI can render a single dashboard.
+
+import type { ProviderId, ProviderReport, ProviderStatus, ProviderKind } from "./types.js";
+
+interface ProviderDescriptor {
+  /** Stable id; matches bifrost provider id where supported. */
+  providerId: ProviderId;
+  /** Display label. */
+  label: string;
+  /** Free-form env var names to probe (first non-empty wins). */
+  envVars: string[];
+  /** Discovery kind. */
+  kind: ProviderKind;
+  /** Optional: a longer blurb shown in the discovery UI. */
+  notes: string | undefined;
+}
+// 16+ surfaces from UNLIMITED_LLM_ACCESS.md. Some are api-key, some web-cookie,
+// some oauth-device-code, some local-runtime.
+export const PROVIDER_CATALOG: ProviderDescriptor[] = [
+  // ---------- Web-cookie providers (no official API, reuse browser session) ----------
+  {
+    providerId: "chatgpt-web",
+    label: "ChatGPT (web cookies)",
+    envVars: ["OMNI_CHATGPT_COOKIE", "CHATGPT_COOKIE", "OPENAI_WEB_COOKIE"],
+    kind: "web-cookie",
+    notes: "Browser session for ChatGPT Plus/Team/Pro. Captures CF + session cookies.",
+  },
+  {
+    providerId: "claude-web",
+    label: "Claude (web cookies)",
+    envVars: ["OMNI_CLAUDE_COOKIE", "CLAUDE_WEB_COOKIE", "ANTHROPIC_WEB_COOKIE"],
+    kind: "web-cookie",
+    notes: "Claude.ai Pro/Team session. Uses sessionKey + org id cookies.",
+  },
+  {
+    providerId: "gemini-web",
+    label: "Gemini (web cookies)",
+    envVars: ["OMNI_GEMINI_COOKIE", "GEMINI_WEB_COOKIE", "GOOGLE_GEMINI_COOKIE"],
+    kind: "web-cookie",
+    notes: "Google account session for gemini.google.com.",
+  },
+  {
+    providerId: "grok-web",
+    label: "Grok (web cookies)",
+    envVars: ["OMNI_GROK_COOKIE", "GROK_WEB_COOKIE", "XAI_WEB_COOKIE"],
+    kind: "web-cookie",
+    notes: "x.com session for grok.x.com.",
+  },
+  {
+    providerId: "perplexity-web",
+    label: "Perplexity (web cookies)",
+    envVars: ["OMNI_PERPLEXITY_COOKIE", "PERPLEXITY_WEB_COOKIE"],
+    kind: "web-cookie",
+    notes: "perplexity.ai Pro session.",
+  },
+  {
+    providerId: "you-web",
+    label: "You.com (web cookies)",
+    envVars: ["OMNI_YOU_COOKIE", "YOU_WEB_COOKIE"],
+    kind: "web-cookie",
+    notes: "you.com Pro session.",
+  },
+  {
+    providerId: "mistral-web",
+    label: "Mistral Le Chat (web cookies)",
+    envVars: ["OMNI_MISTRAL_WEB_COOKIE", "MISTRAL_WEB_COOKIE"],
+    kind: "web-cookie",
+    notes: "chat.mistral.ai Pro session.",
+  },
+  {
+    providerId: "deepseek-web",
+    label: "DeepSeek (web cookies)",
+    envVars: ["OMNI_DEEPSEEK_COOKIE", "DEEPSEEK_WEB_COOKIE"],
+    kind: "web-cookie",
+    notes: "chat.deepseek.com session.",
+  },
+  {
+    providerId: "qwen-web",
+    label: "Qwen (web cookies)",
+    envVars: ["OMNI_QWEN_COOKIE", "QWEN_WEB_COOKIE"],
+    kind: "web-cookie",
+    notes: "tongyi.aliyun.com / qianwen session.",
+  },
+  {
+    providerId: "doubao-web",
+    label: "Doubao (web cookies)",
+    envVars: ["OMNI_DOUBAO_COOKIE", "DOUBAO_WEB_COOKIE"],
+    kind: "web-cookie",
+    notes: "doubao.com ByteDance session.",
+  },
+  {
+    providerId: "kimi-web",
+    label: "Kimi (web cookies)",
+    envVars: ["OMNI_KIMI_COOKIE", "KIMI_WEB_COOKIE"],
+    kind: "web-cookie",
+    notes: "kimi.moonshot.cn session.",
+  },
+  {
+    providerId: "yuanbao-web",
+    label: "Tencent Yuanbao (web cookies)",
+    envVars: ["OMNI_YUANBAO_COOKIE", "YUANBAO_WEB_COOKIE"],
+    kind: "web-cookie",
+    notes: "yuanbao.tencent.com session.",
+  },
+  {
+    providerId: "poe-web",
+    label: "Poe (web cookies)",
+    envVars: ["OMNI_POE_COOKIE", "POE_WEB_COOKIE"],
+    kind: "web-cookie",
+    notes: "poe.com Quora session. Aggregates multiple model vendors.",
+  },
+  {
+    providerId: "youpro-web",
+    label: "YouPro (web cookies)",
+    envVars: ["OMNI_YOUPRO_COOKIE", "YOUPRO_WEB_COOKIE"],
+    kind: "web-cookie",
+    notes: "you.pro / You.com Pro session with model breadth.",
+  },
+
+  // ---------- OAuth device-code providers ----------
+  {
+    providerId: "github-models",
+    label: "GitHub Models",
+    envVars: ["GITHUB_TOKEN", "GH_TOKEN"],
+    kind: "oauth-device-code",
+    notes: "Uses GitHub PAT against models.github.ai catalog.",
+  },
+  {
+    providerId: "copilot",
+    label: "GitHub Copilot",
+    envVars: ["COPILOT_TOKEN", "GH_COPILOT_TOKEN"],
+    kind: "oauth-device-code",
+    notes: "GitHub Copilot Chat completions endpoint.",
+  },
+  {
+    providerId: "huggingface",
+    label: "HuggingFace Inference",
+    envVars: ["HF_TOKEN", "HUGGINGFACE_TOKEN"],
+    kind: "api-key",
+    notes: "api-inference.huggingface.co with HF Inference API token.",
+  },
+
+  // ---------- Standard API-key providers (bifrost-supported) ----------
+  {
+    providerId: "openai",
+    label: "OpenAI",
+    envVars: ["OPENAI_API_KEY"],
+    kind: "api-key",
+    notes: "api.openai.com. Bifrost provider id 'openai'.",
+  },
+  {
+    providerId: "anthropic",
+    label: "Anthropic",
+    envVars: ["ANTHROPIC_API_KEY"],
+    kind: "api-key",
+    notes: "api.anthropic.com. Bifrost provider id 'anthropic'.",
+  },
+  {
+    providerId: "google",
+    label: "Google AI Studio",
+    envVars: ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+    kind: "api-key",
+    notes: "generativelanguage.googleapis.com. Bifrost provider id 'google'.",
+  },
+  {
+    providerId: "xai",
+    label: "xAI (Grok)",
+    envVars: ["XAI_API_KEY", "GROK_API_KEY"],
+    kind: "api-key",
+    notes: "api.x.ai. Bifrost provider id 'xai'.",
+  },
+  {
+    providerId: "mistral",
+    label: "Mistral AI",
+    envVars: ["MISTRAL_API_KEY"],
+    kind: "api-key",
+    notes: "api.mistral.ai. Bifrost provider id 'mistral'.",
+  },
+  {
+    providerId: "groq",
+    label: "Groq",
+    envVars: ["GROQ_API_KEY"],
+    kind: "api-key",
+    notes: "api.groq.com. Bifrost provider id 'groq'.",
+  },
+  {
+    providerId: "together",
+    label: "Together AI",
+    envVars: ["TOGETHER_API_KEY"],
+    kind: "api-key",
+    notes: "api.together.xyz. Bifrost provider id 'together'.",
+  },
+  {
+    providerId: "fireworks",
+    label: "Fireworks AI",
+    envVars: ["FIREWORKS_API_KEY"],
+    kind: "api-key",
+    notes: "api.fireworks.ai. Bifrost provider id 'fireworks'.",
+  },
+  {
+    providerId: "openrouter",
+    label: "OpenRouter",
+    envVars: ["OPENROUTER_API_KEY"],
+    kind: "api-key",
+    notes: "openrouter.ai. Bifrost provider id 'openrouter'.",
+  },
+  {
+    providerId: "deepseek",
+    label: "DeepSeek (API)",
+    envVars: ["DEEPSEEK_API_KEY"],
+    kind: "api-key",
+    notes: "api.deepseek.com. Bifrost provider id 'deepseek'.",
+  },
+  {
+    providerId: "cohere",
+    label: "Cohere",
+    envVars: ["COHERE_API_KEY", "CO_API_KEY"],
+    kind: "api-key",
+    notes: "api.cohere.ai. Bifrost provider id 'cohere'.",
+  },
+  {
+    providerId: "perplexity",
+    label: "Perplexity (API)",
+    envVars: ["PPLX_API_KEY", "PERPLEXITY_API_KEY"],
+    kind: "api-key",
+    notes: "api.perplexity.ai. Bifrost provider id 'perplexity'.",
+  },
+  {
+    providerId: "bedrock",
+    label: "AWS Bedrock",
+    envVars: ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"],
+    kind: "api-key",
+    notes: "Bedrock runtime. Bifrost provider id 'bedrock'.",
+  },
+  {
+    providerId: "azure-openai",
+    label: "Azure OpenAI",
+    envVars: ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"],
+    kind: "api-key",
+    notes: "Azure-hosted OpenAI. Bifrost provider id 'azure-openai'.",
+  },
+
+  // ---------- Local-runtime providers ----------
+  {
+    providerId: "ollama",
+    label: "Ollama (local)",
+    envVars: ["OLLAMA_HOST"],
+    kind: "local-runtime",
+    notes: "http://localhost:11434. Bifrost provider id 'ollama'.",
+  },
+  {
+    providerId: "llamacpp",
+    label: "llama.cpp (local server)",
+    envVars: ["LLAMACPP_HOST"],
+    kind: "local-runtime",
+    notes: "Default http://localhost:8080. Bifrost provider id 'llamacpp'.",
+  },
+  {
+    providerId: "vllm",
+    label: "vLLM (local)",
+    envVars: ["VLLM_HOST"],
+    kind: "local-runtime",
+    notes: "OpenAI-compatible local server. Bifrost provider id 'vllm'.",
+  },
+];
+
+interface RawProvider {
+  providerId: ProviderId;
+  label: string;
+  kind: ProviderKind;
+  notes: string | undefined;
+  status: ProviderStatus;
+  /** The env var name that resolved (for user feedback). null if none. */
+  sourceEnvVar: string | null;
+  /** Length of the secret (we never echo the secret itself). null if not set. */
+  secretLength: number | null;
+  /** Optional: how long ago the env was set (epoch ms). null if unknown. */
+  detectedAt: number;
+}
+
+function probeProvider(desc: ProviderDescriptor): RawProvider {
+  // First non-empty env var wins. We treat empty string the same as unset.
+  let resolved: string | null = null;
+  let sourceEnvVar: string | null = null;
+  for (const name of desc.envVars) {
+    const v = Bun.env[name];
+    if (typeof v === "string" && v.length > 0) {
+      resolved = v;
+      sourceEnvVar = name;
+      break;
+    }
+  }
+
+  let status: ProviderStatus;
+  if (resolved == null) {
+    status = "not-configured";
+  } else {
+    status = "configured";
+  }
+
+  return {
+    providerId: desc.providerId,
+    label: desc.label,
+    kind: desc.kind,
+    notes: desc.notes ?? undefined,
+    status,
+    sourceEnvVar,
+    secretLength: resolved == null ? null : resolved.length,
+    detectedAt: Date.now(),
+  };
+}
+
+/** Cache for the 5-min dashboard render window. */
+let cached: { report: ProviderReport; ts: number } | null = null;
+const CACHE_MS = 5 * 60 * 1000;
+
+export async function runDiscovery(opts?: { force?: boolean }): Promise<ProviderReport> {
+  const now = Date.now();
+  if (!opts?.force && cached && now - cached.ts < CACHE_MS) {
+    return cached.report;
+  }
+
+  const providers = PROVIDER_CATALOG.map(probeProvider);
+  const configured = providers.filter((p) => p.status === "configured");
+
+  const report: ProviderReport = {
+    generatedAt: now,
+    totalCatalog: providers.length,
+    configured: configured.length,
+    notConfigured: providers.length - configured.length,
+    byKind: {
+      "web-cookie": providers.filter((p) => p.kind === "web-cookie" && p.status === "configured").length,
+      "api-key": providers.filter((p) => p.kind === "api-key" && p.status === "configured").length,
+      "oauth-device-code": providers.filter((p) => p.kind === "oauth-device-code" && p.status === "configured").length,
+      "local-runtime": providers.filter((p) => p.kind === "local-runtime" && p.status === "configured").length,
+    },
+    providers,
+  };
+
+  cached = { report, ts: now };
+  return report;
+}

@@ -1,0 +1,40 @@
+import json, os, sys
+files = ['go-nippon.json','smart-mcp-go.json','McpKit.json','phenotype-go-sdk.json',
+         'phenocompose.json','nanovms.json','phenotype-infra.json','BytePort.json']
+base = r'C:\Users\koosh\phenotype-registry\projects'
+req = ['name','status','absorbed_into','disposition','adr','audited_at','audit_artifact','note']
+allowed_status = {'archived','active'}
+allowed_disp = {'AFFIRM','ARCHIVE_ONLY','HARD_DELETED','DELETION_CANDIDATE'}
+all_ok = True
+for fn in files:
+    p = os.path.join(base, fn)
+    print(f'=== {fn} ===')
+    try:
+        d = json.load(open(p, encoding='utf-8'))
+    except Exception as e:
+        print(f'  PARSE ERROR: {e}')
+        all_ok = False
+        continue
+    for k in req:
+        v = d.get(k, '__MISSING__')
+        if v == '__MISSING__':
+            print(f'  MISSING field: {k}')
+            all_ok = False
+        else:
+            disp = repr(v)
+            if len(disp) > 90: disp = disp[:87] + '...'
+            print(f'  {k:18s} = {disp}')
+    s_ok = d.get('status') in allowed_status
+    d_ok = d.get('disposition') in allowed_disp
+    dt_ok = '2026-06-23' in str(d.get('audited_at',''))
+    art_path = os.path.join(r'C:\Users\koosh\phenotype-registry', d.get('audit_artifact',''))
+    art_ok = os.path.exists(art_path)
+    print(f'  status_valid      : {s_ok}')
+    print(f'  disposition_valid : {d_ok}')
+    print(f'  audited_at 2026-06-23: {dt_ok}')
+    print(f'  audit_artifact exists: {art_ok}  ({art_path})')
+    if not (s_ok and d_ok and dt_ok and art_ok):
+        all_ok = False
+    print()
+print('OVERALL P6 score = 2:', 'PASS' if all_ok else 'FAIL')
+sys.exit(0 if all_ok else 1)

@@ -1,0 +1,113 @@
+/**
+ * Drains a non-streaming upstream response body and extracts the parsed payload.
+ *
+ * Lifted verbatim out of chatCore.ts. The upstream path of
+ * chatCore.ts needs to read a non-streaming JSON response body, but
+ * with two protections layered on top of the raw ReadableStream read:
+ *
+ *   1. A fetch-body timeout. If the upstream stalls past
+ *      FETCH_BODY_TIMEOUT_MS, the read is aborted and a synthetic
+ *      524 error is returned. This is the equivalent of Cloudflare's
+ *      "524 A Timeout Occurred" so dashboards can distinguish a
+ *      network stall from a 5xx from the origin.
+ *
+ *   2. A SSE terminal-state tail handler. If the upstream replied
+ *      with `Content-Type: text/event-stream` even though we asked
+ *      for a non-streaming body, we must still parse the final
+ *      `[DONE]` frame and any preceding error frames. The terminal
+ *      state is threaded through the read loop so we can splice the
+ *      last chunk onto the in-flight line buffer.
+ *
+ * Why a leaf:
+ *
+ * - The function is self-contained: it depends only on three sibling
+ *   helpers (`withBodyTimeout`, `readStreamChunkWithTimeout`,
+ *   `createBodyTimeoutError`) plus the SSE terminal signal machinery.
+ * - The function is called from two places today (the non-streaming
+ *   chat path at line 3145 and the response-relay path at line 3967)
+ *   and will be called from the upcoming imageGen subcommand.  Hoisting
+ *   it now avoids a third copy-paste.
+ * - The 33 helpers already extracted from chatCore.ts do not include
+ *   any with this combination of: (a) SSE handling, (b) abortable
+ *   fetch reads, (c) timeout classification.
+ *
+ * The function returns:
+ *
+ *   { payload: object }           -- success
+ *   { payload: null, error: 524 } -- body timeout
+ *   { payload: null, error: "..." } -- body parse error
+ *
+ * and intentionally preserves the *existing* 3-arg signature so call
+ * sites in chatCore.ts do not need to be rewritten.
+ */
+import type { NonStreamingSseTerminalState } from "./nonStreamingSse";
+import { appendNonStreamingSseTerminalSignal } from "./nonStreamingSse";
+
+export type ReadNonStreamingResponseBodyResult =
+  | { payload: Record<string, unknown>; error: null }
+  | { payload: null; error: number | string };
+
+/**
+ * Drain `response.body` and parse it as JSON, with two layers of
+ * protection (fetch-body timeout + SSE terminal tail handling).
+ *
+ * @param body        the Response object whose body to drain
+ * @param terminal    in/out SSE terminal-state (used for the `[DONE]`
+ *                    tail when the upstream replied with
+ *                    text/event-stream even though we asked for
+ *                    non-streaming JSON)
+ * @param signal      an AbortSignal so the read can be cancelled when
+ *                    the client disconnects
+ */
+export async function readNonStreamingResponseBody(
+  body: ReadableStream<Uint8Array>,
+  terminal: NonStreamingSseTerminalState,
+  signal: AbortSignal | null,
+): Promise<ReadNonStreamingResponseBodyResult> {
+  const timeoutMs = FETCH_BODY_TIMEOUT_MS;
+  const decoder = new TextDecoder();
+  let buffered = "";
+
+  try {
+    const reader = body.getReader();
+    while (true) {
+      const { value, done } = await readStreamChunkWithTimeout(
+        reader,
+        timeoutMs,
+        signal,
+      );
+      if (done) break;
+      buffered += decoder.decode(value, { stream: true });
+      appendNonStreamingSseTerminalSignal(buffered, terminal);
+    }
+    buffered += decoder.decode();
+  } catch (err) {
+    if (withBodyTimeout(err)) {
+      return { payload: null, error: createBodyTimeoutError(timeoutMs) };
+    }
+    return {
+      payload: null,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(buffered) as Record<string, unknown>;
+    return { payload: parsed, error: null };
+  } catch (err) {
+    return {
+      payload: null,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+// Imported lazily via barrel re-export so chatCore.ts (which already
+// owns these symbols via its own imports) does not see them double-bound.
+// The leaf exposes them so tests can stub them out via vi.mock().
+import { FETCH_BODY_TIMEOUT_MS } from "../../config/constants";
+import {
+  readStreamChunkWithTimeout,
+  withBodyTimeout,
+  createBodyTimeoutError,
+} from "./upstreamTimeouts";

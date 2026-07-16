@@ -1,0 +1,13 @@
+import re, json, os
+src = r'C:\Users\koosh\_top_repos.json'
+dst = r'C:\Users\koosh\_top_repos_clean.json'
+data = open(src, 'rb').read()
+text = data.decode('utf-16-le')
+ansi = re.compile(r'\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07]*\x07')
+clean = ansi.sub('', text)
+clean = clean.replace('\x1b', '')
+with open(dst, 'w', encoding='utf-8') as f:
+    f.write(clean)
+d = json.loads(clean)
+print(f"total={d['total_count']} items={len(d['items'])}")
+print(f"clean file size: {os.path.getsize(dst)} bytes")

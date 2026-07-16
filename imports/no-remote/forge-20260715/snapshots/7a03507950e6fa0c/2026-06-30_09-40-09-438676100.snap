@@ -1,0 +1,322 @@
+# ClinePass Triage — `tailcallhq/forgecode` & `diegosouzapw/omniroute`
+
+> **Status:** DESIGN — awaiting user authorization before any upstream GitHub Issue/PR
+> is opened. Date: 2026-06-29.
+>
+> **Hard rule observed:** No fabricated ClinePass API details (base URL, key shape,
+> transport, model-id namespace). All spec claims are sourced from the public
+> `https://cline.bot/cline-pass` page; everything else is enumerated as an
+> **open question** to be answered by maintainers or via authenticated inspection
+> of `https://app.cline.bot` (only with explicit user permission).
+
+---
+
+## 1. Background
+
+Cline Bot Inc. has launched **ClinePass**, a paid subscription tier
+(`$4.99` first month, `then $9.99/mo`) that bundles access to ten open-weight
+models from six labs into a single Cline-native "provider":
+
+| Model          | Lab         | Stated purpose                                  |
+|----------------|-------------|--------------------------------------------------|
+| GLM 5.2        | Z.ai        | Deep reasoning                                   |
+| Kimi K2.7 Code | Moonshot AI | Coding tasks                                     |
+| Kimi K2.6      | Moonshot AI | Agentic workflows                                |
+| DeepSeek V4 Pro| DeepSeek    | Large changes                                    |
+| DeepSeek V4 Flash| DeepSeek  | Fast iteration                                   |
+| MiniMax M3      | MiniMax    | General coding                                   |
+| MiMo V2.5 Pro   | MiMo       | Pro workloads                                    |
+| MiMo V2.5       | MiMo       | Efficient edits                                  |
+| Qwen3.7-Max     | Qwen       | Heavy workloads                                  |
+| Qwen3.7-Plus    | Qwen       | Balanced coding                                  |
+
+The ClinePass FAQ states: *"you can use ClinePass with other coding agents by
+using your ClinePass API key."* — i.e. it is intended to be useable from
+third-party harnesses such as `forgecode` and `omniroute`.
+
+`cline/cline`'s own README already supports "any OpenAI-compatible API" as a
+provider, so adding a new gateway-shaped OpenAI-compatible provider is a known
+pattern in the ecosystem.
+
+### 1.1 What is NOT in the public spec
+
+For the avoidance of doubt, the public `https://cline.bot/cline-pass` page does
+**not** document:
+
+1. The **base URL** the ClinePass key should be issued against
+   (e.g. `https://api.cline.bot` / `https://api.clinepass.ai` / `https://api.cline.dev` / unknown).
+2. The **API key issuance flow** for third-party agents (the FAQ references
+   "your ClinePass API key" but does not link to a generation surface beyond
+   `https://app.cline.bot/dashboard/subscription`).
+3. The **wire protocol** — OpenAI-compatible chat completions, OpenAI Responses,
+   Anthropic-compatible Messages, or some Cline-native shape.
+4. The **model-id namespace** as it appears at the ClinePass provider
+   (passthrough like `zai/glm-5.2`, namespaced like `cline:glm-5.2`,
+   alias-mapped like `cline-pass/balanced`, …).
+5. Whether the same key that works in Cline IDE/CLI works in third-party
+   harnesses or is a separate "agent key".
+
+These five items are the **open-questions section** of every upstream-facing
+artifact that would flow from this design.
+
+---
+
+## 2. Upstream repos under triage
+
+| Repo (org/name)                     | Default branch | Branch-protection expectation | Fork under `KooshaPari/` |
+|-------------------------------------|----------------|--------------------------------|---------------------------|
+| `tailcallhq/forgecode`              | `main`         | PR-only                         | `KooshaPari/forgecode`    |
+| `diegosouzapw/omniroute`            | `main`         | PR-only                         | `KooshaPari/OmniRoute`    |
+
+Authentication context: `gh auth status` → `KooshaPari` with scopes
+`gist, read:org, repo, workflow`. Both forks exist and include `upstream` as an
+extra remote.
+
+---
+
+## 3. Integration map (per-repo, evidence-backed)
+
+### 3.1 `tailcallhq/forgecode`
+
+**Stack:** Rust workspace + JS/TS glue (`crates/`, `Cargo.toml`, `package.json`).
+
+**Provider registration paths (verified by inspection of the worktree):**
+
+- `crates/forge_domain/src/provider.rs:46-128` — `ProviderId::*` const declarations.
+- `crates/forge_domain/src/provider.rs:176-222` — `FromStr` impl that
+  falls back to `Cow::Owned` for custom ids.
+- `crates/forge_domain/src/provider.rs:230-238` — `ProviderResponse` enum
+  (`OpenAI | OpenAIResponses | Anthropic | Bedrock | Google | OpenCode`).
+- `crates/forge_repo/src/provider/provider.json` — declarative provider registry.
+- `crates/forge_config/src/config.rs:85-115` — `ProviderEntry` for
+  `forge.toml` additions.
+- `crates/forge_repo/src/provider/provider_repo.rs:75-101` — `ProviderConfig`
+  (incl. `api_key_vars`, `url_param_vars`).
+- `crates/forge_repo/src/provider/provider_repo.rs:391-441` —
+  `create_credential_from_env` (where env vars become credentials).
+- `crates/forge_repo/src/provider/chat.rs:124-194` — `ProviderRouter::chat`,
+  `ProviderResponse::OpenAI` arm dispatches to `OpenAIResponseRepository`.
+- `crates/forge_repo/src/provider/openai.rs:329-374` —
+  `OpenAIResponseRepository` (the OpenAI-compat generic base).
+- Tests:
+  `crates/forge_domain/src/provider.rs:554-887`
+  (`test_*_from_str` / `display_name` pattern per provider),
+  `crates/forge_repo/src/provider/provider_repo.rs:676+` (config tests),
+  `crates/forge_repo/src/provider/openai.rs:376+` (HTTP-mock tests).
+
+**Closest precedents for adding a brand-new gateway:**
+
+- `crates/forge_repo/src/provider/provider.json:3724-3743` —
+  `fireworks-ai-firepass` (recent, OpenAI-compat, brand-new id).
+- `crates/forge_repo/src/provider/provider.json:591-599` —
+  `openai_compatible` (templated, uses `{OPENAI_URL}`).
+- `crates/forge_repo/src/provider/provider.json:612-620` —
+  `openai_responses_compatible` (Responses-API sibling).
+
+**Hot-effort estimate: LOW.** A new provider whose JSON entry declares
+`response_type: "OpenAI"` automatically routes through
+`OpenAIResponseRepository` — no Rust plumbing beyond a `ProviderId` constant,
+`display_name` arm, `FromStr` arm, optional test, plus the JSON entry and
+`api_key_vars`.
+
+**Caveat:** If ClinePass turns out to be Anthropic-compat or Responses-compat
+rather than OpenAI-compat, effort climbs to MEDIUM-HIGH (new
+`ProviderResponse` variant + new `*ResponseRepository`).
+
+### 3.2 `diegosouzapw/omniroute`
+
+**Stack:** Next.js / TS workspace (`@omniroute/...`, `bin`, `config`,
+`contrib`, `.husky`, `.vale`, `package-lock.json`).
+
+**Provider registration paths (verified):**
+
+- `src/shared/constants/providers.ts` — barrel for per-family files
+  (`oauth.ts`, `apikey/*`, `local.ts`, …).
+- `src/shared/constants/providers/apikey/gateways.ts:5-528` — `APIKEY_PROVIDERS`
+  gateways family; current home for `crof`, `api-airforce`, `tokenrouter`,
+  `openadapter`. **Idiomatic spot for a `clinepass` entry.**
+- `src/shared/constants/providers/apikey/index.ts:14-21` — merges the six
+  API-key families into `APIKEY_PROVIDERS`.
+- `src/lib/providers/catalog.ts:89-147` — `STATIC_PROVIDER_CATALOG_GROUPS`.
+- `src/lib/providers/catalog.ts:204-209` — `isManagedProviderConnectionId`
+  runtime gate.
+- `open-sse/config/providers/registry/<id>/index.ts` — per-provider runtime
+  folder.
+- `open-sse/config/providers/registry/crof/index.ts:1-38` — minimal canonical
+  apikey-gateway example.
+- `open-sse/config/providers/registry/openadapter/index.ts:1-25` — even
+  smaller, OpenAI-format example.
+- `open-sse/config/providers/index.ts:172,343` — `import` line and
+  `REGISTRY` literal locations.
+- `open-sse/config/providers/shared.ts:92-129` — `RegistryEntry` type.
+- `scripts/check/check-provider-consistency.ts:33` — **cross-validation gate**
+  between the dashboard catalog and the runtime registry. Both must agree or
+  the entry is flagged as an "orphan registry id".
+- `src/shared/validation/providerSchema.ts:26-47` — Zod schema enforced at
+  module load on the canonical catalog.
+- Tests: `tests/unit/check-provider-consistency.test.ts`,
+  `tests/unit/registry-direct-exports.test.ts`,
+  `tests/unit/provider-registry-models-guard.test.ts`,
+  `tests/unit/provider-alias-uniqueness.test.ts`, plus one
+  `tests/unit/<id>-provider.test.ts` per provider.
+
+**Existing OAuth-only `cline` entry** at
+`src/shared/constants/providers/oauth.ts:168-177`. **No `clinepass` id exists
+anywhere** in the worktree (verified by `grep`).
+
+**Brand-asset convention:** SVGs at `public/providers/<id>.svg`, ≤ 128 KiB
+and ≤ 256 px per side per `scripts/check/check-provider-assets.mjs:8-10`.
+Optional — providers like `crof` and `dit` have no PNG/SVG; their dashboard
+entry uses `textIcon`.
+
+**Hot-effort estimate: MEDIUM** (mechanical for an OpenAI-shape apikey gateway;
+rises only if a non-default executor or non-OpenAI wire format is required).
+
+---
+
+## 4. Proposed upstream artifacts
+
+For each repo, two artifacts.
+
+### 4.1 Triage Issue
+
+**Title:** `[provider] ClinePass — track first-class support`
+
+**Body outline (both repos):**
+
+1. **What ClinePass is** — link to `https://cline.bot/cline-pass`, list the
+   10 models and 6 labs (from the public page), state the launch terms
+   (`$4.99` → `$9.99/mo`).
+2. **Why it fits this project's wiring** — for forgecode: explain how
+   `ProviderResponse::OpenAI` plus `provider.json` makes new OpenAI-compat
+   providers a JSON-only change; for omniroute: explain the
+   `apikey/gateways.ts` + `registry/<id>/index.ts` pairing and the
+   `check-provider-consistency.ts` gate.
+3. **Open questions** (per repo, identical five):
+   - (i) Base URL.
+   - (ii) API key issuance surface and env-var name.
+   - (iii) Wire protocol (OpenAI-compat / Responses / Anthropic-compat).
+   - (iv) Model-id namespace at the ClinePass provider.
+   - (v) Whether Cline IDE/CLI keys are interchangeable with third-party-agent keys.
+4. **Linkage** — track the eventual PR here; PR will link back.
+
+### 4.2 Draft PR (after Issue feedback, default mode)
+
+**`tailcallhq/forgecode`** — touches at most four files:
+
+- `crates/forge_domain/src/provider.rs:46-128,176-222` — `ProviderId::CLINEPASS`
+  const + `display_name` arm + `FromStr` arm.
+- `crates/forge_repo/src/provider/provider.json` — single JSON entry block
+  (id, `api_key_vars: ["CLINEPASS_API_KEY"]`, `response_type: "OpenAI"`,
+  `url`, `models`, `auth_methods`). **Default value of `url` is a clearly
+  marked `<pending-ClinePass-endpoint>` placeholder until (i) is answered.**
+- `crates/forge_domain/src/provider.rs:` —
+  `test_cline_pass_from_str`, `test_cline_pass_display_name`,
+  `test_cline_pass_in_built_in_providers`, mirroring the
+  `fireworks-ai-firepass` precedent.
+- Optionally `crates/forge_repo/src/provider/provider_repo.rs` — a
+  `test_cline_pass_config` mirroring `test_openai_compatible_config`.
+
+**`diegosouzapw/omniroute`** — touches at most five files:
+
+- `src/shared/constants/providers/apikey/gateways.ts` — add a new
+  `clinepass` entry alongside `crof`, `openadapter`, etc.
+- `open-sse/config/providers/registry/clinepass/index.ts` — **new file**
+  shaped like `crof/index.ts:1-38`. Same `<pending-ClinePass-endpoint>`
+  placeholder default until (i) is answered.
+- `open-sse/config/providers/index.ts:172,343` — append the new import line
+  and add `clinepass: clinepassProvider,` to `REGISTRY`.
+- Optionally `public/providers/clinepass.svg` — only if a logo exists (no
+  required default).
+- Optionally `docs/providers/CLINEPASS.md` — only if the project treats
+  per-provider docs as required (template at `docs/providers/AGENTROUTER.md`).
+
+PRs are to be opened as **Drafts** by default — the maintainer-facing signal
+that the diff is reviewable but explicitly not finished until the five open
+questions are answered.
+
+---
+
+## 5. Execution authority and gate
+
+Opening Issues on org-owned upstream repos and pushing branches to your forks
+that open PRs against those org-owned repos are *external actions* whose
+blast radius is global (notifications, public essay-style PR discussion, etc.)
+and somewhat irreversible (closed issues/PRs remain visible).
+
+This design spec therefore names two gating questions whose answers must come
+from the user before any `gh issue create --repo <upstream>` or
+`gh pr create --repo <upstream>` is called:
+
+1. **Draft mode vs delete-later** — recommendation: open Issues as **real
+   Issues**; open PRs as **Drafts**. Confirm, or specify other.
+2. **Auth-app credentialed fetch** — recommendation: **(a)** sign in to
+   `app.cline.bot`, let the agent fetch unauthenticated sub-resources to
+   triangulate the real base URL + env-var name + transport, then draft Issues
+   and PRs from confirmed facts. Alternative: **(b)** ship Issues with the
+   open-questions section populated and let upstream maintainers answer in
+   thread; iterate PR after.
+
+Until both have a confirmed answer, the upstream execution steps remain
+explicitly **BACKLOG — blocked on user authorization**.
+
+---
+
+## 6. What's on disk already
+
+| Artifact                                      | Status                  | Location                                |
+|-----------------------------------------------|-------------------------|-----------------------------------------|
+| `forgecode` clean clone, branch + worktree    | ✅ Done, verified        | `C:\Users\koosh\_tmp_cp\forgecode-clinepass` |
+| `omniroute` clean clone, branch + worktree    | ✅ Done, verified        | `C:\Users\koosh\_tmp_cp\omniroute-clinepass`  |
+| Forks remoted with `upstream`                 | ✅ Done, verified        | `KooshaPari/forgecode`, `KooshaPari/OmniRoute` |
+| Source-code edits                             | ❌ Not started           | (respecting the gate in §5)             |
+| Forgecode Issue on `tailcallhq/forgecode`     | ❌ Blocked (§5)          | —                                       |
+| Omniroute Issue on `diegosouzapw/omniroute`   | ❌ Blocked (§5)          | —                                       |
+| PRs (drafts) on either repo                   | ❌ Blocked (§5)          | —                                       |
+
+---
+
+## 7. Open-question tracking table
+
+Tracked explicitly so the design does not drift from the spec.
+
+| # | Question | Source of eventual answer | Default in PR diff until answered? |
+|---|----------|----------------------------|-----------------------------------:|
+| 1 | ClinePass base URL                | `app.cline.bot` after auth ok | Yes — `<pending-ClinePass-endpoint>` |
+| 2 | API key env-var name              | upstream docs / `app.cline.bot` API-keys page | Yes — `CLINEPASS_API_KEY` |
+| 3 | Wire protocol (compat shape)      | inspection of first response to (1)+(2) | Yes — OpenAI-compat (most permissive) |
+| 4 | Model-id namespace                | "models" listing on the provider | Yes — passthrough where possible |
+| 5 | Interchangeability IDE-key vs agent-key | `app.cline.bot` agent-key settings | Yes — assume separation, document it |
+
+---
+
+## 8. Failure modes
+
+- **Failure A — base URL is not OpenAI-compat:** the forgecode `OpenAI` routing
+  assumption fails. Effort climbs MEDIUM-HIGH in forgecode (new
+  `ProviderResponse` variant + `*ResponseRepository`). The Issue's
+  open-questions section surfaces this so it is caught before code review
+  starts.
+- **Failure B — `check-provider-consistency.ts` flags the omniroute entry:**
+  the dual-source covenant between catalog and registry is unfixable from a
+  single PR; the PR will fail CI locally before it is pushed. Mitigation: the
+  PR opens both files together in one commit.
+- **Failure C — Cline Inc. patents/trademark objections to provider id
+  `cline_pass`:** reroute id to a non-trademark namespace (`cp_*` or
+  `clinepass` unhyphenated per omniroute's existing `cline` OAuth entry);
+  the open-questions section gives maintainers a chance to surface this
+  *before* code lands.
+
+---
+
+## 9. Spec self-review (per the brainstorming-skill checklist)
+
+- **Placeholder scan:** the only "TBD" markers are §5 gating questions and §7
+  open questions — both intentional and labeled.
+- **Internal consistency:** §3 evidence map lines up with §4 PR-diff scope.
+- **Scope check:** two repos, each with the same two-artifact pattern; that is
+  one triage, not a decomposition problem.
+- **Ambiguity check:** the term "first-class support" in the Issue title is
+  linked to §4's specific file lists; insufficient context for misinterpretation.
+
+Design spec clears its own self-review. **No code yet — per the gate above.**

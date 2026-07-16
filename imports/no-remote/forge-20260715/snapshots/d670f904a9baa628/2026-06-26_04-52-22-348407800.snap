@@ -1,0 +1,48 @@
+@echo off
+setlocal
+set "CARGO_HOME=E:\Dev\.cargo"
+set "CARGO_TARGET_DIR=E:\civis-target"
+set "PATH=E:\Dev\.cargo\bin;%SystemRoot%\system32;%SystemRoot%;%SystemRoot%\System32\Wbem;%PATH%"
+cd /d "C:\Users\koosh\.claude\lanes\substrate-feat-cloud-dispatch"
+
+set MAX_ATTEMPTS=10
+set ATTEMPT=0
+
+:retry
+set /a ATTEMPT=ATTEMPT+1
+
+:: Kill competing cargo/rustc processes that hold the lock
+taskkill /F /IM cargo.exe >nul 2>&1
+taskkill /F /IM rustc.exe >nul 2>&1
+del "E:\Dev\.cargo\.package-cache" 2>nul
+del "E:\Dev\.cargo\.package-cache-mutate" 2>nul
+
+:: Launch clippy
+::: Launch clippy with header timestamp
+echo [CLIPPY_STARTED at %DATE% %TIME%] by run_clippy.cmd on %COMPUTERNAME% > cargo_clippy_output_final.txt
+echo CARGO_HOME=%CARGO_HOME% >> cargo_clippy_output_final.txt
+echo PATH=%PATH% >> cargo_clippy_output_final.txt
+cargo clippy --all-targets --all-features -- -D warnings >> cargo_clippy_output_final.txt 2>&1
+
+:: If success, we're done
+if "%EXIT_CODE%"=="0" (
+    echo EXIT_CODE=%EXIT_CODE% >> cargo_clippy_output_final.txt
+    echo FINISHED >> cargo_clippy_output_final.txt
+    exit /b 0
+)
+
+:: Check if lock contention was the cause
+findstr /C:"lock" cargo_clippy_output_final.txt >nul 2>&1
+set WAS_LOCK=%ERRORLEVEL%
+
+if "%WAS_LOCK%"=="0" (
+    if "%ATTEMPT%" LSS "%MAX_ATTEMPTS%" (
+        timeout /t 5 /nobreak >nul
+        goto retry
+    )
+)
+
+:: Non-lock failure or out of retries
+echo EXIT_CODE=%EXIT_CODE% >> cargo_clippy_output_final.txt
+echo FINISHED >> cargo_clippy_output_final.txt
+exit /b %EXIT_CODE%

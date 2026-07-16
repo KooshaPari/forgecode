@@ -1,0 +1,59 @@
+//! Integration tests for the TracingCompat shim.
+#![cfg(feature = "tracing-0-2-compat")]
+
+use pheno_tracing::adapters::VecSpanSink;
+use pheno_tracing::compat::{CompatEvent, TracingCompat};
+use pheno_tracing::port::SpanKind;
+use std::collections::BTreeMap;
+
+#[test]
+fn compat_emit_span_signature() {
+    let sink = VecSpanSink::new();
+    let mut compat = TracingCompat::new(sink);
+    // signature: (name, kind, started_at_ns, ended_at_ns, fields)
+    compat.emit_span("op-1", SpanKind::Server, 1, 0, BTreeMap::new());
+    compat.emit_span("op-2", SpanKind::Client, 2, 1, BTreeMap::new());
+    // signature accepts (name, kind, ended_at_ns, started_at_ns, fields) too
+    compat.emit_span("op-3", SpanKind::Internal, 0, 1, BTreeMap::new());
+}
+
+#[test]
+fn compat_emit_event_takes_value() {
+    let sink = VecSpanSink::new();
+    let mut compat = TracingCompat::new(sink);
+    let e = CompatEvent {
+        target: "test".into(),
+        message: "hi".into(),
+        fields: BTreeMap::new(),
+    };
+    compat.emit_event(e);
+}
+
+#[test]
+fn compat_into_inner_returns_sink() {
+    let sink = VecSpanSink::new();
+    let compat = TracingCompat::new(sink);
+    let _inner = compat.into_inner();
+}
+#[test]
+fn tracing_compat_emit_span_uses_sink() {
+    let mut compat = TracingCompat::new(VecSpanSink::default());
+    compat.emit_span("op-1", SpanKind::Server, BTreeMap::new(), 0, 1);
+    compat.emit_span("op-2", SpanKind::Client, BTreeMap::new(), 1, 2);
+    // Internal sink should have recorded both.
+    let snap = compat.sink().snapshot();
+    assert_eq!(snap.len(), 2);
+    assert_eq!(snap[0].name, "op-1");
+    assert_eq!(snap[1].name, "op-2");
+}
+
+#[test]
+fn tracing_compat_emit_event_does_not_panic() {
+    let mut compat = TracingCompat::new(VecSpanSink::default());
+    let e = CompatEvent {
+        target: "t".to_string(),
+        message: "m".to_string(),
+        fields: BTreeMap::new(),
+    };
+    compat.emit_event(&e);
+}

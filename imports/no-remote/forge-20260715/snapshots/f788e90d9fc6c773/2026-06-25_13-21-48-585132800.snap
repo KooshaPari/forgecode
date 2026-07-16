@@ -1,0 +1,40 @@
+## Summary
+Add YAML/JSON serde-based round-trip serialization for the DAG schema, enabling portable DAG interchange via YAML and JSON formats.
+
+## Context
+This implements unit F4 of epic_F (DAG foundation + automation). The byteport-dag crate already provides core DAG types (`Dag<K>`, `Node<K>`, `Edge`) with topological sort and validation. This PR adds serialization support so DAGs can be exported/imported using standard YAML and JSON formats — critical for config-driven pipeline definitions, persistence, and cross-service DAG handoff.
+
+## Changes
+- **`crates/byteport-dag/Cargo.toml`** — added `serde`, `serde_yaml`, `serde_json` dependencies
+- **`Cargo.toml`** — added `crates/byteport-dag` to workspace members
+- **`crates/byteport-dag/src/serialize.rs`** — new serialization module with:
+  - `#[derive(Serialize, Deserialize)]` on all DAG types (`Dag`, `Node`, `Edge`)
+  - `dag.to_yaml()` / `Dag::from_yaml()` for YAML round-trip
+  - `dag.to_json()` / `Dag::from_json()` for JSON round-trip
+  - Portable `DagSchema<K>` and `DagDocument<K>` types for clean serialization output
+  - Full validation on deserialization: rejects self-loops, dangling node references, duplicate edges
+- **`crates/byteport-dag/src/lib.rs`** — exposed `serialize` module and re-exported convenience methods
+
+### Key Implementation Details
+- Uses a flat `DagSchema<K>` as the serialization intermediary with `nodes` (map) and `edges` (array) at the top level
+- Validates structural invariants during deserialization: every edge's source/target must reference an existing node, no self-loops, no duplicate edges
+- Tests cover: basic round-trip, empty DAG, single node, complex topologies, self-loop rejection, dangling reference rejection, duplicate edge rejection, interop (JSON → YAML), and large DAGs
+
+## Use Cases
+- Define pipeline DAGs as YAML configuration files loaded at startup
+- Debug and visualize DAG structures by exporting to JSON for tooling
+- Persist DAG state across service restarts
+- Cross-service DAG handoff via JSON API payloads
+
+## Testing
+```bash
+# Run all DAG tests
+cargo test -p byteport-dag
+
+# Expected: all 32 unit tests + 2 doc-tests passing (34 total)
+```
+
+## Links
+- Epic: epic_F — DAG foundation + automation
+- Unit: F4 — serialization (YAML/JSON round-trip)
+- Area: compute-infra

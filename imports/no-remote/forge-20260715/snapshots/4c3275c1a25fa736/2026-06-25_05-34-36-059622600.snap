@@ -1,0 +1,228 @@
+/**
+ * Resource attribute builder for OmniRoute's OpenTelemetry telemetry.
+ *
+ * `resource.ts` produces the `Resource` (set of `service.*` and `host.*`
+ * attributes) attached to every exported span/metric/log. The function is
+ * pure (no I/O) so it can be exercised by unit tests deterministically; the
+ * caller is responsible for the actual lookup of dynamic values (hostname,
+ * process PID, uptime) and passing them in.
+ *
+ * Spec: https://opentelemetry.io/docs/specs/otel/resource/data-model/
+ *
+ * @module observability/resource
+ */
+
+import { SPAN_ATTRS } from "./spanTypes.ts";
+
+/** Inputs accepted by `buildResource`. Everything is optional. */
+export interface ResourceInputs {
+  /** Logical service name. Defaults to "omniroute". */
+  serviceName?: string;
+  /** Service namespace (e.g. "gateway", "router"). */
+  serviceNamespace?: string;
+  /** Service version (e.g. "3.8.34"). */
+  serviceVersion?: string;
+  /** Deployment environment ("production", "staging", "ci"). */
+  deploymentEnvironment?: string;
+  /** Container / pod / instance id. */
+  serviceInstanceId?: string;
+  /** Process pid (defaults to current). */
+  pid?: number;
+  /** Process start time in epoch seconds (defaults to current). */
+  startTimeEpoch?: number;
+  /** Host hostname. */
+  hostname?: string;
+  /** Host architecture (e.g. "x64"). */
+  hostArch?: string;
+  /** Operating system (e.g. "linux", "darwin"). */
+  hostOs?: string;
+  /** Free-form telemetry SDK info (e.g. "omniroute/3.8.34 otel/0.50.0"). */
+  telemetrySdkInfo?: string;
+  /** Extra, application-specific attributes. */
+  extra?: Record<string, string | number | boolean>;
+}
+
+const RESERVED_KEYS = new Set([
+  SPAN_ATTRS.PROCESS_PID,
+]);
+
+/**
+ * Build a flat attribute map suitable for `Resource.default().merge(...)` or
+ * for the `OTEL_RESOURCE_ATTRIBUTES` env var.
+ *
+ * @param inputs - Optional overrides; defaults fill in environment-aware values.
+ * @returns A `Record<string, string|number|boolean>` of resource attributes.
+ */
+export function buildResource(inputs: ResourceInputs = {}): Record<string, string | number | boolean> {
+  const pid = inputs.pid ?? safeCurrentPid();
+  const start = inputs.startTimeEpoch ?? Math.floor(Date.now() / 1000);
+  const hostname = inputs.hostname ?? safeHostname();
+  // Resolve service name from OTEL_SERVICE_NAME first (matches OTel SDK
+  // convention), then the explicit override, then "omniroute".
+  const envServiceName = process.env.OTEL_SERVICE_NAME?.trim();
+  const envServiceVersion =
+    process.env.OMNIROUTE_SERVICE_VERSION?.trim() ||
+    process.env.OMNIROUTE_VERSION?.trim() ||
+    process.env.npm_package_version?.trim();
+  const envDeployment = process.env.OMNIROUTE_DEPLOYMENT_ENV?.trim() || process.env.NODE_ENV?.trim();
+
+  const out: Record<string, string | number | boolean> = {
+    "service.name": inputs.serviceName ?? envServiceName ?? "omniroute",
+    "service.version": inputs.serviceVersion ?? envServiceVersion ?? "0.0.0",
+    "service.instance.id": inputs.serviceInstanceId ?? `pid-${pid}`,
+    "process.pid": pid,
+    "process.start_time": start,
+    "host.name": hostname,
+    "telemetry.sdk.language": "nodejs",
+    "telemetry.sdk.name": "omniroute-observability",
+  };
+  if (inputs.serviceNamespace) out["service.namespace"] = inputs.serviceNamespace;
+  const deployment = inputs.deploymentEnvironment ?? envDeployment;
+  if (deployment) out["deployment.environment"] = resolveEnvironment(deployment) ?? deployment;
+  if (inputs.hostArch) out["host.arch"] = inputs.hostArch;
+  if (inputs.hostOs) out["host.os"] = inputs.hostOs;
+  if (inputs.telemetrySdkInfo) out["telemetry.sdk.info"] = inputs.telemetrySdkInfo;
+  if (inputs.extra) {
+    for (const [k, v] of Object.entries(inputs.extra)) {
+      if (RESERVED_KEYS.has(k)) continue;
+      if (v === undefined || v === null) continue;
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/**
+ * Encode a resource attribute map into the `key1=value1,key2=value2` form
+ * required by the `OTEL_RESOURCE_ATTRIBUTES` environment variable.
+ *
+ * Values containing `,` or `=` are percent-encoded (`%2C`, `%3D`).
+ *
+ * @param resource - The attribute map produced by `buildResource`.
+ * @returns The encoded string.
+ */
+export function encodeResourceEnv(resource: Record<string, string | number | boolean>): string {
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(resource)) {
+    const val = String(v).replace(/%/g, "%25").replace(/=/g, "%3D").replace(/,/g, "%2C");
+    parts.push(`${k}=${val}`);
+  }
+  return parts.join(",");
+}
+
+/**
+ * Decode the inverse of `encodeResourceEnv`. Tolerates malformed entries
+ * (skips them) — useful when reading the env var back at runtime.
+ *
+ * @param encoded - The encoded string.
+ * @returns A flat attribute map.
+ */
+export function decodeResourceEnv(encoded: string | undefined | null): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!encoded) return out;
+  for (const part of encoded.split(",")) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    const key = part.slice(0, eq).trim();
+    const val = part
+      .slice(eq + 1)
+      .replace(/%2C/gi, ",")
+      .replace(/%3D/gi, "=")
+      .replace(/%25/g, "%");
+    if (key) out[key] = val;
+  }
+  return out;
+}
+
+/**
+ * Lightweight runtime resolver for the `service.version` string. Reads from
+ * `OMNIROUTE_VERSION` first, then `npm_package_version`, then falls back to
+ * the supplied default. Centralized so tests can stub the env once.
+ */
+export function resolveServiceVersion(defaultVersion = "0.0.0"): string {
+  const fromEnv = process.env.OMNIROUTE_VERSION;
+  if (fromEnv && fromEnv.trim() !== "") return fromEnv.trim();
+  const fromPkg = process.env.npm_package_version;
+  if (fromPkg && fromPkg.trim() !== "") return fromPkg.trim();
+  return defaultVersion;
+}
+
+/**
+ * Determine the deployment environment. Recognized aliases: "prod" → "production",
+ * "dev" → "development". Anything else is passed through verbatim.
+ */
+export function resolveEnvironment(raw: string | undefined | null): string | undefined {
+  if (!raw) return undefined;
+  const t = raw.trim().toLowerCase();
+  if (t === "") return undefined;
+  if (t === "prod") return "production";
+  if (t === "dev") return "development";
+  if (t === "stage" || t === "stg") return "staging";
+  return t;
+}
+
+/**
+ * Safe wrapper around `process.pid` — always returns a number, even in a
+ * non-Node test environment.
+ */
+function safeCurrentPid(): number {
+  if (typeof process !== "undefined" && typeof process.pid === "number" && process.pid > 0) {
+    return process.pid;
+  }
+  return 0;
+}
+
+/** Safe hostname reader. Returns "unknown" when no hostname can be resolved. */
+function safeHostname(): string {
+  try {
+    if (typeof process !== "undefined") {
+      const os = (process as unknown as { hostname?: () => string }).hostname;
+      if (typeof os === "function") {
+        const h = os();
+        if (h) return h;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return "unknown";
+}
+
+/**
+ * Read the canonical service name from env (with fallback to default).
+ * Convenience accessor — equivalent to `buildResource().["service.name"]`.
+ */
+export function getServiceName(): string {
+  return process.env.OTEL_SERVICE_NAME?.trim() || "omniroute";
+}
+
+/**
+ * Read the canonical service version from env (with fallback). Resolves
+ * `OMNIROUTE_VERSION` / `npm_package_version` / explicit override.
+ */
+export function getServiceVersion(): string {
+  return resolveServiceVersion();
+}
+
+/**
+ * Read the canonical deployment environment from env. Resolves common
+ * aliases (prod → production, dev → development) and falls back to the
+ * `NODE_ENV` value when unset.
+ */
+export function getDeploymentEnvironment(): string {
+  const raw = process.env.OMNIROUTE_DEPLOYMENT_ENV ?? process.env.NODE_ENV ?? "development";
+  return resolveEnvironment(raw) ?? "development";
+}
+
+/**
+ * Pre-computed default resource snapshot — matches the resource that
+ * `initTelemetry()` attaches when no overrides are passed. Useful for
+ * dashboards and tests that need a stable snapshot.
+ */
+export const DEFAULT_RESOURCE: Record<string, string | number | boolean> = Object.freeze({
+  ...buildResource({
+    serviceName: getServiceName(),
+    serviceVersion: getServiceVersion(),
+    deploymentEnvironment: getDeploymentEnvironment(),
+  }),
+});

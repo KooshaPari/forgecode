@@ -1,0 +1,141 @@
+name: ci
+
+on:
+  push:
+    branches: [main, fix/**, feat/**, chore/**]
+  pull_request:
+    branches: [main]
+
+# Tier-1 PR gate enforcement (B32)
+# All jobs below are required checks for merging to main.
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: cargo check (ubuntu-latest, stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: iac -> target
+      - name: cargo fmt --check
+        working-directory: iac
+        run: cargo fmt --all -- --check
+      - name: cargo build --workspace
+        working-directory: iac
+        run: cargo build --workspace --locked
+      - name: cargo clippy --workspace --all-targets -- -D warnings
+        working-directory: iac
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    name: cargo test (ubuntu-latest, stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: iac -> target
+      - name: cargo test --workspace
+      - name: cargo test --workspace
+        working-directory: iac
+        run: cargo test --workspace --locked --all-features
+
+  # ── Coverage gate (Tier-2, ADR-040) ─────────────────────────
+  coverage:
+    name: Tier-2 coverage gate (iac ≥60%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: iac -> target
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin --locked
+      - name: Run coverage gate (iac workspace, ≥60%)
+        working-directory: iac
+        run: cargo tarpaulin --workspace --fail-under 60 --out Xml --out Json --engine llvm
+
+  # ── Tier-1 gate ──────────────────────────────────────────────
+  tier1:
+    name: Tier-1 gate (deny + audit + secrets + license)
+    runs-on: ubuntu-latest
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 1. Cargo deny — full check (advisories, licenses, bans, sources)
+      - name: cargo deny check
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          manifest-path: iac/Cargo.toml
+
+      # 2. Cargo audit — known vulnerabilities
+      - name: cargo audit
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # 3. Trufflehog — secrets scan
+      - name: Trufflehog secrets scan
+        uses: trufflesecurity/trufflehog@v3.95.6
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+
+      # 4. License file check
+      - name: License file check
+        run: |
+          for f in LICENSE LICENSE-APACHE LICENSE-MIT; do
+            if [ ! -f "$f" ]; then
+              echo "::error file=$f::Missing required license file: $f"
+              exit 1
+            fi
+            echo "[PASS] $f present"
+          done
+
+      # 5. Changelog check
+      - name: Changelog check
+        run: |
+          if [ ! -f CHANGELOG.md ]; then
+            echo "::error file=CHANGELOG.md::Missing CHANGELOG.md"
+            exit 1
+          fi
+          HEADER=$(head -1 CHANGELOG.md)
+          if [ "$HEADER" != "# Changelog" ]; then
+            echo "::error file=CHANGELOG.md::CHANGELOG.md must start with '# Changelog'"
+            exit 1
+          fi
+          if ! grep -q '^## \[Unreleased\]' CHANGELOG.md; then
+            echo "::error file=CHANGELOG.md::CHANGELOG.md must contain '## [Unreleased]' section"
+            exit 1
+          fi
+          echo "[PASS] CHANGELOG.md format valid"
+
+  # ── macOS build (Tier-1 cross-platform) ─────────────────────
+  macos:
+    name: cargo check (macos-latest, stable)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: iac -> target
+      - name: cargo build --workspace
+        working-directory: iac
+        run: cargo build --workspace --locked

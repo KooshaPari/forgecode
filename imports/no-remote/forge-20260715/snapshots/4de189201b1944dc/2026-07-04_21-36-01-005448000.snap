@@ -1,0 +1,362 @@
+#!/usr/bin/env python3
+# branch_inventory.py
+# ----------------------------------------------------------------------------
+# Auto-derive the registry's audit candidate list from the GitHub public API.
+#
+# This module replaces the manual `_find_audit_candidates.py` stub that lives
+# in `phenotype-registry/`. The manual script scans the local
+# `registry/disposition-index.json` for rows whose `path` matches
+# `KooshaPari/*`; this module reaches out to GitHub directly and uses the
+# live repo state as the source of truth.
+#
+# WHEN TO USE THIS vs. the manual script
+# --------------------------------------
+# Use this module (`bin/branch_inventory.py`):
+#   * When you want a fresh, live snapshot of the org (e.g. weekly refresh).
+#   * When a repo was just created or archived on GitHub and the local
+#     disposition index is stale.
+#   * When onboarding a new release stream / package — the auto-derived
+#     list surfaces "orphans" the registry hasn't classified yet.
+#
+# Keep the manual script (`_find_audit_candidates.py`):
+#   * When you need a deterministic diff against a checked-in disposition
+#     index for offline reproducibility.
+#   * When you want to exercise a specific subset (already audited set is
+#     hard-coded in the manual script).
+#
+# The orchestrator (`bin/absorption-justification.py --refresh-inventory`)
+# writes its output to the same `audit_candidates.json` path the manual
+# script produces, so downstream consumers don't need to know which source
+# filled the file last.
+#
+# RATE-LIMIT BEHAVIOR
+# -------------------
+# Unauthenticated GitHub REST API requests are limited to 60/hr per source
+# IP. We use:
+#   * `per_page=100` and manual pagination (`Link: rel="next"` header) to
+#     minimize round-trips. For ~60 repos this is one call.
+#   * A `.branch-inventory-cache.json` file in the working directory to
+#     avoid re-fetching on every invocation.
+#   * A graceful `RATE_LIMITED` error in the per-repo `error` field when
+#     the API returns 403/429, so the orchestrator can still proceed.
+#
+# CACHE TTL
+# --------
+# Default TTL is 1 hour (3600s). Override with `--cache-ttl <seconds>`.
+# Pass `--no-cache` to skip cache read/write entirely (always live fetch).
+# The cache file lives next to the script by default; pass
+# `--cache-path <file>` to relocate it.
+#
+# OUTPUT SCHEMA
+# -------------
+# Each entry is a JSON object:
+#   {
+#     "name":            "RepoName",            # short repo name
+#     "path":            "KooshaPari/RepoName", # owner/name
+#     "default_branch":  "main",
+#     "pushed_at":       "2026-06-15T18:23:11Z",
+#     "size_kb":         1234,
+#     "archived_remote": false,                 # GitHub archived flag
+#     "is_fork":         false,                 # is this a fork?
+#     "fork_parent":     null,                  # parent owner/name if fork
+#     "private":         false,
+#     "description":     "...",
+#     "stargazers":      0,
+#     "error":           null                   # error string if partial fail
+#   }
+#
+# Repos that are themselves forks AND whose parent is NOT in the target org
+# are filtered out — these are personal experiments or upstream mirrors,
+# not candidate absorptions.
+#
+# USAGE
+# -----
+#   python bin/branch_inventory.py --dry-run --org KooshaPari
+#   python bin/branch_inventory.py --org KooshaPari --out audit_candidates.json
+#   python bin/branch_inventory.py --no-cache --org KooshaPari
+#   python bin/branch_inventory.py --cache-ttl 300 --org KooshaPari
+# ----------------------------------------------------------------------------
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from typing import Any
+
+GITHUB_API_BASE = "https://api.github.com"
+DEFAULT_ORG = "KooshaPari"
+DEFAULT_CACHE_FILENAME = ".branch-inventory-cache.json"
+DEFAULT_CACHE_TTL_SECONDS = 3600  # 1 hour
+USER_AGENT = "phenotype-tooling/branch_inventory.py"
+
+
+class GitHubError(Exception):
+    """Raised on non-2xx GitHub API responses."""
+
+
+def _http_get_json(url: str, timeout: int = 30) -> tuple[Any, dict]:
+    """GET a GitHub API URL and return (parsed_json, response_headers).
+
+    Raises GitHubError on non-2xx. Caller is responsible for pagination
+    via the `Link` header.
+    """
+    req = urllib.request.Request(url, headers={
+        "Accept": "application/vnd.github+json",
+        "User-Agent": USER_AGENT,
+        "X-GitHub-Api-Version": "2022-11-28",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+            headers = {k: v for k, v in resp.getheaders()}
+            try:
+                return json.loads(raw.decode("utf-8")), headers
+            except json.JSONDecodeError:
+                raise GitHubError(f"non-JSON response from {url}")
+    except urllib.error.HTTPError as exc:
+        # Capture rate-limit headers on 403/429 so the caller can decide.
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", errors="replace")[:500]
+        except Exception:
+            pass
+        raise GitHubError(f"HTTP {exc.code} {exc.reason} for {url}: {body}")
+    except urllib.error.URLError as exc:
+        raise GitHubError(f"URL error for {url}: {exc.reason}")
+
+
+def _next_link(headers: dict) -> str | None:
+    """Parse the GitHub `Link` header for rel="next" URL, if present."""
+    link = headers.get("Link") or headers.get("link")
+    if not link:
+        return None
+    for part in link.split(","):
+        section = part.strip()
+        if 'rel="next"' in section:
+            url_part = section.split(";")[0].strip()
+            if url_part.startswith("<") and url_part.endswith(">"):
+                return url_part[1:-1]
+    return None
+
+
+def list_org_repos(org: str, per_page: int = 100) -> list[dict]:
+    """List all public repos in the org. Stops at archived=false filter
+    is applied by the caller — we fetch both archived and non-archived
+    so the caller can choose.
+
+    Raises GitHubError on rate-limit or transport errors.
+    """
+    url = f"{GITHUB_API_BASE}/orgs/{org}/repos?per_page={per_page}&type=public"
+    all_repos: list[dict] = []
+    page_count = 0
+    max_pages = 20  # 20*100 = 2000 repos is more than enough for our org
+    while url and page_count < max_pages:
+        data, headers = _http_get_json(url)
+        if not isinstance(data, list):
+            raise GitHubError(f"expected JSON array, got {type(data).__name__}")
+        all_repos.extend(data)
+        page_count += 1
+        url = _next_link(headers)
+    return all_repos
+
+
+def normalize_repo(raw: dict, org: str) -> dict:
+    """Convert a raw GitHub repo object to our canonical schema."""
+    owner = (raw.get("owner") or {}).get("login") or org
+    name = raw.get("name") or "?"
+    parent = raw.get("parent") or raw.get("source") or {}
+    parent_full = None
+    if parent:
+        p_owner = (parent.get("owner") or {}).get("login")
+        p_name = parent.get("name")
+        if p_owner and p_name:
+            parent_full = f"{p_owner}/{p_name}"
+    return {
+        "name": name,
+        "path": f"{owner}/{name}",
+        "default_branch": raw.get("default_branch") or "main",
+        "pushed_at": raw.get("pushed_at"),
+        "size_kb": raw.get("size", 0) or 0,
+        "archived_remote": bool(raw.get("archived", False)),
+        "is_fork": bool(raw.get("fork", False)),
+        "fork_parent": parent_full,
+        "private": bool(raw.get("private", False)),
+        "description": raw.get("description") or "",
+        "stargazers": raw.get("stargazers_count", 0) or 0,
+        "error": None,
+    }
+
+
+def filter_candidates(repos: list[dict], org: str) -> list[dict]:
+    """Apply candidate filters:
+       - drop archived repos (we only want active targets)
+       - drop forks whose parent is NOT in the same org (third-party mirrors)
+       - keep forks whose parent IS in the org (intra-org mirrors)
+    """
+    out: list[dict] = []
+    for r in repos:
+        if r["archived_remote"]:
+            continue
+        if r["is_fork"]:
+            parent = r["fork_parent"] or ""
+            parent_owner = parent.split("/")[0] if "/" in parent else ""
+            if parent_owner.lower() != org.lower():
+                continue
+        out.append(r)
+    return out
+
+
+def load_cache(cache_path: str, ttl_seconds: int) -> dict | None:
+    """Return cached payload if it exists and is fresh, else None."""
+    if not cache_path or not os.path.exists(cache_path):
+        return None
+    try:
+        with open(cache_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        fetched_at = float(data.get("fetched_at", 0))
+        if (time.time() - fetched_at) > ttl_seconds:
+            return None
+        return data
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+
+
+def save_cache(cache_path: str, org: str, repos: list[dict]) -> None:
+    """Persist the inventory to disk for the next invocation."""
+    if not cache_path:
+        return
+    payload = {
+        "fetched_at": time.time(),
+        "org": org,
+        "count": len(repos),
+        "repos": repos,
+    }
+    try:
+        with open(cache_path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, sort_keys=False)
+            fh.write("\n")
+    except OSError as exc:
+        sys.stderr.write(f"[branch_inventory][WARN] could not write cache {cache_path}: {exc}\n")
+
+
+def build_inventory(org: str, use_cache: bool, cache_path: str,
+                    cache_ttl: int, dry_run: bool) -> list[dict]:
+    """Top-level: return the list of normalized candidate dicts."""
+    if use_cache and not dry_run:
+        cached = load_cache(cache_path, cache_ttl)
+        if cached and cached.get("org") == org:
+            sys.stderr.write(
+                f"[branch_inventory] using cache {cache_path} "
+                f"(age={int(time.time() - cached.get('fetched_at', 0))}s, "
+                f"count={cached.get('count', 0)})\n"
+            )
+            return cached.get("repos", [])
+
+    if dry_run:
+        sys.stderr.write(
+            f"[branch_inventory][DRY-RUN] would GET "
+            f"{GITHUB_API_BASE}/orgs/{org}/repos?per_page=100\n"
+        )
+        return [{
+            "name": "<dry-run>",
+            "path": f"{org}/<dry-run>",
+            "default_branch": "main",
+            "pushed_at": None,
+            "size_kb": 0,
+            "archived_remote": False,
+            "is_fork": False,
+            "fork_parent": None,
+            "private": False,
+            "description": "dry-run placeholder; no API call was made",
+            "stargazers": 0,
+            "error": None,
+        }]
+
+    try:
+        raw = list_org_repos(org)
+    except GitHubError as exc:
+        sys.stderr.write(f"[branch_inventory][ERROR] GitHub API call failed: {exc}\n")
+        # Return an empty list with a single error marker so the orchestrator
+        # can still proceed and report failure downstream.
+        return [{
+            "name": "<api-error>",
+            "path": f"{org}/<api-error>",
+            "default_branch": "main",
+            "pushed_at": None,
+            "size_kb": 0,
+            "archived_remote": False,
+            "is_fork": False,
+            "fork_parent": None,
+            "private": False,
+            "description": "",
+            "stargazers": 0,
+            "error": str(exc),
+        }]
+
+    normalized = [normalize_repo(r, org) for r in raw]
+    candidates = filter_candidates(normalized, org)
+    save_cache(cache_path, org, candidates)
+    return candidates
+
+
+def write_candidates(out_path: str, repos: list[dict]) -> str:
+    """Write the inventory as JSON array to out_path.
+
+    Returns the path written. Also accepts `--out -` to mean stdout.
+    """
+    if out_path == "-":
+        sys.stdout.write(json.dumps(repos, indent=2, sort_keys=False))
+        sys.stdout.write("\n")
+        return "-"
+    parent = os.path.dirname(os.path.abspath(out_path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as fh:
+        json.dump(repos, fh, indent=2, sort_keys=False)
+        fh.write("\n")
+    return out_path
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(
+        description="Auto-derive audit candidate list from GitHub public API.",
+    )
+    p.add_argument("--org", default=DEFAULT_ORG,
+                   help=f"GitHub org to scan (default: {DEFAULT_ORG})")
+    p.add_argument("--out", default="-",
+                   help="output path for JSON (default: stdout)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="do not call GitHub API; print a placeholder row")
+    p.add_argument("--no-cache", dest="use_cache", action="store_false",
+                   help="skip cache read/write (always live fetch)")
+    p.add_argument("--cache-path", default=DEFAULT_CACHE_FILENAME,
+                   help=f"cache file path (default: {DEFAULT_CACHE_FILENAME})")
+    p.add_argument("--cache-ttl", type=int, default=DEFAULT_CACHE_TTL_SECONDS,
+                   help=f"cache TTL in seconds (default: {DEFAULT_CACHE_TTL_SECONDS})")
+    args = p.parse_args(argv)
+
+    repos = build_inventory(
+        org=args.org,
+        use_cache=args.use_cache,
+        cache_path=args.cache_path,
+        cache_ttl=args.cache_ttl,
+        dry_run=args.dry_run,
+    )
+
+    written = write_candidates(args.out, repos)
+    if written != "-":
+        sys.stderr.write(
+            f"[branch_inventory] wrote {len(repos)} candidate(s) to {written}\n"
+        )
+    else:
+        sys.stderr.write(f"[branch_inventory] printed {len(repos)} candidate(s) to stdout\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

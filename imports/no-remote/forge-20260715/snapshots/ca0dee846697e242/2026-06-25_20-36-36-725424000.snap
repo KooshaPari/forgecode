@@ -1,0 +1,18 @@
+"""Parse the gh check-runs JSON (with ANSI stripped) and print a clean table."""
+import re, json
+raw = open(r'C:\Users\koosh\_pr18_checks.json', 'rb').read()
+clean = re.sub(rb'\x1b\[[0-9;]*[a-zA-Z]', b'', raw)
+start = clean.find(b'{')
+end = clean.rfind(b'}') + 1
+d = json.loads(clean[start:end].decode('utf-8'))
+print('total check-runs:', len(d['check_runs']))
+print('---')
+for c in d['check_runs']:
+    name = c['name'][:38].ljust(40)
+    conc = str(c.get('conclusion') or 'pending')[:10].ljust(10)
+    out = c.get('output') or {}
+    title = (out.get('title') or '')[:90]
+    summary = (out.get('summary') or '')[:120]
+    print(f'{name} | {conc} | {title}')
+    if summary:
+        print('  summary: ' + summary)

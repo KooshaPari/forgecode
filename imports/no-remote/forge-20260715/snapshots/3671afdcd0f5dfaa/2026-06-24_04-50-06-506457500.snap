@@ -1,0 +1,5 @@
+$lines = Get-Content "_test_full.txt"
+$start = [Math]::Max(0, $lines.Count - 60)
+for ($i = $start; $i -lt $lines.Count; $i++) {
+  Write-Host $lines[$i]
+}

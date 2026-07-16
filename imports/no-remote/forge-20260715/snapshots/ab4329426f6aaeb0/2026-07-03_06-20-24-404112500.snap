@@ -1,0 +1,10 @@
+[package]
+name = "nvms-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "C-FFI surface for nanovms-core (used by PhenoCompose and BytePort per B9/B10)."
+
+[dependencies]
+nanovms-core = { path = "../nanovms-core" }
+anyhow.workspace = true

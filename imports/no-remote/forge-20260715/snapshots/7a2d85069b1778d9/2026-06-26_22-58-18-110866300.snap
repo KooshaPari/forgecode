@@ -1,0 +1,37 @@
+@echo off
+REM omniroute-dev.cmd - shim that runs the user's fork at C:\Users\koosh\OmniRoute-fresh
+REM Isolated DATA_DIR so it doesn't collide with the deployed `omniroute` instance
+
+setlocal
+set "OMNIROUTE_DATA_DIR=C:\Users\koosh\omniroute-dev-data"
+set "OMNIROUTE_LOG_DIR=C:\Users\koosh\omniroute-dev-data\logs"
+set "OMNIROUTE_PROMPT_CACHE_KEY_FINGERPRINT=1"
+set "RATE_LIMIT_MAX_WAIT_MS=10000"
+set "OMNIROUTE_DISABLE_LIVE_WS_BRIDGE_WARN=true"
+
+if not exist "%OMNIROUTE_DATA_DIR%" mkdir "%OMNIROUTE_DATA_DIR%"
+if not exist "%OMNIROUTE_LOG_DIR%" mkdir "%OMNIROUTE_LOG_DIR%"
+
+REM Load host env if present (OMNIROUTE_* keys, ENCRYPTION_KEY, API_KEYs)
+if exist "C:\Users\koosh\.omniroute\.env" (
+  for /f "usebackq tokens=1,* delims==" %%A in ("C:\Users\koosh\.omniroute\.env") do (
+    if not "%%A"=="" if not "%%A:~0,1"=="#" set "%%A=%%B"
+  )
+)
+
+REM Locate node.exe
+where node >nul 2>nul
+if errorlevel 1 (
+  if exist "C:\Program Files\nodejs\node.exe" (
+    set "NODE_EXE=C:\Program Files\nodejs\node.exe"
+  ) else (
+    echo [omniroute-dev] FATAL: node.exe not found in PATH or at C:\Program Files\nodejs
+    exit /b 1
+  )
+) else (
+  for /f "delims=" %%N in ('where node') do set "NODE_EXE=%%N" & goto :got_node
+)
+:got_node
+
+"%NODE_EXE%" --max-old-space-size=16384 "C:\Users\koosh\OmniRoute-fresh\bin\omniroute.mjs" %*
+endlocal & exit /b %errorlevel%

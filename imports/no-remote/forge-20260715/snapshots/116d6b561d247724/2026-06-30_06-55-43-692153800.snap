@@ -1,0 +1,18 @@
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$ErrorActionPreference = "Continue"
+$tmp = "$env:TEMP\pr.json"
+gh api 'repos/cline/cline/pulls/11986' > $tmp 2>$null
+(Get-Content $tmp -Raw) -replace "`e\[[0-9;]*m",'' | Set-Content $tmp -Encoding utf8
+$j = Get-Content -Raw $tmp | ConvertFrom-Json
+Write-Host "TITLE: $($j.title)"
+Write-Host "STATE: $($j.state) MERGED: $($j.merged) URL: $($j.html_url)"
+Write-Host "BODY:"
+Write-Host $j.body
+Write-Host "----FILES----"
+gh api 'repos/cline/cline/pulls/11986/files?per_page=200' > "$env:TEMP\prfiles.json" 2>$null
+(Get-Content "$env:TEMP\prfiles.json" -Raw) -replace "`e\[[0-9;]*m",'' | Set-Content "$env:TEMP\prfiles.json" -Encoding utf8
+$files = Get-Content -Raw "$env:TEMP\prfiles.json" | ConvertFrom-Json
+foreach ($f in $files) {
+  Write-Host "=== $($f.filename)  +$($f.additions) -$($f.deletions) ==="
+  Write-Host $f.patch
+}

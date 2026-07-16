@@ -1,0 +1,155 @@
+/**
+ * @file tests/unit/observability/auto.test.ts
+ *
+ * Unit tests for src/lib/observability/auto.ts — telemetry auto-init:
+ *   - autoInit() returns false unless OMNIROUTE_TELEMETRY_ENABLED=true
+ *   - setProcessMetrics() is idempotent and safe to call multiple times
+ *   - shutdownTelemetry() is idempotent and safe even if never initialized
+ *
+ * Strategy: read env vars directly from `process.env` (set/restore in
+ * beforeEach/afterEach) so we never pollute the actual global env.
+ */
+import { describe, it, beforeEach, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import {
+  autoInit,
+  setProcessMetrics,
+  shutdownTelemetry,
+  isTelemetryEnabled,
+} from "../../../src/lib/observability/auto";
+
+const ENV_KEY = "OMNIROUTE_TELEMETRY_ENABLED";
+
+describe("observability.auto.autoInit", () => {
+  let original: string | undefined;
+
+  beforeEach(() => {
+    original = process.env[ENV_KEY];
+  });
+
+  afterEach(() => {
+    if (original === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = original;
+    // Always shut down between tests so process listeners don't leak.
+    shutdownTelemetry();
+  });
+
+  it("returns false when env var is unset", () => {
+    delete process.env[ENV_KEY];
+    const out = autoInit();
+    assert.equal(out, false);
+    assert.equal(isTelemetryEnabled(), false);
+  });
+
+  it("returns false when env var is 'false'", () => {
+    process.env[ENV_KEY] = "false";
+    const out = autoInit();
+    assert.equal(out, false);
+  });
+
+  it("returns false when env var is '0'", () => {
+    process.env[ENV_KEY] = "0";
+    const out = autoInit();
+    assert.equal(out, false);
+  });
+
+  it("returns false when env var is empty string", () => {
+    process.env[ENV_KEY] = "";
+    const out = autoInit();
+    assert.equal(out, false);
+  });
+
+  it("returns true when env var is 'true'", () => {
+    process.env[ENV_KEY] = "true";
+    const out = autoInit();
+    assert.equal(out, true);
+    assert.equal(isTelemetryEnabled(), true);
+  });
+
+  it("returns true when env var is '1'", () => {
+    process.env[ENV_KEY] = "1";
+    const out = autoInit();
+    assert.equal(out, true);
+  });
+
+  it("is idempotent — calling twice does not double-init", () => {
+    process.env[ENV_KEY] = "true";
+    const a = autoInit();
+    const b = autoInit();
+    assert.equal(a, true);
+    assert.equal(b, true);
+  });
+});
+
+describe("observability.auto.setProcessMetrics", () => {
+  let original: string | undefined;
+
+  beforeEach(() => {
+    original = process.env[ENV_KEY];
+  });
+
+  afterEach(() => {
+    if (original === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = original;
+    shutdownTelemetry();
+  });
+
+  it("does not throw when telemetry is disabled", () => {
+    delete process.env[ENV_KEY];
+    assert.doesNotThrow(() => setProcessMetrics());
+  });
+
+  it("does not throw when telemetry is enabled", () => {
+    process.env[ENV_KEY] = "true";
+    autoInit();
+    assert.doesNotThrow(() => setProcessMetrics());
+  });
+
+  it("is safe to call twice in a row", () => {
+    process.env[ENV_KEY] = "true";
+    autoInit();
+    assert.doesNotThrow(() => {
+      setProcessMetrics();
+      setProcessMetrics();
+    });
+  });
+});
+
+describe("observability.auto.shutdownTelemetry", () => {
+  let original: string | undefined;
+
+  beforeEach(() => {
+    original = process.env[ENV_KEY];
+  });
+
+  afterEach(() => {
+    if (original === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = original;
+  });
+
+  it("is safe to call when never initialized", () => {
+    assert.doesNotThrow(() => shutdownTelemetry());
+  });
+
+  it("flips isTelemetryEnabled() back to false", () => {
+    process.env[ENV_KEY] = "true";
+    autoInit();
+    assert.equal(isTelemetryEnabled(), true);
+    shutdownTelemetry();
+    assert.equal(isTelemetryEnabled(), false);
+  });
+
+  it("is safe to call twice", () => {
+    process.env[ENV_KEY] = "true";
+    autoInit();
+    assert.doesNotThrow(() => {
+      shutdownTelemetry();
+      shutdownTelemetry();
+    });
+  });
+
+  it("isTelemetryEnabled returns boolean type", () => {
+    const out = isTelemetryEnabled();
+    assert.equal(typeof out, "boolean");
+  });
+});

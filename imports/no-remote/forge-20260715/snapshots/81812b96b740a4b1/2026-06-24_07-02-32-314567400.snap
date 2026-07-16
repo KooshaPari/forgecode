@@ -1,0 +1,46 @@
+## Summary
+
+This PR fixes the **cargo-deny CI** workflow that has been failing on every PR touching Cargo.* since the upstream `Swatinem/rust-cache` pin was force-pushed away. It also fixes three schema-validation errors in `deny.toml` that the newer cargo-deny version rejects.
+
+## Changes
+
+### 1. `.github/workflows/cargo-deny.yml` — pin bump
+
+Bumps `Swatinem/rust-cache` from a force-pushed-away SHA to the current master tip.
+
+Before:
+```yaml
+        uses: Swatinem/rust-cache@82e0640c10b16e16b3049b531e1771638dca14eb
+```
+
+After:
+```yaml
+        uses: Swatinem/rust-cache@baf1a810e98b6a3001d0d7234864ed75a17c42fb
+```
+
+### 2. `deny.toml` — schema migration to cargo-deny v0.16+
+
+Three errors that cargo-deny v0.16+ rejects:
+
+| Line | Old | New | Why |
+|---|---|---|---|
+| 19 | `unmaintained = "warn"` | `unmaintained = "workspace"` | v0.16+ requires `all` / `workspace` / `transitive` / `none` |
+| 36-42 | `highlight = ["rustls", "openssl", ...]` | `highlight = "all"` | v0.16+ requires a string or GraphHighlight struct, not an array |
+| 83 | `[licenses.clarify]` (section) | `clarify = []` (inside [licenses]) | v0.16+ requires an array, not a separate section |
+
+## Risk
+
+Low. The new rust-cache SHA is the current `master` head of the same repo, so the action contract is unchanged. The deny.toml changes preserve the original intent of each option:
+
+- `unmaintained = "workspace"` keeps the prior "track but don't fail" semantics
+- `highlight = "all"` is a strict superset of the previous explicit list
+- `clarify = []` is empty, same as the prior commented-out section
+
+## Validation
+
+Local verification pending (cold workspace build exceeds 5-min tool budget). CI on this PR will exercise the actual `cargo-deny check --workspace` invocation.
+
+## Commits
+
+1. `a5c0685fc` — ci: bump Swatinem/rust-cache pin to current v2
+2. `06d9a9bea` — ci: fix deny.toml schema for cargo-deny v0.16+

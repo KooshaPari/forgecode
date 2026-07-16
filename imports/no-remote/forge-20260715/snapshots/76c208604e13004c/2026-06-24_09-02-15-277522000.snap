@@ -1,0 +1,328 @@
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+use kvirtual::{
+    cli::{CliRunner, CommandContext},
+    config::Config,
+    session::SessionManager,
+    tui::TuiRunner,
+    DesktopAction, ContainerAction, VmAction, RecordAction,
+    SessionAction, ConfigAction, CredAction,
+};
+
+#[derive(Parser)]
+#[command(name = "kvd")]
+#[command(about = "KVirtualDesktop - A playwright equivalent for desktop automation")]
+#[command(long_about = None)]
+#[command(version)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+
+    /// Enable verbose logging
+    #[arg(short, long)]
+    verbose: bool,
+
+    /// Configuration file path
+    #[arg(short, long)]
+    config: Option<String>,
+
+    /// Session name
+    #[arg(short, long)]
+    session: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Interactive mode with TUI
+    Interactive,
+
+    /// Execute automation scripts
+    Script {
+        /// Script file path
+        file: String,
+        /// Script arguments
+        #[arg(short, long)]
+        args: Vec<String>,
+    },
+
+    /// Desktop automation commands
+    Desktop {
+        #[command(subcommand)]
+        action: DesktopActionSub,
+    },
+
+    /// Container management
+    Container {
+        #[command(subcommand)]
+        action: ContainerActionSub,
+    },
+
+    /// VM management
+    Vm {
+        #[command(subcommand)]
+        action: VmActionSub,
+    },
+
+    /// Recording and screenshots
+    Record {
+        #[command(subcommand)]
+        action: RecordActionSub,
+    },
+
+    /// Session management
+    Session {
+        #[command(subcommand)]
+        action: SessionActionSub,
+    },
+
+    /// Configuration management
+    Config {
+        #[command(subcommand)]
+        action: ConfigActionSub,
+    },
+
+    /// Credential management
+    Creds {
+        #[command(subcommand)]
+        action: CredActionSub,
+    },
+
+    /// REPL mode
+    Repl,
+}
+
+// ─── Clap Subcommand enums (convert to kvirtual action types) ─────────────────
+
+#[derive(Subcommand)]
+enum DesktopActionSub {
+    Click { x: i32, y: i32 },
+    Type { text: String },
+    Screenshot { path: Option<String> },
+    Find { text: String },
+    Wait { selector: String, timeout: Option<u64> },
+    Drag { from_x: i32, from_y: i32, to_x: i32, to_y: i32 },
+    Keys { keys: String },
+    StartRecording { output: String },
+    StopRecording,
+}
+
+impl From<DesktopActionSub> for DesktopAction {
+    fn from(s: DesktopActionSub) -> Self {
+        match s {
+            DesktopActionSub::Click { x, y } => DesktopAction::Click { x, y },
+            DesktopActionSub::Type { text } => DesktopAction::Type { text },
+            DesktopActionSub::Screenshot { path } => DesktopAction::Screenshot { path },
+            DesktopActionSub::Find { text } => DesktopAction::Find { text },
+            DesktopActionSub::Wait { selector, timeout } => DesktopAction::Wait { selector, timeout },
+            DesktopActionSub::Drag { from_x, from_y, to_x, to_y } => DesktopAction::Drag { from_x, from_y, to_x, to_y },
+            DesktopActionSub::Keys { keys } => DesktopAction::Keys { keys },
+            DesktopActionSub::StartRecording { output } => DesktopAction::StartRecording { output },
+            DesktopActionSub::StopRecording => DesktopAction::StopRecording,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum ContainerActionSub {
+    List,
+    Create { name: String, image: String },
+    Start { name: String },
+    Stop { name: String },
+    Exec { name: String, command: String },
+    Connect { name: String },
+}
+
+impl From<ContainerActionSub> for ContainerAction {
+    fn from(s: ContainerActionSub) -> Self {
+        match s {
+            ContainerActionSub::List => ContainerAction::List,
+            ContainerActionSub::Create { name, image } => ContainerAction::Create { name, image },
+            ContainerActionSub::Start { name } => ContainerAction::Start { name },
+            ContainerActionSub::Stop { name } => ContainerAction::Stop { name },
+            ContainerActionSub::Exec { name, command } => ContainerAction::Exec { name, command },
+            ContainerActionSub::Connect { name } => ContainerAction::Connect { name },
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum VmActionSub {
+    List,
+    Create { name: String, template: String },
+    Start { name: String },
+    Stop { name: String },
+    Connect { name: String },
+    Snapshot { name: String, snapshot_name: String },
+}
+
+impl From<VmActionSub> for VmAction {
+    fn from(s: VmActionSub) -> Self {
+        match s {
+            VmActionSub::List => VmAction::List,
+            VmActionSub::Create { name, template } => VmAction::Create { name, template },
+            VmActionSub::Start { name } => VmAction::Start { name },
+            VmActionSub::Stop { name } => VmAction::Stop { name },
+            VmActionSub::Connect { name } => VmAction::Connect { name },
+            VmActionSub::Snapshot { name, snapshot_name } => VmAction::Snapshot { name, snapshot_name },
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum RecordActionSub {
+    Start { output: String },
+    Stop,
+    Screenshot { path: Option<String> },
+    Audio { output: String },
+    Tts { text: String },
+}
+
+impl From<RecordActionSub> for RecordAction {
+    fn from(s: RecordActionSub) -> Self {
+        match s {
+            RecordActionSub::Start { output } => RecordAction::Start { output },
+            RecordActionSub::Stop => RecordAction::Stop,
+            RecordActionSub::Screenshot { path } => RecordAction::Screenshot { path },
+            RecordActionSub::Audio { output } => RecordAction::Audio { output },
+            RecordActionSub::Tts { text } => RecordAction::Tts { text },
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum SessionActionSub {
+    List,
+    Create { name: String },
+    Switch { name: String },
+    Delete { name: String },
+    Save { name: Option<String> },
+    Load { name: String },
+}
+
+impl From<SessionActionSub> for SessionAction {
+    fn from(s: SessionActionSub) -> Self {
+        match s {
+            SessionActionSub::List => SessionAction::List,
+            SessionActionSub::Create { name } => SessionAction::Create { name },
+            SessionActionSub::Switch { name } => SessionAction::Switch { name },
+            SessionActionSub::Delete { name } => SessionAction::Delete { name },
+            SessionActionSub::Save { name } => SessionAction::Save { name },
+            SessionActionSub::Load { name } => SessionAction::Load { name },
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum ConfigActionSub {
+    Show,
+    Set { key: String, value: String },
+    Get { key: String },
+    Init,
+    Edit,
+}
+
+impl From<ConfigActionSub> for ConfigAction {
+    fn from(s: ConfigActionSub) -> Self {
+        match s {
+            ConfigActionSub::Show => ConfigAction::Show,
+            ConfigActionSub::Set { key, value } => ConfigAction::Set { key, value },
+            ConfigActionSub::Get { key } => ConfigAction::Get { key },
+            ConfigActionSub::Init => ConfigAction::Init,
+            ConfigActionSub::Edit => ConfigAction::Edit,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum CredActionSub {
+    Store { name: String, value: String },
+    Get { name: String },
+    List,
+    Delete { name: String },
+}
+
+impl From<CredActionSub> for CredAction {
+    fn from(s: CredActionSub) -> Self {
+        match s {
+            CredActionSub::Store { name, value } => CredAction::Store { name, value },
+            CredActionSub::Get { name } => CredAction::Get { name },
+            CredActionSub::List => CredAction::List,
+            CredActionSub::Delete { name } => CredAction::Delete { name },
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    // Initialize logging
+    if cli.verbose {
+        tracing_subscriber::fmt()
+            .with_env_filter("kvirtual=debug")
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter("kvirtual=info")
+            .init();
+    }
+
+    // Load configuration
+    let config = if let Some(config_path) = cli.config {
+        Config::load_from_file(&config_path)?
+    } else {
+        Config::load_default()?
+    };
+
+    // Initialize session manager
+    let session_manager = SessionManager::new(&config.session_dir)?;
+
+    // Create command context
+    let context = CommandContext::new(config, session_manager, cli.session);
+
+    // Execute command
+    match cli.command {
+        Commands::Interactive => {
+            let mut tui = TuiRunner::new(context);
+            tui.run().await?;
+        }
+        Commands::Repl => {
+            let mut cli_runner = CliRunner::new(context);
+            cli_runner.run_repl().await?;
+        }
+        Commands::Script { file, args } => {
+            let mut cli_runner = CliRunner::new(context);
+            cli_runner.run_script(&file, args).await?;
+        }
+        Commands::Desktop { action } => {
+            let mut cli_runner = CliRunner::new(context);
+            cli_runner.handle_desktop_action(action.into()).await?;
+        }
+        Commands::Container { action } => {
+            let mut cli_runner = CliRunner::new(context);
+            cli_runner.handle_container_action(action.into()).await?;
+        }
+        Commands::Vm { action } => {
+            let mut cli_runner = CliRunner::new(context);
+            cli_runner.handle_vm_action(action.into()).await?;
+        }
+        Commands::Record { action } => {
+            let mut cli_runner = CliRunner::new(context);
+            cli_runner.handle_record_action(action.into()).await?;
+        }
+        Commands::Session { action } => {
+            let mut cli_runner = CliRunner::new(context);
+            cli_runner.handle_session_action(action.into()).await?;
+        }
+        Commands::Config { action } => {
+            let mut cli_runner = CliRunner::new(context);
+            cli_runner.handle_config_action(action.into()).await?;
+        }
+        Commands::Creds { action } => {
+            let mut cli_runner = CliRunner::new(context);
+            cli_runner.handle_creds_action(action.into()).await?;
+        }
+    }
+
+    Ok(())
+}

@@ -1,0 +1,20 @@
+import subprocess, io
+sys_stdout = io.TextIOWrapper(subprocess.DEVNULL, encoding='utf-8', errors='replace')
+
+with open(r'C:\Users\koosh\.env') as f:
+    token = [l.strip().split('=',1)[1] for l in f if l.startswith('GITHUB_TOKEN=')][0]
+
+repos = {
+    'phenotype-infra': ('phenotype-infra', 'dag-A8-2026-06-25'),
+    'BytePort': ('BytePort', 'main'),
+    'PhenoCompose': ('PhenoCompose', 'main'),
+}
+
+for local, (remote, branch) in repos.items():
+    url = f'https://KooshaPari:{token}@github.com/KooshaPari/{remote}.git'
+    r = subprocess.run(
+        ['git', '-C', rf'C:\Users\koosh\{local}', 'push', url, f'HEAD:{branch}'],
+        capture_output=True, text=True, timeout=120
+    )
+    out = (r.stderr if r.returncode != 0 else r.stdout)
+    print(f'{local} -> {remote}/{branch}: [{"OK" if r.returncode == 0 else "FAIL"}] {out[-250:].strip()}')

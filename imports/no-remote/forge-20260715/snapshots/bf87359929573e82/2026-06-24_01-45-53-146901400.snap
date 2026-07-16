@@ -1,0 +1,29 @@
+import json, subprocess, re
+ANSI = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+
+# PR #4616 - verify comment posted
+r = subprocess.run(["gh","pr","view","4616","--repo","diegosouzapw/OmniRoute","--json","number,state,comments"], capture_output=True, text=True)
+d = json.loads(ANSI.sub("", r.stdout))
+print("=== PR #4616 ===")
+print("state:", d.get("state"))
+print("comment count:", len(d.get("comments", [])))
+for c in d.get("comments", [])[-2:]:
+    print("---")
+    print("author:", c.get("author",{}).get("login"))
+    print("body head:", c.get("body","")[:160])
+
+# PR #4725 - verify body update
+r2 = subprocess.run(["gh","pr","view","4725","--repo","diegosouzapw/OmniRoute","--json","number,state,body,comments"], capture_output=True, text=True)
+d2 = json.loads(ANSI.sub("", r2.stdout))
+body = d2.get("body","")
+print()
+print("=== PR #4725 ===")
+print("state:", d2.get("state"))
+print("body length:", len(body))
+print("contains comparison table:", "Addressing the self-flagged" in body or "PR-#4381" in body)
+print("contains proof re-validation:", "Proof artifact re-validation" in body)
+print("comment count:", len(d2.get("comments", [])))
+for c in d2.get("comments", [])[-2:]:
+    print("---")
+    print("author:", c.get("author",{}).get("login"))
+    print("body head:", c.get("body","")[:160])

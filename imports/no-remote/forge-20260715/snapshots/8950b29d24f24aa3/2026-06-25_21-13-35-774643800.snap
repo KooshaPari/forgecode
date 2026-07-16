@@ -1,0 +1,11 @@
+@echo off
+setlocal enabledelayedexpansion
+set RUSTUP_AUTO_INSTALL=0
+for %%R in (phenotype-infra phenotype-journeys phenocompose byteport OmniRoute-upstream) do (
+  echo === %%R ===
+  if exist "C:\Users\koosh\%%R\.grade-reports\grade.json" (
+    python -X utf8 C:\Users\koosh\_parse_grade.py "C:\Users\koosh\%%R\.grade-reports\grade.json"
+  ) else (
+    echo   no grade report
+  )
+)

@@ -1,0 +1,26 @@
+with open(r'C:\Users\koosh\omniroute-dev\omniroute-dev.cmd', 'rb') as f:
+    data = f.read()
+
+text = data.decode('utf-8', errors='replace')
+lines = text.split('\n')
+
+with open(r'C:\Users\koosh\batch_analysis.txt', 'w') as out:
+    out.write(f'Total lines: {len(lines)}\n\n')
+    
+    out.write('=== All labels (lines starting with :) ===\n')
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if stripped.startswith(':'):
+            out.write(f'L{i:4d}: {stripped}\n')
+    
+    out.write('\n=== Lines containing delegate ===\n')
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if 'delegate' in stripped.lower():
+            out.write(f'L{i:4d}: {stripped}\n')
+    
+    out.write('\n=== Lines containing goto or call ===\n')
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip().lower()
+        if 'goto' in stripped or 'call :' in stripped:
+            out.write(f'L{i:4d}: {stripped}\n')

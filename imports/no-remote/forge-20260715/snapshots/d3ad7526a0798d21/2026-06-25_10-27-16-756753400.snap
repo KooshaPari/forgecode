@@ -1,0 +1,144 @@
+/**
+ * route.ts — GET /api/health
+ *
+ * Returns a structured snapshot of system health suitable for liveness /
+ * readiness probes (k8s, docker, etc.).
+ *
+ * Response shape:
+ *   {
+ *     status: "ok" | "warn" | "fail",
+ *     version: "v3.8.x",
+ *     uptimeSeconds: 1234,
+ *     timestamp: "2026-06-24T00:00:00.000Z",
+ *     checks: {
+ *       database:          { status, durationMs, details? },
+ *       providerRegistry:  { ... },
+ *       diskSpace:         { ... },
+ *       memory:            { ... },
+ *       eventLoop:         { ... },
+ *       configSchema:      { ... },
+ *       tenantQuota:       { ... },
+ *     },
+ *     errors?: [{ check, message }]   // only when at least one check failed
+ *   }
+ *
+ * HTTP status:
+ *   200 — every check "ok" or "warn"
+ *   503 — at least one check "fail"
+ *
+ * The response is sent with `Cache-Control: no-store` so probes never receive
+ * a stale cached body.
+ *
+ * Optional auth gate: when the caller supplies `?internal=true` the response
+ * is gated by `requireManagementAuth` (matches the convention used by other
+ * operator-facing endpoints that have a public liveness view but require auth
+ * for diagnostics). Plain GETs remain anonymous because the data returned
+ * (uptime + status counts) is non-sensitive.
+ */
+import { NextResponse, type NextRequest } from "next/server";
+
+import { requireManagementAuth } from "@/lib/api/requireManagementAuth";
+import { APP_CONFIG } from "@/shared/constants/appConfig";
+
+import {
+  BUILTIN_CHECKS,
+  aggregateChecks,
+  runHealthCheck,
+} from "@/lib/observability/healthChecks";
+import type {
+  HealthCheckResult,
+  HealthCheckStatus,
+  HealthResponse,
+} from "@/lib/observability/healthTypes";
+
+/** Force dynamic so the handler is never cached at the framework layer. */
+export const dynamic = "force-dynamic";
+/** Never cache — we already emit Cache-Control: no-store below. */
+export const revalidate = 0;
+/** Next.js route segment: this handler runs on the Node.js runtime only. */
+export const runtime = "nodejs";
+
+/** Build a fresh `Response` from a typed payload, with consistent headers. */
+function buildResponse(body: HealthResponse, status: number): NextResponse<HealthResponse> {
+  return NextResponse.json(body, {
+    status,
+    headers: {
+      "Cache-Control": "no-store",
+      "X-Health-Status": body.status,
+    },
+  });
+}
+
+/**
+ * Evaluate every registered builtin check in parallel (each is independently
+ * capped by its own timeout inside `runHealthCheck`). We collect every result
+ * before responding so a single failing check never short-circuits the rest.
+ */
+async function evaluateAllChecks(): Promise<HealthResponse> {
+  const entries = Object.entries(BUILTIN_CHECKS);
+  const settled = await Promise.all(
+    entries.map(async ([name, fn]) => [name, await runHealthCheck(name, fn)] as const)
+  );
+  const checks: Record<string, HealthCheckResult> = {};
+  const errors: Array<{ check: string; message: string }> = [];
+  for (const [name, result] of settled) {
+    checks[name] = result;
+    if (result.status === "fail") {
+      errors.push({
+        check: name,
+        message: result.error ?? "check failed",
+      });
+    }
+  }
+  const status: HealthCheckStatus = aggregateChecks(Object.values(checks));
+  return {
+    status,
+    version: APP_CONFIG.version,
+    uptimeSeconds: Math.round(process.uptime()),
+    timestamp: new Date().toISOString(),
+    checks,
+    ...(errors.length > 0 ? { errors } : {}),
+  };
+}
+
+/**
+ * GET /api/health[?internal=true]
+ *
+ * Liveness + readiness probe surface. See module docstring for the response
+ * shape and status-code policy.
+ */
+export async function GET(request: NextRequest): Promise<NextResponse<HealthResponse>> {
+  // Operator diagnostics path — gated by management auth. Public probes still
+  // get a 200/503 answer with no sensitive data, so we don't gate the default
+  // route.
+  const wantsInternal = request.nextUrl.searchParams.get("internal") === "true";
+  if (wantsInternal) {
+    const authFailure = await requireManagementAuth(request);
+    if (authFailure) return authFailure as NextResponse<HealthResponse>;
+  }
+
+  let body: HealthResponse;
+  try {
+    body = await evaluateAllChecks();
+  } catch (err: unknown) {
+    // The runner already swallows per-check exceptions, so this only fires if
+    // something outside the checks themselves throws (e.g. process.uptime).
+    const message = err instanceof Error ? err.message : String(err);
+    body = {
+      status: "fail",
+      version: APP_CONFIG.version,
+      uptimeSeconds: Math.round(process.uptime()),
+      timestamp: new Date().toISOString(),
+      checks: {
+        _router: {
+          status: "fail",
+          durationMs: 0,
+          error: message,
+        },
+      },
+      errors: [{ check: "_router", message }],
+    };
+  }
+
+  return buildResponse(body, body.status === "fail" ? 503 : 200);
+}

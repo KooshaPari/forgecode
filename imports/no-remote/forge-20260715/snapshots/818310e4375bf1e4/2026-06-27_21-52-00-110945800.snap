@@ -1,0 +1,16 @@
+import json
+with open(r'C:\Users\koosh\AppData\Local\Temp\forge_shell_stdout_CwCNS4.txt','r',encoding='utf-8') as f:
+    data = json.load(f)
+nonforks = [r for r in data if not r['fork']]
+forks = [r for r in data if r['fork']]
+print(f'TOTAL: {len(data)} NON-FORKS: {len(nonforks)} FORKS: {len(forks)}')
+print('---NON-FORKS---')
+for r in sorted(nonforks, key=lambda x: x['name']):
+    lang = r.get('lang','') or ''
+    desc = (r.get('desc','') or '')[:60]
+    print(f'{r["name"]:35s} {lang:15s} | {desc}')
+print('---FORKS---')
+for r in sorted(forks, key=lambda x: x['name']):
+    lang = r.get('lang','') or ''
+    desc = (r.get('desc','') or '')[:60]
+    print(f'{r["name"]:35s} {lang:15s} FORK | {desc}')

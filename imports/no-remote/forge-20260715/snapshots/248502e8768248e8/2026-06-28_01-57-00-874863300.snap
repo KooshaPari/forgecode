@@ -1,0 +1,39 @@
+//! nvms-ffi: thin C-FFI surface over nanovms-core.
+
+use nanovms_core::VmSpec;
+
+/// Opaque FFI handle for a micro-VM runtime id.
+#[repr(C)]
+pub struct NvmsHandle {
+    /// Internal runtime id (heap-owned String).
+    inner: *mut std::os::raw::c_char,
+}
+
+/// Allocate a VmSpec and return a heap-owned runtime id pointer.
+///
+/// Caller must free with `nvms_free`.
+#[no_mangle]
+pub extern "C" fn nvms_spawn(id: *const std::os::raw::c_char) -> *mut NvmsHandle {
+    if id.is_null() {
+        return std::ptr::null_mut();
+    }
+    let cstr = unsafe { std::ffi::CStr::from_ptr(id) };
+    let spec = VmSpec::new(cstr.to_string_lossy().to_string());
+    let owned = std::ffi::CString::new(format!("ffi://{}", spec.id)).unwrap();
+    let ptr = owned.into_raw() as *mut std::os::raw::c_char;
+    Box::into_raw(Box::new(NvmsHandle { inner: ptr }))
+}
+
+/// Free a handle previously returned from `nvms_spawn`.
+#[no_mangle]
+pub extern "C" fn nvms_free(handle: *mut NvmsHandle) {
+    if handle.is_null() {
+        return;
+    }
+    let h = unsafe { Box::from_raw(handle) };
+    if !h.inner.is_null() {
+        unsafe {
+            let _ = std::ffi::CString::from_raw(h.inner);
+        }
+    }
+}

@@ -1,0 +1,4 @@
+# Local VitePress build artifacts (not committed; built fresh in CI).
+node_modules/
+.vitepress/dist/
+.vitepress/cache/

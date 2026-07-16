@@ -1,0 +1,304 @@
+{
+  "title": "Phenotype Epic F — DAG Foundation & Automation",
+  "description": "Interactive DAG showing the work breakdown for the DAG foundation and automation epic.",
+  "nodes": [
+    {
+      "id": "f01",
+      "label": "DAG data model (spec)",
+      "status": "completed",
+      "type": "spec",
+      "epic": "Epic F — DAG Foundation & Automation",
+      "repo": "phenotype-landing",
+      "acceptanceCriteria": [
+        "Define the data model for DAG nodes, edges, and metadata",
+        "Document node types and their properties",
+        "Define edge semantics (dependencies, ordering)"
+      ],
+      "auditLog": [
+        { "date": "2026-06-01", "from": "pending", "to": "in-progress", "note": "Spec work started" },
+        { "date": "2026-06-05", "from": "in-progress", "to": "completed", "note": "Data model finalized and reviewed" }
+      ],
+      "links": [
+        { "label": "Spec doc", "url": "https://github.com/KooshaPari/phenotype-landing/wiki/DAG-Data-Model" },
+        { "label": "PR #1", "url": "https://github.com/KooshaPari/phenotype-landing/pull/1" }
+      ]
+    },
+    {
+      "id": "f02",
+      "label": "DAG schema validation",
+      "status": "completed",
+      "type": "impl",
+      "epic": "Epic F — DAG Foundation & Automation",
+      "repo": "phenotype-landing",
+      "acceptanceCriteria": [
+        "Validate DAG JSON/YAML against the schema",
+        "Report clear error messages for invalid data",
+        "Reject duplicate node IDs and edges"
+      ],
+      "auditLog": [
+        { "date": "2026-06-03", "from": "pending", "to": "in-progress", "note": "Schema validation implementation" },
+        { "date": "2026-06-07", "from": "in-progress", "to": "completed", "note": "Validation passing all test cases" }
+      ],
+      "links": [
+        { "label": "PR #4", "url": "https://github.com/KooshaPari/phenotype-landing/pull/4" }
+      ]
+    },
+    {
+      "id": "f03",
+      "label": "DAG YAML/JSON parser",
+      "status": "completed",
+      "type": "impl",
+      "epic": "Epic F — DAG Foundation & Automation",
+      "repo": "phenotype-landing",
+      "acceptanceCriteria": [
+        "Parse DAG definitions from JSON and YAML formats",
+        "Handle edge cases: empty graphs, single nodes, cycles",
+        "Integrate with schema validation"
+      ],
+      "auditLog": [
+        { "date": "2026-06-02", "from": "pending", "to": "in-progress", "note": "Parser development" },
+        { "date": "2026-06-08", "from": "in-progress", "to": "completed", "note": "Parser complete with tests" }
+      ],
+      "links": [
+        { "label": "PR #6", "url": "https://github.com/KooshaPari/phenotype-landing/pull/6" }
+      ]
+    },
+    {
+      "id": "f04",
+      "label": "DAG topological sort",
+      "status": "completed",
+      "type": "impl",
+      "epic": "Epic F — DAG Foundation & Automation",
+      "repo": "phenotype-landing",
+      "acceptanceCriteria": [
+        "Implement Kahn's algorithm for topological ordering",
+        "Return a valid linear ordering for any valid DAG"
+      ],
+      "auditLog": [
+        { "date": "2026-06-04", "from": "pending", "to": "in-progress", "note": "Algorithm implementation" },
+        { "date": "2026-06-09", "from": "in-progress", "to": "completed", "note": "Topo sort verified" }
+      ],
+      "links": [
+        { "label": "PR #8", "url": "https://github.com/KooshaPari/phenotype-landing/pull/8" }
+      ]
+    },
+    {
+      "id": "f05",
+      "label": "DAG cycle detection",
+      "status": "completed",
+      "type": "impl",
+      "epic": "Epic F — DAG Foundation & Automation",
+      "repo": "phenotype-landing",
+      "acceptanceCriteria": [
+        "Detect cycles in the graph using DFS",
+        "Report cycle path for debugging",
+        "Fail gracefully with descriptive error"
+      ],
+      "auditLog": [
+        { "date": "2026-06-04", "from": "pending", "to": "in-progress", "note": "Cycle detection implementation" },
+        { "date": "2026-06-10", "from": "in-progress", "to": "completed", "note": "Cycle detection working" }
+      ],
+      "links": [
+        { "label": "PR #9", "url": "https://github.com/KooshaPari/phenotype-landing/pull/9" }
+      ]
+    },
+    {
+      "id": "f06",
+      "label": "DAG execution engine",
+      "status": "in-progress",
+      "type": "impl",
+      "epic": "Epic F — DAG Foundation & Automation",
+      "repo": "phenotype-landing",
+      "acceptanceCriteria": [
+        "Execute units in topological order",
+        "Handle parallel execution where possible",
+        "Report execution status per unit"
+      ],
+      "auditLog": [
+        { "date": "2026-06-10", "from": "pending", "to": "in-progress", "note": "Initial engine scaffolding" },
+        { "date": "2026-06-15", "from": "in-progress", "to": "in-progress", "note": "Parallel execution prototype" }
+      ],
+      "links": [
+        { "label": "Branch: feat/dag-engine", "url": "https://github.com/KooshaPari/phenotype-landing/tree/feat/dag-engine" }
+      ]
+    },
+    {
+      "id": "f07",
+      "label": "DAG state persistence",
+      "status": "pending",
+      "type": "impl",
+      "epic": "Epic F — DAG Foundation & Automation",
+      "repo": "phenotype-landing",
+      "acceptanceCriteria": [
+        "Persist DAG execution state to disk/database",
+        "Support resume from saved state",
+        "Handle crash recovery"
+      ],
+      "auditLog": [
+        { "date": "2026-06-12", "from": "pending", "to": "pending", "note": "Design drafted, not yet started" }
+      ],
+      "links": []
+    },
+    {
+      "id": "f08",
+      "label": "DAG status reporting",
+      "status": "pending",
+      "type": "impl",
+      "epic": "Epic F — DAG Foundation & Automation",
+      "repo": "phenotype-landing",
+      "acceptanceCriteria": [
+        "Generate status reports for DAG executions",
+        "Support multiple output formats (JSON, HTML, text)",
+        "Include timing and dependency information"
+      ],
+      "auditLog": [
+        { "date": "2026-06-12", "from": "pending", "to": "pending", "note": "Requirements gathering" }
+      ],
+      "links": []
+    },
+    {
+      "id": "f09",
+      "label": "DAG CLI tooling",
+      "status": "blocked",
+      "type": "tooling",
+      "epic": "Epic F — DAG Foundation & Automation",
+      "repo": "phenotype-landing",
+      "acceptanceCriteria": [
+        "CLI command to validate DAG definitions",
+        "CLI command to execute DAG",
+        "CLI command to visualize DAG"
+      ],
+      "auditLog": [],
+      "links": []
+    },
+    {
+      "id": "f10",
+      "label": "DAG web renderer (this page)",
+      "status": "in-progress",
+      "type": "render",
+      "epic": "Epic F — DAG Foundation & Automation",
+      "repo": "phenotype-landing",
+      "acceptanceCriteria": [
+        "Render interactive DAG in browser",
+        "Support pan, zoom, and node selection",
+        "Display unit status with color coding",
+        "Show detailed drill-down panel on node click"
+      ],
+      "auditLog": [
+        { "date": "2026-06-15", "from": "pending", "to": "in-progress", "note": "Initial renderer built" },
+        { "date": "2026-06-18", "from": "in-progress", "to": "in-progress", "note": "Drill-down panel added" }
+      ],
+      "links": [
+        { "label": "PR #10", "url": "https://github.com/KooshaPari/phenotype-landing/pull/10" }
+      ]
+    },
+    {
+      "id": "f11",
+      "label": "DAG CI integration",
+      "status": "pending",
+      "type": "tooling",
+      "epic": "Epic F — DAG Foundation & Automation",
+      "repo": "phenotype-landing",
+      "acceptanceCriteria": [
+        "Integrate DAG validation into CI pipeline",
+        "Auto-generate DAG status on PR",
+        "Fail CI on invalid DAG definitions"
+      ],
+      "auditLog": [],
+      "links": []
+    },
+    {
+      "id": "f12",
+      "label": "DAG observability hooks",
+      "status": "completed",
+      "type": "impl",
+      "epic": "Epic F — DAG Foundation & Automation",
+      "repo": "phenotype-landing",
+      "acceptanceCriteria": [
+        "Emit telemetry events during DAG execution",
+        "Support OpenTelemetry integration",
+        "Log execution traces"
+      ],
+      "auditLog": [
+        { "date": "2026-06-08", "from": "pending", "to": "in-progress", "note": "Observability implementation" },
+        { "date": "2026-06-14", "from": "in-progress", "to": "completed", "note": "OTel integration done" }
+      ],
+      "links": [
+        { "label": "PR #12", "url": "https://github.com/KooshaPari/phenotype-landing/pull/12" }
+      ]
+    },
+    {
+      "id": "f13",
+      "label": "DAG test suite",
+      "status": "in-progress",
+      "type": "qa",
+      "epic": "Epic F — DAG Foundation & Automation",
+      "repo": "phenotype-landing",
+      "acceptanceCriteria": [
+        "Unit tests for layout algorithm",
+        "Unit tests for data integrity",
+        "Render tests for SVG output"
+      ],
+      "auditLog": [
+        { "date": "2026-06-10", "from": "pending", "to": "in-progress", "note": "Test suite scaffolding" }
+      ],
+      "links": []
+    },
+    {
+      "id": "f14",
+      "label": "DAG documentation",
+      "status": "failed",
+      "type": "docs",
+      "epic": "Epic F — DAG Foundation & Automation",
+      "repo": "phenotype-landing",
+      "acceptanceCriteria": [
+        "Write DAG usage guide",
+        "Document API and CLI interfaces",
+        "Add examples and tutorials"
+      ],
+      "auditLog": [
+        { "date": "2026-06-11", "from": "pending", "to": "in-progress", "note": "Doc writing started" },
+        { "date": "2026-06-16", "from": "in-progress", "to": "failed", "note": "Docs review found gaps; needs rewrite" }
+      ],
+      "links": [
+        { "label": "Docs PR", "url": "https://github.com/KooshaPari/phenotype-landing/pull/14" }
+      ]
+    },
+    {
+      "id": "f15",
+      "label": "DAG deployment pipeline",
+      "status": "pending",
+      "type": "tooling",
+      "epic": "Epic F — DAG Foundation & Automation",
+      "repo": "phenotype-landing",
+      "acceptanceCriteria": [
+        "Automated deploy on merge to main",
+        "Environment promotion (dev → staging → prod)",
+        "Rollback support"
+      ],
+      "auditLog": [],
+      "links": []
+    }
+  ],
+  "lastUpdated": "2026-06-24T12:00:00.000Z",
+  "edges": [
+    { "from": "f01", "to": "f02" },
+    { "from": "f02", "to": "f03" },
+    { "from": "f03", "to": "f04" },
+    { "from": "f03", "to": "f05" },
+    { "from": "f04", "to": "f06" },
+    { "from": "f05", "to": "f06" },
+    { "from": "f06", "to": "f07" },
+    { "from": "f06", "to": "f08" },
+    { "from": "f07", "to": "f09" },
+    { "from": "f08", "to": "f09" },
+    { "from": "f09", "to": "f10" },
+    { "from": "f06", "to": "f11" },
+    { "from": "f10", "to": "f11" },
+    { "from": "f06", "to": "f12" },
+    { "from": "f03", "to": "f13" },
+    { "from": "f10", "to": "f14" },
+    { "from": "f11", "to": "f15" },
+    { "from": "f13", "to": "f14" }
+  ]
+}

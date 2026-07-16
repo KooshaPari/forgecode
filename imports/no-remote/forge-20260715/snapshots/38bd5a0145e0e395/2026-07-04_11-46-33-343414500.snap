@@ -1,0 +1,87 @@
+# scripts/install_wsl_pheno_serve.ps1
+#
+# Windows-side wrapper that calls scripts/install_wsl_pheno_serve.sh inside
+# Ubuntu-22.04 WSL2. Token (HF_TOKEN) is passed as $args[0]; it is set ONLY
+# inside the WSL child-process env, never persisted to disk.
+#
+# Usage:
+#   powershell -File scripts\install_wsl_pheno_serve.ps1 hf_xxx_your_token
+#
+# Output:
+#   bench\results\2026-07-04\_wsl_install_<ts>.log  (full transcript)
+#   bench\results\2026-07-04\_wsl_install_heartbeat.json  (current step)
+
+param(
+    [Parameter(Mandatory=$true, Position=0)]
+    [string]$HFToken,
+
+    [string]$Distro = "Ubuntu-22.04"
+)
+
+$ErrorActionPreference = "Stop"
+
+# Locate the bootstrap script inside WSL
+$ScriptPath = "/mnt/d/koosh/pheno-harness/scripts/install_wsl_pheno_serve.sh"
+
+# Sanity: distro must exist
+$distroList = wsl --list --quiet 2>&1 | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+if ($distroList -notcontains $Distro) {
+    Write-Host "ERROR: WSL distro '$Distro' not found. Available:" -ForegroundColor Red
+    $distroList | ForEach-Object { Write-Host "  $_" }
+    exit 11
+}
+
+# Pre-flight: distro reachable, kernel version captured
+Write-Host "=== pheno-serve WSL install ===" -ForegroundColor Cyan
+Write-Host "Distro:        $Distro"
+Write-Host "HF token:      $(if ($HFToken.Length -gt 8) { $HFToken.Substring(0,8) + '...' } else { '<short>' })  (one-shot; never written)"
+Write-Host "Bootstrap:     $ScriptPath"
+
+Write-Host ""
+Write-Host "--- WSL preflight ---" -ForegroundColor Yellow
+wsl -d $Distro -- uname -a
+
+# Launch the bootstrap inside WSL with HF_TOKEN in env, capture heartbeat
+$env:HF_TOKEN = $HFToken
+
+$LogDir = "D:\koosh\pheno-harness\bench\results\2026-07-04"
+if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Force -Path $LogDir | Out-Null }
+
+$Ts = Get-Date -Format "yyyy-MM-ddTHH-mm-ssZ"
+$FullLog = Join-Path $LogDir "_wsl_install_${Ts}.log"
+$Heartbeat = Join-Path $LogDir "_wsl_install_heartbeat.json"
+
+Write-Host ""
+Write-Host "--- Running bootstrap (full log: $FullLog) ---" -ForegroundColor Yellow
+
+$proc = Start-Process -FilePath "wsl" `
+    -ArgumentList @("-d", $Distro, "--", "bash", "-c", "export HF_TOKEN='$HFToken'; bash $ScriptPath") `
+    -RedirectStandardOutput $FullLog `
+    -RedirectStandardError "$FullLog.err" `
+    -NoNewWindow -PassThru -Wait
+
+$rc = $proc.ExitCode
+Write-Host ""
+Write-Host "Bootstrap exit code: $rc" -ForegroundColor $(if ($rc -eq 0) {"Green"} else {"Red"})
+
+if (Test-Path $Heartbeat) {
+    Write-Host ""
+    Write-Host "--- Final heartbeat ---" -ForegroundColor Yellow
+    Get-Content $Heartbeat | Write-Host
+} else {
+    Write-Host "WARNING: no heartbeat file at $Heartbeat" -ForegroundColor Yellow
+}
+
+if (Test-Path "$FullLog.err") {
+    $errSize = (Get-Item "$FullLog.err").Length
+    if ($errSize -gt 0) {
+        Write-Host ""
+        Write-Host "--- stderr ($errSize bytes) ---" -ForegroundColor Yellow
+        Get-Content "$FullLog.err" -Tail 40 | Write-Host
+    }
+}
+
+# Unset token from this shell's env
+Remove-Item Env:HF_TOKEN -ErrorAction SilentlyContinue
+
+exit $rc

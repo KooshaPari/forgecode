@@ -1,0 +1,81 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Byteport",
+  "version": "0.1.0",
+  "identifier": "com.byteport.desktop",
+  "build": {
+    "frontendDist": "../build",
+    "devUrl": "http://localhost:5173/",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Byteport",
+        "url": "index.html",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false,
+        "center": true
+      }
+    ],
+
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: https://ipc.localhost https://api.byteport.dev; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self';",
+      "devCsp": "default-src 'self' http://localhost:5173 ws://localhost:5173; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://api.byteport.dev ws://localhost:5173;",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      },
+      "headers": {
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Embedder-Policy": "require-corp",
+        "Cross-Origin-Resource-Policy": "same-origin",
+        "Permissions-Policy": "geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "no-referrer",
+        "Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload"
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "rpm", "appimage", "msi", "nsis", "app", "dmg"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Byteport — secure peer-to-peer data transport",
+    "longDescription": "Byteport is a desktop client for the BytePort mesh transport protocol. Provides S3-compatible upload, SOCKS5 proxy, and full-text search across the local mesh.",
+    "publisher": "Byteport, Inc.",
+    "homepage": "https://byteport.dev",
+    "createUpdaterArtifacts": true,
+    "updater": {
+      "active": true,
+      "endpoints": ["https://releases.byteport.dev/byteport/{{target}}/{{arch}}/{{current_version}}"],
+      "dialog": true,
+      "pubkey": "REPLACE_WITH_RELEASE_SIGNING_PUBKEY"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": ["https://releases.byteport.dev/byteport/{{target}}/{{arch}}/{{current_version}}"],
+      "pubkey": "REPLACE_WITH_RELEASE_SIGNING_PUBKEY"
+    }
+  }
+}

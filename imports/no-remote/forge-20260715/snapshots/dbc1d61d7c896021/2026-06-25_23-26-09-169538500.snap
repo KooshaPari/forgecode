@@ -1,0 +1,145 @@
+/**
+ * GET /api/v1/admin/slos
+ *
+ * List all known SLO definitions with their current status snapshot.
+ * Read-only, gated by the `manage` API-key scope (see
+ * `requireManagementAuth`).
+ *
+ * Wrapped in `withProxySpan` so the request emits a W3C `traceparent`
+ * header downstream (matches PR #4875's correlation requirement for the
+ * admin endpoints).
+ *
+ * Response shape:
+ *   {
+ *     slos: [
+ *       {
+ *         id, objective, window, sli_query, target, description,
+ *         current: ErrorBudgetSnapshot | null
+ *       }
+ *     ],
+ *     requestId: string
+ *   }
+ *
+ * The `current` field is `null` when the SLO has never been measured
+ * (fresh deployment, no traffic yet) — distinct from `status: "unknown"`
+ * which means the budget was instantiated but no SLI samples have arrived.
+ */
+
+import { NextRequest } from "next/server";
+import { requireManagementAuth } from "@/lib/api/requireManagementAuth";
+import {
+  createErrorResponse,
+  createErrorResponseFromUnknown,
+} from "@/lib/api/errorResponse";
+import { withProxySpan } from "@/lib/observability/trace";
+import {
+  listActiveBudgets,
+  type ErrorBudgetSnapshot,
+} from "@/lib/observability/budget";
+import { windowMs, type SloDefinition } from "@/lib/observability/slo";
+
+/**
+ * The canonical SLO catalog for this release. Real deployments will
+ * load this from config or a registry table; for PR-012 we hardcode
+ * the two production SLOs so the admin endpoints have something to
+ * surface end-to-end (PR-012 acceptance: GET /admin/slos returns at
+ * least one SLO).
+ */
+const SLO_CATALOG: ReadonlyArray<SloDefinition> = [
+  {
+    id: "chat-completion-availability",
+    objective: "Chat completion availability",
+    window: "28d",
+    sli_query: "success_ratio{service=\"chat-completions\"}",
+    target: 0.999,
+    description:
+      "Fraction of chat-completion requests that complete without a 5xx or timeout, measured over a rolling 28-day window.",
+  },
+  {
+    id: "embeddings-latency-p99",
+    objective: "Embeddings p99 latency under 500ms",
+    window: "28d",
+    sli_query: "latency_p99_under{service=\"embeddings\", ms=500}",
+    target: 0.995,
+    description:
+      "Fraction of embedding requests whose p99 latency stays under 500ms over the rolling 28-day window.",
+  },
+  {
+    id: "responses-streaming-success",
+    objective: "Streaming responses success ratio",
+    window: "28d",
+    sli_query: "success_ratio{service=\"responses-streaming\"}",
+    target: 0.995,
+    description:
+      "Fraction of streaming response requests that complete the stream without an early disconnect or 5xx.",
+  },
+];
+
+export interface SloListEntry {
+  readonly id: string;
+  readonly objective: string;
+  readonly window: SloDefinition["window"];
+  readonly sli_query: SloDefinition["sli_query"];
+  readonly target: number;
+  readonly description?: string;
+  readonly current: ErrorBudgetSnapshot | null;
+}
+
+export async function GET(request: NextRequest): Promise<Response> {
+  const authError = await requireManagementAuth(request);
+  if (authError) return authError;
+
+  try {
+    return await withProxySpan("admin.listSlos", async (span) => {
+      const budgets = listActiveBudgets();
+      const bySlo = new Map<string, ErrorBudgetSnapshot>();
+      for (const b of budgets) {
+        if (!bySlo.has(b.slo_id)) bySlo.set(b.slo_id, b);
+      }
+
+      const entries: SloListEntry[] = SLO_CATALOG.map((def) => ({
+        id: def.id,
+        objective: def.objective,
+        window: def.window,
+        sli_query: def.sli_query,
+        target: def.target,
+        description: def.description,
+        current: bySlo.get(def.id) ?? null,
+      }));
+
+      // Surface an `unknown`-status SLO definition that hasn't been
+      // measured yet so dashboards can show the catalog without lying
+      // about its compliance. The catalog rows are always emitted.
+      const responseBody = {
+        slos: entries,
+        catalog_size: entries.length,
+        window_ms: windowMs("28d"),
+        requestId: span.traceId,
+        traceparent: span.traceparent,
+      };
+
+      return Response.json(responseBody, {
+        status: 200,
+        headers: {
+          "traceparent": span.traceparent,
+          "x-request-id": span.traceId,
+        },
+      });
+    }).then((result) => {
+      // Re-shape the `WithSpanResult` into a plain Response — withProxySpan
+      // already returned a Response from `fn`, so we just unwrap.
+      return result.value;
+    });
+  } catch (error) {
+    return createErrorResponseFromUnknown(error, "Failed to list SLOs");
+  }
+}
+
+// Test-only export so unit tests can pin the catalog without re-importing.
+export const __TEST_SLO_CATALOG = SLO_CATALOG;
+
+// Keep an unused import to silence dead-code elimination if a future PR
+// wants to introduce error responses specific to this endpoint (e.g.
+// `slo_not_found` codes for the detail endpoint). Leaving the helper
+// reachable here so the test suite can grep for it.
+export const _createErrorResponse = createErrorResponse;

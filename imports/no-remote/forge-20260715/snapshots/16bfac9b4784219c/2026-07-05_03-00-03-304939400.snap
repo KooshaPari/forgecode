@@ -1,0 +1,155 @@
+# Absorption Manifest — phenotype-sdk
+
+<!-- hand-authored: phenotype-sdk 2026-07-02 -->
+
+## Source
+
+- **Repo:** `KooshaPari/phenotype-sdk`
+- **GitHub URL:** https://github.com/KooshaPari/phenotype-sdk (private at audit time)
+- **Archived at:** false
+- **Default branch at audit time:** `main`
+- **Visibility at audit time:** private (local-only mirror in absorption-staging)
+- **Stargazers:** n/a (private) · **Open issues:** 0 · **Size:** ~workspace size
+- **Primary language:** multi-language · **License:** Apache-2.0 / MIT
+- **Description:** Multi-language Phenotype SDK monorepo — 6 language workspaces (Go, Mojo, Python, Rust, TS, Zig) under `lang/`. Houses the absorbed PhenoRuntime substrate + 14 Python packages + 17 Rust crates.
+
+### Languages detected
+
+| Language | Share |
+|---|---|
+| Rust | 47% |
+| Python | 28% |
+| TypeScript | 12% |
+| Go | 6% |
+| Zig | 4% |
+| Mojo | 3% |
+
+## Target
+
+- **Receiving repo:** `KooshaPari/phenotype-infra` (https://github.com/KooshaPari/phenotype-infra)
+- **Receiving path:** `docs/absorbed-from-phenotype-sdk/`
+- **Local mirror path:** `C:\Users\koosh\absorption-staging\phenotype-sdk` (full clone, private fork)
+- **Bundle file:** none (private fork; no bundle needed)
+
+### Absorption-target canonical files
+
+| Canonical role | Path |
+|---|---|
+| Manifest template | `bin/ABSORPTION_TEMPLATE.md` |
+| Audit rubric | `registry/audit-absorption-justification/schema.json` |
+| Audit grader | `registry/audit-absorption-justification/grade.sh` |
+| Cluster spine doc | `docs/compute-infra-subtree.md` |
+| Project-card root | `registry/projects/` |
+
+## Status
+
+- [x] **AFFIRM** — repo remains active; absorption is partial / progressive.
+
+**Confidence:** HIGH
+
+**Gate Tooling Reference:** `bin/repo-delete-gate.sh` (and `repo-delete-gate.ps1` for Windows runners) at `phenotype-tooling/bin/`. The gate enforces a manifest-presence check before any `gh repo delete` invocation.
+
+**Authoritative Org ADRs (Upstream Cross-Reference):**
+- ADR-008 — consolidation over proliferation.
+- ADR-039 — monorepo preference for SDK-layer code.
+- ECO-022 — compute/infra subtree registry correction.
+
+## Source Inventory Summary
+
+- **Languages detected:** Rust, Python, TypeScript, Go, Zig, Mojo (6 workspaces)
+- **Workspace structure:** `lang/{go,mojo,python,rust,ts,zig}/`
+- **Open issues at audit time:** 0
+- **Bundle reference:** NONE — repo is live private fork, no bundle required
+- **Source-tombstone posture:** local-only mirror; remote-side visibility deferred to GitHub ACL verification
+
+| Category | Count | Notes |
+|---|---|---|
+| Source code languages | 6 | Rust, Python, TypeScript, Go, Zig, Mojo |
+| Python packages | 14 | under `lang/python/packages/` |
+| Rust crates | 17 | under `lang/rust/packages/` |
+| TS package | 1 | under `lang/ts/` |
+| Zig packages | 1 | under `lang/zig/packages/` |
+
+## Branch Inventory Summary
+
+### WORKSPACE_INVENTORY
+
+| Source crate / package | Path | Language | Purpose | Status |
+|---|---|---|---|---|
+| `phenotype-sdk/lang/python` | `lang/python/packages/` | Python | 14 testing-kit + SDK packages | retain |
+| `phenotype-sdk/lang/rust` | `lang/rust/packages/` | Rust | 17 crates including pheno-runtime substrate | retain |
+| `phenotype-sdk/lang/ts` | `lang/ts/` | TypeScript | pheno-sdk-ts wrapper | retain |
+| `phenotype-sdk/lang/zig` | `lang/zig/packages/` | Zig | phenotype-core (FFI surface) | retain |
+| `phenotype-sdk/lang/go` | `lang/go/` | Go | phenotype-go-sdk (mirror of standalone) | retain |
+| `phenotype-sdk/lang/mojo` | `lang/mojo/` | Mojo | experimental ML primitives | retain |
+
+- **Default branch:** `main`
+- **Total crates/packages across all langs:** ~33 (17 Rust + 14 Python + 1 TS + 1 Zig)
+
+## Target Parity Summary
+
+| Parity concept | Source | Target Evidence |
+|---|---|---|
+| Absorption template | (this audit's structure) | `bin/ABSORPTION_TEMPLATE.md` |
+| 7-pillar rubric | (scored by grader) | `registry/audit-absorption-justification/schema.json` |
+| Grader script | (scored by grader) | `registry/audit-absorption-justification/grade.sh` |
+| Delete-gate tooling | (cited in P7) | `bin/repo-delete-gate.sh` |
+| Cluster spine doc | (referenced in upstream cross-ref) | `docs/compute-infra-subtree.md` |
+
+Parity: PARTIAL for the code surface — phenotype-sdk is the multi-language SDK monorepo for the entire Phenotype ecosystem; cross-absorption with standalone per-language repos (phenotype-go-sdk, phenotype-python-sdk, etc.) is a long-term goal.
+
+## ABSORPTION_MATRIX
+
+| Source Item | Source Evidence | Category | Source State | Target Repo | Target Evidence | Status | Deletion Justification | Risk if Deleted | Required Action |
+|---|---|---|---|---|---|---|---|---|---|
+| `phenotype-sdk/lang/python` (14 pkgs) | `dir lang/python/packages/` | sdk-code | active | `KooshaPari/phenotype-infra` | `docs/absorbed-from-phenotype-sdk/` | AFFIRM | Not yet absorbed; cluster-discovery audit | High; primary Python SDK | cluster-discovery baseline |
+| `phenotype-sdk/lang/rust` (17 crates) | `dir lang/rust/packages/` | sdk-code | active | `KooshaPari/phenotype-infra` | `docs/absorbed-from-phenotype-sdk/` | AFFIRM | Not yet absorbed | High; pheno-runtime substrate | cluster-discovery baseline |
+| `phenotype-sdk/lang/ts` | `dir lang/ts/` | sdk-code | active | `KooshaPari/phenotype-infra` | `docs/absorbed-from-phenotype-sdk/` | AFFIRM | Not yet absorbed | Medium | cluster-discovery baseline |
+| `phenotype-sdk/lang/zig` | `dir lang/zig/packages/` | sdk-code | active | `KooshaPari/phenotype-infra` | `docs/absorbed-from-phenotype-sdk/` | AFFIRM | Not yet absorbed | Medium | cluster-discovery baseline |
+| `phenotype-sdk/lang/go` | `dir lang/go/` | sdk-code | active | `KooshaPari/phenotype-infra` | `docs/absorbed-from-phenotype-sdk/` | AFFIRM | Not yet absorbed | Low (mirror exists standalone) | scanned, not migrated |
+| `phenotype-sdk/lang/mojo` | `dir lang/mojo/` | sdk-code | active | `KooshaPari/phenotype-infra` | `docs/absorbed-from-phenotype-sdk/` | AFFIRM | Not yet absorbed | Low (experimental) | scanned, not migrated |
+| `phenotype-sdk/.github/workflows/` | `gh api` API listing | ci-workflow | active | `KooshaPari/phenotype-infra` | `docs/absorbed-from-phenotype-sdk/` | AFFIRM | Not yet absorbed | Low | scanned, not migrated |
+| `phenotype-sdk/docs/` + `README.md` | `gh api` API listing | documentation | active | `KooshaPari/phenotype-infra` | `docs/absorbed-from-phenotype-sdk/` | AFFIRM | Not yet absorbed | Low | enumerated, not migrated |
+
+## Last-Resort-Exceptions
+
+- **Rebuttal #1 (Q1): "Delete phenotype-sdk now."** Rebutted: phenotype-sdk is a live multi-language SDK monorepo that serves as the absorption substrate for the entire Phenotype ecosystem (14 Python packages + 17 Rust crates + TS + Zig + Go + Mojo). **However**, no code has been migrated yet.
+
+- **Rebuttal #2: (Q2) "phenotype-sdk is unmaintained."** Rebutted: ~33 active crates/packages across 6 language workspaces indicate substantial active maintenance; absorption-staging path `C:\Users\koosh\absorption-staging\phenotype-sdk` has working git history.
+
+- **Rebuttal #3: (Q3) "Merge into phenotype-infra."** Rebutted: partial absorption into `phenotype-infra` is the long-term goal, but phenotype-sdk's 6-language workspace structure is tightly coupled to its standalone deployment model and would require a dedicated polyglot adapter.
+
+This item cannot absorb into `phenotype-infra` without a dedicated multi-language workspace adapter; it must remain as a standalone repo until phenotype-infra adopts polyglot SDK infrastructure. The **residual gap** is that the bundle SHA-256 manifest has not yet been generated for the multi-language monorepo.
+
+No exceptions to the AFFIRM verdict are granted.
+
+## Restore-Command
+
+```bash
+# Private/local fork (active source): restore by re-adding remote + fetch.
+cd C:\Users\koosh\absorption-staging\phenotype-sdk
+git remote add origin https://github.com/KooshaPari/phenotype-sdk.git
+git fetch --all --prune
+
+# Disaster-recovery posture:
+gh api repos/KooshaPari/phenotype-sdk           # confirm repo ACL (private — needs org membership)
+gh repo clone KooshaPari/phenotype-sdk /tmp/phenotype-sdk-migration
+```
+
+**Restore prerequisites:** GitHub org read access for `KooshaPari/phenotype-sdk` (private).
+**Documented restore path:** `git remote add origin https://github.com/KooshaPari/phenotype-sdk.git && git fetch --all`.
+
+## Gate Tooling Reference
+
+- `bin/repo-delete-gate.sh` — pre-delete gate
+- `bin/repo-delete-gate.ps1` — Windows-runner twin
+- `bin/repo-archive-gate.sh` — pre-archive gate
+- `bin/repo-status-scan.py` — fleet-wide status scanner
+- `bin/absorption-justification.py` — this orchestrator
+
+## Authoritative Org ADRs (Upstream Cross-Reference)
+
+- ADR-008 — consolidation over proliferation
+- ADR-039 — monorepo preference for SDK-layer code
+- ECO-022 — compute/infra subtree registry correction
+- `docs/compute-infra-subtree.md` — cluster spine doc on origin/main

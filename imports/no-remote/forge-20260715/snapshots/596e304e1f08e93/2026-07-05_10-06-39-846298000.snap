@@ -1,0 +1,24 @@
+# Use the SAME scope by invoking pwsh with the profile loaded natively
+# This is the equivalent of starting pwsh interactively
+$psi = [System.Management.Automation.PowerShell]::Create()
+$psi.AddScript(". '$PSHOME\profile.ps1'").Invoke() | Out-Null
+
+# Inline: load user's profile as if interactive pwsh started
+. 'D:\koosh\Documents\PowerShell\Microsoft.PowerShell_profile.ps1'
+
+# Now we're in the test scope - vars set by dot-source should be visible
+Write-Host '=== Env vars (same scope) ===' -ForegroundColor Cyan
+@('ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'ANTHROPIC_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL') |
+    ForEach-Object {
+        $val = $env:$_
+        if ($val) {
+            if ($_ -eq 'ANTHROPIC_AUTH_TOKEN') {
+                Write-Host ('  ' + $_ + ' = ' + $val.Substring(0,12) + '... (' + $val.Length + ' chars)') -ForegroundColor Green
+            } else {
+                Write-Host ('  ' + $_ + ' = ' + $val) -ForegroundColor Green
+            }
+        } else {
+            Write-Host ('  ' + $_ + ' = <missing>') -ForegroundColor Red
+        }
+    }

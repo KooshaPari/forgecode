@@ -1,0 +1,239 @@
+/**
+ * TDD for PR-012 — `src/lib/observability/burnRateAlerts.ts` (10 unit tests).
+ *
+ * Covers:
+ *   - multi-window evaluation against the threshold table
+ *   - severity escalation (critical for fast burn, warning for slow burn)
+ *   - fast-burn vs slow-burn distinctions
+ *   - false-positive suppression (headroom below noise floor stays empty)
+ *   - OTEL_SDK_DISABLED gate (alerts short-circuit when disabled)
+ *
+ * Run from the repo root:
+ *   node --import tsx --test tests/unit/observability/burnRateAlerts.test.ts
+ */
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  DEFAULT_THRESHOLDS,
+  consumedFractionInWindow,
+  evaluateBurnRates,
+  evaluateWithOtelGate,
+  highestSeverity,
+  isOtelAlertsDisabled,
+  suppressionHeadroom,
+  type BurnRateAlert,
+  type ErrorBudgetSnapshot,
+} from "../../../src/lib/observability/burnRateAlerts.ts";
+
+/**
+ * Construct a minimal `ErrorBudgetSnapshot` whose `burn_rates` are the
+ * canonical Workbook "burn rate" multiples (so a 2% / 28d burn over 1h
+ * = `1h_burn_rate = 0.02 / 0.001 × (60 / (28 × 24 × 60))` … easier to
+ * express in budget-fraction form and convert via the helper).
+ */
+function snapshotWithFractions(
+  slo_id: string,
+  fractions: { "1h": number; "6h": number; "24h": number; "72h": number }
+): ErrorBudgetSnapshot {
+  const totalMinutes = 28 * 24 * 60;
+  const windowMinutes = { "1h": 60, "6h": 360, "24h": 1440, "72h": 4320 } as const;
+  // burn_rate = fraction × totalMinutes / windowMinutes
+  const burn_rates = {
+    "1h": (fractions["1h"] * totalMinutes) / windowMinutes["1h"],
+    "6h": (fractions["6h"] * totalMinutes) / windowMinutes["6h"],
+    "24h": (fractions["24h"] * totalMinutes) / windowMinutes["24h"],
+    "72h": (fractions["72h"] * totalMinutes) / windowMinutes["72h"],
+  } as ErrorBudgetSnapshot["burn_rates"];
+  return {
+    slo_id,
+    window_start_ms: 0,
+    window_end_ms: 28 * 24 * 60 * 60 * 1000,
+    total_budget_minutes: 40.32,
+    consumed_minutes: 0,
+    remaining_minutes: 40.32,
+    consumed_ratio: 0,
+    is_exhausted: false,
+    status: "healthy",
+    burn_rates,
+    sli_value: 1,
+    measured_at: 0,
+  };
+}
+
+describe("burnRateAlerts: consumedFractionInWindow", () => {
+  it("inverts the burn_rate back into a budget-fraction form", () => {
+    // burn_rate 14 over 1h means "burning 14× the allowed rate for 1h",
+    // which corresponds to 14 × (1h / 28d) = 14 × (60 / 40320) = 0.0208.
+    const fraction = consumedFractionInWindow(
+      { "1h": 14, "6h": 0, "24h": 0, "72h": 0 },
+      "1h"
+    );
+    assert.ok(Math.abs(fraction - 14 * (60 / (28 * 24 * 60))) < 1e-9);
+  });
+});
+
+describe("burnRateAlerts: evaluateBurnRates", () => {
+  it("returns no alerts when burn is below every threshold (healthy)", () => {
+    const snap = snapshotWithFractions("chat-availability", {
+      "1h": 0.001,
+      "6h": 0.005,
+      "24h": 0.01,
+      "72h": 0.02,
+    });
+    assert.deepEqual(evaluateBurnRates(snap), []);
+  });
+
+  it("flags the 1h window as critical when 2% burns in 1h", () => {
+    const snap = snapshotWithFractions("chat-availability", {
+      "1h": 0.025,
+      "6h": 0.005,
+      "24h": 0.01,
+      "72h": 0.02,
+    });
+    const alerts = evaluateBurnRates(snap);
+    const one = alerts.find((a) => a.window === "1h");
+    assert.ok(one, "expected a 1h alert");
+    assert.equal(one.severity, "critical");
+    assert.equal(one.threshold, 0.02);
+  });
+
+  it("flags the 6h window as critical when 5% burns in 6h", () => {
+    const snap = snapshotWithFractions("chat-availability", {
+      "1h": 0.005,
+      "6h": 0.06,
+      "24h": 0.01,
+      "72h": 0.02,
+    });
+    const alerts = evaluateBurnRates(snap);
+    const six = alerts.find((a) => a.window === "6h");
+    assert.ok(six, "expected a 6h alert");
+    assert.equal(six.severity, "critical");
+  });
+
+  it("flags the 24h window as critical when 10% burns in 24h", () => {
+    const snap = snapshotWithFractions("chat-availability", {
+      "1h": 0.005,
+      "6h": 0.005,
+      "24h": 0.11,
+      "72h": 0.02,
+    });
+    const alerts = evaluateBurnRates(snap);
+    const twentyFour = alerts.find((a) => a.window === "24h");
+    assert.ok(twentyFour, "expected a 24h alert");
+    assert.equal(twentyFour.severity, "critical");
+  });
+
+  it("flags the 72h window as warning (never critical)", () => {
+    const snap = snapshotWithFractions("chat-availability", {
+      "1h": 0.005,
+      "6h": 0.005,
+      "24h": 0.01,
+      "72h": 0.25,
+    });
+    const alerts = evaluateBurnRates(snap);
+    const seventyTwo = alerts.find((a) => a.window === "72h");
+    assert.ok(seventyTwo, "expected a 72h alert");
+    assert.equal(seventyTwo.severity, "warning");
+  });
+
+  it("treats a small 1h spike (false positive) as suppressed by the 24h window", () => {
+    // 1h is past threshold but 6h/24h are well below → the burn is
+    // not sustained. We expect a 1h critical alert (it DID trip),
+    // but NO 6h or 24h alerts — that's the multi-window pattern: a
+    // single window fires alone (page if you want), but the suppression
+    // test ensures the inverse (single-window compliance) stays silent.
+    const snap = snapshotWithFractions("chat-availability", {
+      "1h": 0.025, // → critical
+      "6h": 0.005, // suppressed
+      "24h": 0.01, // suppressed
+      "72h": 0.02, // suppressed
+    });
+    const alerts = evaluateBurnRates(snap);
+    assert.equal(alerts.length, 1);
+    assert.equal(alerts[0].window, "1h");
+  });
+});
+
+describe("burnRateAlerts: severity routing + OTEL gate", () => {
+  it("highestSeverity picks critical over warning over info", () => {
+    const alerts: BurnRateAlert[] = [
+      makeAlert("warning"),
+      makeAlert("info"),
+      makeAlert("critical"),
+    ];
+    assert.equal(highestSeverity(alerts), "critical");
+    assert.equal(highestSeverity([makeAlert("warning")]), "warning");
+    assert.equal(highestSeverity([makeAlert("info")]), "info");
+    assert.equal(highestSeverity([]), null);
+  });
+
+  it("suppressionHeadroom is positive below threshold, negative above", () => {
+    const below = snapshotWithFractions("x", {
+      "1h": 0.001,
+      "6h": 0.001,
+      "24h": 0.001,
+      "72h": 0.001,
+    }).burn_rates;
+    assert.ok(suppressionHeadroom(below) > 0);
+    const above = snapshotWithFractions("x", {
+      "1h": 0.5,
+      "6h": 0.5,
+      "24h": 0.5,
+      "72h": 0.5,
+    }).burn_rates;
+    assert.ok(suppressionHeadroom(above) < 0);
+  });
+
+  it("evaluateWithOtelGate short-circuits when OTEL_SDK_DISABLED=true", () => {
+    const prev = process.env.OTEL_SDK_DISABLED;
+    try {
+      process.env.OTEL_SDK_DISABLED = "true";
+      assert.equal(isOtelAlertsDisabled(), true);
+      const snap = snapshotWithFractions("chat-availability", {
+        "1h": 0.5,
+        "6h": 0.5,
+        "24h": 0.5,
+        "72h": 0.5,
+      });
+      assert.equal(evaluateWithOtelGate(snap), null);
+    } finally {
+      if (prev === undefined) delete process.env.OTEL_SDK_DISABLED;
+      else process.env.OTEL_SDK_DISABLED = prev;
+    }
+  });
+
+  it("evaluateWithOtelGate evaluates normally when OTEL_SDK_DISABLED is unset", () => {
+    const prev = process.env.OTEL_SDK_DISABLED;
+    try {
+      delete process.env.OTEL_SDK_DISABLED;
+      assert.equal(isOtelAlertsDisabled(), false);
+      const snap = snapshotWithFractions("chat-availability", {
+        "1h": 0.5,
+        "6h": 0.5,
+        "24h": 0.5,
+        "72h": 0.5,
+      });
+      const out = evaluateWithOtelGate(snap);
+      assert.ok(out && out.length === 4);
+    } finally {
+      if (prev !== undefined) process.env.OTEL_SDK_DISABLED = prev;
+    }
+  });
+});
+
+function makeAlert(severity: "info" | "warning" | "critical"): BurnRateAlert {
+  return {
+    slo_id: "x",
+    window: "1h",
+    severity,
+    burn_rate: 1,
+    threshold: 0.02,
+    message: "test",
+    evaluated_at: 0,
+  };
+}
+
+// Reference DEFAULT_THRESHOLDS so tree-shakers don't drop it (also serves
+// as a regression guard if the threshold table is ever reordered).
+void DEFAULT_THRESHOLDS;

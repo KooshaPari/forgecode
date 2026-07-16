@@ -1,0 +1,157 @@
+/**
+ * @file tests/unit/observability/otel.test.ts
+ *
+ * Unit tests for src/lib/observability/otel.ts — central OTel facade:
+ *   - initTelemetry() / shutdownTelemetry()
+ *   - getTracer / getMeter
+ *   - runInSpan helper
+ *   - isTelemetryInitialized
+ */
+import { describe, it, beforeEach, afterEach } from "node:test";
+import assert from "node:assert/strict";
+import {
+  initTelemetry,
+  shutdownTelemetry,
+  getTracer,
+  getMeter,
+  isTelemetryInitialized,
+  runInSpan,
+} from "../../../src/lib/observability/otel";
+
+const ENV_KEY = "OMNIROUTE_TELEMETRY_ENABLED";
+
+describe("observability.otel.initTelemetry", () => {
+  let original: string | undefined;
+  beforeEach(() => {
+    original = process.env[ENV_KEY];
+    shutdownTelemetry();
+  });
+  afterEach(() => {
+    shutdownTelemetry();
+    if (original === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = original;
+  });
+
+  it("returns true on first init", () => {
+    delete process.env[ENV_KEY];
+    const out = initTelemetry();
+    assert.equal(out, true);
+  });
+
+  it("is idempotent — second call still returns true", () => {
+    delete process.env[ENV_KEY];
+    initTelemetry();
+    const out = initTelemetry();
+    assert.equal(out, true);
+  });
+
+  it("flips isTelemetryInitialized() to true after init", () => {
+    delete process.env[ENV_KEY];
+    initTelemetry();
+    assert.equal(isTelemetryInitialized(), true);
+  });
+
+  it("flips back to false after shutdown", () => {
+    delete process.env[ENV_KEY];
+    initTelemetry();
+    shutdownTelemetry();
+    assert.equal(isTelemetryInitialized(), false);
+  });
+});
+
+describe("observability.otel.getTracer", () => {
+  let original: string | undefined;
+  beforeEach(() => {
+    original = process.env[ENV_KEY];
+    shutdownTelemetry();
+  });
+  afterEach(() => {
+    shutdownTelemetry();
+    if (original === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = original;
+  });
+
+  it("returns a tracer object even when not initialized (no-op tracer)", () => {
+    delete process.env[ENV_KEY];
+    const t = getTracer("test");
+    assert.ok(t);
+    assert.equal(typeof t.startSpan, "function");
+  });
+
+  it("returns the same tracer for the same name", () => {
+    delete process.env[ENV_KEY];
+    const a = getTracer("test");
+    const b = getTracer("test");
+    assert.equal(a, b);
+  });
+
+  it("tracer has required methods", () => {
+    delete process.env[ENV_KEY];
+    const t = getTracer("test");
+    assert.equal(typeof t.startSpan, "function");
+    assert.equal(typeof t.startActiveSpan, "function");
+  });
+});
+
+describe("observability.otel.getMeter", () => {
+  let original: string | undefined;
+  beforeEach(() => {
+    original = process.env[ENV_KEY];
+    shutdownTelemetry();
+  });
+  afterEach(() => {
+    shutdownTelemetry();
+    if (original === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = original;
+  });
+
+  it("returns a meter object even when not initialized", () => {
+    delete process.env[ENV_KEY];
+    const m = getMeter("test");
+    assert.ok(m);
+  });
+
+  it("meter has counter/histogram/gauge creators", () => {
+    delete process.env[ENV_KEY];
+    const m = getMeter("test");
+    assert.equal(typeof m.createCounter, "function");
+    assert.equal(typeof m.createHistogram, "function");
+    assert.equal(typeof m.createUpDownCounter, "function");
+  });
+});
+
+describe("observability.otel.runInSpan", () => {
+  let original: string | undefined;
+  beforeEach(() => {
+    original = process.env[ENV_KEY];
+    shutdownTelemetry();
+  });
+  afterEach(() => {
+    shutdownTelemetry();
+    if (original === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = original;
+  });
+
+  it("runs the callback and returns its value", async () => {
+    delete process.env[ENV_KEY];
+    const out = await runInSpan("op", async () => 42);
+    assert.equal(out, 42);
+  });
+
+  it("returns undefined when callback returns void", async () => {
+    delete process.env[ENV_KEY];
+    const out = await runInSpan("op", async () => {
+      /* no return */
+    });
+    assert.equal(out, undefined);
+  });
+
+  it("propagates errors thrown in callback", async () => {
+    delete process.env[ENV_KEY];
+    await assert.rejects(async () =>
+      runInSpan("op", async () => {
+        throw new Error("kaboom");
+      })
+    );
+  });
+});

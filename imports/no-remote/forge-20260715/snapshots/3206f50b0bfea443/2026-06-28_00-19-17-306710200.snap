@@ -1,0 +1,36 @@
+$share = 'E:\phase-finish-stack\.github\workflows'
+$repos = @('Tracera','AgilePlus')
+
+foreach ($r in $repos) {
+  $wfDir = Join-Path 'E:\phase-finish-stack' "$r\.github\workflows"
+}
+
+$matrix = @{
+  Tracera    = @('coverage','e2e','perf','qe')
+  AgilePlus  = @('coverage','perf','qe')
+}
+
+foreach ($r in 'Tracera','AgilePlus') {
+  $dst = "E:\phase-finish-stack\$r\.github\workflows"
+  if (-not (Test-Path $dst)) { New-Item -ItemType Directory -Force -Path $dst | Out-Null }
+  foreach ($f in $matrix[$r]) {
+    $src = Join-Path $share "$f.yml"
+    $tgt = Join-Path $dst "$f.yml"
+    if (Test-Path $src) {
+      Copy-Item -Path $src -Destination $tgt -Force
+      $len = (Get-Item $tgt).Length
+      Write-Host "  $r -- $f.yml copied  ($len bytes)"
+    } else {
+      Write-Host "  $r -- $f.yml MISSING"
+    }
+  }
+}
+
+Write-Host ''
+Write-Host '=== Final per-repo coverage ==='
+foreach ($r in 'Tracera','AgilePlus') {
+  Write-Host ""
+  Write-Host "  $r:"
+  Get-ChildItem "E:\phase-finish-stack\$r\.github\workflows" -Filter '*.yml' -Force |
+    ForEach-Object { Write-Host "    $($_.Name)" } | Out-Null
+}

@@ -1,0 +1,95 @@
+/**
+ * PR #36 — TPROXY decrypt complete: HTTPS inspection engine.
+ *
+ * Public barrel for the decryption half of TPROXY. The kernel-bound half
+ * (`captureMode.ts`, `transparentSocket.ts`, `commands.ts`, `setup.ts`) lives
+ * in the parent `tproxy/` directory; this barrel only re-exports the
+ * CLIENT-FACING forward-proxy + cert-management surface.
+ *
+ * Wiring example (CLI / route handler):
+ *
+ *   import { startInterceptedHttpsProxy, resolveCaPaths, isDecryptEnabled } from "../tproxy/decrypt";
+ *
+ *   if (isDecryptEnabled(process.env)) {
+ *     const handle = await startInterceptedHttpsProxy({
+ *       host: "127.0.0.1",
+ *       port: Number(process.env.OMNIROUTE_TPROXY_DECRYPT_PORT ?? 8443),
+ *       ...resolveCaPaths(process.env),
+ *       caName: "OmniRoute TPROXY Decrypt CA",
+ *       bypassHosts: KNOWN_HSTS_HOSTS,
+ *       forceInterceptHosts: [],
+ *     });
+ *     // ...
+ *   }
+ *
+ * The exported `isDecryptEnabled(env)` reads `OMNIROUTE_TPROXY_DECRYPT=true`
+ * (the single source of truth for the feature flag); the parent `tproxy/`
+ * `index.ts` re-uses it so CLI + UI + route agree.
+ */
+import {
+  CaCertManager,
+  DEFAULT_CA_DIR,
+  DEFAULT_CA_CERT_PATH,
+  DEFAULT_CA_KEY_PATH,
+  DEFAULT_ROTATE_BEFORE_DAYS,
+  caExistsOnDisk,
+  resolveCaPaths,
+} from "./caCertManager.ts";
+
+export {
+  parseHsts,
+  createHstsBypasser,
+  stripHsts,
+  KNOWN_HSTS_HOSTS,
+  type HstsPolicy,
+  type HstsBypassOptions,
+} from "./hstsBypass.ts";
+
+export {
+  TlsInspector,
+  hostMatches,
+  decideInspection,
+  type InspectDecision,
+  type TlsInspectorDeps,
+} from "./tlsInspector.ts";
+
+export {
+  TlsSessionCache,
+  type SessionCacheOptions,
+  type UpstreamSession,
+} from "./sessionCache.ts";
+
+export {
+  startInterceptedHttpsProxy,
+  createDefaultForwarder,
+  shouldBypassHost,
+  type InterceptedHttpsProxyHandle,
+} from "./interceptedHttpsProxy.ts";
+
+export {
+  DEFAULT_TLS_INTERCEPT_CONFIG,
+  silentLogger,
+  type TlsInterceptConfig,
+  type InterceptedRequest,
+  type InterceptedResponse,
+  type InterceptedForwarder,
+  type CaCertChain,
+  type CertManagerLike,
+  type TlsInterceptLogger,
+} from "./types.ts";
+
+/** Single source of truth for the feature flag. */
+export function isDecryptEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.OMNIROUTE_TPROXY_DECRYPT;
+  if (!raw) return false;
+  const lower = raw.trim().toLowerCase();
+  return lower === "1" || lower === "true" || lower === "yes" || lower === "on";
+}
+
+/** Single source of truth for the CA path (env or default). */
+export function decryptCaPath(env: NodeJS.ProcessEnv = process.env): string {
+  return resolveCaPaths(env).caCertPath;
+}
+
+/** Default port for the HTTPS MITM proxy. */
+export const DECRYPT_DEFAULT_PORT = 8443;

@@ -1,0 +1,46 @@
+## Summary
+Recover/replay `byteport-stash-1-tools-cli` by adding a proper, compilable `byteport-cli` crate as a workspace member — closing out the branch-slim hygiene work for Epic A / A12.
+
+## Context
+The `recover/byteport-stash-1-tools-cli` branch was previously triaged as closed (BRANCH_TRIAGE_DONE.md) because the original stash had a destructive Cargo.toml change and the `tools/cli/` crate didn't exist. A12 requires us to recover the intent — create a working tools CLI crate — rather than blindly replaying the broken stash.
+
+This completes the A12 DAG unit in Epic A (Hygiene garden & branch slim) for the Compute/Infra hardening Epic.
+
+## Changes
+- Added `crates/byteport-cli/` — a new workspace member (`byteport-cli`)
+- **`Cargo.toml`** (`byteport-cli`): depends on `byteport-transport` (hexagonal ports) and `clap` (derive-based CLI parser)
+- **`src/main.rs`**: CLI commands for:
+  - `codec` — encode/decode via `WireCodecAdapter`
+  - `transport` — send/receive via `MockTransportAdapter`
+  - `ui view` — render `UiView` into a terminal header
+  - `ui prompt` — generate `PromptMessage` strings
+- Updated workspace `Cargo.toml` to register the crate
+- Updated `Cargo.lock` to reflect the new member
+
+### Key Implementation Details
+Unlike the original stash (which had a broken `Cargo.toml` with no valid path), this implementation:
+- Uses the existing `byteport-transport` crate path dependency
+- Wires all four hexagonal port adapters (`Codec`, `Transport`, `UiPort`, `UploadTransport`) as CLI subcommands
+- Passes `cargo check --workspace`, `cargo clippy`, `cargo fmt --check`, and `cargo test`
+
+## Testing
+```bash
+# Build & typecheck
+cargo check -p byteport-cli
+
+# Lint
+cargo clippy -p byteport-cli
+
+# Format check
+cargo fmt -p byteport-cli --check
+
+# Run tests
+cargo test -p byteport-cli
+```
+
+All gates pass cleanly.
+
+## Links
+- Epic: Compute/Infra Hardening (Epic A — Hygiene garden & branch slim)
+- DAG unit: A12
+- Previous triage: BRANCH_TRIAGE_DONE.md

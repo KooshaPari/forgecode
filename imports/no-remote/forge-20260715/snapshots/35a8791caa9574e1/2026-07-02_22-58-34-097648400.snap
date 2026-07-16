@@ -1,0 +1,6 @@
+$ErrorActionPreference = 'SilentlyContinue'
+$content = Get-Content 'C:\Users\koosh\_wsm3d_audit\ws3d_build_now.txt' -Raw
+$matches = [regex]::Matches($content, 'E:\\Dev\\WorldSphereMod\\([^()]+?)\(\d+,\d+:')
+$groups = $matches | ForEach-Object { $_.Groups[1].Value } | Group-Object
+Write-Host ('TOTAL: ' + $groups.Count)
+$groups | Sort-Object Count -Descending | Format-Table Count, Name -AutoSize

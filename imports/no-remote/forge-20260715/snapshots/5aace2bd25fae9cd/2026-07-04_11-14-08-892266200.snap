@@ -1,0 +1,20 @@
+import re
+import json
+with open('_sapanw_issues.json','rb') as f:
+    raw = f.read()
+text = raw.decode('utf-8')
+ansi = re.compile(r'\x1b\[[0-9;]*m')
+clean = ansi.sub('', text)
+data = json.loads(clean)
+
+want = {6169, 6149, 6134, 6135, 6039, 6162, 6127, 6142, 6087, 5757}
+for issue in data:
+    if issue['number'] not in want:
+        continue
+    print('='*80)
+    print(f"#{issue['number']} :: {issue['title']}")
+    print('labels=', [l['name'] for l in issue.get('labels', [])])
+    print('created=', issue['createdAt'])
+    print('-'*80)
+    print(issue.get('body', '') or '')
+    print()

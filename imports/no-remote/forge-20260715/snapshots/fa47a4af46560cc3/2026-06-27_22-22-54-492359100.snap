@@ -1,0 +1,87 @@
+# Phase C — Optional SLM Session Evaluator
+
+> Goal: behind a flag, invoke a tiny llama.cpp-served evaluator (LLMLingua-class, ≤1B params) per session/turn to produce three numbers — *waste*, *goal-progression*, *thrash-flip* — so that the user can understand when a session is asymptotically converging, thrashing, or slowly wasting budget.
+
+---
+
+## 1. Why now
+
+Heuristic self-healing already answers "is the chain failing" via circuit breakers and cooldown. It does **not** answer "is this session ever going to deliver". The optional evaluator fills that gap using a local SLM, so cost is near-zero and no data leaves the box. Off by default.
+
+## 2. Activation & env
+
+`OMNIROUTE_SLM_EVAL=1` enables. Soft-fail to no-op on missing/invalid model file. Telemetry goes to `detailed_logs` (existing column for `event_kind`, `payload_json`).
+
+## 3. Inputs
+
+Per turn, gather:
+
+- The most recent `route_traces` step chain for the `session_id`
+- Diff of model outputs across the last N turns (N=5 default, windowed)
+- Token totals (input/output/cache-write/cache-read), recent trend
+- Cascade reasons, error classes seen, anomaly signals (from Phase A)
+- Final decision + outcome for the current turn
+
+The evaluator receives a compact JSON document, not raw chat history. Tooling optimisation is upstream — limits the prompt to ≤ 4 KB.
+
+## 4. Outputs (typed)
+
+```ts
+interface EvalResult {
+  wasteDelta:   number;   // -1..1   (negative = making progress on spend efficiency)
+  progression:  number;   // 0..1    (confidence the session is converging on a goal)
+  thrash:       boolean;  // true if N consecutive turns show no progression
+  rationale:    string;   // 1 short sentence, ≤160 chars
+  slmVersion:   string;   // hash for reproducibility
+  evaluatedAt:  string;   // ISO8601
+}
+```
+
+Persist to a new `slm_eval_results` table keyed on `(session_id, ts)` so the user can replay.
+
+## 5. Model + serving
+
+- llama.cpp binary fetched once into a deterministic location under `~/.omniroute/slm/` (`OLLAMA`-class alternative not in stack yet — `llama.cpp` matches existing single-binary pattern).
+- Model: ≤1B params. Three candidate sizes (default = middle):
+  - **XS** (~100M, e.g. `qwen2.5-0.5b-instruct` or comparable public release) for max throughput
+  - **S** (~500M, e.g. `llama-3.2-1b-instruct`)
+  - **M** (~1B, e.g. `phi-1.5` or `tinyllama-1.1b`)
+- Selection via env `OMNIROUTE_SLM_EVAL_MODEL=XS|S|M`; default = S.
+- Invocation: synchronous under 250 ms p95 for the S tier, gated behind a 5s timeout; exceeded → degrade to heuristic result (waste=0, progression=heuristicEstimate, thrash=false).
+- **No network calls**; runs entirely on local hardware.
+
+## 6. Heuristic fallback (when SLM disabled or fails)
+
+- *Waste*: `tokens_in_window * current_price − tokens_in_baseline * current_price`
+- *Progression*: simple diff against last user message (Jaccard + length-similarity) → 0..1
+- *Thrash*: windowed flag if `progression < 0.1` for 10 consecutive turns
+
+Both paths feed the same consumer surface so caller code does not branch.
+
+## 7. Hooking
+
+- New file `open-sse/services/learning/traceEvaluator.ts` exports `evaluateTurn(ctx)`.
+- `combo.resolve` calls `evaluateTurn()` after each successful completion when `OMNIROUTE_SLM_EVAL=1`.
+- The evaluator pushes the result back into `route_traces.slm_eval_json` (extension column on Phase B's table) and into `slm_eval_results` for history.
+
+## 8. Tests
+
+- `tests/unit/evaluator-heuristic.test.ts` — table-driven Jaccard / thrash-flip behaviour.
+- `tests/integration/evaluator-llama.test.ts` — boots the llama.cpp stub in tests, runs a fixed input, asserts non-empty `EvalResult` and stable `slmVersion` across runs.
+- `tests/e2e/slm-eval-flag-off.spec.ts` — flag off ⇒ no SLM column populated; flag on ⇒ column populated within a 250ms p95 budget.
+- `tests/e2e/slm-eval-thrash.spec.ts` — drives 10 identical turns; thrash flips to true at turn N=10.
+
+## 9. Risks & mitigations
+
+| Risk | Mitigation |
+|---|---|
+| llama.cpp binary missing | Soft-fail; heuristic fallback always runs. |
+| SLM prompt drift breaks tests | Pin `slmVersion` hash, include the hash in the prompt at test-time. |
+| Long evaluation latency stalls the chain | 5s timeout, async maybe-future; v1 is sync. |
+| Hallucinated progression scores | Clamp to `[0,1]`, never drive a routing decision off them (informational only). |
+
+## 10. Open questions
+
+1. Should the evaluator's output be displayed in the dashboard as a sparkline per session, or only fire off alerts / events? *Recommended: sparklines + alert event hooks.*
+2. Multi-session correlation — do users want *cross-session* thrash detection (top-K sessions that thrashed today)? *Recommended: yes, queryable at `/dashboard/eval/thrash`.*
+3. Should the eval results shape router behaviour (e.g. lower concurrency on a thrashing session), or strictly be observational? *Recommended: observational in v1; behaviour-shaping after safety data.*

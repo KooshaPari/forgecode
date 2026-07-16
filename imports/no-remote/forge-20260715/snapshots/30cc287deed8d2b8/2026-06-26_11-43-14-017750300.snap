@@ -1,0 +1,26 @@
+# OmniRoute — Docker deployment .env
+# This file is consumed by `docker compose --env-file .env` (implicit)
+# and by the omniroute container at runtime.
+#
+# IMPORTANT: paths here are CONTAINER paths (/app/...), NOT Windows paths.
+# All persistent data is mounted from ./data on the Windows host.
+
+# --- Server ---
+HOST=0.0.0.0
+PORT=20128
+NODE_ENV=production
+OMNIROUTE_DEPLOYMENT=docker
+
+# --- Data (mounted to ./data on the host) ---
+DATA_DIR=/app/data
+
+# --- Auth (generate your own with: node -e "console.log(require('crypto').randomBytes(48).toString('base64'))") ---
+# Fill these in from C:\Users\koosh\.omniroute\.env — DO NOT COMMIT REAL SECRETS
+# AUTH_KEY=
+# SESSION_SECRET=
+
+# --- Optional Redis (uncomment to enable the redis sidecar) ---
+# REDIS_URL=redis://redis:6379
+
+# --- Logging ---
+LOG_LEVEL=info

@@ -1,0 +1,9 @@
+@echo off
+setlocal
+set "CARGO_HOME=E:\Dev\.cargo"
+set "CARGO_TARGET_DIR=E:\civis-target"
+cd /d "C:\Users\koosh\.claude\lanes\substrate-feat-cloud-dispatch"
+echo [BUILD_STARTED at %DATE% %TIME%] > build_output.txt
+cargo check -p substrate-core -p cloud-cursor -p cloud-kilo -p cloud-codex -p cloud-dispatch-conformance -p driver-cli >> build_output.txt 2>&1
+echo EXIT_CODE=%ERRORLEVEL% >> build_output.txt
+echo [BUILD_FINISHED at %DATE% %TIME%] >> build_output.txt

@@ -1,0 +1,142 @@
+# Tier-0 CI enforcement gate
+# Runs on every PR — fails the PR if any gate fails.
+# ============================================================
+#  Gates:
+#   1. build       — cargo build + npm build (where applicable)
+#   2. test-unit   — cargo test
+#   3. fmt/clippy  — cargo fmt --check + cargo clippy
+#   4. typecheck   — cargo check (acts as Rust type-check)
+# ============================================================
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # ── Gate 1: Build ──────────────────────────────────────────
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            bindings/rust-ffi -> bindings/rust-ffi/target
+            pheno-compose-driver -> pheno-compose-driver/target
+            crates/pheno-config -> crates/pheno-config/target
+
+
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: npm install
+        run: npm ci
+
+      - name: npm build (docs)
+        run: npm run build
+
+  # ── Gate 2: Unit tests ─────────────────────────────────────
+  test-unit:
+    name: test-unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+          . -> target
+          bindings/rust-ffi -> bindings/rust-ffi/target
+          pheno-compose-driver -> pheno-compose-driver/target
+          crates/pheno-config -> crates/pheno-config/target
+
+      - name: cargo test (workspace)
+        run: cargo test --workspace --all-features --locked
+
+  # ── Gate 3: Format + Clippy + Lint ─────────────────────────
+  fmt-clippy:
+    name: fmt-clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+          . -> target
+          bindings/rust-ffi -> bindings/rust-ffi/target
+          pheno-compose-driver -> pheno-compose-driver/target
+          crates/pheno-config -> crates/pheno-config/target
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  # ── Gate 4: Typecheck (cargo check acts as Rust type-check) ─
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+          . -> target
+          bindings/rust-ffi -> bindings/rust-ffi/target
+          pheno-compose-driver -> pheno-compose-driver/target
+          crates/pheno-config -> crates/pheno-config/target
+
+      - name: cargo check (workspace)
+        run: cargo check --workspace --all-targets --locked

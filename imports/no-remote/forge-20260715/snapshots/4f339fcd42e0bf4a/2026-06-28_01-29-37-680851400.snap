@@ -1,0 +1,60 @@
+$ErrorActionPreference = 'Stop'
+$in  = 'C:\Users\koosh\_compute_infra_audit\tmp\a3_branch_dates.tsv'
+$out = 'C:\Users\koosh\_compute_infra_audit\tmp\A3_report.md'
+
+# system_date from task = 2026-06-27
+$today = Get-Date '2026-06-27T00:00:00Z'
+$threshold = $today.AddDays(-30)
+
+$rows = Get-Content $in -Encoding utf8 |
+  Select-Object -Skip 1 |
+  ForEach-Object {
+    $parts = $_ -split "`t"
+    [pscustomobject]@{
+      Name = $parts[0]
+      Sha  = $parts[1]
+      Date = [datetime]$parts[2]
+    }
+  }
+
+$stale   = $rows | Where-Object { $_.Date -lt $threshold } | Sort-Object Date
+$fresh   = $rows | Where-Object { $_.Date -ge $threshold } | Sort-Object Date -Descending
+$exclude = @('main')
+
+$md = New-Object System.Text.StringBuilder
+[void]$md.AppendLine('# Unit A3 — Stale Branches (>30d no commit)')
+[void]$md.AppendLine()
+[void]$md.AppendLine("- Repo: `KooshaPari/BytePort`")
+[void]$md.AppendLine("- As-of: 2026-06-27 (UTC)")
+[void]$md.AppendLine("- Threshold: commit before $('{0:yyyy-MM-dd}' -f $threshold) is stale")
+[void]$md.AppendLine("- Total remote branches: $($rows.Count)")
+[void]$md.AppendLine("- Stale (>30d): $($stale.Count)")
+[void]$md.AppendLine("- Fresh (<=30d): $($fresh.Count)")
+[void]$md.AppendLine()
+[void]$md.AppendLine('## Stale branches (candidate archival)')
+[void]$md.AppendLine()
+[void]$md.AppendLine('| Branch | Tip SHA | Last commit (UTC) | Age (days) | Status |')
+[void]$md.AppendLine('|---|---|---|---|---|')
+foreach ($b in $stale) {
+  $age  = [int]([math]::Floor(($today - $b.Date).TotalDays))
+  $prot = if ($b.Name -in $exclude) { 'protected' } else { 'archive-candidate' }
+  [void]$md.AppendLine(('| `{0}` | `{1}` | {2:yyyy-MM-dd HH:mm:ss}Z | {3} | {4} |' -f $b.Name, $b.Sha.Substring(0,7), $b.Date, $age, $prot))
+}
+[void]$md.AppendLine()
+[void]$md.AppendLine('## Fresh branches (active)')
+[void]$md.AppendLine()
+[void]$md.AppendLine('| Branch | Tip SHA | Last commit (UTC) | Age (days) |')
+[void]$md.AppendLine('|---|---|---|---|')
+foreach ($b in $fresh) {
+  $age  = [int]([math]::Floor(($today - $b.Date).TotalDays))
+  [void]$md.AppendLine(('| `{0}` | `{1}` | {2:yyyy-MM-dd HH:mm:ss}Z | {3} |' -f $b.Name, $b.Sha.Substring(0,7), $b.Date, $age))
+}
+[void]$md.AppendLine()
+[void]$md.AppendLine('## Recommendations')
+[void]$md.AppendLine()
+[void]$md.AppendLine('- `main` is the only protected branch; safe to archive the 11 stale branches above.')
+[void]$md.AppendLine('- Candidate auto-add DAG units for each stale branch: `arch/B<id>-delete-<slug>` (B-tier, type=archive).')
+[void]$md.AppendLine('- Open PR `arch/A3-cleanup-stale-branches` with one deletion commit per branch, keep `main` untouched.')
+
+$md.ToString() | Out-File -FilePath $out -Encoding utf8
+Get-Content $out

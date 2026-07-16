@@ -1,0 +1,39 @@
+' start-proxy.vbs - detach-spawn sse-cleanup-proxy.mjs (avoids cmd.exe start /B hangs)
+' Usage: cscript //nologo start-proxy.vbs
+Dim shell, fso, tsOut, tsErr, cmd
+Set shell = CreateObject("Wscript.Shell")
+Set fso   = CreateObject("Scripting.FileSystemObject")
+
+Dim proxyMjs : proxyMjs = "C:\Users\koosh\.omniroute\bin\sse-cleanup-proxy.mjs"
+Dim port     : port      = "20130"
+Dim logOut   : logOut    = "C:\Users\koosh\AppData\Local\Temp\sse-cleanup-proxy.out.log"
+Dim logErr   : logErr    = "C:\Users\koosh\AppData\Local\Temp\sse-cleanup-proxy.err.log"
+
+' Find node.exe on PATH
+Dim nodeExe : nodeExe = ""
+Dim pathEnv : pathEnv = shell.ExpandEnvironmentStrings("%PATH%")
+Dim paths   : paths   = Split(pathEnv, ";")
+Dim p
+For Each p In paths
+    If LCase(Right(p, 4)) = "\bin" Or LCase(Right(p, 4)) = "\usr" Then
+        ' skip
+    End If
+    Dim candidate
+    candidate = Trim(p) & "\node.exe"
+    If fso.FileExists(candidate) Then
+        nodeExe = candidate
+        Exit For
+    End If
+Next
+If nodeExe = "" Then
+    ' Fallback to bare "node" — relies on PATH at exec time
+    nodeExe = "node"
+End If
+
+' shell.Run with bstrCommand lets us redirect via cmd /c; but we want TRUE detach.
+' Use shell.Run with WindowStyle=0 + Wait=False; redirect via cmd /c > out 2> err
+Dim cmdLine
+cmdLine = "cmd.exe /c " & nodeExe & " """ & proxyMjs & """ " & port & _
+          " 1> """ & logOut & """ 2> """ & logErr & """"
+
+shell.Run cmdLine, 0, False

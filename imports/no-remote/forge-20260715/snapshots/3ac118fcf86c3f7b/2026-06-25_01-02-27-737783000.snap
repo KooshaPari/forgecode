@@ -1,0 +1,11 @@
+import { execSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+
+const result = execSync(
+  "node node_modules/typescript/bin/tsc --noEmit",
+  { cwd: "C:\\Users\\koosh\\OmniRoute-upstream", encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+);
+writeFileSync("C:\\Users\\koosh\\OmniRoute-upstream\\_tsc_pr21.log", result);
+console.log("TSC OK - no output");
+</content>
+</invoke>

@@ -1,0 +1,12 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+test("validateResponseQuality import works via combo.ts", async () => {
+  const { validateResponseQuality } = await import("./services/combo.ts");
+  assert.equal(typeof validateResponseQuality, "function");
+});
+
+test("validateResponseQuality import works via validateQuality.ts directly", async () => {
+  const mod = await import("./services/combo/validateQuality.ts");
+  assert.equal(typeof mod.validateResponseQuality, "function");
+});

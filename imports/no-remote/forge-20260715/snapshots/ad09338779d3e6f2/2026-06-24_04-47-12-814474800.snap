@@ -1,0 +1,33 @@
+import json
+from pathlib import Path
+
+raw = Path(r'C:\Users\koosh\Civis\_issues.json').read_bytes()
+print(f"raw bytes start: {raw[:8].hex()}  total: {len(raw)}")
+
+# Strip leading ANSI if present (e.g., ESC[1;...m)
+i = raw.find(b'[')
+if i > 0:
+    raw = raw[i:]
+text = raw.decode('utf-8', errors='replace')
+print(f"after strip first 120: {text[:120]!r}")
+
+issues = json.loads(text)
+
+buckets = {}
+for issue in issues:
+    labels = [l['name'] for l in issue.get('labels', [])]
+    if 'auto-alert-sync' in labels:
+        continue
+    primary = labels[0] if labels else 'unlabeled'
+    buckets.setdefault(primary, []).append(issue)
+
+print(f"\nTotal non-CI issues: {sum(len(v) for v in buckets.values())} / {len(issues)}")
+for primary in sorted(buckets, key=lambda k: -len(buckets[k])):
+    items = buckets[primary]
+    print(f"\n=== {primary} ({len(items)}) ===")
+    for it in items[:10]:
+        n = it['number']
+        t = it['title'][:90]
+        print(f"  #{n:>4}  {t}")
+    if len(items) > 10:
+        print(f"  ... and {len(items) - 10} more")

@@ -1,0 +1,29 @@
+import json, re, os
+
+ansi = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
+with open(r'C:\Users\koosh\_repos_inventory.json', 'r', encoding='utf-8') as f:
+    raw = f.read()
+clean = ansi.sub('', raw)
+data = json.loads(clean)
+
+# Non-forks only (forks = upstream repos we don't control)
+nonforks = [r for r in data if not r['fork']]
+nonforks.sort(key=lambda x: x['name'])
+
+# Write clean JSON
+with open(r'C:\Users\koosh\_repos_clean.json', 'w') as f:
+    json.dump(nonforks, f, indent=2)
+
+print(f'TOTAL: {len(nonforks)} non-fork repos')
+print()
+# Language breakdown
+from collections import Counter
+langs = Counter(r.get('lang','') or '' for r in nonforks)
+for lang, count in sorted(langs.items(), key=lambda x: -x[1]):
+    print(f'  {lang:20s} {count}')
+print()
+print('Repo list:')
+for r in nonforks:
+    lang = r.get('lang','') or ''
+    desc = (r.get('desc','') or '')[:70]
+    print(f'  {r["name"]:35s} {lang:15s} {desc}')

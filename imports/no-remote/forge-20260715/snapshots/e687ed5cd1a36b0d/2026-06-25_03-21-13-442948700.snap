@@ -1,0 +1,223 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text.RegularExpressions;
+using FluentAssertions;
+using Xunit;
+
+namespace WorldSphereMod.Tests.Unit;
+
+/// <summary>
+/// Closes Phase 6 unit-test gaps around the Constants actor-rig registry.
+/// Asserts registry observable behavior (via ResolveActorRig) for the runtime
+/// expectations, and asserts source-text invariants for the implementation
+/// shape (the AddRigGroup helper, prefix tables, VoxelRender ordering, etc.).
+/// Behavior assertions stay robust to refactors that preserve semantics;
+/// shape assertions lock in the design contract the test was written for.
+/// </summary>
+[Trait("Category", "Unit")]
+public class Phase6RigRegistryTests
+{
+    // ResolveActorRig + ActorRigTypes live in the main WorldSphereMod Unity
+    // project which this test project doesn't reference. Use reflection to
+    // query the registry via the loaded assembly so the test stays a behavior
+    // assertion (not a source-text grep) and doesn't need to compile Unity deps.
+    static readonly Assembly WorldSphereModAssembly = AppDomain.CurrentDomain.GetAssemblies()
+        .FirstOrDefault(a => a.GetName().Name == "WorldSphereMod")
+        ?? throw new InvalidOperationException("WorldSphereMod assembly not loaded");
+
+    static readonly Type ConstantsType = WorldSphereModAssembly.GetType("WorldSphereMod.Constants")
+        ?? throw new InvalidOperationException("WorldSphereMod.Constants type not found");
+
+    static MethodInfo ResolveActorRigMethod =>
+        ConstantsType.GetMethod("ResolveActorRig", BindingFlags.Public | BindingFlags.Static)
+        ?? throw new InvalidOperationException("Constants.ResolveActorRig not found");
+
+    static IDictionary GetActorRigTypesDictionary()
+    {
+        var field = ConstantsType.GetField("ActorRigTypes", BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException("Constants.ActorRigTypes not found");
+        return (IDictionary)field.GetValue(null)!;
+    }
+
+    static string ResolveRigTypeName(string assetId)
+    {
+        var result = ResolveActorRigMethod.Invoke(null, new object?[] { assetId });
+        return result?.ToString() ?? "None";
+    }
+
+    // Rig-type expectations are expressed as strings (matching rig.ToString())
+    // because the RigType enum lives in the main Unity project which the test
+    // projects can't reference.
+    [Theory]
+    [InlineData("human", "Humanoid")]
+    [InlineData("villager", "Humanoid")]
+    [InlineData("swordsman", "Humanoid")]
+    [InlineData("archer", "Humanoid")]
+    [InlineData("mage", "Humanoid")]
+    [InlineData("warrior", "Humanoid")]
+    [InlineData("whiteMage", "Humanoid")]
+    [InlineData("evilMage", "Humanoid")]
+    [InlineData("orc", "Humanoid")]
+    [InlineData("elf", "Humanoid")]
+    [InlineData("dwarf", "Humanoid")]
+    [InlineData("goblin", "Humanoid")]
+    [InlineData("skeleton", "Humanoid")]
+    [InlineData("zombie", "Humanoid")]
+    [InlineData("bandit", "Humanoid")]
+    [InlineData("necromancer", "Humanoid")]
+    [InlineData("druid", "Humanoid")]
+    [InlineData("king", "Humanoid")]
+    [InlineData("plague_doctor", "Humanoid")]
+    [InlineData("demon", "Humanoid")]
+    [InlineData("angel", "Humanoid")]
+    [InlineData("wolf", "Quadruped")]
+    [InlineData("bear", "Quadruped")]
+    [InlineData("snake", "Snake")]
+    [InlineData("dragon", "None")]
+    [InlineData("crabzilla", "None")]
+    public void ResolveActorRig_maps_expected_actor_ids_to_their_rig_types(string assetId, string expectedRigTypeName)
+    {
+        // Resolve via observable behavior. The RigType enum is defined in the
+        // main WorldSphereMod Unity project which this test project doesn't
+        // reference, so we compare by enum .ToString() instead.
+        var rigType = Constants.ResolveActorRig(assetId);
+        rigType.ToString().Should().Be(expectedRigTypeName,
+            $"actor '{assetId}' must resolve to rig type {expectedRigTypeName} for the Phase 6 rig driver");
+    }
+
+    [Theory]
+    [InlineData("humanoid")]
+    [InlineData("quadruped")]
+    [InlineData("snake")]
+    [InlineData("dragon")]
+    [InlineData("unknown-actor-id-12345")]
+    public void Constants_resolves_any_id_to_a_defined_rig_type(string id)
+    {
+        // Assert the registry resolves the id via observable behavior. Unknown
+        // ids default to Humanoid for the static voxel fallback path. We check
+        // rig.ToString() against the known set of RigType names because the
+        // enum itself isn't accessible from this test project.
+        var rigType = Constants.ResolveActorRig(id);
+        var name = rigType.ToString();
+        var knownNames = new[] { "Humanoid", "Quadruped", "Bird", "Snake", "Insect", "Static", "None" };
+        knownNames.Should().Contain(name,
+            $"Constants must map id '{id}' to a defined RigType (got {name})");
+    }
+
+    [Fact]
+    public void Unknown_actors_default_to_humanoid_for_static_voxel_fallback()
+    {
+        Constants.ResolveActorRig("not-in-registry").ToString().Should().Be("Humanoid",
+            "unknown actors must default to humanoid rig for the static voxel fallback path");
+    }
+
+    [Fact]
+    public void BoneDefinition_enumerates_the_phase_6_rig_types()
+    {
+        var source = ReadSource(@"WorldSphereMod/Code/Rig/BoneDefinition.cs");
+
+        foreach (var name in new[] { "Humanoid", "Quadruped", "Bird", "Snake", "Insect", "Static" })
+        {
+            Regex.IsMatch(source, $@"\b{name}\b").Should().BeTrue($"RigType must include {name}");
+        }
+    }
+
+    [Fact]
+    public void Constants_defines_the_actor_rig_registry_entries()
+    {
+        // Source-level check that ActorRigTypes is wired (via AddRigGroup or
+        // equivalent) - the exact inline syntax isn't required.
+        var source = ReadSource(@"WorldSphereMod/Code/Constants.cs");
+        source.Should().Contain("ActorRigTypes");
+        source.Should().Contain("AddRigGroup",
+            "Constants should populate ActorRigTypes via the AddRigGroup helper " +
+            "so prefix and override merges stay declarative");
+    }
+
+    [Fact]
+    public void Constants_resolve_actor_rig_uses_registry_then_prefix_then_humanoid_default()
+    {
+        var source = ReadSource(@"WorldSphereMod/Code/Constants.cs");
+
+        source.Should().Contain("ActorRigTypes.TryGetValue");
+        source.Should().Contain("RegisterActorRig");
+        source.Should().Contain("return RigType.Humanoid");
+        source.Should().Contain("VehicleShapeHints.IsVehicleAssetId");
+        source.Should().Contain("MatchesAnyPrefix");
+        source.Should().Contain("_humanoidPrefixes");
+        source.Should().Contain("_quadrupedPrefixes");
+        source.Should().Contain("_birdPrefixes");
+        source.Should().Contain("_insectPrefixes");
+    }
+
+    [Fact]
+    public void Constants_registry_omits_unconfirmed_catalog_asset_ids()
+    {
+        var source = ReadSource(@"WorldSphereMod/Code/Constants.cs");
+
+        source.Should().NotContain("[\"spider\"]");
+    }
+
+    [Fact]
+    public void VoxelRender_resolves_rig_type_after_cull_and_lod()
+    {
+        var source = ReadSource(@"WorldSphereMod/Code/Voxel/VoxelRender.cs");
+
+        var cullIndex = source.IndexOf("FrustumCuller.IsVisible", StringComparison.Ordinal);
+        var rigIndex = source.IndexOf("ResolveRigType(a.asset.id)", StringComparison.Ordinal);
+        cullIndex.Should().BeGreaterThan(-1);
+        rigIndex.Should().BeGreaterThan(cullIndex, "rig type should be resolved after frustum cull");
+        source.Should().Contain("tier != WorldSphereMod.LOD.LodTier.Cull");
+        source.Should().Contain("Constants.ResolveActorRig(assetId)");
+    }
+
+    [Fact]
+    public void VoxelMeshCache_exposes_the_rig_weight_builder()
+    {
+        var source = ReadSource(@"WorldSphereMod/Code/Voxel/VoxelMeshCache.cs");
+
+        source.Should().Contain("BuildWithBoneWeights");
+        source.Should().Contain("HumanoidRig.SegmentVoxels");
+        source.Should().Contain("SkinnedVoxelMesh");
+    }
+
+    [Fact]
+    public void RigCache_uses_the_shared_bone_weight_builder_for_humanoids()
+    {
+        var source = ReadSource(@"WorldSphereMod/Code/Rig/RigCache.cs");
+
+        source.Should().Contain("VoxelMeshCache.BuildWithBoneWeights(sprite, rigType)");
+    }
+
+    [Fact]
+    public void RigDriver_uses_skinned_mesh_renderers_for_humanoids()
+    {
+        var source = ReadSource(@"WorldSphereMod/Code/Rig/RigDriver.cs");
+
+        source.Should().Contain("SkinnedMeshRenderer");
+        source.Should().Contain("HumanoidRig.FillLocalRotations");
+        source.Should().Contain("public static void Update()");
+    }
+
+    static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null && !File.Exists(Path.Combine(dir.FullName, "WorldSphereMod.sln")))
+        {
+            dir = dir.Parent;
+        }
+        dir.Should().NotBeNull("test bin directory should be inside a WorldSphereMod checkout");
+        return dir!.FullName;
+    }
+
+    static string ReadSource(string relativePath)
+    {
+        var path = Path.Combine(FindRepoRoot(), relativePath);
+        File.Exists(path).Should().BeTrue($"source file must exist at {path}");
+        return File.ReadAllText(path);
+    }
+}

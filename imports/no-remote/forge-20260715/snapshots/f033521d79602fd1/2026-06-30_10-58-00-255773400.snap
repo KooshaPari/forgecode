@@ -1,0 +1,280 @@
+//! N-of-M signature quorum verification.
+//!
+//! The current implementation verifies ed25519 signatures against an
+//! explicitly-configured `SignerSet`. The trait surface ([`Verify`]) is
+//! intentionally narrow so that a future BLS aggregate verifier can be
+//! dropped in without changing the call site or test suite.
+//!
+//! ## Verification rules
+//!
+//! 1. Each [`Signature`] is paired with a 32-byte [`SignerKeyId`] = the
+//!    ed25519 public key of the alleged signer.
+//! 2. Each signature must:
+//!    - match the message under `ed25519_dalek`;
+//!    - have a public key that resolves to a member of the [`SignerSet`];
+//!    - be unique per (key_id, sig) pair (duplicates do not double-count).
+//! 3. The number of distinct valid members must be **≥ threshold `n`**.
+
+use std::collections::HashSet;
+use std::fmt;
+
+use ed25519_dalek::{Signature as InnerSig, Verifier, VerifyingKey};
+use serde::{Deserialize, Serialize};
+
+/// 32-byte ed25519 public key used as the signer's identity in a `SignerSet`.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SignerKeyId(pub [u8; 32]);
+
+/// Opaque signature bytes (64 bytes). Wrapped so future signature schemes
+/// (e.g. BLS) can introduce their own newtype without breaking callers.
+#[derive(Clone, Eq, PartialEq, Hash, Debug, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Signature(pub [u8; 64]);
+
+impl Signature {
+    /// Wrap a 64-byte signature.
+    pub fn from_bytes(bytes: [u8; 64]) -> Self {
+        Self(bytes)
+    }
+
+    /// Borrow the raw signature bytes.
+    pub fn as_bytes(&self) -> &[u8; 64] {
+        &self.0
+    }
+}
+
+/// A [`Signature`] paired with the 32-byte ed25519 public key of the
+/// purported signer.
+#[derive(Clone, Debug)]
+pub struct SignedMessage<'a> {
+    /// The signer's public key.
+    pub signer: SignerKeyId,
+    /// The signature itself.
+    pub signature: &'a Signature,
+}
+
+/// A configured set of allowed signers and their public keys.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SignerSet {
+    members: Vec<SignerKeyId>,
+}
+
+impl SignerSet {
+    /// Construct a `SignerSet` from an iterable of 32-byte ed25519 public
+    /// keys. Duplicate keys are silently de-duplicated; sort-order is not
+    /// guaranteed.
+    pub fn from_keys<I: IntoIterator<Item = [u8; 32]>>(iter: I) -> Self {
+        let mut seen = HashSet::new();
+        let mut members = Vec::new();
+        for k in iter {
+            let id = SignerKeyId(k);
+            if seen.insert(id) {
+                members.push(id);
+            }
+        }
+        Self { members }
+    }
+
+    /// All configured members.
+    pub fn members(&self) -> &[SignerKeyId] {
+        &self.members
+    }
+
+    /// Membership check.
+    pub fn contains(&self, key: &SignerKeyId) -> bool {
+        self.members.iter().any(|m| m == key)
+    }
+}
+
+/// Errors that [`verify_quorum`] can return.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QuorumError {
+    /// The payload was either empty or zero signatures were supplied.
+    NoSignatures,
+    /// At least one signature failed to verify against its claimed pubkey
+    /// (the message may have been tampered with).
+    SignatureInvalid {
+        /// Signer whose signature did not verify.
+        signer: SignerKeyId,
+    },
+    /// A signature referenced a key not present in the configured
+    /// `SignerSet`.
+    UnknownSigner {
+        /// Signer whose key was unknown.
+        signer: SignerKeyId,
+    },
+    /// Threshold was not met by the set of *distinct* valid signers.
+    InsufficientSignatures {
+        /// The threshold required (e.g. N-of-M).
+        threshold: usize,
+        /// Distinct valid signers observed.
+        observed: usize,
+        /// Total signers configured in the [`SignerSet`].
+        configured: usize,
+    },
+}
+
+impl fmt::Display for QuorumError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            QuorumError::NoSignatures => f.write_str("no signatures supplied"),
+            QuorumError::SignatureInvalid { signer } => {
+                write!(f, "signature did not verify for signer {:?}", signer)
+            }
+            QuorumError::UnknownSigner { signer } => {
+                write!(f, "signer {:?} is not in the configured SignerSet", signer)
+            }
+            QuorumError::InsufficientSignatures { threshold, observed, configured } => write!(
+                f,
+                "insufficient signatures: need {threshold} of {configured}, got {observed}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for QuorumError {}
+
+/// Lightweight verifier abstraction. Lets us swap ed25519 for a future
+/// BLS aggregate without changing the call site of `verify_quorum`.
+pub trait Verify {
+    /// Verify `signature` against `message` for the signer identified by
+    /// `signer`. Returns `Ok(())` on success.
+    fn verify(
+        &self,
+        signer: &SignerKeyId,
+        message: &[u8],
+        signature: &Signature,
+    ) -> Result<(), QuorumError>;
+}
+
+/// The default ed25519 verifier. Stateless and cheap to construct.
+#[derive(Copy, Clone, Default, Debug)]
+pub struct Ed25519Verifier;
+
+impl Verify for Ed25519Verifier {
+    fn verify(
+        &self,
+        signer: &SignerKeyId,
+        message: &[u8],
+        signature: &Signature,
+    ) -> Result<(), QuorumError> {
+        let vk = VerifyingKey::from_bytes(&signer.0)
+            .map_err(|_| QuorumError::SignatureInvalid { signer: *signer })?;
+        let inner = InnerSig::from_bytes(&signature.0);
+        vk.verify(message, &inner)
+            .map_err(|_| QuorumError::SignatureInvalid { signer: *signer })
+    }
+}
+
+/// Verify an N-of-M quorum of [`Signature`]s over `payload` against the
+/// configured [`SignerSet`].
+///
+/// Each entry in `sigs` is a `(pubkey, signature)` pair; the pubkey must be
+/// a member of `set`. The number of *distinct, valid* signers must be at
+/// least `threshold`.
+///
+/// `threshold` is the absolute minimum number of distinct signers required
+/// (not a fraction of `set.members().len()`); passing 0 returns
+/// [`QuorumError::NoSignatures`] so a caller cannot accidentally accept an
+/// empty bundle.
+pub fn verify_quorum(
+    set: &SignerSet,
+    payload: &[u8],
+    sigs: &[(SignerKeyId, Signature)],
+    threshold: usize,
+) -> Result<(), QuorumError> {
+    verify_quorum_with::<Ed25519Verifier>(set, payload, sigs, threshold)
+}
+
+/// Verify an N-of-M quorum using an arbitrary [`Verify`] implementation.
+///
+/// This is the indirection point that lets a future BLS aggregate verifier
+/// (or a test double) drop in without changing the call site.
+pub fn verify_quorum_with<V: Verify>(
+    set: &SignerSet,
+    payload: &[u8],
+    sigs: &[(SignerKeyId, Signature)],
+    threshold: usize,
+) -> Result<(), QuorumError> {
+    if threshold == 0 || sigs.is_empty() {
+        return Err(QuorumError::NoSignatures);
+    }
+
+    let mut distinct: HashSet<SignerKeyId> = HashSet::new();
+    for (signer, signature) in sigs {
+        if !set.contains(signer) {
+            return Err(QuorumError::UnknownSigner { signer: *signer });
+        }
+        if !distinct.insert(*signer) {
+            // Duplicate (signer, signature) pair from same public key — skip
+            // without double-counting; the verifier is single-shot.
+            continue;
+        }
+        V::default_if_unsupplied();
+        let verifier = V::default_inst();
+        verifier.verify(signer, payload, signature)?;
+    }
+
+    let observed = distinct.len();
+    if observed < threshold {
+        return Err(QuorumError::InsufficientSignatures {
+            threshold,
+            observed,
+            configured: set.members().len(),
+        });
+    }
+    Ok(())
+}
+
+impl Ed25519Verifier {
+    /// Default-instance accessor used by [`verify_quorum_with`]. Equivalent
+    /// to `Ed25519Verifier::default()` but lets us add a default constructor
+    /// that stays in lockstep with the trait method we may generalize.
+    pub const fn default_inst() -> Self {
+        Self
+    }
+}
+
+impl Ed25519Verifier {
+    /// Trait-use hook so `verify_quorum_with::<Ed25519Verifier>` can call
+    /// `V::default()` uniformly. The body is intentionally a no-op.
+    pub fn default_if_unsupplied() {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+
+    fn fresh_signers(n: usize) -> (Vec<SigningKey>, SignerSet) {
+        use rand::rngs::OsRng;
+        use rand::RngCore;
+        let mut rng = OsRng;
+        let mut keys = Vec::with_capacity(n);
+        for _ in 0..n {
+            let mut sk_bytes = [0u8; 32];
+            rng.fill_bytes(&mut sk_bytes);
+            keys.push(SigningKey::from_bytes(&sk_bytes));
+        }
+        let set = SignerSet::from_keys(keys.iter().map(|k| k.verifying_key().to_bytes()));
+        (keys, set)
+    }
+
+    #[test]
+    fn zero_threshold_is_rejected() {
+        let (_, set) = fresh_signers(2);
+        let payload = b"x";
+        let res = verify_quorum(&set, payload, &[], 0);
+        assert_eq!(res, Err(QuorumError::NoSignatures));
+    }
+
+    #[test]
+    fn unknown_signer_is_rejected() {
+        let (_, set) = fresh_signers(2);
+        let fake = SignerKeyId([0xAAu8; 32]);
+        let sig = Signature([0u8; 64]);
+        let res = verify_quorum(&set, b"x", &[(fake, sig)], 1);
+        assert!(matches!(res, Err(QuorumError::UnknownSigner { .. })));
+    }
+}

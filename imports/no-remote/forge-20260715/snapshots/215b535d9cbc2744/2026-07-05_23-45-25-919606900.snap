@@ -1,0 +1,3 @@
+model = "Main"
+model_reasoning_effort = "medium"
+model_provider = "omniroute"

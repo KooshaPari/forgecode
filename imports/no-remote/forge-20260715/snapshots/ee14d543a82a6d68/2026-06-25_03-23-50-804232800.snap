@@ -1,0 +1,410 @@
+---
+import "../../styles/globals.css";
+import dagData from "../../../data/dag-data.json";
+
+// Pre-compute status summary at build time
+const statusCounts = { completed: 0, "in-progress": 0, pending: 0, failed: 0 };
+for (const n of dagData.nodes) {
+  statusCounts[n.status] = (statusCounts[n.status] || 0) + 1;
+}
+const totalNodes = dagData.nodes.length;
+const totalEdges = dagData.edges.length;
+---
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DAG Renderer — Phenotype</title>
+    <meta name="description" content="Interactive directed-acyclic graph (DAG) renderer for Phenotype compute/infra epic work breakdown." />
+    <meta property="og:title" content="DAG Renderer — Phenotype" />
+    <meta property="og:description" content="Interactive directed-acyclic graph (DAG) renderer for Phenotype compute/infra epic work breakdown." />
+    <meta property="og:type" content="website" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>D</text></svg>" />
+  </head>
+  <body class="min-h-screen flex flex-col">
+    <main class="flex-1 flex flex-col max-w-7xl mx-auto w-full px-4 py-6">
+      <!-- Header -->
+      <header class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p class="mono text-xs uppercase tracking-widest text-[var(--accent)] mb-1">
+            <a href="/" class="hover:underline">&larr; Phenotype</a> / DAG renderer
+          </p>
+          <h1 class="text-2xl md:text-3xl font-bold tracking-tight">{dagData.title}</h1>
+          <p class="text-sm text-[var(--muted)] mt-1">{dagData.description}</p>
+        </div>
+        <div class="flex flex-wrap gap-2 mono text-xs">
+          <span class="px-2 py-1 rounded bg-[var(--card)] border border-[var(--border)]">{totalNodes} nodes</span>
+          <span class="px-2 py-1 rounded bg-[var(--card)] border border-[var(--border)]">{totalEdges} edges</span>
+          <span class="px-2 py-1 rounded bg-[var(--card)] border border-[var(--border)]" style="border-left: 3px solid #16a34a">{statusCounts.completed} done</span>
+          <span class="px-2 py-1 rounded bg-[var(--card)] border border-[var(--border)]" style="border-left: 3px solid #2563eb">{statusCounts["in-progress"]} active</span>
+          <span class="px-2 py-1 rounded bg-[var(--card)] border border-[var(--border)]" style="border-left: 3px solid #6b7280">{statusCounts.pending} pending</span>
+          <span class="px-2 py-1 rounded bg-[var(--card)] border border-[var(--border)]" style="border-left: 3px solid #dc2626">{statusCounts.failed} failed</span>
+        </div>
+      </header>
+
+      <!-- Info panel -->
+      <div id="dag-info" class="mb-3 px-4 py-3 rounded bg-[var(--card)] border border-[var(--border)] min-h-[3rem]">
+        <span class="text-[var(--muted)] text-sm">Click a node to see details</span>
+      </div>
+
+      <!-- Legend -->
+      <div class="mb-3 flex flex-wrap gap-4 text-xs text-[var(--muted)]">
+        <span class="flex items-center gap-1">
+          <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#16a34a"></span> Completed
+        </span>
+        <span class="flex items-center gap-1">
+          <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#2563eb"></span> In Progress
+        </span>
+        <span class="flex items-center gap-1">
+          <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#6b7280"></span> Pending
+        </span>
+        <span class="flex items-center gap-1">
+          <span class="inline-block w-2.5 h-2.5 rounded-full" style="background:#dc2626"></span> Failed
+        </span>
+        <span class="ml-auto text-[var(--muted)]">Drag to pan &middot; Scroll to zoom &middot; Click to select</span>
+      </div>
+
+      <!-- Canvas -->
+      <div id="dag-canvas" class="flex-1 rounded border border-[var(--border)] bg-[var(--card)] min-h-[500px]" style="overflow:hidden"></div>
+    </main>
+
+    <script>
+      import dagData from "../../../data/dag-data.json";
+    </script>
+
+    <script>
+      // Inline the renderer — we serve it client-side so the graph is interactive
+      (function() {
+        "use strict";
+        // ── constants ──
+        const NODE_W = 180;
+        const NODE_H = 48;
+        const LAYER_GAP = 100;
+        const NODE_GAP = 24;
+        const PAD = 60;
+        const ARROW_SIZE = 8;
+
+        const STATUS_COLORS = {
+          completed: { fill: "#16a34a", stroke: "#15803d", text: "#fff", bg: "#052e16" },
+          "in-progress": { fill: "#2563eb", stroke: "#1d4ed8", text: "#fff", bg: "#172554" },
+          pending: { fill: "#6b7280", stroke: "#4b5563", text: "#fff", bg: "#1f2937" },
+          failed: { fill: "#dc2626", stroke: "#b91c1c", text: "#fff", bg: "#450a0a" },
+        };
+        const DEFAULT_STATUS = "pending";
+
+        // ── state ──
+        let svg, gMain, gEdges, gNodes;
+        let panX = 0, panY = 0;
+        let scale = 1;
+        let isPanning = false;
+        let panStart = { x: 0, y: 0 };
+        let selectedId = null;
+        let nodeRects = new Map();
+
+        // ── dag helpers ──
+        function topoSort(nodes, edges) {
+          const inDeg = new Map();
+          const adj = new Map();
+          const idSet = new Set(nodes.map(n => n.id));
+          for (const id of idSet) { inDeg.set(id, 0); adj.set(id, []); }
+          for (const e of edges) {
+            if (!idSet.has(e.from) || !idSet.has(e.to)) continue;
+            adj.get(e.from).push(e.to);
+            inDeg.set(e.to, (inDeg.get(e.to) || 0) + 1);
+          }
+          const queue = [];
+          for (const [id, deg] of inDeg) { if (deg === 0) queue.push(id); }
+          const order = [];
+          while (queue.length) {
+            const id = queue.shift();
+            order.push(id);
+            for (const n of adj.get(id) || []) {
+              const d = inDeg.get(n) - 1;
+              inDeg.set(n, d);
+              if (d === 0) queue.push(n);
+            }
+          }
+          return order;
+        }
+
+        function assignLayers(nodes, edges) {
+          const order = topoSort(nodes, edges);
+          const layer = new Map();
+          const adj = new Map();
+          const idSet = new Set(nodes.map(n => n.id));
+          for (const id of idSet) layer.set(id, 0);
+          for (const e of edges) {
+            if (!idSet.has(e.from) || !idSet.has(e.to)) continue;
+            if (!adj.has(e.from)) adj.set(e.from, []);
+            adj.get(e.from).push(e.to);
+          }
+          for (const id of order) {
+            const l = layer.get(id) || 0;
+            for (const n of adj.get(id) || []) {
+              layer.set(n, Math.max(layer.get(n) || 0, l + 1));
+            }
+          }
+          const byLayer = new Map();
+          for (const n of nodes) {
+            const l = layer.get(n.id) || 0;
+            if (!byLayer.has(l)) byLayer.set(l, []);
+            byLayer.get(l).push(n);
+          }
+          return { byLayer, layer };
+        }
+
+        function computePositions(nodes, edges) {
+          const { byLayer, layer } = assignLayers(nodes, edges);
+          const positions = new Map();
+          const sortedLayers = [...byLayer.keys()].sort((a, b) => a - b);
+          let maxW = 0;
+          for (const [, ns] of byLayer) {
+            const totalW = ns.length * NODE_W + (ns.length - 1) * NODE_GAP;
+            if (totalW > maxW) maxW = totalW;
+          }
+          for (const l of sortedLayers) {
+            const ns = byLayer.get(l);
+            const totalW = ns.length * NODE_W + (ns.length - 1) * NODE_GAP;
+            const startX = (maxW - totalW) / 2;
+            ns.forEach((n, i) => {
+              const x = startX + i * (NODE_W + NODE_GAP);
+              const y = l * (NODE_H + LAYER_GAP);
+              positions.set(n.id, { x: PAD + x, y: PAD + y, cx: PAD + x + NODE_W / 2, cy: PAD + y + NODE_H / 2 });
+            });
+          }
+          return positions;
+        }
+
+        function routeEdge(x1, y1, x2, y2) {
+          const cp1y = y1 + LAYER_GAP / 2;
+          const cp2y = y2 - LAYER_GAP / 2;
+          return `M ${x1} ${y1} C ${x1} ${cp1y}, ${x2} ${cp2y}, ${x2} ${y2}`;
+        }
+
+        // ── render ──
+        function render(dagData, container) {
+          svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+          svg.setAttribute("width", "100%");
+          svg.setAttribute("height", "100%");
+          svg.style.display = "block";
+          svg.style.cursor = "grab";
+          container.innerHTML = "";
+          container.appendChild(svg);
+
+          const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+          const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+          marker.setAttribute("id", "dag-arrow");
+          marker.setAttribute("viewBox", "0 0 10 10");
+          marker.setAttribute("refX", "10");
+          marker.setAttribute("refY", "5");
+          marker.setAttribute("markerWidth", String(ARROW_SIZE));
+          marker.setAttribute("markerHeight", String(ARROW_SIZE));
+          marker.setAttribute("orient", "auto-start-reverse");
+          const arrowPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          arrowPath.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+          arrowPath.setAttribute("fill", "#4b5563");
+          marker.appendChild(arrowPath);
+          defs.appendChild(marker);
+          svg.appendChild(defs);
+
+          gMain = document.createElementNS("http://www.w3.org/2000/svg", "g");
+          gEdges = document.createElementNS("http://www.w3.org/2000/svg", "g");
+          gNodes = document.createElementNS("http://www.w3.org/2000/svg", "g");
+          gMain.appendChild(gEdges);
+          gMain.appendChild(gNodes);
+          svg.appendChild(gMain);
+
+          const pos = computePositions(dagData.nodes, dagData.edges);
+          nodeRects = pos;
+
+          for (const e of dagData.edges) {
+            const from = pos.get(e.from);
+            const to = pos.get(e.to);
+            if (!from || !to) continue;
+            const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            path.setAttribute("d", routeEdge(from.cx, from.y + NODE_H, to.cx, to.y));
+            path.setAttribute("fill", "none");
+            path.setAttribute("stroke", "#4b5563");
+            path.setAttribute("stroke-width", "2");
+            path.setAttribute("marker-end", "url(#dag-arrow)");
+            path.setAttribute("data-from", e.from);
+            path.setAttribute("data-to", e.to);
+            gEdges.appendChild(path);
+          }
+
+          for (const n of dagData.nodes) {
+            const p = pos.get(n.id);
+            if (!p) continue;
+            const st = STATUS_COLORS[n.status] || STATUS_COLORS[DEFAULT_STATUS];
+            const grp = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            grp.setAttribute("data-id", n.id);
+            grp.style.cursor = "pointer";
+
+            const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            rect.setAttribute("x", String(p.x));
+            rect.setAttribute("y", String(p.y));
+            rect.setAttribute("width", String(NODE_W));
+            rect.setAttribute("height", String(NODE_H));
+            rect.setAttribute("rx", "6");
+            rect.setAttribute("fill", st.bg);
+            rect.setAttribute("stroke", st.stroke);
+            rect.setAttribute("stroke-width", "2");
+            rect.classList.add("dag-node-rect");
+            grp.appendChild(rect);
+
+            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            text.setAttribute("x", String(p.cx));
+            text.setAttribute("y", String(p.cy + 1));
+            text.setAttribute("text-anchor", "middle");
+            text.setAttribute("dominant-baseline", "middle");
+            text.setAttribute("fill", st.text);
+            text.setAttribute("font-size", "12");
+            text.setAttribute("font-family", "ui-monospace, SFMono-Regular, monospace");
+            text.textContent = n.label;
+            grp.appendChild(text);
+
+            const badge = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+            badge.setAttribute("cx", String(p.x + 12));
+            badge.setAttribute("cy", String(p.y + NODE_H / 2));
+            badge.setAttribute("r", "5");
+            badge.setAttribute("fill", st.fill);
+            grp.appendChild(badge);
+
+            grp.addEventListener("click", () => selectNode(n.id, dagData));
+            gNodes.appendChild(grp);
+          }
+
+          applyTransform();
+
+          svg.addEventListener("mousedown", (ev) => {
+            if (ev.target !== svg) return;
+            isPanning = true;
+            panStart = { x: ev.clientX - panX, y: ev.clientY - panY };
+            svg.style.cursor = "grabbing";
+          });
+
+          window.addEventListener("mousemove", (ev) => {
+            if (!isPanning) return;
+            panX = ev.clientX - panStart.x;
+            panY = ev.clientY - panStart.y;
+            applyTransform();
+          });
+
+          window.addEventListener("mouseup", () => {
+            if (isPanning) {
+              isPanning = false;
+              svg.style.cursor = "grab";
+            }
+          });
+
+          svg.addEventListener("wheel", (ev) => {
+            ev.preventDefault();
+            scale = Math.max(0.2, Math.min(5, scale * (ev.deltaY > 0 ? 0.92 : 1.08)));
+            applyTransform();
+          }, { passive: false });
+
+          updateInfo(null, dagData);
+        }
+
+        function applyTransform() {
+          gMain.setAttribute("transform", `translate(${panX},${panY}) scale(${scale})`);
+        }
+
+        function selectNode(id, dagData) {
+          selectedId = id;
+          const allRects = gNodes.querySelectorAll(".dag-node-rect");
+          allRects.forEach((r) => {
+            const g = r.closest("g") || r.parentElement;
+            const nid = g.getAttribute("data-id");
+            const n = dagData.nodes.find(x => x.id === nid);
+            const st = STATUS_COLORS[n?.status] || STATUS_COLORS[DEFAULT_STATUS];
+            r.setAttribute("stroke", nid === id ? "#fbbf24" : st.stroke);
+            r.setAttribute("stroke-width", nid === id ? "3" : "2");
+          });
+          updateInfo(id, dagData);
+        }
+
+        function updateInfo(id, dagData) {
+          const info = document.getElementById("dag-info");
+          if (!info) return;
+          if (!id) {
+            info.innerHTML = `<span class="text-[var(--muted)] text-sm">Click a node to see details</span>`;
+            return;
+          }
+          const n = dagData.nodes.find(x => x.id === id);
+          if (!n) return;
+          const deps = dagData.edges.filter(e => e.to === n.id).map(e => {
+            const src = dagData.nodes.find(x => x.id === e.from);
+            return src ? src.label : e.from;
+          });
+          const dependents = dagData.edges.filter(e => e.from === n.id).map(e => {
+            const tgt = dagData.nodes.find(x => x.id === e.to);
+            return tgt ? tgt.label : e.to;
+          });
+          const st = STATUS_COLORS[n.status] || STATUS_COLORS[DEFAULT_STATUS];
+          info.innerHTML = `
+            <div class="flex items-center gap-2 mb-1">
+              <span class="font-bold text-sm">${this.escapeHtml ? this.escapeHtml(n.label) : n.label}</span>
+              <span class="mono text-xs px-2 py-0.5 rounded" style="background:${st.fill};color:#fff">${n.status}</span>
+            </div>
+            <p class="text-xs text-[var(--muted)] mt-1">${deps.length ? 'Depends on: ' + deps.join(', ') : 'No dependencies (root node)'}</p>
+            <p class="text-xs text-[var(--muted)] mt-1">${dependents.length ? 'Required by: ' + dependents.join(', ') : 'No dependents (leaf node)'}</p>
+          `;
+        }
+
+        // ── boot ──
+        const container = document.getElementById("dag-canvas");
+        if (container) {
+          const data = JSON.parse(document.getElementById("dag-data-json").textContent);
+          render(data, container);
+        }
+      })();
+    </script>
+
+    <!-- Embed DAG data as JSON so the client script can parse it -->
+    <script id="dag-data-json" type="application/json">
+      {
+        "title": "Epic F — DAG Foundation & Automation",
+        "description": "Interactive DAG showing the work breakdown for the DAG foundation and automation epic.",
+        "nodes": [
+          { "id": "f01", "label": "DAG data model (spec)",        "status": "completed" },
+          { "id": "f02", "label": "DAG schema validation",        "status": "completed" },
+          { "id": "f03", "label": "DAG YAML/JSON parser",         "status": "completed" },
+          { "id": "f04", "label": "DAG topological sort",         "status": "completed" },
+          { "id": "f05", "label": "DAG cycle detection",          "status": "completed" },
+          { "id": "f06", "label": "DAG execution engine",         "status": "in-progress" },
+          { "id": "f07", "label": "DAG state persistence",        "status": "pending" },
+          { "id": "f08", "label": "DAG status reporting",         "status": "pending" },
+          { "id": "f09", "label": "DAG CLI tooling",              "status": "pending" },
+          { "id": "f10", "label": "DAG web renderer (this page)", "status": "in-progress" },
+          { "id": "f11", "label": "DAG CI integration",           "status": "pending" },
+          { "id": "f12", "label": "DAG observability hooks",      "status": "completed" },
+          { "id": "f13", "label": "DAG test suite",               "status": "in-progress" },
+          { "id": "f14", "label": "DAG documentation",            "status": "failed" },
+          { "id": "f15", "label": "DAG deployment pipeline",      "status": "pending" }
+        ],
+        "edges": [
+          { "from": "f01", "to": "f02" },
+          { "from": "f02", "to": "f03" },
+          { "from": "f03", "to": "f04" },
+          { "from": "f03", "to": "f05" },
+          { "from": "f04", "to": "f06" },
+          { "from": "f05", "to": "f06" },
+          { "from": "f06", "to": "f07" },
+          { "from": "f06", "to": "f08" },
+          { "from": "f07", "to": "f09" },
+          { "from": "f08", "to": "f09" },
+          { "from": "f09", "to": "f10" },
+          { "from": "f06", "to": "f11" },
+          { "from": "f10", "to": "f11" },
+          { "from": "f06", "to": "f12" },
+          { "from": "f03", "to": "f13" },
+          { "from": "f10", "to": "f14" },
+          { "from": "f11", "to": "f15" },
+          { "from": "f13", "to": "f14" }
+        ]
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,51 @@
+import re, json, os
+
+TEMP = r'C:\Users\koosh\AppData\Local\Temp'
+repos = ['pi_issues_full', 'nv_issues_full', 'bp_issues_full', 'pc_issues_full', 'reg_issues_full']
+repo_names = {
+repo_names = {
+    'pi_issues_full': 'phenotype-infra',
+    'nv_issues_full': 'nanovms',
+    'bp_issues_full': 'BytePort',
+    'pc_issues_full': 'PhenoCompose',
+    'reg_issues_full': 'phenotype-registry'
+}
+for file_key in repos:
+    path = os.path.join(TEMP, file_key + '.json')
+    if not os.path.exists(path):
+        print(f'--- {repo_names[file_key]} --- NO FILE')
+        continue
+    raw = open(path, 'rb').read()
+    if len(raw) == 0:
+        print(f'--- {repo_names[file_key]} --- EMPTY FILE')
+        continue
+    dec = raw.decode('utf-8', errors='replace')
+    clean = re.sub(r'\x1b\[[0-9;]*m', '', dec).lstrip('\ufeff').strip()
+    if not clean:
+        print(f'--- {repo_names[file_key]} --- EMPTY AFTER STRIP')
+        continue
+    try:
+        data = json.loads(clean)
+    except json.JSONDecodeError as e:
+        print(f'--- {repo_names[file_key]} --- JSON ERROR: {e}')
+        continue
+    if not isinstance(data, list):
+        # Could be array
+        print(f'--- {repo_names[file_key]} --- not a list, type={type(data).__name__}')
+        continue
+    fr_count = 0
+    other_count = 0
+    for i in data:
+        title = i.get('title', '')
+        labels = [l.get('name','') for l in i.get('labels', [])]
+        label_str = ','.join(labels[:4])
+        # Check if it's an FR or enhancement
+        is_fr = any(kw in title.lower() for kw in [
+            'fr:', 'feature:', 'add ', 'new ', 'implement', 'support for',
+            'integrate', 'upgrade', 'support ', 'request', 'proposal'
+        ]) or any(kw in label_str.lower() for kw in ['fr', 'feature', 'enhancement', 'request'])
+        
+        if is_fr:
+            fr_count += 1
+            print(f"  FR #{i['number']} [{label_str}]: {title[:100]}")
+    print(f'--- {repo_names[file_key]}: {len(data)} issues, {fr_count} FRs ---')

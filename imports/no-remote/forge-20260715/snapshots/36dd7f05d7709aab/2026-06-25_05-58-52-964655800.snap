@@ -1,0 +1,155 @@
+import os, json, glob, re
+
+# Strip ANSI escape codes from a string
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
+
+def strip_ansi(s):
+    return _ANSI_RE.sub('', s) if s else s
+
+home = r'C:\Users\koosh'
+out_dir = os.path.join(home, '_clone_introspection')
+
+# Only match the data files (raw_b0.json ... raw_b9.json), NOT raw_b0_errors.json
+data_files = []
+for path in glob.glob(os.path.join(out_dir, 'raw_b*.json')):
+    base = os.path.basename(path)
+    # Match exactly raw_bN.json where N is digits (no _errors suffix)
+    if re.fullmatch(r'raw_b\d+\.json', base):
+        data_files.append(path)
+data_files.sort()
+
+merged = {}
+merged_errors = {}
+for path in data_files:
+    with open(path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    # data should be dict of {name: {path, default_branch, commands}}
+    if isinstance(data, dict):
+        merged.update(data)
+    err_path = path.replace('.json', '_errors.json')
+    if os.path.exists(err_path):
+        with open(err_path, 'r', encoding='utf-8') as f:
+            err_data = json.load(f)
+        if isinstance(err_data, dict):
+            merged_errors.update(err_data)
+
+with open(os.path.join(out_dir, 'raw.json'), 'w', encoding='utf-8') as f:
+    json.dump(merged, f, indent=2)
+with open(os.path.join(out_dir, 'errors.json'), 'w', encoding='utf-8') as f:
+    json.dump(merged_errors, f, indent=2)
+
+print(f"Merged {len(merged)} clones from {len(data_files)} batch files; {len(merged_errors)} with errors")
+
+# Build a summary table
+lines = []
+lines.append(f"# Git Introspection Summary ({len(merged)} clones)")
+lines.append("")
+lines.append("| Clone | Default | Local Branches | Remote Branches | Worktrees | Stashes | Ahead-of-origin | Dirty | Errors |")
+lines.append("|---|---|---|---|---|---|---|---|---|")
+
+def count_lines(s):
+    if not s:
+        return 0
+    return sum(1 for l in s.splitlines() if l.strip())
+
+for name in sorted(merged.keys()):
+    info = merged[name]
+    if not isinstance(info, dict) or 'commands' not in info:
+        lines.append(f"| {name} | ? | ? | ? | ? | ? | ? | ? | (parse error) |")
+        continue
+    cmds = info['commands']
+    branch_out_raw = cmds.get('branch_-a', {}).get('stdout', '')
+    branch_out = strip_ansi(branch_out_raw)
+    local_branches = [l.strip() for l in branch_out.splitlines() if l.strip() and not l.strip().startswith('remotes/')]
+    remote_branches = [l.strip() for l in branch_out.splitlines() if l.strip().startswith('remotes/')]
+    wt_out = strip_ansi(cmds.get('worktree_list', {}).get('stdout', '')).strip()
+    wt_count = count_lines(wt_out) if wt_out else 0
+    stash_out = strip_ansi(cmds.get('stash_list', {}).get('stdout', '')).strip()
+    stash_count = count_lines(stash_out) if stash_out else 0
+    log_out = strip_ansi(cmds.get('log_ahead', {}).get('stdout', '')).strip()
+    ahead_count = count_lines(log_out) if log_out else 0
+    status_out = strip_ansi(cmds.get('status_short_branch', {}).get('stdout', '')).strip()
+    dirty_lines = [l for l in status_out.splitlines() if l and not l.startswith('##')]
+    dirty_count = len(dirty_lines)
+    err_list = merged_errors.get(name, [])
+    if not isinstance(err_list, list):
+        err_list = []
+    lines.append(f"| {name} | {info.get('default_branch','?')} | {len(local_branches)} | {len(remote_branches)} | {wt_count} | {stash_count} | {ahead_count} | {dirty_count} | {len(err_list)} |")
+
+with open(os.path.join(out_dir, 'summary.md'), 'w', encoding='utf-8') as f:
+    f.write("\n".join(lines))
+
+# Per-clone markdown reports
+flat_dir = os.path.join(out_dir, 'per_clone')
+os.makedirs(flat_dir, exist_ok=True)
+for name, info in merged.items():
+    if not isinstance(info, dict) or 'commands' not in info:
+        continue
+    cmds = info['commands']
+    out_lines = []
+    out_lines.append(f"# {name}  (default: {info.get('default_branch','?')}, path: {info.get('path','?')})")
+    out_lines.append("")
+    out_lines.append(f"## git branch -a (rc={cmds.get('branch_-a',{}).get('returncode')})")
+    out_lines.append("```")
+    out_lines.append(cmds.get('branch_-a', {}).get('stdout', '<no output>').rstrip())
+    if cmds.get('branch_-a', {}).get('stderr'):
+        out_lines.append("[stderr]")
+        out_lines.append(cmds['branch_-a']['stderr'].rstrip())
+    out_lines.append("```")
+    out_lines.append("")
+    out_lines.append(f"## git worktree list (rc={cmds.get('worktree_list',{}).get('returncode')})")
+    out_lines.append("```")
+    out_lines.append(cmds.get('worktree_list', {}).get('stdout', '<no output>').rstrip())
+    if cmds.get('worktree_list', {}).get('stderr'):
+        out_lines.append("[stderr]")
+        out_lines.append(cmds['worktree_list']['stderr'].rstrip())
+    out_lines.append("```")
+    out_lines.append("")
+    out_lines.append(f"## git stash list (rc={cmds.get('stash_list',{}).get('returncode')})")
+    out_lines.append("```")
+    out_lines.append(cmds.get('stash_list', {}).get('stdout', '<no output>').rstrip())
+    if cmds.get('stash_list', {}).get('stderr'):
+        out_lines.append("[stderr]")
+        out_lines.append(cmds['stash_list']['stderr'].rstrip())
+    out_lines.append("```")
+    out_lines.append("")
+    out_lines.append(f"## git status --short --branch (rc={cmds.get('status_short_branch',{}).get('returncode')})")
+    out_lines.append("```")
+    out_lines.append(cmds.get('status_short_branch', {}).get('stdout', '<no output>').rstrip())
+    if cmds.get('status_short_branch', {}).get('stderr'):
+        out_lines.append("[stderr]")
+        out_lines.append(cmds['status_short_branch']['stderr'].rstrip())
+    out_lines.append("```")
+    out_lines.append("")
+    out_lines.append(f"## git log origin/{info.get('default_branch','main')}..HEAD --oneline (rc={cmds.get('log_ahead',{}).get('returncode')})")
+    out_lines.append("```")
+    out_lines.append(cmds.get('log_ahead', {}).get('stdout', '<no output>').rstrip())
+    if cmds.get('log_ahead', {}).get('stderr'):
+        out_lines.append("[stderr]")
+        out_lines.append(cmds['log_ahead']['stderr'].rstrip())
+    out_lines.append("```")
+    if name in merged_errors:
+        out_lines.append("")
+        out_lines.append("## Errors")
+        out_lines.append("```")
+        for e in merged_errors[name]:
+            out_lines.append(e)
+        out_lines.append("```")
+    with open(os.path.join(flat_dir, f"{name}.md"), 'w', encoding='utf-8') as f:
+        f.write("\n".join(out_lines))
+
+# Also dump error-only report
+err_lines = []
+err_lines.append(f"# Errors ({len(merged_errors)} clones)")
+err_lines.append("")
+for name in sorted(merged_errors.keys()):
+    err_lines.append(f"## {name}")
+    for e in merged_errors[name]:
+        err_lines.append(f"- {e}")
+    err_lines.append("")
+with open(os.path.join(out_dir, 'errors.md'), 'w', encoding='utf-8') as f:
+    f.write("\n".join(err_lines))
+
+print(f"Wrote summary to {out_dir}\\summary.md")
+print(f"Wrote errors report to {out_dir}\\errors.md")
+print(f"Wrote {len(merged)} per-clone reports to {flat_dir}\\")

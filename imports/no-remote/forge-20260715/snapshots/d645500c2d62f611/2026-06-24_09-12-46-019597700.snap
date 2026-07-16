@@ -1,0 +1,13 @@
+$files = @(
+  'docs/index.md',
+  'docs/getting-started.md',
+  'docs/package.json',
+  'docs/.gitignore',
+  '.github/workflows/docs.yml',
+  'docs/.vitepress/config.mts'
+)
+foreach ($f in $files) {
+  $b = [System.IO.File]::ReadAllBytes($f)
+  $n = $b[$b.Length - 1] -eq 10
+  Write-Host ("{0} -> ends with newline: {1}" -f $f, $n)
+}

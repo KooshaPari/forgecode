@@ -1,0 +1,3 @@
+@echo off
+"C:\Program Files\Git\usr\bin\bash.exe" -c "cd /c/Users/koosh/phenotype-tooling && bash /c/Users/koosh/phenotype-registry/grade.sh --fast --json 2>&1" > "C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.json"
+type "C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.json" | findstr /N "." | findstr /B "1: 2: 3: 4: 5:" 2>nul

@@ -1,0 +1,276 @@
+/**
+ * Auto-instrumentation helpers (PR-002).
+ *
+ * Provides one-call wrappers around the most common I/O and data-layer
+ * code paths in OmniRoute so PR-002 doesn't have to wire `withSpan(...)`
+ * into every call site by hand. The wrappers are zero-cost when
+ * telemetry is disabled (the SDK early-returns a stub span) and integrate
+ * with the metrics module so every instrumented call also feeds the
+ * Prometheus registry.
+ *
+ * Exports:
+ *   - {@link instrumentFetch}   — wraps `fetch` so outgoing HTTP calls
+ *                                 emit CLIENT spans + provider-attempt metrics
+ *   - {@link instrumentDb}      — wraps a `db.run(sql, params)` style call
+ *   - {@link instrumentCache}   — wraps a cache read so hit/miss metrics
+ *                                 emit and a span carries the lookup kind
+ *   - {@link instrumentProvider} — wraps a provider call so the
+ *                                  provider-attempt / duration / quota
+ *                                  metrics and a CLIENT span are emitted
+ *   - {@link withRootSpan}      — start a SERVER span, run fn, end on
+ *                                  resolve/reject (used by Next.js
+ *                                  proxy.ts and the WebSocket upgrade path)
+ *
+ * All wrappers are safe to call when telemetry is disabled — they
+ * short-circuit and just run `fn`.
+ *
+ * @see plans/2026-06-23-omniroute-100-pr-roadmap.md (PR-002)
+ */
+import {
+  withSpan,
+  type Span,
+  type SpanKind,
+  type AttributeValue,
+} from "./otel";
+import {
+  httpMetricsMiddleware,
+  recordProviderAttempt,
+  recordProviderDuration,
+  recordCacheHit,
+  recordCacheMiss,
+  type AttributeValue as MetricsAttributeValue,
+} from "./metrics";
+
+// ─────────────────────────────────────────────────────────────────────────
+// Public API
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Options shared by every wrapper. */
+export interface InstrumentOptions {
+  /** Span name (visible in trace UI). Required. */
+  name: string;
+  /** Span kind (default INTERNAL). Use CLIENT for outgoing HTTP, SERVER for incoming. */
+  kind?: SpanKind;
+  /** Pre-set span attributes. */
+  attributes?: Record<string, AttributeValue>;
+}
+
+/**
+ * Instrument a fetch call. Emits a CLIENT span + records the response code
+ * in the HTTP metrics middleware. The fetch itself runs unmodified.
+ *
+ * @example
+ *   const res = await instrumentFetch(
+ *     { name: "http.client.openai.chat", kind: "CLIENT" },
+ *     "https://api.openai.com/v1/chat/completions",
+ *     requestInit,
+ *   );
+ */
+export async function instrumentFetch(
+  opts: InstrumentOptions,
+  input: string | URL | Request,
+  init?: RequestInit
+): Promise<Response> {
+  const url =
+    typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+  const attributes: Record<string, AttributeValue> = {
+    "http.method": method,
+    "http.url": sanitizeUrl(url),
+    ...(opts.attributes ?? {}),
+  };
+  const startNs = process.hrtime.bigint();
+  return withSpan(opts.name, async (span: Span) => {
+    let response: Response | undefined;
+    try {
+      response = await fetch(input, init);
+      span.attributes["http.status_code"] = response.status;
+      // Feed the HTTP metrics middleware for RED metrics.
+      httpMetricsMiddleware({
+        req: {
+          method,
+          url,
+          headers: new Headers(init?.headers),
+        } as never,
+        res: response,
+        durationSeconds: Number(process.hrtime.bigint() - startNs) / 1e9,
+        routeName: opts.name,
+      });
+      return response;
+    } catch (err) {
+      span.attributes["http.error"] = String((err as Error)?.message ?? err);
+      throw err;
+    }
+  }, { kind: opts.kind ?? "CLIENT", attributes });
+}
+
+/**
+ * Instrument a database query. Emits an INTERNAL span with the SQL op
+ * (SELECT/INSERT/UPDATE/DELETE) and table name as attributes. Errors are
+ * recorded via recordException so trace UIs show them.
+ *
+ * @example
+ *   const row = await instrumentDb({ name: "db.combo.findById" }, () =>
+ *     db.prepare("SELECT * FROM combos WHERE id = ?").get(id)
+ *   );
+ */
+export async function instrumentDb<T>(
+  opts: InstrumentOptions,
+  fn: () => Promise<T>
+): Promise<T> {
+  const startNs = process.hrtime.bigint();
+  return withSpan(opts.name, fn, {
+    kind: opts.kind ?? "INTERNAL",
+    attributes: {
+      "db.system": "sqlite",
+      ...(opts.attributes ?? {}),
+    },
+  }).finally(() => {
+    const durSec = Number(process.hrtime.bigint() - startNs) / 1e9;
+    // Lightweight latency attribution. Not a separate metric (would
+    // cardinality-explode); we use a process-level histogram in
+    // setProcessMetrics() instead.
+    void durSec;
+  });
+}
+
+/** Cache layer identifiers — must match `recordCacheHit` parameter type. */
+export type CacheLayer = "memory" | "disk" | "prompt" | "provider";
+
+/**
+ * Instrument a cache lookup. The callback returns `{ hit: true, value }`
+ * on a cache hit or `{ hit: false }` on a miss. Either way the wrapper
+ * records `omniroute_cache_hits_total{layer}` or
+ * `omniroute_cache_misses_total{layer}` and emits a SPAN with
+ * `cache.hit = true|false`.
+ *
+ * @example
+ *   const cached = await instrumentCache("memory", () => memCache.get(key));
+ *   if (cached.hit) return cached.value;
+ */
+export async function instrumentCache<T>(
+  layer: CacheLayer,
+  fn: () => Promise<{ hit: boolean; value?: T }>
+): Promise<{ hit: boolean; value?: T }> {
+  if (!isKnownCacheLayer(layer)) {
+    throw new Error(
+      `unknown cache layer "${String(layer)}" — must be one of: memory, disk, prompt, provider`
+    );
+  }
+  return withSpan(`cache.${layer}`, async () => {
+    const result = await fn();
+    if (result.hit) {
+      recordCacheHit(layer);
+    } else {
+      recordCacheMiss(layer);
+    }
+    return result;
+  }, {
+    attributes: {
+      "cache.layer": layer,
+    } as Record<string, AttributeValue>,
+  });
+}
+
+/**
+ * Instrument a provider call (OpenAI, Anthropic, etc.). Records:
+ *   - omniroute_provider_attempts_total{provider, model, outcome}
+ *   - omniroute_provider_duration_seconds{provider, model}
+ * Emits a CLIENT span with provider/model/status_code attributes.
+ *
+ * @example
+ *   const result = await instrumentProvider(
+ *     { name: "provider.openai.chat", attributes: { provider: "openai" } },
+ *     () => openai.chat.completions.create(...),
+ *   );
+ */
+export async function instrumentProvider<T>(
+  opts: InstrumentOptions & { provider: string; model: string },
+  fn: () => Promise<T>
+): Promise<T> {
+  const startNs = process.hrtime.bigint();
+  return withSpan(opts.name, fn, {
+    kind: opts.kind ?? "CLIENT",
+    attributes: {
+      provider: opts.provider,
+      model: opts.model,
+      ...(opts.attributes ?? {}),
+    },
+  }).then(
+    (value) => {
+      const durSec = Number(process.hrtime.bigint() - startNs) / 1e9;
+      recordProviderAttempt({
+        provider: opts.provider,
+        model: opts.model,
+        outcome: "success",
+      });
+      recordProviderDuration({
+        provider: opts.provider,
+        model: opts.model,
+        outcome: "success",
+        durationSeconds: durSec,
+      });
+      return value;
+    },
+    (err: unknown) => {
+      const durSec = Number(process.hrtime.bigint() - startNs) / 1e9;
+      const outcome = classifyOutcome(err);
+      recordProviderAttempt({
+        provider: opts.provider,
+        model: opts.model,
+        outcome,
+      });
+      recordProviderDuration({
+        provider: opts.provider,
+        model: opts.model,
+        outcome,
+        durationSeconds: durSec,
+      });
+      throw err;
+    }
+  );
+}
+
+/**
+ * Start a root SERVER span, run fn, end on resolve/reject. Used by the
+ * Next.js proxy (`src/proxy.ts`) and the WebSocket upgrade handler so
+ * incoming requests become the trace root.
+ */
+export async function withRootSpan<T>(
+  name: string,
+  fn: (span: Span) => Promise<T>,
+  attributes?: Record<string, AttributeValue>
+): Promise<T> {
+  return withSpan(name, fn, {
+    kind: "SERVER",
+    attributes,
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Internals
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Strip query string + userinfo from a URL for span attribute hygiene. */
+function sanitizeUrl(raw: string): string {
+  try {
+    const u = new URL(raw);
+    u.search = "";
+    u.username = "";
+    u.password = "";
+    return u.toString();
+  } catch {
+    return raw;
+  }
+}
+
+/** Bucket an error into a provider-attempt outcome. */
+function classifyOutcome(err: unknown): "error" | "timeout" | "rate_limit" {
+  const msg = String((err as { message?: string })?.message ?? err).toLowerCase();
+  if (msg.includes("timeout") || msg.includes("timed out")) return "timeout";
+  if (msg.includes("rate limit") || msg.includes("429")) return "rate_limit";
+  return "error";
+}
+
+// Re-export so callers only need to import from "./auto".
+export type { Span, SpanKind, AttributeValue, MetricsAttributeValue };

@@ -1,0 +1,72 @@
+# build-shortcuts.ps1 - Regenerate phenotypeApps Start Menu shortcuts (UTF-8 safe)
+$ErrorActionPreference = 'Stop'
+$startDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\phenotypeApps'
+if (-not (Test-Path $startDir)) { New-Item -ItemType Directory -Force -Path $startDir | Out-Null }
+
+# Wipe old ones (with mangled cp1252 em-dashes)
+Get-ChildItem $startDir -Filter '*.lnk' -Force -ErrorAction SilentlyContinue | Remove-Item -Force
+
+$ws = New-Object -ComObject WScript.Shell
+
+function New-Lnk([string]$name, [string]$target, [string]$args = '', [string]$wd = '', [string]$icon = '') {
+    $lnk = Join-Path $startDir ($name + '.lnk')
+    $sc = $ws.CreateShortcut($lnk)
+    $sc.TargetPath = $target
+    if ($args) { $sc.Arguments = $args }
+    if ($wd)   { $sc.WorkingDirectory = $wd }
+    if (Test-Path $icon) { $sc.IconLocation = $icon }
+    $sc.Save()
+    Write-Host ('  OK  ' + $lnk)
+}
+
+$root    = 'E:\phase-finish-stack'
+$psExe   = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$cmdExe  = Join-Path $env:SystemRoot 'System32\cmd.exe'
+$ieExe   = Join-Path $env:SystemRoot 'System32\mshta.exe'
+
+# 1. Tracera Launch
+New-Lnk 'Tracera - Launch Server' `
+    $cmdExe '/c "' + (Join-Path $root 'Tracera\.deploy\launch-tracera.bat') + '"' `
+    (Split-Path (Join-Path $root 'Tracera\.deploy\launch-tracera.bat') -Parent)
+
+# 2. Tracera Install (admin)
+New-Lnk 'Tracera - Install Locally (admin)' `
+    $psExe '-NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $root 'Tracera\.deploy\install-tracera.ps1') + '"' `
+    (Split-Path (Join-Path $root 'Tracera\.deploy\install-tracera.ps1') -Parent)
+
+# 3. Tracera GitHub Pages
+New-Lnk 'Tracera - GitHub Pages' `
+    $ieExe 'https://kooshapari.github.io/Tracera/'
+
+# 4. Tracera Vercel
+New-Lnk 'Tracera - Vercel' `
+    $ieExe 'https://tracera.vercel.app/'
+
+# 5. AgilePlus Launch
+New-Lnk 'AgilePlus - Launch Server' `
+    $cmdExe '/c "' + (Join-Path $root 'AgilePlus\.deploy\launch-agileplus.bat') + '"' `
+    (Split-Path (Join-Path $root 'AgilePlus\.deploy\launch-agileplus.bat') -Parent)
+
+# 6. AgilePlus Install (admin)
+New-Lnk 'AgilePlus - Install Locally (admin)' `
+    $psExe '-NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $root 'AgilePlus\.deploy\install-agileplus.ps1') + '"' `
+    (Split-Path (Join-Path $root 'AgilePlus\.deploy\install-agileplus.ps1') -Parent)
+
+# 7. AgilePlus - compose stack
+New-Lnk 'AgilePlus - Spawn Stack' `
+    $cmdExe '/c "' + (Join-Path $root 'compose\process-compose.phase.yml') + '"' `
+    (Split-Path (Join-Path $root 'compose\process-compose.phase.yml') -Parent)
+
+# 8. OmniRoute Dashboard
+New-Lnk 'OmniRoute - Dashboard' `
+    $ieExe 'http://localhost:20128/dashboard'
+
+# 9. Re-run shortcut installer
+New-Lnk 'phenotypeApps - Reinstall Shortcuts' `
+    $psExe '-NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $root '.deploy\install-phenotypeapps.ps1') + '"' `
+    (Join-Path $root '.deploy')
+
+Write-Host ''
+Write-Host '=== Verify on disk ==='
+Get-ChildItem $startDir -Filter '*.lnk' -Force -ErrorAction SilentlyContinue |
+    ForEach-Object { '  {0,7}  {1}' -f $_.Length, $_.Name }

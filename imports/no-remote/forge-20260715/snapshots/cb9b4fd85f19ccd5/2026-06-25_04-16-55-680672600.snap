@@ -1,0 +1,12 @@
+const data = JSON.parse(require('fs').readFileSync('runs.json', 'utf8'));
+const grouped = {};
+data.workflow_runs.forEach(r => {
+  if (!grouped[r.name]) grouped[r.name] = [];
+  grouped[r.name].push({id: r.id, conclusion: r.conclusion, head_branch: r.head_branch, event: r.event, head_sha: r.head_sha.substring(0,8), created_at: r.created_at});
+});
+for (const name of Object.keys(grouped).sort()) {
+  console.log(`\n=== ${name} ===`);
+  grouped[name].slice(0, 5).forEach(r => {
+    console.log(`  ${r.id} | ${r.conclusion} | ${r.event} | ${r.head_branch} | ${r.head_sha} | ${r.created_at}`);
+  });
+}

@@ -1,0 +1,21 @@
+{
+  "name": "thegent",
+  "path": "KooshaPari/thegent",
+  "size_mb": 1001.1,
+  "default_branch": "main",
+  "scope_partition": {
+    "slice_1": "reconnaissance (README + manifest + docs)",
+    "slice_2": "agent runtime (orchestration + lifecycle)",
+    "slice_3": "tool/tooling layer (MCP-adjacent code)",
+    "slice_4": "frontend UI (React + Vite)",
+    "slice_5": "infrastructure (CI + Docker + scripts)"
+  },
+  "absorption_targets": ["phenotype-orchestrator (slice 2)", "pheno-runtime (slice 5)"],
+  "manifest_url": "https://raw.githubusercontent.com/KooshaPari/thegent/main/REGISTRY.yaml",
+  "audit": "audits/absorption-justifications/thegent-2026-07-02.md",
+  "grade": "L4",
+  "score": "14/14",
+  "pillars_pass": ["manifest", "parity-evidence", "scope-rationale", "verification", "restore-mechanism", "project-card", "rebuttal"],
+  "last_audit": "2026-07-02",
+  "registry_status": "AFFIRM"
+}

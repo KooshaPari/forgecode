@@ -1,0 +1,74 @@
+[package]
+name = "phenotype-cli"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "Phenotype tooling CLI facade — `pt <subcmd>` entrypoint into the absorbed compute/infra ecosystem"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KooshaPari/phenotype-tooling"
+
+[lib]
+name = "phenotype_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pt"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive", "cargo", "wrap_help"] }
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread", "signal"], optional = true }
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+phenotype-tooling-observability = { path = "../phenotype-tooling-observability", default-features = false, optional = true }
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.1"
+tempfile = "3.10"
+pretty_assertions = "1.4"
+
+[features]
+default = []
+# Tokio async runtime — needed for any I/O-bound subcommand (HTTP, file-watch, exec).
+async = ["dep:tokio", "dep:tracing-subscriber"]
+# Structured logging.
+telemetry = ["dep:tracing-subscriber"]
+# JSON output for scripting/CI.
+json = ["dep:serde", "dep:serde_json"]
+# Observability subcommand — exposes /metrics, /health, /slo endpoints via axum.
+observability = ["dep:phenotype-tooling-observability", "async"]
+# Absorbed sub-crate gates — one per absorbed tool. All-off by default.
+absorbed-byteport = []
+absorbed-heliosapp = []
+absorbed-nanovms = []
+absorbed-policystack = []
+absorbed-worktree-manager = []
+absorbed-phenodiff = []
+absorbed-phenotype-resilience = []
+absorbed-phenotype-config = []
+# All absorbed crates at once (CI matrix convenience).
+all-absorbed = [
+    "absorbed-byteport",
+    "absorbed-heliosapp",
+    "absorbed-nanovms",
+    "absorbed-policystack",
+    "absorbed-worktree-manager",
+    "absorbed-phenodiff",
+    "absorbed-phenotype-resilience",
+    "absorbed-phenotype-config",
+]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

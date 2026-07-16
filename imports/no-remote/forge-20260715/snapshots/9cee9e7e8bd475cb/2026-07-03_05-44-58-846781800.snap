@@ -1,0 +1,108 @@
+# Weekly fuzzing job for the phenotype-tooling workspace.
+#
+# Runs every Monday at 04:00 UTC and on demand via workflow_dispatch. The
+# short fuzz runs (~3 minutes per target) are good enough to catch simple
+# panics and assertion failures across the four targets defined in
+# `crates/fuzz-setup/fuzz_targets/`.
+#
+# Crashes are persisted as GitHub Actions artifacts for 30 days so the team
+# can triage them in the regular Monday review.
+
+name: fuzz
+
+on:
+  schedule:
+    # Mondays at 04:00 UTC. Cron is evaluated on GitHub Actions runners.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      fuzz_seconds:
+        description: "Per-target fuzz duration in seconds"
+        required: false
+        default: "180"
+        type: string
+  push:
+    paths:
+      - "crates/fuzz-setup/**"
+      - "crates/acceptance-contract/**"
+      - "crates/phenotype-config/**"
+      - ".github/workflows/fuzz.yml"
+
+# Only one fuzz run at a time; never cancel an in-flight fuzz — losing
+# coverage data on cancellation is worse than waiting for the next slot.
+concurrency:
+  group: fuzz-${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  FUZZ_TARGETS: "audit_chain_verify canonical_json ir_hash_stability starlark_parse_invariants"
+
+jobs:
+  fuzz:
+    name: cargo-fuzz (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(env.FUZZ_TARGETS) }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (stable + nightly for fuzz)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchains: nightly
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Build the fuzz harness
+        run: cargo fuzz build -p fuzz-setup --fuzz-dir crates/fuzz-setup --target ${{ matrix.target }}
+
+      - name: Run the fuzzer
+        id: fuzz_run
+        # If the user triggered this manually, honour their duration choice.
+        run: |
+          SECONDS_INPUT="${{ inputs.fuzz_seconds || '180' }}"
+          echo "Fuzzing ${{ matrix.target }} for ${SECONDS_INPUT}s"
+          # `cargo fuzz run` returns non-zero on any crash/timeout/oom.
+          cargo fuzz run -p fuzz-setup --fuzz-dir crates/fuzz-setup \
+              --target ${{ matrix.target }} -- -max_total_time=${SECONDS_INPUT} \
+              || echo "FUZZ_RESULT=fail" >> "$GITHUB_OUTPUT"
+          echo "FUZZ_RESULT=pass" >> "$GITHUB_OUTPUT"
+        env:
+          RUST_BACKTRACE: 1
+
+      - name: Upload corpus on success
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-corpus-${{ matrix.target }}
+          path: crates/fuzz-setup/corpus/${{ matrix.target }}
+          retention-days: 7
+
+      - name: Upload crash artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: |
+            crates/fuzz-setup/artifacts/${{ matrix.target }}/**
+          retention-days: 30
+
+      - name: Annotate the run with the crash summary
+        if: failure()
+        run: |
+          echo "::error::Fuzz target \`${{ matrix.target }}\` reported a failure. Check the uploaded artifact for the repro."

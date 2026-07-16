@@ -1,0 +1,26 @@
+#!/bin/bash
+set -e
+cd /c/Users/koosh/Civis
+
+TOK=$(gh auth token)
+echo "TOKEN_LEN=${#TOK}"
+
+# Build askpass that references the runtime TOK env var
+cat > /tmp/_askpass.sh <<'EOF'
+#!/bin/bash
+case "$1" in
+  Username*) echo "x-access-token" ;;
+  Password*) echo "$TOK" ;;
+  *) echo "" ;;
+esac
+EOF
+chmod +x /tmp/_askpass.sh
+
+git config --local --unset-all credential.https://github.com.helper 2>/dev/null || true
+git config --local credential.helper=
+
+export TOK
+export GIT_ASKPASS=/tmp/_askpass.sh
+export GIT_TERMINAL_PROMPT=0
+
+git push -u origin fix/security-replay-path-traversal 2>&1

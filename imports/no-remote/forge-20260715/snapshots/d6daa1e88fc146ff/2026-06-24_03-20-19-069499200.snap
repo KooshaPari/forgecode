@@ -1,0 +1,5 @@
+import json
+with open(r'C:\Users\koosh\AppData\Local\Temp\jobs.json', encoding='utf-8') as f:
+    d = json.load(f)
+for j in d.get('jobs', []):
+    print(j.get('name'), '|', j.get('conclusion'), '|', j.get('databaseId'))

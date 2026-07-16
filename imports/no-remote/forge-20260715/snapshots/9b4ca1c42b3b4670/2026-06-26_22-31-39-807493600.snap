@@ -1,0 +1,66 @@
+$ErrorActionPreference = 'Continue'
+$base = 'C:/Users/koosh/Civis_fresh'
+Set-Location $base
+
+function Run-Ck($pkg, $label) {
+    Write-Host "  --- $pkg ---"
+    $tmpout = [System.IO.Path]::GetTempFileName()
+    $tmperr = [System.IO.Path]::GetTempFileName()
+    cmd /c "cargo check -p $pkg --offline --color=never > $tmpout 2> $tmperr" *> $null
+    $ec = $LASTEXITCODE
+    $stdout = Get-Content $tmpout -Raw -ErrorAction SilentlyContinue
+    $stderr = Get-Content $tmperr -Raw -ErrorAction SilentlyContinue
+    Remove-Item $tmpout,$tmperr -ErrorAction SilentlyContinue
+    $out = (($stdout + "`n" + $stderr) -split "`r?`n") | Where-Object { $_ -ne '' }
+    if ($ec -eq 0) {
+        $tail = ($out | Select-Object -Last 2) -join ' | '
+        Write-Host "    OK: $tail"
+        return $true
+    } else {
+        $errs = $out | Where-Object { $_ -match '^error\[' } | Select-Object -First 3
+        $errs | ForEach-Object { Write-Host "    $_" }
+        $summary = $out | Where-Object { $_ -match 'previous errors' } | Select-Object -First 1
+        if ($summary) { Write-Host "    $summary" }
+        return $false
+    }
+}
+
+# Get PR commits
+$prs = @(
+    @{name='governance'; sha='3058884'; label='PR-gov: governance file'},
+    @{name='classifiers'; sha='50b1341'; label='PR1: lifecycle classifiers'},
+    @{name='reproduction'; sha='352dc57'; label='PR2: reproduction params'},
+    @{name='labor-economy'; sha='f68f1c7'; label='PR3: labor-economy'},
+    @{name='trace-matrix'; sha='d34c2d4'; label='PR4: trace matrix'}
+)
+
+# Always start from workspace fix
+git checkout fix/workspace-bevy-ref-holocron-dep 2>&1 | Out-Null
+
+# Baseline
+Write-Host ""
+Write-Host "===== BASELINE (workspace-fix only) ====="
+Run-Ck 'civ-needs' 'civ-needs'
+Run-Ck 'civ-economy' 'civ-economy'
+Run-Ck 'civ-genetics' 'civ-genetics'
+
+foreach ($pr in $prs) {
+    Write-Host ""
+    Write-Host "===== $($pr.label) ($($pr.sha)) ====="
+    $branchName = "verify-$($pr.name)"
+    git checkout -b $branchName fix/workspace-bevy-ref-holocron-dep 2>&1 | Out-Null
+    git cherry-pick $pr.sha 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  cherry-pick FAILED"
+        git cherry-pick --abort 2>&1 | Out-Null
+        continue
+    }
+    Run-Ck 'civ-needs' 'civ-needs'
+    Run-Ck 'civ-economy' 'civ-economy'
+    Run-Ck 'civ-genetics' 'civ-genetics'
+}
+
+git checkout fix/workspace-bevy-ref-holocron-dep 2>&1 | Out-Null
+git branch | Where-Object { $_ -match '^verify-' } | ForEach-Object { git branch -D $_ 2>&1 | Out-Null }
+Write-Host ""
+Write-Host "===== verification complete ====="

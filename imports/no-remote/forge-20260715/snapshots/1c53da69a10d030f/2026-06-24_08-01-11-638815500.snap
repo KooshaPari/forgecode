@@ -1,0 +1,53 @@
+[bans]
+[bans]
+# cargo-deny >= 0.18 rejects any key it doesn't recognize as a hard
+# error, so only documented fields belong here. The previous config
+# listed six clippy-style lint toggles (workspace-features,
+# multiple-mains, main, unnameable-traits, unnameable-types,
+# unknown-lints) that were never documented `[bans]` keys — they
+# were silently ignored by 0.16 and are now hard errors. Removed.
+
+[licenses] 
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSD-3-Clause-Clear",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CC-BY-SA-4.0",
+    "GPL-3.0-only",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+    "0BSD",
+    "BlueOak-1.0.0",
+    "CDLA-Permissive-2.0",
+    "Unlicense",
+    "WTFPL",
+] 
+[sources]
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+unknown-git = "deny"
+
+[advisories]
+ignore = [
+    # RUSTSEC-2024-0421 — `idna 0.5.0` accepts Punycode labels that decode
+    # to ASCII. Patched in `idna >= 1.0.0`. Pulled in transitively by
+    # `sqlx 0.8.6` -> `idna 0.5.0`; sqlx has not yet bumped to idna 1.x.
+    "RUSTSEC-2024-0421",
+    # RUSTSEC-2023-0071 — Marvin Attack: `rsa 0.9.10` non-constant-time
+    # implementation leaks private-key bits via timing sidechannel. No
+    # patch available upstream; only mitigation is "don't use rsa in
+    # network-observable settings". Transitive via sqlx backends.
+    "RUSTSEC-2023-0071",
+    # RUSTSEC-2024-0370 — `proc-macro-error 1.0.4` is unmaintained.
+    # Informational warning only; does not affect runtime. Transitive via
+    # `darling` -> `darling_core` -> `proc-macro-error`. Upstream `darling`
+    # has not migrated; replacing would be a breaking change in sqlx.
+    "RUSTSEC-2024-0370",
+]  

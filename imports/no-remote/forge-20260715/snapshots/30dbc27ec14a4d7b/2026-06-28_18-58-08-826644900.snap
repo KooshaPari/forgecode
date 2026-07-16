@@ -1,0 +1,89 @@
+@echo off
+rem ============================================================
+rem  omniroute-dev.cmd - user-local bin shim for fork CLI
+rem ============================================================
+rem  Lives in %USERPROFILE%\.local\bin\ alongside agent-imessage,
+rem  claude, uv, etc. Resolved by `where` on this machine (the
+rem  .local\bin directory is now first on user PATH).
+rem
+rem  Forwards every argument verbatim to the OmniRoute fork
+rem  CLI installed at:
+rem
+rem    C:\Users\koosh\OmniRoute-fresh2\bin\omniroute.mjs
+rem
+rem  The CLI is invoked with `node` directly. Override the
+rem  fork location by setting OMNIRoute_DEV_FORK_ROOT before
+rem  invoking (e.g. to point at a different checkout).
+rem
+rem  The fork source has no built `dist/server.js` (it's a
+rem  source clone, not a release). On first invocation of
+rem  `serve` we symlink the fork's `dist/` to the working
+rem  upstream bun install so the fork's `serve.mjs` finds a
+rem  server entry. Set OMNIRoute_DEV_NO_SHIM_DIST=1 to
+rem  disable (e.g. after running `npm run build:cli`).
+rem
+rem  Examples:
+rem    omniroute-dev --version
+rem    omniroute-dev --help
+rem    omniroute-dev serve
+rem    omniroute-dev doctor
+rem    omniroute-dev cloud
+rem ============================================================
+
+setlocal
+
+if "%OMNIRoute_DEV_FORK_ROOT%"=="" set "OMNIRoute_DEV_FORK_ROOT=C:\Users\koosh\OmniRoute-fresh2"
+set "FORK_BIN=%OMNIRoute_DEV_FORK_ROOT%\bin\omniroute.mjs"
+
+if not exist "%FORK_BIN%" (
+    echo [omniroute-dev] ERROR: fork CLI not found at "%FORK_BIN%" 1>&2
+    echo [omniroute-dev] Set OMNIRoute_DEV_FORK_ROOT to point at your fork checkout. 1>&2
+    exit /b 1
+)
+
+where node >nul 2>&1
+if errorlevel 1 (
+    echo [omniroute-dev] ERROR: 'node' is not on PATH. Install Node.js ^>=22 to run this fork. 1>&2
+    exit /b 1
+)
+
+rem -----------------------------------------------------------
+rem  Self-healing dist/ shim for unbuilt fork source clones.
+rem  The fork CLI's serve.mjs picks `dist/server.js` first;
+rem  if it doesn't exist (typical for source checkouts), we
+rem  symlink fork `dist\` to the upstream bun-install dist\.
+rem -----------------------------------------------------------
+if "%OMNIRoute_DEV_NO_SHIM_DIST%"=="" (
+    call :ensure_dist_shim
+    if errorlevel 1 (
+        echo [omniroute-dev] WARNING: failed to set up dist\ shim. Run 'npm run build:cli' in the fork. 1>&2
+    )
+)
+
+rem Forward all arguments verbatim. Use %* so quoting is preserved.
+node "%FORK_BIN%" %*
+exit /b %ERRORLEVEL%
+
+:ensure_dist_shim
+set "FORK_DIST=%OMNIRoute_DEV_FORK_ROOT%\dist"
+set "UPSTREAM_DIST=C:\Users\koosh\.bun\install\global\node_modules\omniroute\dist"
+
+rem If fork already has a built dist/server.js, leave it alone.
+if exist "%FORK_DIST%\server.js" exit /b 0
+rem If upstream has nothing to link to, give up silently.
+if not exist "%UPSTREAM_DIST%\server.js" exit /b 1
+
+rem If fork `dist\` exists but lacks server.js, fail loudly.
+if exist "%FORK_DIST%" (
+    echo [omniroute-dev] fork `dist\` exists but is missing server.js. Run `npm run build:cli`. 1>&2
+    exit /b 1
+)
+
+mklink /D "%FORK_DIST%" "%UPSTREAM_DIST%" >nul 2>&1
+if errorlevel 1 (
+    rem mklink failed (likely no developer mode). Tell the user how to proceed.
+    echo [omniroute-dev] could not create dist\ symlink. Enable Developer Mode, or run `npm run build:cli` in the fork. 1>&2
+    exit /b 1
+)
+echo [omniroute-dev] linked %FORK_DIST% --^> %UPSTREAM_DIST% 1>&2
+exit /b 0

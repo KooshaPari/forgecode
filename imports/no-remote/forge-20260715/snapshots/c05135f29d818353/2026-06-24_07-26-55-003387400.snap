@@ -1,0 +1,111 @@
+# Absorption-Justification Audit Grade Report
+
+**Generated:** 2026-06-24T00:18:00Z
+**Authority:** phenotype-registry
+**Rubric:** `registry/audit-absorption-justification/schema.json` (7 pillars, max 14)
+**Audits graded:** 7 of 8 expected
+
+> **Note:** The task referenced "all 8 audit files," but only 7 absorption-justification
+> audit markdown files existed in `audits/absorption-justifications/` at generation time.
+> This report grades the 7 audits actually present. Re-run the grader when the 8th audit
+> lands to refresh the fleet average.
+
+## Grade Boundaries
+
+| Grade | Range | Classification |
+|-------|-------|----------------|
+| **L4** | 11.50 – 14.00 | Excellent: Absorption fully justified |
+| **L3** | 10.00 – 11.49 | On Track: Minor gaps in justification |
+| **L2** | 7.00 – 9.99  | Needs Improvement: Substantive gaps |
+| **L1** | 3.00 – 6.99  | Critical Foundation Needed |
+| **L0** | 0.00 – 2.99  | Unacceptable: Absorption not justified |
+
+## Per-Audit Grades (sorted by score ascending)
+
+| # | Source Repo | Verdict | Score | Max | % | Grade | Classification |
+|---|-------------|---------|-------|-----|---|-------|----------------|
+| 1 | phenotype-infra | AFFIRM_CONSOLIDATION_TARGET | 13.5 | 14 | 96.43% | L4 | Excellent |
+| 2 | go-nippon | ARCHIVE_ONLY | 13.5 | 14 | 96.43% | L4 | Excellent |
+| 3 | smart-mcp-go | NO_MERIT_WITH_INTENT | 13.5 | 14 | 96.43% | L4 | Excellent |
+| 4 | McpKit | HARD_DELETE_READY | 13.5 | 14 | 96.43% | L4 | Excellent |
+| 5 | phenocompose | DELETABLE_DOWNGRADED_TO_ARCHIVE | 13.5 | 14 | 96.43% | L4 | Excellent |
+| 6 | nanovms | DELETION_CANDIDATE_PROCEED | 13.5 | 14 | 96.43% | L4 | Excellent |
+| 7 | phenotype-go-sdk | ARCHIVE_DELETE_BLOCKED | 14.0 | 14 | 100.00% | L4 | Excellent |
+
+> **Tie-break ordering:** All six audits at 13.5/14 share the same score. They are
+> sorted alphabetically by `source_repo` to keep output deterministic. The first row
+> (`phenotype-infra`) has the most informative weakness (P5 restore-command-validity
+> is partial because the AFFIRM verdict has no concrete restore command — it relies
+> on "target's own revert workflow" prose).
+
+## Per-Pillar Breakdown (all audits)
+
+| Pillar | Weight | What it checks |
+|--------|--------|----------------|
+| P1: manifest-completeness | 3 | All 5 mandatory sections present (Source, Target, Status, Last-Resort-Exceptions, Restore-Command) |
+| P2: parity-evidence | 3 | ABSORPTION_MATRIX has Target Evidence column with citations per row |
+| P3: branch-coverage | 2 | Every branch with unique content has a row with Source/Target/Status/Restore-Command |
+| P4: last-resort-justification | 2 | Each exception has rebuttal: why target can't absorb, residual gap, why archival-not-deletion insufficient |
+| P5: restore-command-validity | 1 | `mv .archive/X .` OR `git clone <remote>` + bundle SHA-256 match |
+| P6: registry-integration | 2 | `projects/<Name>.json` exists with status + absorbed_into + disposition |
+| P7: deletion-gate-tooling-coverage | 1 | References `bin/repo-delete-gate.sh/.ps1` OR explicitly explains why the gate is not required |
+
+### Pillar scores per audit
+
+| Audit | P1 (3) | P2 (3) | P3 (2) | P4 (2) | P5 (1) | P6 (2) | P7 (1) | Total |
+|-------|--------|--------|--------|--------|--------|--------|--------|-------|
+| phenotype-infra | 3.0 | 3.0 | 2.0 | 2.0 | 0.5 | 2.0 | 1.0 | **13.5** |
+| go-nippon | 3.0 | 3.0 | 2.0 | 2.0 | 1.0 | 2.0 | 0.5 | **13.5** |
+| smart-mcp-go | 3.0 | 3.0 | 2.0 | 2.0 | 1.0 | 2.0 | 0.5 | **13.5** |
+| McpKit | 3.0 | 3.0 | 2.0 | 2.0 | 1.0 | 2.0 | 0.5 | **13.5** |
+| phenocompose | 3.0 | 3.0 | 2.0 | 2.0 | 1.0 | 2.0 | 0.5 | **13.5** |
+| nanovms | 3.0 | 3.0 | 2.0 | 2.0 | 1.0 | 2.0 | 0.5 | **13.5** |
+| phenotype-go-sdk | 3.0 | 3.0 | 2.0 | 2.0 | 1.0 | 2.0 | 1.0 | **14.0** |
+
+## Key Observations
+
+- **All 7 audits pass at L4 (Excellent).** No L3/L2/L1/L0 grades in this batch.
+- **Only one audit scored a full 14/14:** `phenotype-go-sdk` (ARCHIVE_DELETE_BLOCKED).
+  Strongest pillar evidence: explicit enumeration of three blockers with reason + residual
+  gap + why archival-insufficient rebuttal, and explicit Action Class statement ("hold;
+  resolve blockers; re-audit") that satisfies the schema's allowance for explaining why
+  the deletion gate is not required.
+- **Fleet-wide weakness: P7 (deletion-gate-tooling-coverage).** Six of seven audits
+  scored 0.5/1 here. None of them reference `bin/repo-delete-gate.sh/.ps1` directly.
+  Schema allows full credit when the audit "explicitly explains why the gate is not
+  required" — but most audits rely on implicit justification (verdict is archive / no
+  deletion proposed) rather than an explicit statement.
+- **Fleet-wide weakness: P5 (restore-command-validity) for AFFIRM_CONSOLIDATION_TARGET.**
+  `phenotype-infra` is a special case (target references itself) and the Restore-Command
+  section is prose-only ("governed by target CI") rather than a concrete `mv`/`git clone`
+  invocation. Scored 0.5/1.
+- **No audit failed any mandatory pillar** (P1, P2, P3, P4, P6 all at full marks across
+  the fleet).
+
+## Fleet Average
+
+| Metric | Value |
+|--------|-------|
+| **Audits graded** | 7 |
+| **Rubric maximum** | 14 |
+| **Average score** | **13.50 / 14** |
+| **Average percentage** | **96.43%** |
+| **Average grade** | **L4** |
+| **Average classification** | **Excellent: Absorption fully justified** |
+| **Grade distribution** | L4 = 7, L3 = 0, L2 = 0, L1 = 0, L0 = 0 |
+| **Strongest audit** | phenotype-go-sdk (14.0/14, 100%) |
+| **Weakest audit (tie at 13.5)** | phenotype-infra — partial on P5 (prose-only restore command) |
+
+## How to Reproduce
+
+1. List all `*.md` files in `audits/absorption-justifications/`.
+2. For each file, score against the 7 pillars in `registry/audit-absorption-justification/schema.json`.
+3. Sum earned points; map to grade via `grade_boundaries`.
+4. Sort by `score` ascending (weakest first → most informative for improvement).
+5. Aggregate into `GRADES.json` + `GRADES.md`.
+
+## Provenance
+
+- Rubric authority: `registry/audit-absorption-justification/schema.json` v1.0.0
+- Audit batch: `wave: absorption-justification-2026-06-23`
+- All audits authored 2026-06-23; report generated 2026-06-24

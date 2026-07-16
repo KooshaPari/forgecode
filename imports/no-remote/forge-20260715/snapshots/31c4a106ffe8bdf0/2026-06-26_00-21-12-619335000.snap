@@ -1,0 +1,16 @@
+import { redact, redactString } from "../scripts/sre/redact-logs.mjs";
+const cases = [
+  "from fe80::1 to ::1",
+  "peer 2001:0db8:85a3:0000:0000:8a2e:0370:7334 connected",
+  "traffic from ::1 only",
+  "addr=2001:db8::1 here",
+  "::ffff:192.168.0.1",
+  "2001:db8:85a3::8a2e:370:7334",
+  ":::",
+  "1:2:3:4:5:6:7:8",
+  "abc::",
+  "::abc",
+];
+for (const c of cases) {
+  console.log(JSON.stringify(c), "->", JSON.stringify(redact(c)));
+}

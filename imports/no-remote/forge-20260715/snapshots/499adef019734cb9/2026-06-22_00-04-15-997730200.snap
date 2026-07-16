@@ -1,0 +1,31 @@
+$ErrorActionPreference = 'Continue'
+# Probe one repo end-to-end to confirm everything works
+$repo = 'phenotype-registry'
+$owner = 'KooshaPari'
+
+Write-Host "=== Workflows ==="
+$wfJson = gh api "repos/$owner/$repo/contents/.github/workflows" 2>&1
+$wfObj = $wfJson | ConvertFrom-Json
+$wfObj | ForEach-Object { Write-Host ("WF: " + $_.name + " (" + $_.size + "b)") }
+
+Write-Host "=== Actions runs (last 5) ==="
+$runsJson = gh api "repos/$owner/$repo/actions/runs?per_page=5" 2>&1
+$runsObj = $runsJson | ConvertFrom-Json
+$runsObj.workflow_runs | Select-Object -First 5 | ForEach-Object {
+  Write-Host ("RUN: id=" + $_.id + " name='" + $_.name + "' conclusion=" + $_.conclusion + " status=" + $_.status + " event=" + $_.event + " branch=" + $_.head_branch + " created=" + $_.created_at)
+}
+
+Write-Host "=== Commits on main (last 3) ==="
+$cmJson = gh api "repos/$owner/$repo/commits?sha=main&per_page=3" 2>&1
+$cmObj = $cmJson | ConvertFrom-Json
+$cmObj | Select-Object -First 3 | ForEach-Object {
+  Write-Host ("CMT: " + $_.sha.Substring(0,8) + " " + $_.commit.author.date + " " + $_.commit.author.name + " - " + ($_.commit.message -split "`n")[0])
+}
+
+Write-Host "=== Single workflow YAML ==="
+$wfPath = $wfObj[0].path
+$wfRaw = gh api "repos/$owner/$repo/contents/$wfPath" --jq '.content' 2>&1
+Write-Host "len(content_b64)=" $wfRaw.Length
+$bytes = [Convert]::FromBase64String($wfRaw)
+$text = [System.Text.Encoding]::UTF8.GetString($bytes)
+Write-Host $text.Substring(0, [Math]::Min(500, $text.Length))

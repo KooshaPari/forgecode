@@ -1,0 +1,3 @@
+@echo off
+"C:\Program Files\Git\usr\bin\bash.exe" -c "ls /c/Users/koosh/phenotype-registry/grade.sh 1>C:/Users/koosh/_compute_infra_audit/reports/B5_grade_phenotype-tooling.stdout 2>C:/Users/koosh/_compute_infra_audit/reports/B5_grade_phenotype-tooling.stderr"
+type C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.stdout

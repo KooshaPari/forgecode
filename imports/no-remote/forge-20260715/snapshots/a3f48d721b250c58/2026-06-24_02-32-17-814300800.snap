@@ -1,0 +1,10 @@
+import os, re
+for f in sorted(os.listdir(r'.github\workflows')):
+    if not f.endswith('.yml'):
+        continue
+    p = os.path.join(r'.github\workflows', f)
+    text = open(p).read()
+    on_count = len(re.findall(r'^on\s*:\s*$', text, re.MULTILINE))
+    has_broken = 'actions/checkout11bd71901bbe5b1630ceea73d27597364c9af683' in text
+    has_proper = 'actions/checkout@' in text
+    print(f'{f} | on-keys: {on_count} | broken-checkout: {has_broken} | proper-checkout: {has_proper}')

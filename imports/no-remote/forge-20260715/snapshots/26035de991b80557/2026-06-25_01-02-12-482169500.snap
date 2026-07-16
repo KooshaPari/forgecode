@@ -1,0 +1,6 @@
+$output = & gh api "repos/KooshaPari/kvirtualstage/commits/HEAD" 2>&1
+Write-Host "Type:" $output.GetType().FullName
+Write-Host "Count:" $output.Count
+$raw = $output -join "`n"
+Write-Host "Length:" $raw.Length
+Write-Host "First 200:" ($raw.Substring(0, [Math]::Min(200, $raw.Length)))

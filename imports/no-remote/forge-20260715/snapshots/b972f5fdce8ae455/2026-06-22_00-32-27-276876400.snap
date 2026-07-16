@@ -1,0 +1,13 @@
+import re, json, sys, os
+sys.stdout.reconfigure(encoding='utf-8')
+base = r'C:\Users\koosh\forge_tmp'
+if os.path.isdir(base):
+    for n in sorted(os.listdir(base)):
+        p = os.path.join(base, n)
+        if os.path.isdir(p):
+            sub = sorted(os.listdir(p))[:8]
+            print(f"DIR  {n}/  -> {sub}")
+        else:
+            print(f"FILE {n}")
+else:
+    print('NO forge_tmp')

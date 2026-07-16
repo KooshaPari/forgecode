@@ -1,0 +1,10 @@
+/** 
+ * DAG renderer tests. 
+ * 
+ * Uses Vitest test runner. 
+ * Tests the layout algorithm, DAG data integrity, drill-down detail fields, 
+ * and client-side filter logic. 
+ */ 
+ 
+import { describe, it, expect } from "vitest"; 
+import dagData from "../data/dag-data.json";

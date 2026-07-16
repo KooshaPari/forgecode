@@ -1,0 +1,43 @@
+{
+  "project": "BytePort",
+  "stack": "rust",
+<<<<<<< Updated upstream
+  "mode": "e1-recovery",
+  "score": 7,
+  "max": 10,
+  "percentage": 70,
+  "grade": "C+",
+  "checks": [
+    {"name":"build","status":"pass","score":2,"max":2,"detail":"cargo check -p byteport-transport passed (files verified on origin/main)"},
+    {"name":"recovery-files","status":"pass","score":3,"max":3,"detail":"3 terminal UI files recovered: terminal_ui.rs(370 lines), ui.rs(389 lines), mod.rs(5 lines)"},
+    {"name":"branch","status":"pass","score":1,"max":1,"detail":"recover/E1-terminal-ui-worktree created from origin/main"},
+    {"name":"pr","status":"pass","score":1,"max":1,"detail":"PR #248 opened with area:compute-infra + epic-e labels"},
+    {"name":"deny","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},
+    {"name":"audit-entry","status":"pass","score":1,"max":1,"detail":"worklog appended with E1 entry"},
+=======
+  "mode": "e2-terminal-ui-pr",
+  "score": 8,
+  "max": 10,
+  "percentage": 80,
+  "grade": "B-",
+  "checks": [
+    {"name":"build","status":"pass","score":2,"max":2,"detail":"cargo check --workspace passes (byteport-dag crate compiles on main)"},
+    {"name":"terminal-ui-verified","status":"pass","score":2,"max":2,"detail":"terminal_ui.rs, ui.rs, mod.rs verified on origin/main via PR #248 merge path"},
+    {"name":"dag-foundation-lifted","status":"pass","score":2,"max":2,"detail":"byteport-dag crate (5 modules) successfully lifted to main via Phase-6"},
+    {"name":"branch","status":"pass","score":1,"max":1,"detail":"recover/E2-terminal-ui-pr created from origin/main"},
+    {"name":"pr","status":"pass","score":1,"max":1,"detail":"PR created with area:compute-infra + epic-e labels"},
+    {"name":"deny","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},
+    {"name":"audit-entry","status":"pass","score":1,"max":1,"detail":"worklog appended with E2 entry"},
+>>>>>>> Stashed changes
+    {"name":"test-snapshot","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},
+    {"name":"test-fuzz","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},
+    {"name":"coverage","status":"skipped","score":0,"max":2,"detail":"skipped in fast mode"},
+    {"name":"audit","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},
+    {"name":"bench","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"}
+  ],
+<<<<<<< Updated upstream
+  "timestamp": "2026-06-25T22:55:00Z"
+=======
+  "timestamp": "2026-06-25T23:00:00Z"
+>>>>>>> Stashed changes
+}

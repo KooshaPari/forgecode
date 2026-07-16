@@ -1,0 +1,21 @@
+import sys, re, json, base64
+path = sys.argv[1]
+with open(path, 'rb') as f:
+    raw = f.read()
+text = raw.decode('utf-8', errors='replace')
+# Strip ANSI
+ansi_re = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+text = ansi_re.sub('', text)
+# Strip leading garbage before first {
+i = text.find('{')
+if i > 0:
+    text = text[i:]
+data = json.loads(text)
+if isinstance(data, dict) and 'content' in data and data.get('encoding') == 'base64':
+    decoded = base64.b64decode(data['content']).decode('utf-8', errors='replace')
+    sys.stdout.write(decoded)
+elif isinstance(data, list):
+    for d in data:
+        print(f"  {d.get('type','?'):5} {d.get('size',0):>10}  {d.get('name','?')}")
+else:
+    print(json.dumps(data, indent=2)[:3000])

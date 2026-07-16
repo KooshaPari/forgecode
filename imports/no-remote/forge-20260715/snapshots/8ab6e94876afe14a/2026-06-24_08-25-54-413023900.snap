@@ -1,0 +1,111 @@
+//! KVirtual — Desktop Automation CLI (`kvd`)
+//!
+//! Absorbed from `_tmp_kvirtualstage/kvirtualdesktop` on 2026-06-24.
+//! Provides a playwright-equivalent for desktop automation with
+//! VM/container support, credential management, screen recording,
+//! and an MCP protocol server.
+
+pub mod cli;
+pub mod config;
+pub mod session;
+pub mod tui;
+pub mod desktop;
+pub mod container;
+pub mod vm;
+pub mod record;
+pub mod credentials;
+pub mod scripting;
+pub mod history;
+pub mod completion;
+pub mod error;
+
+// Re-exports
+pub use cli::{CliRunner, CommandContext};
+pub use config::Config;
+pub use session::SessionManager;
+pub use tui::TuiRunner;
+pub use error::{KvdError, Result};
+
+// ─── Core Automation Traits ───────────────────────────────────────────────────
+
+pub mod automation {
+    use async_trait::async_trait;
+    use crate::error::Result;
+
+    /// Core automation interface — click, type, screenshot, find elements.
+    #[async_trait]
+    pub trait Automator: Send {
+        async fn click(&mut self, x: i32, y: i32) -> Result<()>;
+        async fn type_text(&mut self, text: &str) -> Result<()>;
+        async fn key_press(&mut self, key: &str) -> Result<()>;
+        async fn screenshot(&mut self, path: Option<&str>) -> Result<String>;
+        async fn find_element(&mut self, selector: &str) -> Result<ElementHandle>;
+        async fn wait_for_element(&mut self, selector: &str, timeout: Option<u64>) -> Result<ElementHandle>;
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct ElementHandle {
+        pub id: String,
+        pub bounds: Rect,
+        pub text: Option<String>,
+        pub class_name: Option<String>,
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct Rect {
+        pub x: i32,
+        pub y: i32,
+        pub width: i32,
+        pub height: i32,
+    }
+}
+
+// ─── MCP Interface Support ────────────────────────────────────────────────────
+
+pub mod mcp {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct McpTool {
+        pub name: String,
+        pub description: String,
+        pub input_schema: serde_json::Value,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct McpRequest {
+        pub tool: String,
+        pub arguments: serde_json::Value,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct McpResponse {
+        pub success: bool,
+        pub result: serde_json::Value,
+        pub error: Option<String>,
+    }
+}
+
+// ─── Utility Functions ────────────────────────────────────────────────────────
+
+pub mod utils {
+    use crate::error::Result;
+    use std::path::Path;
+
+    pub fn ensure_dir_exists(path: &Path) -> Result<()> {
+        if !path.exists() {
+            std::fs::create_dir_all(path)?;
+        }
+        Ok(())
+    }
+
+    pub fn get_timestamp() -> String {
+        chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string()
+    }
+
+    pub fn sanitize_filename(name: &str) -> String {
+        name.chars()
+            .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+            .collect()
+    }
+}

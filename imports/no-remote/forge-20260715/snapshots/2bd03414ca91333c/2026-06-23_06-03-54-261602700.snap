@@ -1,0 +1,29 @@
+import json, subprocess, sys
+repos = [
+    "decolua/9router",
+    "musistudio/claude-code-router",
+    "kaitranntt/CLIProxyAPIPlus",
+    "mksglu/context-mode",
+    "MaximAI/bifrost",
+    "diegosouzapw/OmniRoute",
+    "coder/agentapi",
+    "wei-shaw/substrate",  # likely doesn't exist
+    "phenotype-registry/phenotype-registry",
+    "KooshaPari/agentapi-plusplus",
+    "KooshaPari/cliproxyapi-plusplus",
+    "KooshaPari/OmniRoute",
+    "KooshaPari/substrate",
+]
+print(f"{'full':<35} {'stars':>5} {'arch':<6} {'updated':<11} {'lic':<10} desc")
+for r in repos:
+    out = subprocess.run(["gh", "api", f"/repos/{r}"], capture_output=True, text=True)
+    if out.returncode != 0 or not out.stdout.strip().startswith("{"):
+        print(f"{r:<35} <not found or 404>")
+        continue
+    try:
+        d = json.loads(out.stdout)
+    except Exception as e:
+        print(f"{r:<35} parse_err: {e}")
+        continue
+    lic = (d.get("license") or {}).get("name") or "-"
+    print(f"{d.get('full_name'):<35} {d.get('stargazers_count',0):>5} {str(d.get('archived',False)):<6} {d.get('updated_at','')[:10]:<11} {lic:<10} {(d.get('description') or '')[:80]}")

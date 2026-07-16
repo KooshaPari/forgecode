@@ -1,0 +1,112 @@
+---
+version: 1
+metadata:
+  owner: koosh
+  scope: compute-infra
+  depth: phase1
+  repos: 7
+  units: 16
+  pillars: 6
+created: 2026-07-04
+dag:
+  units:
+    - id: A1
+      title: "phenotype-infra branch hygiene audit"
+      pool: infra
+      type: branch_audit
+      repo: phenotype-infra
+      ac:
+        - "no branches older than 30 days with no recent commit"
+        - "no orphaned local-only branches referencing deleted remotes"
+        - "all cursor branches either merged or annotated"
+        - "results JSON on disk under _compute_infra_audit/audits/2026-07-04/infra-pool/A1/"
+      verify: "grade.sh infra branch_audit"
+    - id: A2
+      title: "phenotype-infra editorconfig harmonization"
+      pool: infra
+      type: config
+      repo: phenotype-infra
+      ac:
+        - "diff against phenoshared .editorconfig"
+        - "results JSON on disk under _compute_infra_audit/audits/2026-07-04/infra-pool/A2/"
+      verify: "grade.sh infra config"
+    - id: A3
+      title: "phenotype-infra gitignore standardization"
+      pool: infra
+      type: config
+      repo: phenotype-infra
+      ac:
+        - "matches registry .gitignore canonical"
+        - "results JSON on disk under _compute_infra_audit/audits/2026-07-04/infra-pool/A3/"
+      verify: "grade.sh infra config"
+    - id: A4
+      title: "phenotype-infra gitattributes audit"
+      pool: infra
+      type: config
+      repo: phenotype-infra
+      ac:
+        - "no conflicts with registry .gitattributes"
+        - "results JSON on disk under _compute_infra_audit/audits/2026-07-04/infra-pool/A4/"
+      verify: "grade.sh infra config"
+    - id: B5
+      title: "phenotype-infra grade.sh baseline"
+      pool: registry
+      type: grade_baseline
+      repo: phenotype-infra
+      ac:
+        - "all 4 governance files (LICENSE, CODEOWNERS, SECURITY.md, SUPPORT.md) exist"
+        - "results JSON on disk under _compute_infra_audit/audits/2026-07-04/registry-pool/B5/"
+      verify: "grade.sh infra governance"
+  pillars_set:
+    - branch_hygiene
+    - config_alignment
+    - grade_baseline
+    - editorconfig_gitignore_gitattributes
+    - security_audit
+    - dependencies
+    - governance
+    - cross_repo
+  gates:
+    - editorconfig_gitignore_gitattributes: must be in registry standard
+    - security_audit: no HIGH or CRITICAL CVEs
+    - dependencies: no circular references
+    - test_coverage: at or above baseline
+    - governance: all 4 files exist
+    - cross_repo: registry must record this audit run
+  auditor_loop:
+    - run_grade_sh_baseline
+    - run_cargo_audit
+    - run_cargo_clippy
+    - run_format_check
+    - run_doc_check
+    - update_audit_summary
+    - emit_decision_card
+execution:
+  phase1: 4
+  phase2: 0
+  total_concurrent: 4
+risks:
+  - id: R1
+    title: "phenotype-sdk mid-flight absorb operation"
+    impact: high
+    mitigation: "do not touch SDK this pass; only audit and report"
+  - id: R2
+    title: "pheno-compose huge repo (large clone)"
+    impact: medium
+    mitigation: "use shallow clone for static analysis only"
+  - id: R3
+    title: "byteport cargo lockfile v4 incompat"
+    impact: medium
+    mitigation: "report only; do not fix in this pass"
+  - id: R4
+    title: "nanovms repointing ambiguity"
+    impact: low
+    mitigation: "read DOMAIN_ROLES for canonical owner; record finding"
+  - id: R5
+    title: "rate limits on subagent backend"
+    impact: medium
+    mitigation: "batch by pool; backoff and retry; surface partial state"
+  - id: R6
+    title: "session boundary loss"
+    impact: high
+    mitigation: "rebuild workspace on demand; re-verify before claiming"

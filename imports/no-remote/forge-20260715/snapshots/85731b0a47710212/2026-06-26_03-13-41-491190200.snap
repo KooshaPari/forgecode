@@ -1,0 +1,2 @@
+Set objShell = CreateObject("Wscript.Shell")
+objShell.Run "cmd /c C:\Users\koosh\.claude\lanes\substrate-feat-cloud-dispatch\run_build.cmd", 0, False

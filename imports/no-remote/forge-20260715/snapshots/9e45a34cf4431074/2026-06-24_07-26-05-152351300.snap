@@ -1,0 +1,169 @@
+{
+  "schema": "absorption-justification-grade-report",
+  "version": "1.0.0",
+  "authority": "phenotype-registry",
+  "rubric": "registry/audit-absorption-justification/schema.json",
+  "rubric_max_score": 14,
+  "grade_boundaries": [
+    {"grade": "L4", "min": 11.5, "max": 14.0, "classification": "Excellent: Absorption fully justified"},
+    {"grade": "L3", "min": 10.0, "max": 11.49, "classification": "On Track: Minor gaps in justification"},
+    {"grade": "L2", "min": 7.0, "max": 9.99, "classification": "Needs Improvement: Substantive gaps"},
+    {"grade": "L1", "min": 3.0, "max": 6.99, "classification": "Critical Foundation Needed"},
+    {"grade": "L0", "min": 0.0, "max": 2.99, "classification": "Unacceptable: Absorption not justified"}
+  ],
+  "generated_at": "2026-06-24T00:18:00Z",
+  "note": "User task referenced 'all 8 audit files' but only 7 absorption-justification audit markdown files exist in audits/absorption-justifications/ at generation time. This report grades the 7 audits actually present. The 8th audit referenced may not yet be authored; re-run grader when it lands.",
+  "audits_count": 7,
+  "audits": [
+    {
+      "source_repo": "phenotype-infra",
+      "audit_path": "audits/absorption-justifications/phenotype-infra-2026-06-23.md",
+      "score": 13.5,
+      "max": 14,
+      "percentage": 96.43,
+      "grade": "L4",
+      "classification": "Excellent: Absorption fully justified",
+      "verdict": "AFFIRM_CONSOLIDATION_TARGET",
+      "per_pillar_status": [
+        {"pillar_id": 1, "pillar_name": "manifest-completeness", "weight": 3, "earned": 3.0, "status": "pass", "note": "All 5 mandatory sections present (Source, Target, Status, Last-Resort-Exceptions, Restore-Command) plus all optional sections."},
+        {"pillar_id": 2, "pillar_name": "parity-evidence", "weight": 3, "earned": 3.0, "status": "pass", "note": "ABSORPTION_MATRIX has Target Evidence column with citations per row."},
+        {"pillar_id": 3, "pillar_name": "branch-coverage", "weight": 2, "earned": 2.0, "status": "pass", "note": "Branches tracked within target workflow; Branch carry-over row populated."},
+        {"pillar_id": 4, "pillar_name": "last-resort-justification", "weight": 2, "earned": 2.0, "status": "pass", "note": "Clean: no exceptions invoked for AFFIRM_CONSOLIDATION_TARGET baseline posture."},
+        {"pillar_id": 5, "pillar_name": "restore-command-validity", "weight": 1, "earned": 0.5, "status": "partial", "note": "Restore-Command is a comment ('governed by target CI') rather than a concrete `mv .archive/X .` or `git clone` invocation. Partial credit: documented but not verifiable as a hard restore command."},
+        {"pillar_id": 6, "pillar_name": "registry-integration", "weight": 2, "earned": 2.0, "status": "pass", "note": "projects/phenotype-infra.json present with status=active, disposition=AFFIRM."},
+        {"pillar_id": 7, "pillar_name": "deletion-gate-tooling-coverage", "weight": 1, "earned": 1.0, "status": "pass", "note": "No deletion proposed; target is consolidation target. Action Class explicit ('retain and continue') explains gate is not required."}
+      ]
+    },
+    {
+      "source_repo": "go-nippon",
+      "audit_path": "audits/absorption-justifications/go-nippon-2026-06-23.md",
+      "score": 13.5,
+      "max": 14,
+      "percentage": 96.43,
+      "grade": "L4",
+      "classification": "Excellent: Absorption fully justified",
+      "verdict": "ARCHIVE_ONLY",
+      "per_pillar_status": [
+        {"pillar_id": 1, "pillar_name": "manifest-completeness", "weight": 3, "earned": 3.0, "status": "pass", "note": "All 5 mandatory sections present plus all optional sections."},
+        {"pillar_id": 2, "pillar_name": "parity-evidence", "weight": 3, "earned": 3.0, "status": "pass", "note": "ABSORPTION_MATRIX Target Evidence column populated per row."},
+        {"pillar_id": 3, "pillar_name": "branch-coverage", "weight": 2, "earned": 2.0, "status": "pass", "note": "All branches covered; Branch carry-over row + Branch Inventory Summary."},
+        {"pillar_id": 4, "pillar_name": "last-resort-justification", "weight": 2, "earned": 2.0, "status": "pass", "note": "None invoked; clean ARCHIVE_ONLY posture documented."},
+        {"pillar_id": 5, "pillar_name": "restore-command-validity", "weight": 1, "earned": 1.0, "status": "pass", "note": "`gh repo archive kooshapari/go-nippon --confirm` + local mirror path documented; verifiable per schema."},
+        {"pillar_id": 6, "pillar_name": "registry-integration", "weight": 2, "earned": 2.0, "status": "pass", "note": "projects/go-nippon.json present with status=archived, disposition=ARCHIVE_ONLY, absorbed_into=phenotype-infra."},
+        {"pillar_id": 7, "pillar_name": "deletion-gate-tooling-coverage", "weight": 1, "earned": 0.5, "status": "partial", "note": "Uses `gh repo archive` directly without referencing `bin/repo-delete-gate.sh/.ps1`. Verdict is archive-not-delete so gate is not strictly required, but the audit does not explicitly explain the gate omission per schema allowance."}
+      ]
+    },
+    {
+      "source_repo": "smart-mcp-go",
+      "audit_path": "audits/absorption-justifications/smart-mcp-go-2026-06-23.md",
+      "score": 13.5,
+      "max": 14,
+      "percentage": 96.43,
+      "grade": "L4",
+      "classification": "Excellent: Absorption fully justified",
+      "verdict": "NO_MERIT_WITH_INTENT",
+      "per_pillar_status": [
+        {"pillar_id": 1, "pillar_name": "manifest-completeness", "weight": 3, "earned": 3.0, "status": "pass", "note": "All 5 mandatory sections present plus all optional sections."},
+        {"pillar_id": 2, "pillar_name": "parity-evidence", "weight": 3, "earned": 3.0, "status": "pass", "note": "ABSORPTION_MATRIX Target Evidence column populated per row."},
+        {"pillar_id": 3, "pillar_name": "branch-coverage", "weight": 2, "earned": 2.0, "status": "pass", "note": "Branch carry-over row populated; only stale branches present."},
+        {"pillar_id": 4, "pillar_name": "last-resort-justification", "weight": 2, "earned": 2.0, "status": "pass", "note": "None invoked for this cycle; intent register row added; cleanly explained."},
+        {"pillar_id": 5, "pillar_name": "restore-command-validity", "weight": 1, "earned": 1.0, "status": "pass", "note": "`gh repo archive` documented as conditional restore command; local mirror path documented."},
+        {"pillar_id": 6, "pillar_name": "registry-integration", "weight": 2, "earned": 2.0, "status": "pass", "note": "projects/smart-mcp-go.json present with status=archived, disposition=AFFIRM, absorbed_into=phenotype-infra."},
+        {"pillar_id": 7, "pillar_name": "deletion-gate-tooling-coverage", "weight": 1, "earned": 0.5, "status": "partial", "note": "No deletion proposed (verdict is NO_MERIT_WITH_INTENT, repo stays live). No explicit reference to `bin/repo-delete-gate.sh/.ps1`. The Status section Action Class ('do not absorb now; keep door open') is implicit justification but does not cite gate tooling."}
+      ]
+    },
+    {
+      "source_repo": "McpKit",
+      "audit_path": "audits/absorption-justifications/McpKit-2026-06-23.md",
+      "score": 13.5,
+      "max": 14,
+      "percentage": 96.43,
+      "grade": "L4",
+      "classification": "Excellent: Absorption fully justified",
+      "verdict": "HARD_DELETE_READY",
+      "per_pillar_status": [
+        {"pillar_id": 1, "pillar_name": "manifest-completeness", "weight": 3, "earned": 3.0, "status": "pass", "note": "All 5 mandatory sections present plus all optional sections."},
+        {"pillar_id": 2, "pillar_name": "parity-evidence", "weight": 3, "earned": 3.0, "status": "pass", "note": "ABSORPTION_MATRIX Target Evidence column populated per row including Snapshot posture row."},
+        {"pillar_id": 3, "pillar_name": "branch-coverage", "weight": 2, "earned": 2.0, "status": "pass", "note": "Branch carry-over row populated; only stale branches present."},
+        {"pillar_id": 4, "pillar_name": "last-resort-justification", "weight": 2, "earned": 2.0, "status": "pass", "note": "None invoked; hard-delete posture supported by snapshot retention, not policy carve-out."},
+        {"pillar_id": 5, "pillar_name": "restore-command-validity", "weight": 1, "earned": 1.0, "status": "pass", "note": "`gh repo delete` + frozen local mirror + documented restore path; verifiable."},
+        {"pillar_id": 6, "pillar_name": "registry-integration", "weight": 2, "earned": 2.0, "status": "pass", "note": "projects/McpKit.json present with status=archived, absorbed_into=phenotype-infra."},
+        {"pillar_id": 7, "pillar_name": "deletion-gate-tooling-coverage", "weight": 1, "earned": 0.5, "status": "partial", "note": "HARD_DELETE_READY uses `gh repo delete` directly without referencing `bin/repo-delete-gate.sh/.ps1`. Snapshot is captured but the audit does not explicitly cite the gate tooling per schema."}
+      ]
+    },
+    {
+      "source_repo": "phenocompose",
+      "audit_path": "audits/absorption-justifications/phenocompose-2026-06-23.md",
+      "score": 13.5,
+      "max": 14,
+      "percentage": 96.43,
+      "grade": "L4",
+      "classification": "Excellent: Absorption fully justified",
+      "verdict": "DELETABLE_DOWNGRADED_TO_ARCHIVE",
+      "per_pillar_status": [
+        {"pillar_id": 1, "pillar_name": "manifest-completeness", "weight": 3, "earned": 3.0, "status": "pass", "note": "All 5 mandatory sections present plus all optional sections."},
+        {"pillar_id": 2, "pillar_name": "parity-evidence", "weight": 3, "earned": 3.0, "status": "pass", "note": "ABSORPTION_MATRIX Target Evidence column populated per row including Posture shift row."},
+        {"pillar_id": 3, "pillar_name": "branch-coverage", "weight": 2, "earned": 2.0, "status": "pass", "note": "Branch carry-over row populated; only stale branches present."},
+        {"pillar_id": 4, "pillar_name": "last-resort-justification", "weight": 2, "earned": 2.0, "status": "pass", "note": "None invoked; downgrade from delete to archive is itself a non-blocker."},
+        {"pillar_id": 5, "pillar_name": "restore-command-validity", "weight": 1, "earned": 1.0, "status": "pass", "note": "`gh repo archive` + frozen local mirror path; verifiable restore posture."},
+        {"pillar_id": 6, "pillar_name": "registry-integration", "weight": 2, "earned": 2.0, "status": "pass", "note": "projects/phenocompose.json present with status=archived, disposition=ARCHIVE_ONLY."},
+        {"pillar_id": 7, "pillar_name": "deletion-gate-tooling-coverage", "weight": 1, "earned": 0.5, "status": "partial", "note": "Verdict is archive (downgraded from delete). Audit does not cite `bin/repo-delete-gate.sh/.ps1` and does not explicitly explain the gate omission. The conservative downgrade is documented but does not reference gate tooling."}
+      ]
+    },
+    {
+      "source_repo": "nanovms",
+      "audit_path": "audits/absorption-justifications/nanovms-2026-06-23.md",
+      "score": 13.5,
+      "max": 14,
+      "percentage": 96.43,
+      "grade": "L4",
+      "classification": "Excellent: Absorption fully justified",
+      "verdict": "DELETION_CANDIDATE_PROCEED",
+      "per_pillar_status": [
+        {"pillar_id": 1, "pillar_name": "manifest-completeness", "weight": 3, "earned": 3.0, "status": "pass", "note": "All 5 mandatory sections present plus all optional sections."},
+        {"pillar_id": 2, "pillar_name": "parity-evidence", "weight": 3, "earned": 3.0, "status": "pass", "note": "ABSORPTION_MATRIX Target Evidence column populated per row including Dependent check row."},
+        {"pillar_id": 3, "pillar_name": "branch-coverage", "weight": 2, "earned": 2.0, "status": "pass", "note": "Branch carry-over row populated; only stale branches present."},
+        {"pillar_id": 4, "pillar_name": "last-resort-justification", "weight": 2, "earned": 2.0, "status": "pass", "note": "None invoked; deletion-candidate posture supported by redundancy assessment and frozen snapshot."},
+        {"pillar_id": 5, "pillar_name": "restore-command-validity", "weight": 1, "earned": 1.0, "status": "pass", "note": "`gh repo delete` + frozen local mirror + documented restore path; verifiable."},
+        {"pillar_id": 6, "pillar_name": "registry-integration", "weight": 2, "earned": 2.0, "status": "pass", "note": "projects/nanovms.json present with status=archived, disposition=ARCHIVE_ONLY."},
+        {"pillar_id": 7, "pillar_name": "deletion-gate-tooling-coverage", "weight": 1, "earned": 0.5, "status": "partial", "note": "DELETION_CANDIDATE_PROCEED uses `gh repo delete` directly without referencing `bin/repo-delete-gate.sh/.ps1`. Audit does not cite gate tooling or explain omission."}
+      ]
+    },
+    {
+      "source_repo": "phenotype-go-sdk",
+      "audit_path": "audits/absorption-justifications/phenotype-go-sdk-2026-06-23.md",
+      "score": 14.0,
+      "max": 14,
+      "percentage": 100.0,
+      "grade": "L4",
+      "classification": "Excellent: Absorption fully justified",
+      "verdict": "ARCHIVE_DELETE_BLOCKED",
+      "per_pillar_status": [
+        {"pillar_id": 1, "pillar_name": "manifest-completeness", "weight": 3, "earned": 3.0, "status": "pass", "note": "All 5 mandatory sections present plus all optional sections."},
+        {"pillar_id": 2, "pillar_name": "parity-evidence", "weight": 3, "earned": 3.0, "status": "pass", "note": "ABSORPTION_MATRIX Target Evidence column populated per row including Consumer impact row."},
+        {"pillar_id": 3, "pillar_name": "branch-coverage", "weight": 2, "earned": 2.0, "status": "pass", "note": "Branch carry-over row populated; unmerged work explicitly identified."},
+        {"pillar_id": 4, "pillar_name": "last-resort-justification", "weight": 2, "earned": 2.0, "status": "pass", "note": "Three explicit blockers documented with reason + residual gap + why archival isn't sufficient. Strongest P4 evidence in fleet."},
+        {"pillar_id": 5, "pillar_name": "restore-command-validity", "weight": 1, "earned": 1.0, "status": "pass", "note": "`gh repo archive` conditional + local mirror path documented; repo remains live per verdict."},
+        {"pillar_id": 6, "pillar_name": "registry-integration", "weight": 2, "earned": 2.0, "status": "pass", "note": "projects/phenotype-go-sdk.json present with status=archived, absorbed_into=phenotype-infra."},
+        {"pillar_id": 7, "pillar_name": "deletion-gate-tooling-coverage", "weight": 1, "earned": 1.0, "status": "pass", "note": "No deletion proposed (blocked). Action Class explicit ('hold; resolve blockers; re-audit') clearly explains why the gate is not invoked this cycle — meets schema's 'explicitly explains why the gate is not required' allowance."}
+      ]
+    }
+  ],
+  "fleet_summary": {
+    "total_audits": 7,
+    "rubric_max_score": 14,
+    "average_score": 13.5,
+    "average_percentage": 96.43,
+    "average_grade": "L4",
+    "average_classification": "Excellent: Absorption fully justified",
+    "grade_distribution": {
+      "L4": 7,
+      "L3": 0,
+      "L2": 0,
+      "L1": 0,
+      "L0": 0
+    },
+    "weakest_audit": "phenotype-infra-2026-06-23.md (tied at 13.5/14; sorted first because P5 restore-command-validity is partial)",
+    "strongest_audit": "phenotype-go-sdk-2026-06-23.md (14/14, perfect score)"
+  }
+}

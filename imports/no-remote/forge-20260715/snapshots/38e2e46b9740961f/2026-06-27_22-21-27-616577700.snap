@@ -1,0 +1,125 @@
+# Phase B — Route-Decision Trace
+
+> Goal: every request routed through `auto/*`, `combo:*`, or a custom strategy leaves a navigable forensic trail that explains *why* each candidate was considered, why the cascade chose what it chose, and where the chain fell through.
+
+---
+
+## 1. Why now
+
+Self-healing and the autoCombo scoring engine are opaque from the outside — failures look like "we picked B and that timed out" with no record of why A was *not* picked. The user's pain point: requests failing too often inside harnesses, no way to see the decision chain, no way to investigate cost/speed optimisations from real data. Once traces exist, every downstream thing (cost derivation, anomaly detection, SLM evaluator) plugs in trivially.
+
+## 2. What the trace must capture
+
+Per request, write one row into `route_traces` and one or more rows into `route_trace_steps`:
+
+| Field | Type | Source | Notes |
+|---|---|---|---|
+| `request_id` | TEXT PK | existing request correlation id | Same id also appears in `call_logs` for cross-link |
+| `session_id` | TEXT | If session-keyed (`auto/smart`, `auto/coding`) | Enables rollup on session boundaries |
+| `ts` | TEXT (ISO) | `Date.now()` | UTC |
+| `route_kind` | TEXT CHECK in (`auto`, `combo`, `manual`, `recovery`) | `combo.resolve()` caller | |
+| `strategy` | TEXT | `RouterStrategy.name` (`rules`, `cost`, `latency`, `sla-aware`, `lkgp`, `learning`, custom) | |
+| `model_requested` | TEXT | input `model` field | |
+| `model_chosen` | TEXT | `RoutingDecision.model` | |
+| `provider_chosen` | TEXT | `RoutingDecision.provider` | |
+| `final_score` | REAL | `RoutingDecision.finalScore` | |
+| `candidates_json` | TEXT | ordered snapshot of every candidate score | JSON-encoded array |
+| `cascade_json` | TEXT | per-step explainer | JSON-encoded array of `{step, reason, candidate}` |
+| `latency_ms_total` | INTEGER | request lifecycle span | |
+| `cascade_steps` | INTEGER | number of retry attempts | `0` if first-choice won |
+| `outcome` | TEXT CHECK in (`success`, `fallback`, `error`) | terminal state | |
+| `error_class` | TEXT NULL | classifier output (`PROVIDER_ERROR_TYPES.*`) | only on `error` |
+| `error_kind` | TEXT NULL | structured `{kind, retryable, retryAfterMs}` | only on `error` |
+| `observed_input_tokens` | INTEGER NULL | call completion | |
+| `observed_output_tokens` | INTEGER NULL | call completion | |
+| `observed_cache_write_tokens` | INTEGER NULL | call completion (Anthropic) | |
+| `observed_cache_read_tokens` | INTEGER NULL | call completion | |
+| `learned_failure_rate` | REAL NULL | future Phase B step | 0..1 |
+| `anomaly_signal` | TEXT NULL | future Phase B step | z-score string or null |
+| `user_agent` | TEXT NULL | upstream request UA | |
+
+Indexes: `(ts DESC)`, `(session_id, ts)`, `(model_requested, ts)`, `(outcome, error_class, ts)`, plus FTS5 on `cascade_json` (SQLite already supported via `db/migrations` patterns — verify before adding).
+
+## 3. Where the recorder hooks
+
+Three touchpoints are enough to capture everything that matters:
+
+1. **`traceRecorder.startRequest(reqCtx)`** at the top of `combo.resolve()` (or whichever function currently invokes the strategy). Returns a `TraceHandle`.
+2. **`traceRecorder.recordStep(handle, candidate, score, reason)`** is called from inside `scorePool()` (`open-sse/services/autoCombo/scoring.ts`) for *every candidate*, and again for each retry/cycle inside `accountFallback` — only the score/decision values, never the LLM payload.
+3. **`traceRecorder.finish(handle, decision, outcome, error?)`** after the executor returns — writes the row and the steps.
+
+Boundary discipline per `AGENTS.md`: do not modify `routerStrategy.ts` or `scoring.ts` *implementation* — instead read their output. The recorder is a new file (`open-sse/services/routing/traceRecorder.ts`) that subscribes to decisions emitted by the strategy. To make that work, `scorePool` needs to wrap its result with a `scorePoolWithAudit()` shim; that shim is opt-in via `OMNIROUTE_TRACE=1`. Off by default — zero overhead path through.
+
+## 4. Persistence
+
+```sql
+CREATE TABLE IF NOT EXISTS route_traces (
+  request_id                  TEXT PRIMARY KEY,
+  session_id                  TEXT,
+  ts                          TEXT NOT NULL DEFAULT (datetime('now')),
+  route_kind                  TEXT NOT NULL,
+  strategy                    TEXT NOT NULL,
+  model_requested             TEXT NOT NULL,
+  model_chosen                TEXT,
+  provider_chosen             TEXT,
+  final_score                 REAL,
+  candidates_json             TEXT,
+  cascade_json                TEXT,
+  latency_ms_total            INTEGER,
+  cascade_steps               INTEGER NOT NULL DEFAULT 0,
+  outcome                     TEXT NOT NULL,
+  error_class                 TEXT,
+  error_kind                  TEXT,
+  observed_input_tokens       INTEGER,
+  observed_output_tokens      INTEGER,
+  observed_cache_write_tokens INTEGER,
+  observed_cache_read_tokens  INTEGER,
+  learned_failure_rate        REAL,
+  anomaly_signal              TEXT,
+  user_agent                  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_route_traces_ts        ON route_traces (ts DESC);
+CREATE INDEX IF NOT EXISTS idx_route_traces_session   ON route_traces (session_id, ts);
+CREATE INDEX IF NOT EXISTS idx_route_traces_model     ON route_traces (model_requested, ts);
+CREATE INDEX IF NOT EXISTS idx_route_traces_outcome   ON route_traces (outcome, error_class, ts);
+```
+
+Migration number: `113_route_traces.sql` (Phase A will use `112_provider_health_history.sql` for the z-score backing table — see Phase A spec, to be written).
+
+## 5. Read API
+
+`src/app/api/v1/traces/route.ts` — list endpoint, paginated by ts DESC; filters: `request_id`, `session_id`, `model`, `provider`, `strategy`, `outcome`, `error_class`, `from_ts`, `to_ts`.
+`src/app/api/v1/traces/[id]/route.ts` — single trace, returns full `candidates_json` / `cascade_json` decoded.
+
+Both follow the existing pattern in `src/app/api/v1/` (Zod-validated, auth-gated per `AGENTS.md:208-220`).
+
+## 6. Dashboard
+
+`src/app/(dashboard)/dashboard/traces/[requestId]/page.tsx` — server component. Renders:
+
+- Header: `requested`, `chosen`, `strategy`, `final_score`, `latency_ms_total`, `outcome`.
+- *Compare table*: one row per candidate, columns `provider`, `model`, `score`, `composite reasons`. Sortable.
+- *Cascade timeline*: vertical timeline of `{step, reason, candidate, transition}` so the user sees exactly why model A → B → C.
+- *Side panel*: tokens, cache tokens, error class (if any), anomaly signal (when Phase A online).
+- A *session roll-up* view at `/dashboard/traces/session/[sessionId]` that aggregates per-session waste / progression once Phase C ships.
+
+## 7. Tests
+
+- `tests/unit/trace-recorder.test.ts` — start/record/finish lifecycle; verifies on/off flag handling; verifies failure isolation (a thrown recorder does not break routing).
+- `tests/integration/traces-cascade-rewrite.test.ts` — synthesises a cascade with two fallbacks; asserts `cascade_json` decodes to the expected shape and `cascade_steps` matches.
+- `tests/e2e/route-trace.spec.ts` — Playwright run via existing `tests/e2e/*.spec.ts` style. Drives `POST /v1/chat/completions` with `model: "auto/coding"` against a mock server that fails once then succeeds; asserts a complete `route_traces` row + navigable dashboard URL.
+
+## 8. Risks & mitigations
+
+| Risk | Mitigation |
+|---|---|
+| Trace size balloons SQLite | `candidates_json` capped at top N=20; cascade capped at N=10 steps; truncate older than 30d via existing `cleanup.ts` pattern. |
+| Recorder overhead when off | Off-by-default via `OMNIROUTE_TRACE=1`; recorder functions early-return if disabled. |
+| User request payload leakage | Recorder only stores metadata, never message body. Audit at PR time. |
+| Migration conflicts | Use `113` (upstream may add between drafts — re-check before commit). |
+
+## 9. Open questions
+
+1. Body text / metadata about the *prompt* shape — should we include a SHA-256 of the prompt so the user can correlate traces without storing PII? *Recommended: yes, hashes only.*
+2. Cache the trace JSON columns or normalise cascade steps into their own table? *Recommended: JSON columns for v1; normalise later if cadence demands.*
+3. `error_kind` schema — should it be the standard `PROVIDER_ERROR_TYPES` enum or a richer `{kind, retryable, retryAfterMs, rawStatus}` object? *Recommended: richer object.*

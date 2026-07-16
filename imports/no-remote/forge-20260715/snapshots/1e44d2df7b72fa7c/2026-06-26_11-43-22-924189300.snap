@@ -1,0 +1,66 @@
+# OmniRoute — Docker Compose (base profile, Windows host)
+# Generated 2026-06-26
+#
+# Two services:
+#   - omniroute    : main app on host port 20128 -> container 20128
+#   - redis        : optional sidecar (caching + pub/sub for multi-worker)
+#
+# All persistent state lives in ./data (mounted volume) — fast local disk,
+# survives container recreation, immune to Bun slow-fs / Windows file locks.
+
+services:
+  omniroute:
+    image: ghcr.io/omniroute/omniroute:latest
+    container_name: omniroute
+    restart: unless-stopped
+    profiles: ["base"]
+    ports:
+      - "127.0.0.1:20128:20128"
+    env_file:
+      - .env
+    environment:
+      # Deployment marker so the app knows it's running in a container
+      OMNIROUTE_DEPLOYMENT: docker
+      DATA_DIR: /app/data
+      NODE_ENV: production
+      # Bind to all interfaces inside the container (port mapping handles host side)
+      HOST: 0.0.0.0
+      PORT: "20128"
+      # Optional Redis — uncomment REDIS_URL below if you start the redis service
+      # REDIS_URL: redis://redis:6379
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+        required: false   # set true once you've enabled REDIS_URL above
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:20128/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    container_name: omniroute-redis
+    restart: unless-stopped
+    profiles: ["base"]
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"

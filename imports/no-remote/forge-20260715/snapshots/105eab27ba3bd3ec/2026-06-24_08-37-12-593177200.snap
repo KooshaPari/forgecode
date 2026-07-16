@@ -1,0 +1,9 @@
+import json
+d = json.load(open(r'C:\Temp\errs.json', encoding='utf-8'))
+diags = d['generalDiagnostics']
+target = r'e:\Dev\Tracera\tests\conftest.py'
+for e in diags:
+    f = e['file'].replace('\\', '/').lower()
+    if f == target.lower():
+        ln = e['range']['start']['line']+1
+        print(f"L{ln} [{e.get('rule')}]: {e['message'][:200]}")

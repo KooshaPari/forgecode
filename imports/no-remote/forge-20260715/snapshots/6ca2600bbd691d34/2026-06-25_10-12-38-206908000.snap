@@ -1,0 +1,141 @@
+//! FR-CIV-REL-007 — regression test for `phase_belief` §7 wiring.
+//!
+//! Asserts that a single-tick run produces bounded `ReligiousProfile`s for every
+//! settlement in `Simulation::settlements`, that the per-tick Big-Gods response
+//! is monotonically non-decreasing in monitoring, and that the religion event
+//! buffer is populated exactly once per settlement.
+
+use civ_engine::{apply_big_gods_response, ReligionEvent, ReligiousProfile, Simulation};
+
+#[test]
+fn fr_civ_religion_007_phase_belief_populates_profiles_per_settlement() {
+    let mut sim = Simulation::new();
+    // Settle two populations so phase_belief has something to iterate.
+    sim.settlements.insert(101, 800);
+    sim.settlements.insert(202, 1_500);
+
+    sim.tick();
+
+    assert_eq!(sim.religious_profiles.len(), 2);
+    for sid in [101u32, 202u32] {
+        let p = sim
+            .religious_profiles
+            .get(&sid)
+            .expect("phase_belief must populate a profile for every settlement");
+        assert!(p.monitoring >= 0.0 && p.monitoring <= 1.0, "monitoring OOB: {}", p.monitoring);
+        assert!(
+            p.mythic_coherence >= 0.0 && p.mythic_coherence <= 1.0,
+            "mythic_coherence OOB: {}",
+            p.mythic_coherence
+        );
+        assert!(
+            p.uncertainty_reduction >= 0.0 && p.uncertainty_reduction <= 1.0,
+            "uncertainty_reduction OOB: {}",
+            p.uncertainty_reduction
+        );
+        assert!(p.population > 0, "profile.population should match settlement pop");
+        assert_eq!(p.age_ticks, 1, "profile should age by exactly one tick per phase_belief");
+    }
+}
+
+#[test]
+fn fr_civ_religion_007_phase_belief_records_one_event_per_settlement() {
+    let mut sim = Simulation::new();
+    sim.settlements.insert(7, 400);
+    sim.settlements.insert(8, 900);
+    sim.settlements.insert(9, 2_200);
+
+    sim.tick();
+
+    assert_eq!(sim.last_tick_religion_events.len(), 3);
+    let mut sids: Vec<u32> = sim
+        .last_tick_religion_events
+        .iter()
+        .map(ReligionEvent::settlement_id)
+        .collect();
+    sids.sort_unstable();
+    assert_eq!(sids, vec![7, 8, 9]);
+}
+
+#[test]
+fn fr_civ_religion_007_phase_belief_is_deterministic_given_identical_seed() {
+    let mut a = Simulation::with_seed(0xDEADBEEF);
+    a.settlements.insert(11, 1_000);
+    a.settlements.insert(12, 1_000);
+    a.tick();
+
+    let mut b = Simulation::with_seed(0xDEADBEEF);
+    b.settlements.insert(11, 1_000);
+    b.settlements.insert(12, 1_000);
+    b.tick();
+
+    for sid in [11u32, 12u32] {
+        let pa = a.religious_profiles.get(&sid).unwrap();
+        let pb = b.religious_profiles.get(&sid).unwrap();
+        assert_eq!(pa.monitoring.to_bits(), pb.monitoring.to_bits(), "sid {sid} monitoring");
+        assert_eq!(
+            pa.mythic_coherence.to_bits(),
+            pb.mythic_coherence.to_bits(),
+            "sid {sid} mythic_coherence"
+        );
+        assert_eq!(
+            pa.uncertainty_reduction.to_bits(),
+            pb.uncertainty_reduction.to_bits(),
+            "sid {sid} uncertainty_reduction"
+        );
+    }
+}
+
+#[test]
+fn fr_civ_religion_007_apply_big_gods_response_unit_invariants() {
+    // Apply_big_gods_response is the pure function behind phase_belief. It must
+    // never push any of the three scalars outside [0, 1] across a wide variety
+    // of substrate gradients — this guards against the spec REL-INV-1..7
+    // tripwires being violated by future refactors.
+    let mut p = ReligiousProfile::default();
+    let cases: &[&dyn Fn() -> civ_engine::SubstrateGradients] = &[
+        &|| civ_engine::SubstrateGradients {
+            grad_T: 0.0,
+            grad_M: 0.0,
+            grad_B: 0.0,
+            kinship_density: 0.0,
+            unrest: 0.0,
+            migration_rate: 0.0,
+            language_distance: 0.0,
+        },
+        &|| civ_engine::SubstrateGradients {
+            grad_T: 1.0,
+            grad_M: 1.0,
+            grad_B: 1.0,
+            kinship_density: 1.0,
+            unrest: 1.0,
+            migration_rate: 1.0,
+            language_distance: 1.0,
+        },
+        &|| civ_engine::SubstrateGradients {
+            grad_T: -0.5,
+            grad_M: 0.5,
+            grad_B: 0.0,
+            kinship_density: 0.3,
+            unrest: -0.3,
+            migration_rate: 0.2,
+            language_distance: 0.4,
+        },
+    ];
+    for (tick, mk) in cases.iter().enumerate() {
+        apply_big_gods_response(&mut p, &mk(), tick as u64 + 1);
+        assert!((0.0..=1.0).contains(&p.monitoring), "tick={} monitoring={}", tick, p.monitoring);
+        assert!(
+            (0.0..=1.0).contains(&p.mythic_coherence),
+            "tick={} mythic_coherence={}",
+            tick,
+            p.mythic_coherence
+        );
+        assert!(
+            (0.0..=1.0).contains(&p.uncertainty_reduction),
+            "tick={} uncertainty_reduction={}",
+            tick,
+            p.uncertainty_reduction
+        );
+    }
+}

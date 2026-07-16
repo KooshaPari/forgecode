@@ -1,0 +1,66 @@
+$ErrorActionPreference = 'Stop'
+$repo = 'KooshaPari/BytePort'
+$out  = 'C:\Users\koosh\_compute_infra_audit\tmp\a3_branch_dates.tsv'
+
+# (name, sha) pairs
+$list = @(
+  @{n='B34-tier-1-enforcement'; s='68a1f8e7e0c30b19a7c6bdec766a892bcd59075e'},
+  @{n='a29-sweep-orphaned-svelte'; s='184630e2c4700168b7f5218dc5fb053745a10f33'},
+  @{n='a30/orphaned-astro-preview-sweep'; s='700e9bece16872669e15981a3ad50613ca30b171'},
+  @{n='audit/A3-list-stale-branches'; s='89270ae2ccb1678e214bcdf795c152ee78b2db24'},
+  @{n='bp-dag-foundation-2026-06-12'; s='8d96dd64f837146921c9ee3f884d6ddee5d5c795'},
+  @{n='chore/governance-skeleton-2026-06-16'; s='50856e5777ef67e357a60774428b2fec8486ce13'},
+  @{n='chore/manifest-fix'; s='0ffc247b962143e98ef9777a108129b113b6ca0e'},
+  @{n='chore/slsa-build-2026-06-16'; s='39c5b41bee37ad44b591c9f11ea30bccc37265d8'},
+  @{n='ci/add-golangci-lint'; s='2e61349aa3359885d791c78232f03ee999cfbff8'},
+  @{n='ci/go-workflow'; s='fa3d7f712b23b21b6e69ac539b5afa1d54636ceb'},
+  @{n='ci/security-scan-2026-06-20'; s='f62654b277e4bd18956a6ca4c6c7c495efc019a3'},
+  @{n='consolidate/B11-delete-nvms-impl'; s='689d27ed9618eba309682a7d0f28288a67beddb8'},
+  @{n='cve-sweep-high'; s='ee137d07aa2bfb5d8124099599b93b5abb6dd400'},
+  @{n='dependabot/github_actions/major-6df859f817'; s='10b037c7cb4bb150e68dc795458a42f7082be6c0'},
+  @{n='dependabot/github_actions/minor-and-patch-cfdd69f9fc'; s='3f177767ea3bbbbb66472378b472f93388d8973d'},
+  @{n='dependabot/npm_and_yarn/frontend/web/npm-5453435d43'; s='f79c7c23a7f150936783620ec3985dc3f00b68d5'},
+  @{n='docs/A21-readme-workstate'; s='da2fd9854ba953ba1585ceeb547c835b3b4bcb46'},
+  @{n='epic/B10-repoint-nvms-parser'; s='6362ac3667bf5ed2533876e6768b8a44bb25b307'},
+  @{n='epic/B11-delete-local-nvms-impl'; s='8bf4ada1f0d55150ec8d41c1e4c05e4013941760'},
+  @{n='epic/B16-extract-oci-helpers'; s='71b43d13846306884276fa6d9dda1b8d232d3090'},
+  @{n='epic/F2-extract-pheno-dag'; s='bff7268b2b587a141380a0b2cbf3a48a7b4cba6d'},
+  @{n='epic/F4-dag-serialization'; s='f33ebad724d1180d3f33d3836dc3e011d693081b'},
+  @{n='epic/F10-dag-cli-run'; s='35da1ed19a8a68488e3e9de3b76652a5a02a4f1f'},
+  @{n='epic/G3-slsa-l3-byteport-cli'; s='485586483efdc6628575a4c1d4ae9c5d0b797b0e'},
+  @{n='epic-G13/wasm-cli-subset'; s='bff7268b2b587a141380a0b2cbf3a48a7b4cba6d'},
+  @{n='feat/E7-otel-cli-trace'; s='96f83e76ddd2498e89a34760dcc43f39d72f8ca1'},
+  @{n='feat/E8-otel-context-propagate'; s='92dfb0f6628168d51f629c76574fc60c49a0f3f5'},
+  @{n='feat/E9-otel-metrics'; s='97999a859ed27c7ef7fa778739261470f30fb9be'},
+  @{n='feat/F3-dag-schema-complete'; s='46a18222a1cd7e7b0947f1c53e717dac8583dc9e'},
+  @{n='feat/otel-instrumentation'; s='9c07b752e404d985e02570e6515d433af06e7fca'},
+  @{n='fix/add-pem-gitignore'; s='d29f6ec490b45061e107e3dd279b500434edfe65'},
+  @{n='fix/byteport-changelog-hygiene'; s='105eb58de0baf120f4b328797e4a9593fc9867fb'},
+  @{n='fix/codeql-apilink-ssrf'; s='e53d2505d3d9e66468a814e846d4d5569013cbe9'},
+  @{n='fix/deps-cve-2026-04-27'; s='343018d32d2100ebab593d5ee809536059f71122'},
+  @{n='fix/nvms-parser-cleanup'; s='c755a153dbe125edac6191538846271782c3f6be'},
+  @{n='main'; s='2cf3cfb48d8555a9f4b6ab1694abaa165a1f19d6'},
+  @{n='reconcile/E5-recover-reconciliation'; s='477ff63cc8c31013ab1778b030846613957f5dec'},
+  @{n='recover/E2-terminal-ui-pr'; s='a31d0547386860e4eec8bb997d4379e4b4d882ad'},
+  @{n='recover/E3-tools-cli-worktree'; s='3625a3ca5d5b8bb37c9773f2e6f76c4365ded167'},
+  @{n='recover/E4-tools-cli-pr'; s='e3e0ed6dbaed41de3e8ab3a520270521d5e96b93'},
+  @{n='review/F1-dag-foundation-review-2026-06-25'; s='1d29fa389603bc03cb1ab22d460a71f964854d4f'},
+  @{n='t12-devcontainer-ci'; s='16a7f71641f5331218314148e88ca62b770a573c'},
+  @{n='wip/byteport-local-dump-20260626'; s='4cf9207f80b4b1e7c9d7759c06c5fe9eaf13c954'},
+  @{n='wip/2026-06-24-byteport-hygiene-bundle'; s='1c35a21e54cd3d08f59f44becba01c1fd9cf290d'}
+)
+
+# Write header with real tabs
+[byte[]]$hdr = 0x62,0x72,0x61,0x6e,0x63,0x68,0x09,0x73,0x68,0x61,0x09,0x64,0x61,0x74,0x65
+[System.IO.File]::WriteAllBytes($out, $hdr)
+
+foreach ($entry in $list) {
+  $name = $entry.n
+  $sha  = $entry.s
+  $api  = "repos/$repo/branches/$([uri]::EscapeDataString($name))"
+  $date = gh api $api --jq ".commit.commit.committer.date" 2>$null
+  if (-not $date) { $date = 'ERR' }
+  $line = ('{0}{1}{2}{1}{3}' -f $name, ([char]9), $sha, $date)
+  Write-Host $line
+  Add-Content -Path $out -Value $line -Encoding utf8
+}

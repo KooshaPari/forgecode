@@ -1,0 +1,16 @@
+[package]
+name = "phenotype-infra-tests"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-crate integration tests for phenotype-infra monorepo"
+publish = false
+
+[[test]]
+name = "integration"
+path = "integration_test.rs"
+
+[dependencies]
+nvms-ffi = { path = "../crates/nvms-ffi" }
+pheno-compose-driver = { path = "../crates/pheno-compose" }
+pheno-config = { path = "../crates/pheno-config" }
+serde_json = { workspace = true }

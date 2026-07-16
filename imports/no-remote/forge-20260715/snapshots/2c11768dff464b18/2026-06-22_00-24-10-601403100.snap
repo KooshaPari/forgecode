@@ -1,0 +1,6 @@
+@echo off
+setlocal
+echo Starting CI inventory build at %DATE% %TIME% > "C:\Users\koosh\ecosystem\__build.log"
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\koosh\ecosystem\__build_ci_inventory.ps1" >> "C:\Users\koosh\ecosystem\__build.log" 2>&1
+echo Finished at %DATE% %TIME% >> "C:\Users\koosh\ecosystem\__build.log"
+echo EXITCODE=%ERRORLEVEL% >> "C:\Users\koosh\ecosystem\__build.log"

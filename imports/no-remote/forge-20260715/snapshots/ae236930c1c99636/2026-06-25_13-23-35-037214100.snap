@@ -1,0 +1,355 @@
+//! DAG audit write-back to phenotype-registry.
+//!
+//! After DAG review completes, this module aggregates per-unit results and
+//! writes a structured audit entry to phenotype-registry/audits/ and updates
+//! phenotype-registry/projects/agileplus.json if architecture changed.
+//!
+//! Traceability: F15 / epic_F
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+
+use super::review_loop::DagReviewResult;
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/// A DAG audit entry written to phenotype-registry/audits/.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DagAuditEntry {
+    /// ISO-8601 timestamp when the audit entry was created.
+    pub timestamp: String,
+    /// The epic that was executed (e.g. "F").
+    pub epic: String,
+    /// Total units in the DAG wave plan.
+    pub total_units: usize,
+    /// Number of units approved.
+    pub approved: usize,
+    /// Number of units that failed.
+    pub failed: usize,
+    /// Per-unit results.
+    pub units: Vec<DagUnitAudit>,
+    /// Any new DAG unit candidates discovered during execution.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub auto_added: Vec<DagUnitCandidate>,
+    /// Arbitrary key-value metadata (e.g. coverage delta, branch names).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub metadata: HashMap<String, String>,
+}
+
+/// Per-unit audit record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DagUnitAudit {
+    pub unit_id: String,
+    pub approved: bool,
+    pub cycles_used: u32,
+    pub error: Option<String>,
+}
+
+/// A candidate for a new DAG unit discovered during execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DagUnitCandidate {
+    pub id: String,
+    pub repo: String,
+    pub unit_type: String,
+    pub title: String,
+    pub source: String,
+}
+
+/// The phenotype-registry project file schema (projects/<repo>.json).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectEntry {
+    pub name: String,
+    pub repo: String,
+    pub architecture: Option<ArchitectureState>,
+    pub last_audit: Option<String>,
+    pub dag_epics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArchitectureState {
+    pub pillars: Vec<String>,
+    pub description: String,
+}
+
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
+
+/// Write DAG audit results back to phenotype-registry.
+///
+/// # Arguments
+///
+/// * `results` — Per-unit results from `run_dag_reviews_with_executor`.
+/// * `epic` — The epic that was executed (e.g. "F").
+/// * `pheno_registry_path` — Absolute path to the phenotype-registry checkout.
+/// * `dag_yaml_path` — Path to the DAG YAML that was used (for provenance).
+/// * `branch_name` — The branch on which the DAG was executed (for provenance).
+///
+/// Returns the path of the written audit file.
+pub async fn write_dag_audit(
+    results: &[DagReviewResult],
+    epic: &str,
+    pheno_registry_path: &Path,
+    dag_yaml_path: Option<&Path>,
+    branch_name: Option<&str>,
+) -> Result<PathBuf> {
+    let now = Utc::now();
+    let date_str = now.format("%Y-%m-%d").to_string();
+    let timestamp_str = now.to_rfc3339();
+
+    // ------------------------------------------------------------------
+    // 1. Build the audit entry
+    // ------------------------------------------------------------------
+    let total = results.len();
+    let approved = results.iter().filter(|r| r.approved).count();
+    let failed = total - approved;
+
+    let units: Vec<DagUnitAudit> = results
+        .iter()
+        .map(|r| DagUnitAudit {
+            unit_id: r.unit_id.clone(),
+            approved: r.approved,
+            cycles_used: r.cycles_used,
+            error: r.error.clone(),
+        })
+        .collect();
+
+    let mut metadata: HashMap<String, String> = HashMap::new();
+    metadata.insert("schema".into(), "agileplus-v1-audit".into());
+    if let Some(dag_yaml) = dag_yaml_path {
+        metadata.insert("dag_yaml".into(), dag_yaml.display().to_string());
+    }
+    if let Some(branch) = branch_name {
+        metadata.insert("branch".into(), branch.to_string());
+    }
+    metadata.insert("epic".into(), epic.to_string());
+
+    let entry = DagAuditEntry {
+        timestamp: timestamp_str,
+        epic: epic.to_string(),
+        total_units: total,
+        approved,
+        failed,
+        units,
+        auto_added: Vec::new(),
+        metadata,
+    };
+
+    // ------------------------------------------------------------------
+    // 2. Determine audit file path
+    // ------------------------------------------------------------------
+    let audits_dir = pheno_registry_path.join("audits");
+    if !audits_dir.exists() {
+        std::fs::create_dir_all(&audits_dir)
+            .with_context(|| format!("creating audits dir: {}", audits_dir.display()))?;
+    }
+
+    let audit_filename = format!("{date_str}_dag-epic-{epic}-audit.json");
+    let audit_path = audits_dir.join(&audit_filename);
+
+    // Write the audit entry
+    let json_content =
+        serde_json::to_string_pretty(&entry).context("serialising DAG audit entry")?;
+    std::fs::write(&audit_path, &json_content)
+        .with_context(|| format!("writing audit file: {}", audit_path.display()))?;
+
+    println!(
+        "  Audit written: {} ({} units, {approved} approved, {failed} failed)",
+        audit_path.display(),
+        total,
+    );
+
+    // ------------------------------------------------------------------
+    // 3. Update project file (phenotype-registry/projects/agileplus.json)
+    // ------------------------------------------------------------------
+    let projects_dir = pheno_registry_path.join("projects");
+    if !projects_dir.exists() {
+        std::fs::create_dir_all(&projects_dir)
+            .with_context(|| format!("creating projects dir: {}", projects_dir.display()))?;
+    }
+
+    let project_file = projects_dir.join("agileplus.json");
+    let mut project = if project_file.exists() {
+        let existing = std::fs::read_to_string(&project_file)
+            .with_context(|| format!("reading project file: {}", project_file.display()))?;
+        serde_json::from_str::<ProjectEntry>(&existing)
+            .with_context(|| format!("parsing project file: {}", project_file.display()))?
+    } else {
+        ProjectEntry {
+            name: "agileplus".into(),
+            repo: "KooshaPari/agileplus".into(),
+            architecture: None,
+            last_audit: None,
+            dag_epics: Vec::new(),
+        }
+    };
+
+    // Update the project entry with audit provenance.
+    project.last_audit = Some(audit_filename.clone());
+    if !project.dag_epics.contains(&epic.to_string()) {
+        project.dag_epics.push(epic.to_string());
+    }
+
+    let project_json =
+        serde_json::to_string_pretty(&project).context("serialising project entry")?;
+    std::fs::write(&project_file, &project_json)
+        .with_context(|| format!("writing project file: {}", project_file.display()))?;
+
+    println!(
+        "  Project file updated: {} (last_audit={audit_filename}, dag_epics={})",
+        project_file.display(),
+        project.dag_epics.join(", "),
+    );
+
+    Ok(audit_path)
+}
+
+/// Append a candidate DAG unit to an auto_added.yaml file in
+/// phenotype-registry/audits/ so the next DAG executor pass picks it up.
+pub async fn append_auto_added_candidate(
+    pheno_registry_path: &Path,
+    candidate: &DagUnitCandidate,
+) -> Result<()> {
+    let audits_dir = pheno_registry_path.join("audits");
+    if !audits_dir.exists() {
+        std::fs::create_dir_all(&audits_dir)
+            .with_context(|| format!("creating audits dir: {}", audits_dir.display()))?;
+    }
+
+    let auto_file = audits_dir.join("auto_added.yaml");
+    let mut content = if auto_file.exists() {
+        std::fs::read_to_string(&auto_file)
+            .with_context(|| format!("reading auto_added.yaml: {}", auto_file.display()))?
+    } else {
+        "# Auto-added DAG unit candidates (discovered during execution)\n".to_string()
+    };
+
+    let new_entry = format!(
+        "- id: {id}\n  repo: {repo}\n  type: {type_}\n  title: \"{title}\"\n  source: {source}\n",
+        id = candidate.id,
+        repo = candidate.repo,
+        type_ = candidate.unit_type,
+        title = candidate.title,
+        source = candidate.source,
+    );
+    content.push_str(&new_entry);
+
+    std::fs::write(&auto_file, &content)
+        .with_context(|| format!("writing auto_added.yaml: {}", auto_file.display()))?;
+
+    println!(
+        "  Auto-added candidate '{}' appended to {}",
+        candidate.id,
+        auto_file.display()
+    );
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_results() -> Vec<DagReviewResult> {
+        vec![
+            DagReviewResult {
+                unit_id: "F11".into(),
+                approved: true,
+                cycles_used: 1,
+                error: None,
+            },
+            DagReviewResult {
+                unit_id: "F12".into(),
+                approved: true,
+                cycles_used: 2,
+                error: None,
+            },
+            DagReviewResult {
+                unit_id: "F13".into(),
+                approved: false,
+                cycles_used: 3,
+                error: Some("max review cycles reached".into()),
+            },
+        ]
+    }
+
+    #[tokio::test]
+    async fn test_write_audit_creates_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pheno_path = tmp.path().join("phenotype-registry");
+        std::fs::create_dir_all(&pheno_path).unwrap();
+
+        let results = sample_results();
+        let audit_path = write_dag_audit(
+            &results,
+            "F",
+            &pheno_path,
+            None,
+            Some("bridge/F15-dag-audit-back"),
+        )
+        .await
+        .unwrap();
+
+        assert!(audit_path.exists(), "audit file should exist");
+
+        // Read and verify content
+        let content = std::fs::read_to_string(&audit_path).unwrap();
+        let entry: DagAuditEntry = serde_json::from_str(&content).unwrap();
+        assert_eq!(entry.epic, "F");
+        assert_eq!(entry.total_units, 3);
+        assert_eq!(entry.approved, 2);
+        assert_eq!(entry.failed, 1);
+    }
+
+    #[tokio::test]
+    async fn test_write_audit_creates_project_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pheno_path = tmp.path().join("phenotype-registry");
+        std::fs::create_dir_all(&pheno_path).unwrap();
+
+        let results = sample_results();
+        write_dag_audit(&results, "F", &pheno_path, None, None)
+            .await
+            .unwrap();
+
+        let proj_file = pheno_path.join("projects").join("agileplus.json");
+        assert!(proj_file.exists(), "project file should exist");
+
+        let content = std::fs::read_to_string(&proj_file).unwrap();
+        let project: ProjectEntry = serde_json::from_str(&content).unwrap();
+        assert_eq!(project.name, "agileplus");
+        assert_eq!(project.dag_epics, vec!["F"]);
+        assert!(project.last_audit.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_append_auto_added() {
+        let tmp = tempfile::tempdir().unwrap();
+        let pheno_path = tmp.path().join("phenotype-registry");
+        std::fs::create_dir_all(&pheno_path).unwrap();
+
+        let candidate = DagUnitCandidate {
+            id: "F21".into(),
+            repo: "agileplus".into(),
+            unit_type: "bridge".into(),
+            title: "Detect missing coverage".into(),
+            source: "auditor-loop".into(),
+        };
+
+        append_auto_added_candidate(&pheno_path, &candidate)
+            .await
+            .unwrap();
+
+        let auto_file = pheno_path.join("audits").join("auto_added.yaml");
+        assert!(auto_file.exists());
+        let content = std::fs::read_to_string(&auto_file).unwrap();
+        assert!(content.contains("F21"));
+        assert!(content.contains("Detect missing coverage"));
+    }
+}

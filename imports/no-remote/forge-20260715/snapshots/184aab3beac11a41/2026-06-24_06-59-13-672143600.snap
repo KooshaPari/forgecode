@@ -1,0 +1,67 @@
+//! Validation example for pheno-config.
+//!
+//! Shows how to attach validators that run during `.build()` and produce
+//! structured `Validation` errors via `pheno-errors`.
+//!
+//! Run with:
+//!   cargo run --example validation
+
+use pheno_config::{Config, ConfigBuilder, Validate};
+use pheno_errors::AppError;
+
+#[derive(Debug)]
+struct ServerConfig {
+    port: u16,
+    host: String,
+    max_connections: u32,
+}
+
+impl Validate for ServerConfig {
+    fn validate(&self) -> Result<(), AppError> {
+        if self.port < 1024 {
+            return Err(AppError::Validation {
+                field: "server.port".into(),
+                message: format!("port must be >= 1024 (non-privileged), got {}", self.port),
+            });
+        }
+        if self.host.is_empty() {
+            return Err(AppError::Validation {
+                field: "server.host".into(),
+                message: "host cannot be empty".into(),
+            });
+        }
+        if self.max_connections == 0 || self.max_connections > 10_000 {
+            return Err(AppError::Validation {
+                field: "server.max_connections".into(),
+                message: format!("max_connections must be 1..=10000, got {}", self.max_connections),
+            });
+        }
+        Ok(())
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Valid config
+    let good = ServerConfig {
+        port: 8080,
+        host: "0.0.0.0".into(),
+        max_connections: 100,
+    };
+    good.validate()?;
+    println!("✓ Good config: {:#?}", good);
+
+    // Invalid config (port < 1024)
+    let bad = ServerConfig {
+        port: 80,
+        host: "0.0.0.0".into(),
+        max_connections: 100,
+    };
+    match bad.validate() {
+        Err(AppError::Validation { field, message }) => {
+            eprintln!("✗ Validation failed on {}: {}", field, message);
+        }
+        other => panic!("expected Validation error, got {:?}", other),
+    }
+
+    Ok(())
+}

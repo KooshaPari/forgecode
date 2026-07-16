@@ -1,0 +1,34 @@
+import csv
+from collections import Counter
+
+paths = [
+    r'C:\Users\koosh\Downloads\traces_full_v3.csv',
+    r'C:\Users\koosh\Downloads\traces_lite_v3.csv',
+    r'C:\Users\koosh\Downloads\turn_metrics.csv',
+    r'C:\Users\koosh\Downloads\conversation_graph.csv',
+    r'C:\Users\koosh\Downloads\artifact_graph.csv',
+    r'C:\Users\koosh\Downloads\optimization_opportunities.csv',
+]
+out = []
+for p in paths:
+    import os
+    if not os.path.exists(p):
+        out.append(f'MISSING: {p}')
+        continue
+    rows = list(csv.DictReader(open(p, 'r', encoding='utf-8-sig')))
+    head = os.path.basename(p)
+    out.append(f'{head:38s} : {len(rows):>7,} rows  ({os.path.getsize(p):>12,} bytes)  cols={len(rows[0]) if rows else 0}')
+
+# Optimization distribution
+rows = list(csv.DictReader(open(paths[5], 'r', encoding='utf-8-sig')))
+out.append('')
+out.append('Optimization lane distribution:')
+for k, v in Counter(r['recommended_execution_lane'] for r in rows).most_common():
+    out.append(f'  {k:8s}: {v}')
+out.append('Optimization confidence distribution:')
+for k, v in Counter(r['confidence'] for r in rows).most_common():
+    out.append(f'  {k:8s}: {v}')
+
+with open(r'C:\Users\koosh\AppData\Local\Temp\verify_final.txt', 'w') as f:
+    f.write('\n'.join(out))
+print('\n'.join(out))

@@ -1,0 +1,45 @@
+@echo off
+rem ============================================================
+rem  omniroute-dev.cmd - user-local bin shim for fork CLI
+rem ============================================================
+rem  Lives in %USERPROFILE%\.local\bin\ alongside agent-imessage,
+rem  claude, uv, etc. Resolved by `where` even though the dir
+rem  is not on PATH (this machine's convention).
+rem
+rem  Forwards every argument verbatim to the OmniRoute fork
+rem  CLI installed at:
+rem
+rem    C:\Users\koosh\OmniRoute-fresh2\bin\omniroute.mjs
+rem
+rem  The CLI is invoked with `node` directly. Override the
+rem  fork location by setting OMNIRoute_DEV_FORK_ROOT before
+rem  invoking (e.g. to point at a different checkout).
+rem
+rem  Examples:
+rem    omniroute-dev --version
+rem    omniroute-dev --help
+rem    omniroute-dev serve
+rem    omniroute-dev doctor
+rem    omniroute-dev cloud
+rem ============================================================
+
+setlocal
+
+if "%OMNIRoute_DEV_FORK_ROOT%"=="" set "OMNIRoute_DEV_FORK_ROOT=C:\Users\koosh\OmniRoute-fresh2"
+set "FORK_BIN=%OMNIRoute_DEV_FORK_ROOT%\bin\omniroute.mjs"
+
+if not exist "%FORK_BIN%" (
+    echo [omniroute-dev] ERROR: fork CLI not found at "%FORK_BIN%" 1>&2
+    echo [omniroute-dev] Set OMNIRoute_DEV_FORK_ROOT to point at your fork checkout. 1>&2
+    exit /b 1
+)
+
+where node >nul 2>&1
+if errorlevel 1 (
+    echo [omniroute-dev] ERROR: 'node' is not on PATH. Install Node.js ^>=22 to run this fork. 1>&2
+    exit /b 1
+)
+
+rem Forward all arguments verbatim. Use %* so quoting is preserved.
+node "%FORK_BIN%" %*
+exit /b %ERRORLEVEL%

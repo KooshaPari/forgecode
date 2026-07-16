@@ -1,0 +1,4 @@
+@echo off
+set CARGO_TARGET_DIR=E:\civis-target
+cd /D "C:\Users\koosh\Dev\Civis\.worktrees\wt-impl-godtools"
+cargo check -p civ-powers --message-format=short 1>C:\Users\koosh\AppData\Local\Temp\civ-powers-check.log 2>&1

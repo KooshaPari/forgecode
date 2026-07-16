@@ -1,0 +1,12 @@
+$ErrorActionPreference = 'Stop'
+$bashScript = 'C:\Users\koosh\forge\agentuserstatus-merge\phenotype-tooling\bin\repo-delete-gate.sh'
+$psScript   = 'C:\Users\koosh\forge\agentuserstatus-merge\phenotype-tooling\bin\repo-delete-gate.ps1'
+
+Write-Host '== bash syntax check =='
+& bash -n $bashScript
+if ($LASTEXITCODE -eq 0) { 'BASH_OK' } else { 'BASH_FAIL' }
+
+Write-Host ''
+Write-Host '== ps1 smoke run (expect gate failure, exit 2) =='
+& $psScript -Repo 'kooshapari/__smoketest' -DocsRoot 'docs' -ToolingRoot '.'
+"EXIT=$LASTEXITCODE"

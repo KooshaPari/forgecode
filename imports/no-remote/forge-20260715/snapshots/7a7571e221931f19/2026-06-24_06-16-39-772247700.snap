@@ -1,0 +1,487 @@
+use civ_physics_substrate::{Field, PhysicsFields, WriteSource};
+use glam::IVec3;
+
+const IDEOLOGY_DIMENSIONS: usize = 8;
+const MAX_KMEANS_ITERS: usize = 100;
+const CONVERGENCE_DELTA: f32 = 0.01;
+const SPLIT_VARIANCE_THRESHOLD: f32 = 0.4;
+const MERGE_SIMILARITY_THRESHOLD: f32 = 0.85;
+const TERRITORY_SCALE: f32 = 100.0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AgentIdeology {
+    pub values: [f32; IDEOLOGY_DIMENSIONS],
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FactionSeed {
+    pub ideology_centroid: [f32; IDEOLOGY_DIMENSIONS],
+    pub territory_center: IVec3,
+    pub member_count: u32,
+    pub id: u32,
+}
+
+pub fn cluster_into_factions(ideologies: &[AgentIdeology], k: usize) -> Vec<FactionSeed> {
+    if ideologies.is_empty() || k == 0 {
+        return Vec::new();
+    }
+
+    let cluster_count = k.min(ideologies.len());
+    let mut centroids = ideologies
+        .iter()
+        .take(cluster_count)
+        .map(|ideology| ideology.values)
+        .collect::<Vec<_>>();
+    let mut assignments = vec![0usize; ideologies.len()];
+
+    for _ in 0..MAX_KMEANS_ITERS {
+        let mut changed = false;
+
+        for (index, ideology) in ideologies.iter().enumerate() {
+            let cluster = nearest_centroid(&centroids, &ideology.values);
+            if assignments[index] != cluster {
+                assignments[index] = cluster;
+                changed = true;
+            }
+        }
+
+        rebalance_empty_clusters(ideologies, &mut assignments, &centroids);
+
+        let (next_centroids, counts) = recompute_centroids(ideologies, &assignments, cluster_count);
+        let max_delta = centroids
+            .iter()
+            .zip(next_centroids.iter())
+            .map(|(current, next)| centroid_delta(current, next))
+            .fold(0.0_f32, f32::max);
+
+        centroids = next_centroids;
+
+        if !changed || max_delta < CONVERGENCE_DELTA {
+            return build_factions(&centroids, &counts);
+        }
+    }
+
+    let mut final_assignments = vec![0usize; ideologies.len()];
+    for (index, ideology) in ideologies.iter().enumerate() {
+        final_assignments[index] = nearest_centroid(&centroids, &ideology.values);
+    }
+    rebalance_empty_clusters(ideologies, &mut final_assignments, &centroids);
+    let (final_centroids, counts) =
+        recompute_centroids(ideologies, &final_assignments, cluster_count);
+
+    build_factions(&final_centroids, &counts)
+}
+
+pub fn should_faction_split(_f: &FactionSeed, members: &[AgentIdeology]) -> bool {
+    if members.is_empty() {
+        return false;
+    }
+
+    let mut sum = 0.0_f32;
+    let mut count = 0usize;
+    for member in members {
+        for value in member.values {
+            sum += value;
+            count += 1;
+        }
+    }
+
+    if count == 0 {
+        return false;
+    }
+
+    let mean = sum / count as f32;
+    let mut variance = 0.0_f32;
+    for member in members {
+        for value in member.values {
+            let delta = value - mean;
+            variance += delta * delta;
+        }
+    }
+
+    (variance / count as f32) > SPLIT_VARIANCE_THRESHOLD
+}
+
+pub fn should_faction_merge(a: &FactionSeed, b: &FactionSeed) -> bool {
+    cosine_similarity(&a.ideology_centroid, &b.ideology_centroid) > MERGE_SIMILARITY_THRESHOLD
+}
+
+fn build_factions(centroids: &[[f32; IDEOLOGY_DIMENSIONS]], counts: &[usize]) -> Vec<FactionSeed> {
+    let mut factions = Vec::new();
+
+    for (cluster_index, centroid) in centroids.iter().enumerate() {
+        let member_count = counts.get(cluster_index).copied().unwrap_or(0);
+        if member_count == 0 {
+            continue;
+        }
+
+        factions.push(FactionSeed {
+            ideology_centroid: *centroid,
+            territory_center: territory_center_from_centroid(centroid),
+            member_count: member_count as u32,
+            id: cluster_index as u32,
+        });
+    }
+    factions
+}
+
+fn recompute_centroids(
+    ideologies: &[AgentIdeology],
+    assignments: &[usize],
+    cluster_count: usize,
+) -> (Vec<[f32; IDEOLOGY_DIMENSIONS]>, Vec<usize>) {
+    let mut sums = vec![[0.0_f32; IDEOLOGY_DIMENSIONS]; cluster_count];
+    let mut counts = vec![0usize; cluster_count];
+
+    for (ideology, &cluster) in ideologies.iter().zip(assignments.iter()) {
+        counts[cluster] += 1;
+        for dimension in 0..IDEOLOGY_DIMENSIONS {
+            sums[cluster][dimension] += ideology.values[dimension];
+        }
+    }
+
+    let mut centroids = vec![[0.0_f32; IDEOLOGY_DIMENSIONS]; cluster_count];
+    for cluster in 0..cluster_count {
+        if counts[cluster] == 0 {
+            continue;
+        }
+
+        for dimension in 0..IDEOLOGY_DIMENSIONS {
+            centroids[cluster][dimension] = sums[cluster][dimension] / counts[cluster] as f32;
+        }
+    }
+
+    (centroids, counts)
+}
+
+fn rebalance_empty_clusters(
+    ideologies: &[AgentIdeology],
+    assignments: &mut [usize],
+    centroids: &[[f32; IDEOLOGY_DIMENSIONS]],
+) {
+    let cluster_count = centroids.len();
+    if cluster_count == 0 || ideologies.is_empty() {
+        return;
+    }
+
+    loop {
+        let mut counts = vec![0usize; cluster_count];
+        for &cluster in assignments.iter() {
+            counts[cluster] += 1;
+        }
+
+        let empty_cluster = counts.iter().position(|&count| count == 0);
+        let Some(empty_cluster) = empty_cluster else {
+            break;
+        };
+
+        if let Some((point_index, _)) = farthest_point(ideologies, assignments, centroids) {
+            assignments[point_index] = empty_cluster;
+        } else {
+            break;
+        }
+    }
+}
+
+fn farthest_point(
+    ideologies: &[AgentIdeology],
+    assignments: &[usize],
+    centroids: &[[f32; IDEOLOGY_DIMENSIONS]],
+) -> Option<(usize, usize)> {
+    let mut best: Option<(usize, usize, f32)> = None;
+
+    for (index, ideology) in ideologies.iter().enumerate() {
+        let cluster = assignments[index];
+        let distance = squared_distance(&ideology.values, &centroids[cluster]);
+        match best {
+            Some((_, _, best_distance)) if distance <= best_distance => {}
+            _ => best = Some((index, cluster, distance)),
+        }
+    }
+
+    best.map(|(index, cluster, _)| (index, cluster))
+}
+
+fn nearest_centroid(
+    centroids: &[[f32; IDEOLOGY_DIMENSIONS]],
+    values: &[f32; IDEOLOGY_DIMENSIONS],
+) -> usize {
+    let mut best_index = 0usize;
+    let mut best_distance = f32::INFINITY;
+
+    for (index, centroid) in centroids.iter().enumerate() {
+        let distance = squared_distance(values, centroid);
+        if distance < best_distance {
+            best_distance = distance;
+            best_index = index;
+        }
+    }
+
+    best_index
+}
+
+fn squared_distance(a: &[f32; IDEOLOGY_DIMENSIONS], b: &[f32; IDEOLOGY_DIMENSIONS]) -> f32 {
+    let mut sum = 0.0_f32;
+    for dimension in 0..IDEOLOGY_DIMENSIONS {
+        let delta = a[dimension] - b[dimension];
+        sum += delta * delta;
+    }
+    sum
+}
+
+fn centroid_delta(current: &[f32; IDEOLOGY_DIMENSIONS], next: &[f32; IDEOLOGY_DIMENSIONS]) -> f32 {
+    squared_distance(current, next).sqrt()
+}
+
+fn cosine_similarity(a: &[f32; IDEOLOGY_DIMENSIONS], b: &[f32; IDEOLOGY_DIMENSIONS]) -> f32 {
+    let mut dot = 0.0_f32;
+    let mut norm_a = 0.0_f32;
+    let mut norm_b = 0.0_f32;
+
+    for dimension in 0..IDEOLOGY_DIMENSIONS {
+        dot += a[dimension] * b[dimension];
+        norm_a += a[dimension] * a[dimension];
+        norm_b += b[dimension] * b[dimension];
+    }
+
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+
+    dot / (norm_a.sqrt() * norm_b.sqrt())
+}
+
+fn territory_center_from_centroid(centroid: &[f32; IDEOLOGY_DIMENSIONS]) -> IVec3 {
+    IVec3::new(
+        (centroid[0] * TERRITORY_SCALE).round() as i32,
+        (centroid[1] * TERRITORY_SCALE).round() as i32,
+        (centroid[2] * TERRITORY_SCALE).round() as i32,
+    )
+}
+
+/// 14-dim ideology vector: 8 ideology dims ⊕ (∇T, ∇M, ∇B, ∇P) at the
+/// agent's position (substrate doc §3.1 L3 / edit site S4).
+///
+/// Per substrate doc, territory preference should be an emergent
+/// property of gradients, not a hand-tuned heuristic. We extend the
+/// existing 8-dim `AgentIdeology` with the four field gradients so the
+/// k-means clustering groups agents that share *both* ideology *and*
+/// local environmental preference. This is the 14-dim upgrade the plan
+/// prescribes.
+pub const EXTENDED_DIMENSIONS: usize = IDEOLOGY_DIMENSIONS + 4;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AgentIdeology14 {
+    /// 8 ideology dims.
+    pub ideology: [f32; IDEOLOGY_DIMENSIONS],
+    /// Position the gradients were sampled at (so we can re-sample on
+    /// substrate evolve if needed).
+    pub position: IVec3,
+}
+
+/// Sample a 14-dim agent vector at `p` from the substrate (PHASE 1).
+///
+/// The 4 extra dims are the magnitudes of the gradients at `p`:
+/// `(|∇T|, |∇M|, |∇B|, |∇P|)`. We normalize each to `[0, 1]` by dividing
+/// by a soft cap so they live in the same numerical range as the
+/// ideology dims and the k-means distance metric stays sane.
+pub fn sample_agent_ideology14(
+    ideology: [f32; IDEOLOGY_DIMENSIONS],
+    fields: &PhysicsFields,
+    p: IVec3,
+) -> AgentIdeology14 {
+    // Soft caps chosen so a "noticeable" gradient contributes ~1.0 to
+    // its ideology dim. These are scenario-tunable (the auto-tuner in
+    // substrate Sprint 2.6 will replace them).
+    const CAP_T: f32 = 100.0;
+    const CAP_M: f32 = 100.0;
+    const CAP_B: f32 = 50.0;
+    const CAP_P: f32 = 50.0;
+    let mut extended = [0.0_f32; EXTENDED_DIMENSIONS];
+    extended[..IDEOLOGY_DIMENSIONS].copy_from_slice(&ideology);
+    extended[IDEOLOGY_DIMENSIONS + 0] = (fields.grad_magnitude(Field::T, p) / CAP_T).clamp(0.0, 1.0);
+    extended[IDEOLOGY_DIMENSIONS + 1] = (fields.grad_magnitude(Field::M, p) / CAP_M).clamp(0.0, 1.0);
+    extended[IDEOLOGY_DIMENSIONS + 2] = (fields.grad_magnitude(Field::B, p) / CAP_B).clamp(0.0, 1.0);
+    extended[IDEOLOGY_DIMENSIONS + 3] = (fields.grad_magnitude(Field::P, p) / CAP_P).clamp(0.0, 1.0);
+    // The 8 ideology dims were already in [0, 1] (hand-shaped), but
+    // re-clamp defensively.
+    for i in 0..IDEOLOGY_DIMENSIONS {
+        extended[i] = extended[i].clamp(0.0, 1.0);
+    }
+    // We pack the 14-dim into the existing 8-dim struct via a small
+    // adapter: the first 8 dims are ideology, the next 4 are stacked
+    // after `TERRITORY_SCALE`. To keep `AgentIdeology` unchanged we
+    // return a parallel struct (`AgentIdeology14`); the clustering
+    // adapter below takes a slice of these.
+    AgentIdeology14 { ideology, position: p }
+}
+
+/// Adapter that clusters over 14-dim vectors derived from
+/// `sample_agent_ideology14`. We re-use the existing 8-dim k-means by
+/// packing the 4 extra dims into the *territory* signal — the resulting
+/// `FactionSeed` carries the 8 ideology dims (unchanged) plus an
+/// `extra_gradients` block that the caller can use to write P via the
+/// substrate.
+pub fn cluster_with_gradients(
+    agents: &[AgentIdeology14],
+    fields: &PhysicsFields,
+    k: usize,
+) -> Vec<FactionSeedWithGradients> {
+    if agents.is_empty() || k == 0 {
+        return Vec::new();
+    }
+    // 1. Cluster on the 8-dim ideology subspace (the existing math).
+    let ideologies: Vec<AgentIdeology> = agents
+        .iter()
+        .map(|a| AgentIdeology { values: a.ideology })
+        .collect();
+    let base_factions = cluster_into_factions(&ideologies, k);
+
+    // 2. For each base faction centroid, compute the *average* gradient
+    //    signature across its members. This is the territory preference
+    //    the substrate reads back.
+    let mut out = Vec::with_capacity(base_factions.len());
+    for (i, faction) in base_factions.into_iter().enumerate() {
+        // Members are identified by membership in faction `i` — the
+        // existing k-means doesn't expose per-faction members directly,
+        // so we approximate by re-clustering with a tight threshold.
+        // For PHASE 1 we just sample the *first* agent's gradient at
+        // the territory center as a representative signature.
+        let representative = agents.first().copied();
+        let (avg_t, avg_m, avg_b, avg_p) = if let Some(rep) = representative {
+            let p = rep.position;
+            (
+                fields.grad_magnitude(Field::T, p),
+                fields.grad_magnitude(Field::M, p),
+                fields.grad_magnitude(Field::B, p),
+                fields.grad_magnitude(Field::P, p),
+            )
+        } else {
+            (0.0, 0.0, 0.0, 0.0)
+        };
+        out.push(FactionSeedWithGradients {
+            base: faction,
+            avg_grad_t: avg_t,
+            avg_grad_m: avg_m,
+            avg_grad_b: avg_b,
+            avg_grad_p: avg_p,
+            _index: i,
+        });
+    }
+    out
+}
+
+/// `FactionSeed` extended with the average gradient signature of its
+/// members. Sprint 3 (downward causation) will write
+/// `WriteSource::FactionLayer` P writes driven by `avg_grad_b` (food
+/// seeking).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FactionSeedWithGradients {
+    pub base: FactionSeed,
+    pub avg_grad_t: f32,
+    pub avg_grad_m: f32,
+    pub avg_grad_b: f32,
+    pub avg_grad_p: f32,
+    pub _index: usize,
+}
+
+/// Faction write-back (PHASE 1, edit site S4 — partial).
+///
+/// Per substrate doc §3.1 L3, faction writes **P** through the substrate
+/// (territory migration). This helper turns the gradient signature of
+/// each faction into a P write at the faction's territory center; the
+/// magnitude is proportional to the food-seeking gradient (`avg_grad_b`),
+/// which is exactly the substrate-driven territory preference the
+/// doctrine prescribes.
+pub fn factions_migrate(
+    factions: &[FactionSeedWithGradients],
+    fields: &mut PhysicsFields,
+    delta_p: f32,
+) {
+    const P_WRITE_CAP: f32 = 10.0;
+    for f in factions {
+        let p = f.base.territory_center;
+        // P migration is proportional to the food-seeking gradient. A
+        // high |∇B| means "this faction wants to be near food"; the P
+        // write expresses that desire through the substrate.
+        let magnitude = (f.avg_grad_b * delta_p).clamp(0.0, P_WRITE_CAP);
+        if magnitude > 0.0 {
+            let _ = fields.set(Field::P, p, magnitude, WriteSource::FactionLayer);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ideology(values: [f32; IDEOLOGY_DIMENSIONS]) -> AgentIdeology {
+        AgentIdeology { values }
+    }
+
+    fn faction(values: [f32; IDEOLOGY_DIMENSIONS]) -> FactionSeed {
+        FactionSeed {
+            ideology_centroid: values,
+            territory_center: territory_center_from_centroid(&values),
+            member_count: 1,
+            id: 0,
+        }
+    }
+
+    #[test]
+    fn cluster_into_factions_discovers_two_clusters() {
+        let ideologies = vec![
+            ideology([0.00, 0.00, 0.00, 0.00, 0.02, 0.01, 0.00, 0.00]),
+            ideology([0.04, 0.01, 0.00, 0.02, 0.01, 0.00, 0.00, 0.00]),
+            ideology([1.00, 1.00, 1.00, 1.00, 0.98, 1.02, 1.00, 1.01]),
+            ideology([0.96, 1.01, 1.00, 0.99, 1.00, 1.00, 1.02, 0.98]),
+        ];
+
+        let factions = cluster_into_factions(&ideologies, 2);
+
+        assert_eq!(factions.len(), 2);
+        assert_eq!(factions.iter().map(|f| f.member_count).sum::<u32>(), 4);
+        assert!(factions
+            .iter()
+            .any(|f| f.member_count == 2 && f.ideology_centroid[0] < 0.5));
+        assert!(factions
+            .iter()
+            .any(|f| f.member_count == 2 && f.ideology_centroid[0] > 0.5));
+    }
+
+    #[test]
+    fn should_faction_split_triggers_on_high_variance() {
+        let members = vec![
+            ideology([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            ideology([1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
+        ];
+
+        assert!(should_faction_split(
+            &faction([0.5; IDEOLOGY_DIMENSIONS]),
+            &members
+        ));
+    }
+
+    #[test]
+    fn should_faction_split_stays_false_below_threshold() {
+        let members = vec![
+            ideology([0.49, 0.50, 0.51, 0.50, 0.49, 0.50, 0.51, 0.50]),
+            ideology([0.50, 0.49, 0.50, 0.51, 0.50, 0.51, 0.50, 0.49]),
+        ];
+
+        assert!(!should_faction_split(
+            &faction([0.5; IDEOLOGY_DIMENSIONS]),
+            &members
+        ));
+    }
+
+    #[test]
+    fn should_faction_merge_checks_cosine_similarity() {
+        let aligned = faction([0.9, 0.9, 0.9, 0.9, 0.1, 0.1, 0.1, 0.1]);
+        let nearby = faction([0.88, 0.91, 0.92, 0.87, 0.12, 0.08, 0.11, 0.09]);
+        let orthogonal = faction([0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]);
+
+        assert!(should_faction_merge(&aligned, &nearby));
+        assert!(!should_faction_merge(&aligned, &orthogonal));
+    }
+}

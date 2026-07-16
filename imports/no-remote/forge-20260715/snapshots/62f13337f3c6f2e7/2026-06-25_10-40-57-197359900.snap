@@ -1,0 +1,15 @@
+﻿cargo : [1m[92m   Compiling[0m 
+serde_derive v1.0.228
+At line:1 char:1
++ cargo clippy -p phenotype-mcp -- -D 
+warnings 2>&1 | Out-File -FilePat ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~
+    + CategoryInfo          : NotSpecifi 
+   ed: ([1m[92m   Com...derive v1.0.2  
+  28:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeComm 
+   andError
+ 
+[1m[92m   Compiling[0m thiserror-impl 
+v2.0.18

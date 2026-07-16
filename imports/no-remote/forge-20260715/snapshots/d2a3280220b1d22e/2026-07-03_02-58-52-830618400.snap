@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""Capture pre-deletion state for A9 bulk-close."""
+import subprocess
+
+BRANCHES = [
+    "chore/CC1-005-sota-2026-06-11",
+    "chore/CC2-005-sota-2026-06-11",
+    "chore/CC3-005-sota-2026-06-11",
+    "chore/CC4-005-sota-2026-06-11",
+    "chore/QC1-005-sota-2026-06-11",
+    "chore/QC2-005-sota-2026-06-11",
+    "chore/QC3-005-sota-2026-06-11",
+    "chore/QC4-005-sota-2026-06-11",
+    "chore/SD2-004-sota-2026-06-11",
+    "chore/SD3-004-sota-2026-06-11",
+    "chore/SD4-004-sota-2026-06-11",
+]
+
+with open("audits/branch-clean/evidence/A9-pre-remote-refs.txt", "w") as f:
+    f.write("branch|tip_sha|commit_date|subject|merged_into_main|ahead_of_main|behind_main|archive_tag|archive_sha|matches\n")
+    main_sha = subprocess.run(
+        ["git", "rev-parse", "origin/main"],
+        capture_output=True, text=True
+    ).stdout.strip()
+    for b in BRANCHES:
+        # Tip SHA
+        sha = subprocess.run(
+            ["git", "rev-parse", f"origin/{b}"],
+            capture_output=True, text=True
+        ).stdout.strip()
+        # Commit date and subject
+        info = subprocess.run(
+            ["git", "log", "-1", "--format=%cI|%s", sha],
+            capture_output=True, text=True
+        ).stdout.strip()
+        cdate, subject = info.split("|", 1) if "|" in info else (info, "")
+        # Merged into main
+        merged = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", sha, main_sha],
+            capture_output=True, text=True
+        ).returncode == 0
+        # Ahead/behind
+        ahead = subprocess.run(
+            ["git", "rev-list", "--count", f"{main_sha}..origin/{b}"],
+            capture_output=True, text=True
+        ).stdout.strip()
+        behind = subprocess.run(
+            ["git", "rev-list", "--count", f"origin/{b}..{main_sha}"],
+            capture_output=True, text=True
+        ).stdout.strip()
+        # Archive tag SHA
+        tag_short = b.split("/")[1].split("-sota-")[0]  # CC1, QC1, SD2
+        archive = f"archive/{tag_short}-2026-06-11"
+        tag_sha = subprocess.run(
+            ["git", "rev-parse", archive],
+            capture_output=True, text=True
+        ).stdout.strip()
+        matches = "YES" if tag_sha == sha else "MISMATCH"
+        f.write(f"{b}|{sha[:12]}|{cdate}|{subject}|{merged}|{ahead}|{behind}|{archive}|{tag_sha[:12]}|{matches}\n")
+
+print(open("audits/branch-clean/evidence/A9-pre-remote-refs.txt").read())

@@ -1,0 +1,565 @@
+0000	23 21 2f 75 73 72 2f 62  69 6e 2f 65 6e 76 20 6e   #!/usr/bin/env n
+0010	6f 64 65 0a 0a 2f 2a 2a  0a 20 2a 20 4f 6d 6e 69   ode../**. * Omni
+0020	52 6f 75 74 65 20 43 4c  49 20 65 6e 74 72 79 20   Route CLI entry 
+0030	70 6f 69 6e 74 2e 0a 20  2a 0a 20 2a 20 53 70 65   point.. *. * Spe
+0040	63 69 61 6c 20 62 79 70  61 73 73 65 73 20 28 68   cial bypasses (h
+0050	61 6e 64 6c 65 64 20 62  65 66 6f 72 65 20 43 6f   andled before Co
+0060	6d 6d 61 6e 64 65 72 29  3a 0a 20 2a 20 20 20 2d   mmander):. *   -
+0070	2d 6d 63 70 20 20 20 20  20 20 20 20 20 20 20 20   -mcp            
+0080	20 20 20 20 20 20 20 20  20 53 74 61 72 74 20 4d            Start M
+0090	43 50 20 73 65 72 76 65  72 20 6f 76 65 72 20 73   CP server over s
+00a0	74 64 69 6f 0a 20 2a 20  20 20 72 65 73 65 74 2d   tdio. *   reset-
+00b0	65 6e 63 72 79 70 74 65  64 2d 63 6f 6c 75 6d 6e   encrypted-column
+00c0	73 20 20 20 52 65 63 6f  76 65 72 79 20 74 6f 6f   s   Recovery too
+00d0	6c 20 66 6f 72 20 62 72  6f 6b 65 6e 20 65 6e 63   l for broken enc
+00e0	72 79 70 74 65 64 20 63  72 65 64 65 6e 74 69 61   rypted credentia
+00f0	6c 73 0a 20 2a 0a 20 2a  20 41 6c 6c 20 6f 74 68   ls. *. * All oth
+0100	65 72 20 63 6f 6d 6d 61  6e 64 73 20 61 72 65 20   er commands are 
+0110	72 6f 75 74 65 64 20 74  68 72 6f 75 67 68 20 43   routed through C
+0120	6f 6d 6d 61 6e 64 65 72  20 28 62 69 6e 2f 63 6c   ommander (bin/cl
+0130	69 2f 70 72 6f 67 72 61  6d 2e 6d 6a 73 29 2e 0a   i/program.mjs)..
+0140	20 2a 2f 0a 0a 69 6d 70  6f 72 74 20 7b 20 65 78    */..import { ex
+0150	69 73 74 73 53 79 6e 63  2c 20 72 65 61 64 46 69   istsSync, readFi
+0160	6c 65 53 79 6e 63 20 7d  20 66 72 6f 6d 20 22 6e   leSync } from "n
+0170	6f 64 65 3a 66 73 22 3b  0a 69 6d 70 6f 72 74 20   ode:fs";.import 
+0180	7b 20 6a 6f 69 6e 2c 20  64 69 72 6e 61 6d 65 20   { join, dirname 
+0190	7d 20 66 72 6f 6d 20 22  6e 6f 64 65 3a 70 61 74   } from "node:pat
+01a0	68 22 3b 0a 69 6d 70 6f  72 74 20 7b 20 66 69 6c   h";.import { fil
+01b0	65 55 52 4c 54 6f 50 61  74 68 2c 20 70 61 74 68   eURLToPath, path
+01c0	54 6f 46 69 6c 65 55 52  4c 20 7d 20 66 72 6f 6d   ToFileURL } from
+01d0	20 22 6e 6f 64 65 3a 75  72 6c 22 3b 0a 69 6d 70    "node:url";.imp
+01e0	6f 72 74 20 75 70 64 61  74 65 4e 6f 74 69 66 69   ort updateNotifi
+01f0	65 72 20 66 72 6f 6d 20  22 75 70 64 61 74 65 2d   er from "update-
+0200	6e 6f 74 69 66 69 65 72  22 3b 0a 69 6d 70 6f 72   notifier";.impor
+0210	74 20 7b 20 69 73 4e 61  74 69 76 65 42 69 6e 61   t { isNativeBina
+0220	72 79 43 6f 6d 70 61 74  69 62 6c 65 20 7d 20 66   ryCompatible } f
+0230	72 6f 6d 20 22 2e 2e 2f  73 63 72 69 70 74 73 2f   rom "../scripts/
+0240	62 75 69 6c 64 2f 6e 61  74 69 76 65 2d 62 69 6e   build/native-bin
+0250	61 72 79 2d 63 6f 6d 70  61 74 2e 6d 6a 73 22 3b   ary-compat.mjs";
+0260	0a 69 6d 70 6f 72 74 20  7b 20 67 65 74 4e 6f 64   .import { getNod
+0270	65 52 75 6e 74 69 6d 65  53 75 70 70 6f 72 74 2c   eRuntimeSupport,
+0280	20 67 65 74 4e 6f 64 65  52 75 6e 74 69 6d 65 57    getNodeRuntimeW
+0290	61 72 6e 69 6e 67 20 7d  20 66 72 6f 6d 20 22 2e   arning } from ".
+02a0	2f 6e 6f 64 65 52 75 6e  74 69 6d 65 53 75 70 70   /nodeRuntimeSupp
+02b0	6f 72 74 2e 6d 6a 73 22  3b 0a 69 6d 70 6f 72 74   ort.mjs";.import
+02c0	20 7b 20 67 65 74 44 65  66 61 75 6c 74 44 61 74    { getDefaultDat
+02d0	61 44 69 72 20 7d 20 66  72 6f 6d 20 22 2e 2f 63   aDir } from "./c
+02e0	6c 69 2f 64 61 74 61 2d  64 69 72 2e 6d 6a 73 22   li/data-dir.mjs"
+02f0	3b 0a 69 6d 70 6f 72 74  20 7b 20 73 68 6f 75 6c   ;.import { shoul
+0300	64 50 72 6f 76 69 73 69  6f 6e 53 74 6f 72 61 67   dProvisionStorag
+0310	65 4b 65 79 20 7d 20 66  72 6f 6d 20 22 2e 2f 63   eKey } from "./c
+0320	6c 69 2f 75 74 69 6c 73  2f 73 74 6f 72 61 67 65   li/utils/storage
+0330	4b 65 79 50 72 6f 76 69  73 69 6f 6e 2e 6d 6a 73   KeyProvision.mjs
+0340	22 3b 0a 0a 2f 2f 20 52  65 67 69 73 74 65 72 20   ";..// Register 
+0350	74 73 78 20 73 6f 20 64  79 6e 61 6d 69 63 20 69   tsx so dynamic i
+0360	6d 70 6f 72 74 73 20 6f  66 20 2e 74 73 20 73 6f   mports of .ts so
+0370	75 72 63 65 20 66 69 6c  65 73 20 28 72 65 66 65   urce files (refe
+0380	72 65 6e 63 65 64 20 61  73 20 2e 6a 73 20 70 65   renced as .js pe
+0390	72 0a 2f 2f 20 54 79 70  65 53 63 72 69 70 74 20   r.// TypeScript 
+03a0	63 6f 6e 76 65 6e 74 69  6f 6e 73 29 20 72 65 73   conventions) res
+03b0	6f 6c 76 65 20 63 6f 72  72 65 63 74 6c 79 2e 20   olve correctly. 
+03c0	54 68 65 20 62 75 69 6c  64 20 6e 65 76 65 72 20   The build never 
+03d0	65 6d 69 74 73 20 2e 6a  73 20 66 6f 72 0a 2f 2f   emits .js for.//
+03e0	20 73 72 63 2f 6c 69 62  2f 63 6c 69 2d 68 65 6c    src/lib/cli-hel
+03f0	70 65 72 2f 2c 20 73 6f  20 74 73 78 20 68 61 6e   per/, so tsx han
+0400	64 6c 65 73 20 74 68 65  20 2e 74 73 20 e2 86 92   dles the .ts ...
+0410	20 2e 6a 73 20 72 65 73  6f 6c 75 74 69 6f 6e 20    .js resolution 
+0420	61 74 20 72 75 6e 74 69  6d 65 2e 0a 61 77 61 69   at runtime..awai
+0430	74 20 69 6d 70 6f 72 74  28 22 74 73 78 2f 65 73   t import("tsx/es
+0440	6d 22 29 3b 0a 61 77 61  69 74 20 69 6d 70 6f 72   m");.await impor
+0450	74 28 22 2e 2e 2f 6f 70  65 6e 2d 73 73 65 2f 75   t("../open-sse/u
+0460	74 69 6c 73 2f 73 65 74  75 70 50 6f 6c 79 66 69   tils/setupPolyfi
+0470	6c 6c 2e 74 73 22 29 3b  0a 0a 63 6f 6e 73 74 20   ll.ts");..const 
+0480	5f 5f 66 69 6c 65 6e 61  6d 65 20 3d 20 66 69 6c   __filename = fil
+0490	65 55 52 4c 54 6f 50 61  74 68 28 69 6d 70 6f 72   eURLToPath(impor
+04a0	74 2e 6d 65 74 61 2e 75  72 6c 29 3b 0a 63 6f 6e   t.meta.url);.con
+04b0	73 74 20 5f 5f 64 69 72  6e 61 6d 65 20 3d 20 64   st __dirname = d
+04c0	69 72 6e 61 6d 65 28 5f  5f 66 69 6c 65 6e 61 6d   irname(__filenam
+04d0	65 29 3b 0a 63 6f 6e 73  74 20 52 4f 4f 54 20 3d   e);.const ROOT =
+04e0	20 6a 6f 69 6e 28 5f 5f  64 69 72 6e 61 6d 65 2c    join(__dirname,
+04f0	20 22 2e 2e 22 29 3b 0a  0a 2f 2f 20 4d 43 50 20    "..");..// MCP 
+0500	73 74 64 69 6f 20 74 72  61 6e 73 70 6f 72 74 20   stdio transport 
+0510	75 73 65 73 20 73 74 64  6f 75 74 20 65 78 63 6c   uses stdout excl
+0520	75 73 69 76 65 6c 79 20  66 6f 72 20 4a 53 4f 4e   usively for JSON
+0530	2d 52 50 43 20 6d 65 73  73 61 67 65 73 2e 0a 2f   -RPC messages../
+0540	2f 20 52 65 64 69 72 65  63 74 20 63 6f 6e 73 6f   / Redirect conso
+0550	6c 65 2e 6c 6f 67 2f 77  61 72 6e 20 74 6f 20 73   le.log/warn to s
+0560	74 64 65 72 72 20 65 61  72 6c 79 20 28 62 65 66   tderr early (bef
+0570	6f 72 65 20 6c 6f 61 64  45 6e 76 46 69 6c 65 20   ore loadEnvFile 
+0580	61 6e 64 20 44 42 20 69  6e 69 74 29 0a 2f 2f 20   and DB init).// 
+0590	73 6f 20 6e 6f 20 73 74  61 72 74 75 70 20 6f 75   so no startup ou
+05a0	74 70 75 74 20 63 6f 72  72 75 70 74 73 20 74 68   tput corrupts th
+05b0	65 20 70 72 6f 74 6f 63  6f 6c 2e 0a 69 66 20 28   e protocol..if (
+05c0	70 72 6f 63 65 73 73 2e  61 72 67 76 2e 69 6e 63   process.argv.inc
+05d0	6c 75 64 65 73 28 22 2d  2d 6d 63 70 22 29 29 20   ludes("--mcp")) 
+05e0	7b 0a 20 20 63 6f 6e 73  74 20 7b 20 43 6f 6e 73   {.  const { Cons
+05f0	6f 6c 65 20 7d 20 3d 20  61 77 61 69 74 20 69 6d   ole } = await im
+0600	70 6f 72 74 28 22 6e 6f  64 65 3a 63 6f 6e 73 6f   port("node:conso
+0610	6c 65 22 29 3b 0a 20 20  63 6f 6e 73 74 20 73 74   le");.  const st
+0620	64 65 72 72 43 6f 6e 73  6f 6c 65 20 3d 20 6e 65   derrConsole = ne
+0630	77 20 43 6f 6e 73 6f 6c  65 28 7b 20 73 74 64 6f   w Console({ stdo
+0640	75 74 3a 20 70 72 6f 63  65 73 73 2e 73 74 64 65   ut: process.stde
+0650	72 72 2c 20 73 74 64 65  72 72 3a 20 70 72 6f 63   rr, stderr: proc
+0660	65 73 73 2e 73 74 64 65  72 72 20 7d 29 3b 0a 20   ess.stderr });. 
+0670	20 63 6f 6e 73 6f 6c 65  2e 6c 6f 67 20 3d 20 73    console.log = s
+0680	74 64 65 72 72 43 6f 6e  73 6f 6c 65 2e 6c 6f 67   tderrConsole.log
+0690	2e 62 69 6e 64 28 73 74  64 65 72 72 43 6f 6e 73   .bind(stderrCons
+06a0	6f 6c 65 29 3b 0a 20 20  63 6f 6e 73 6f 6c 65 2e   ole);.  console.
+06b0	77 61 72 6e 20 3d 20 73  74 64 65 72 72 43 6f 6e   warn = stderrCon
+06c0	73 6f 6c 65 2e 77 61 72  6e 2e 62 69 6e 64 28 73   sole.warn.bind(s
+06d0	74 64 65 72 72 43 6f 6e  73 6f 6c 65 29 3b 0a 7d   tderrConsole);.}
+06e0	0a 0a 66 75 6e 63 74 69  6f 6e 20 6c 6f 61 64 45   ..function loadE
+06f0	6e 76 46 69 6c 65 28 29  20 7b 0a 20 20 63 6f 6e   nvFile() {.  con
+0700	73 74 20 65 6e 76 50 61  74 68 73 20 3d 20 5b 5d   st envPaths = []
+0710	3b 0a 20 20 63 6f 6e 73  74 20 6c 6f 61 64 65 64   ;.  const loaded
+0720	45 6e 76 50 61 74 68 73  20 3d 20 5b 5d 3b 0a 20   EnvPaths = [];. 
+0730	20 63 6f 6e 73 74 20 73  65 65 6e 45 6e 76 50 61    const seenEnvPa
+0740	74 68 73 20 3d 20 6e 65  77 20 53 65 74 28 29 3b   ths = new Set();
+0750	0a 20 20 63 6f 6e 73 74  20 61 64 64 45 6e 76 50   .  const addEnvP
+0760	61 74 68 20 3d 20 28 65  6e 76 50 61 74 68 29 20   ath = (envPath) 
+0770	3d 3e 20 7b 0a 20 20 20  20 69 66 20 28 73 65 65   => {.    if (see
+0780	6e 45 6e 76 50 61 74 68  73 2e 68 61 73 28 65 6e   nEnvPaths.has(en
+0790	76 50 61 74 68 29 29 20  72 65 74 75 72 6e 3b 0a   vPath)) return;.
+07a0	20 20 20 20 73 65 65 6e  45 6e 76 50 61 74 68 73       seenEnvPaths
+07b0	2e 61 64 64 28 65 6e 76  50 61 74 68 29 3b 0a 20   .add(envPath);. 
+07c0	20 20 20 65 6e 76 50 61  74 68 73 2e 70 75 73 68      envPaths.push
+07d0	28 65 6e 76 50 61 74 68  29 3b 0a 20 20 7d 3b 0a   (envPath);.  };.
+07e0	0a 20 20 69 66 20 28 70  72 6f 63 65 73 73 2e 65   .  if (process.e
+07f0	6e 76 2e 44 41 54 41 5f  44 49 52 29 20 7b 0a 20   nv.DATA_DIR) {. 
+0800	20 20 20 61 64 64 45 6e  76 50 61 74 68 28 6a 6f      addEnvPath(jo
+0810	69 6e 28 70 72 6f 63 65  73 73 2e 65 6e 76 2e 44   in(process.env.D
+0820	41 54 41 5f 44 49 52 2c  20 22 2e 65 6e 76 22 29   ATA_DIR, ".env")
+0830	29 3b 0a 20 20 7d 0a 0a  20 20 61 64 64 45 6e 76   );.  }..  addEnv
+0840	50 61 74 68 28 6a 6f 69  6e 28 67 65 74 44 65 66   Path(join(getDef
+0850	61 75 6c 74 44 61 74 61  44 69 72 28 29 2c 20 22   aultDataDir(), "
+0860	2e 65 6e 76 22 29 29 3b  0a 0a 20 20 61 64 64 45   .env"));..  addE
+0870	6e 76 50 61 74 68 28 6a  6f 69 6e 28 70 72 6f 63   nvPath(join(proc
+0880	65 73 73 2e 63 77 64 28  29 2c 20 22 2e 65 6e 76   ess.cwd(), ".env
+0890	22 29 29 3b 0a 20 20 2f  2f 20 53 6b 69 70 20 74   "));.  // Skip t
+08a0	68 65 20 72 65 70 6f 2d  63 68 65 63 6b 6f 75 74   he repo-checkout
+08b0	20 2e 65 6e 76 20 77 68  65 6e 20 65 78 70 6c 69    .env when expli
+08c0	63 69 74 6c 79 20 72 65  71 75 65 73 74 65 64 20   citly requested 
+08d0	28 75 73 65 64 20 62 79  20 69 73 6f 6c 61 74 69   (used by isolati
+08e0	6f 6e 20 74 65 73 74 73  0a 20 20 2f 2f 20 74 68   on tests.  // th
+08f0	61 74 20 6e 65 65 64 20  61 20 64 65 74 65 72 6d   at need a determ
+0900	69 6e 69 73 74 69 63 20  65 6e 76 69 72 6f 6e 6d   inistic environm
+0910	65 6e 74 20 77 69 74 68  6f 75 74 20 74 68 65 20   ent without the 
+0920	64 65 76 65 6c 6f 70 6d  65 6e 74 20 72 65 70 6f   development repo
+0930	27 73 20 64 65 66 61 75  6c 74 73 29 2e 0a 20 20   's defaults)..  
+0940	69 66 20 28 70 72 6f 63  65 73 73 2e 65 6e 76 2e   if (process.env.
+0950	4f 4d 4e 49 52 4f 55 54  45 5f 43 4c 49 5f 53 4b   OMNIROUTE_CLI_SK
+0960	49 50 5f 52 45 50 4f 5f  45 4e 56 20 21 3d 3d 20   IP_REPO_ENV !== 
+0970	22 31 22 29 20 7b 0a 20  20 20 20 61 64 64 45 6e   "1") {.    addEn
+0980	76 50 61 74 68 28 6a 6f  69 6e 28 52 4f 4f 54 2c   vPath(join(ROOT,
+0990	20 22 2e 65 6e 76 22 29  29 3b 0a 20 20 7d 0a 0a    ".env"));.  }..
+09a0	20 20 66 6f 72 20 28 63  6f 6e 73 74 20 65 6e 76     for (const env
+09b0	50 61 74 68 20 6f 66 20  65 6e 76 50 61 74 68 73   Path of envPaths
+09c0	29 20 7b 0a 20 20 20 20  74 72 79 20 7b 0a 20 20   ) {.    try {.  
+09d0	20 20 20 20 69 66 20 28  65 78 69 73 74 73 53 79       if (existsSy
+09e0	6e 63 28 65 6e 76 50 61  74 68 29 29 20 7b 0a 20   nc(envPath)) {. 
+09f0	20 20 20 20 20 20 20 63  6f 6e 73 74 20 63 6f 6e          const con
+0a00	74 65 6e 74 20 3d 20 72  65 61 64 46 69 6c 65 53   tent = readFileS
+0a10	79 6e 63 28 65 6e 76 50  61 74 68 2c 20 22 75 74   ync(envPath, "ut
+0a20	66 2d 38 22 29 3b 0a 20  20 20 20 20 20 20 20 66   f-8");.        f
+0a30	6f 72 20 28 63 6f 6e 73  74 20 6c 69 6e 65 20 6f   or (const line o
+0a40	66 20 63 6f 6e 74 65 6e  74 2e 73 70 6c 69 74 28   f content.split(
+0a50	22 5c 6e 22 29 29 20 7b  0a 20 20 20 20 20 20 20   "\n")) {.       
+0a60	20 20 20 63 6f 6e 73 74  20 74 72 69 6d 6d 65 64      const trimmed
+0a70	20 3d 20 6c 69 6e 65 2e  74 72 69 6d 28 29 3b 0a    = line.trim();.
+0a80	20 20 20 20 20 20 20 20  20 20 69 66 20 28 21 74             if (!t
+0a90	72 69 6d 6d 65 64 20 7c  7c 20 74 72 69 6d 6d 65   rimmed || trimme
+0aa0	64 2e 73 74 61 72 74 73  57 69 74 68 28 22 23 22   d.startsWith("#"
+0ab0	29 29 20 63 6f 6e 74 69  6e 75 65 3b 0a 20 20 20   )) continue;.   
+0ac0	20 20 20 20 20 20 20 63  6f 6e 73 74 20 65 71 49          const eqI
+0ad0	64 78 20 3d 20 74 72 69  6d 6d 65 64 2e 69 6e 64   dx = trimmed.ind
+0ae0	65 78 4f 66 28 22 3d 22  29 3b 0a 20 20 20 20 20   exOf("=");.     
+0af0	20 20 20 20 20 69 66 20  28 65 71 49 64 78 20 3e        if (eqIdx >
+0b00	20 30 29 20 7b 0a 20 20  20 20 20 20 20 20 20 20    0) {.          
+0b10	20 20 63 6f 6e 73 74 20  6b 65 79 20 3d 20 74 72     const key = tr
+0b20	69 6d 6d 65 64 2e 73 6c  69 63 65 28 30 2c 20 65   immed.slice(0, e
+0b30	71 49 64 78 29 2e 74 72  69 6d 28 29 3b 0a 20 20   qIdx).trim();.  
+0b40	20 20 20 20 20 20 20 20  20 20 63 6f 6e 73 74 20             const 
+0b50	76 61 6c 75 65 20 3d 20  74 72 69 6d 6d 65 64 2e   value = trimmed.
+0b60	73 6c 69 63 65 28 65 71  49 64 78 20 2b 20 31 29   slice(eqIdx + 1)
+0b70	2e 74 72 69 6d 28 29 3b  0a 20 20 20 20 20 20 20   .trim();.       
+0b80	20 20 20 20 20 69 66 20  28 70 72 6f 63 65 73 73        if (process
+0b90	2e 65 6e 76 5b 6b 65 79  5d 20 3d 3d 3d 20 75 6e   .env[key] === un
+0ba0	64 65 66 69 6e 65 64 29  20 7b 0a 20 20 20 20 20   defined) {.     
+0bb0	20 20 20 20 20 20 20 20  20 70 72 6f 63 65 73 73            process
+0bc0	2e 65 6e 76 5b 6b 65 79  5d 20 3d 20 76 61 6c 75   .env[key] = valu
+0bd0	65 2e 72 65 70 6c 61 63  65 28 2f 5e 5b 22 27 5d   e.replace(/^["']
+0be0	7c 5b 22 27 5d 24 2f 67  2c 20 22 22 29 3b 0a 20   |["']$/g, "");. 
+0bf0	20 20 20 20 20 20 20 20  20 20 20 7d 0a 20 20 20              }.   
+0c00	20 20 20 20 20 20 20 7d  0a 20 20 20 20 20 20 20          }.       
+0c10	20 7d 0a 20 20 20 20 20  20 20 20 6c 6f 61 64 65    }.        loade
+0c20	64 45 6e 76 50 61 74 68  73 2e 70 75 73 68 28 65   dEnvPaths.push(e
+0c30	6e 76 50 61 74 68 29 3b  0a 20 20 20 20 20 20 7d   nvPath);.      }
+0c40	0a 20 20 20 20 7d 20 63  61 74 63 68 20 7b 0a 20   .    } catch {. 
+0c50	20 20 20 20 20 2f 2f 20  49 67 6e 6f 72 65 20 65        // Ignore e
+0c60	72 72 6f 72 73 20 72 65  61 64 69 6e 67 20 65 6e   rrors reading en
+0c70	76 20 66 69 6c 65 73 2e  0a 20 20 20 20 7d 0a 20   v files..    }. 
+0c80	20 7d 0a 0a 20 20 66 6f  72 20 28 63 6f 6e 73 74    }..  for (const
+0c90	20 65 6e 76 50 61 74 68  20 6f 66 20 6c 6f 61 64    envPath of load
+0ca0	65 64 45 6e 76 50 61 74  68 73 29 20 7b 0a 20 20   edEnvPaths) {.  
+0cb0	20 20 63 6f 6e 73 6f 6c  65 2e 6c 6f 67 28 60 20     console.log(` 
+0cc0	20 5c 78 31 62 5b 32 6d  f0 9f 93 8b 20 4c 6f 61    \x1b[2m.... Loa
+0cd0	64 65 64 20 65 6e 76 20  66 72 6f 6d 20 24 7b 65   ded env from ${e
+0ce0	6e 76 50 61 74 68 7d 5c  78 31 62 5b 30 6d 60 29   nvPath}\x1b[0m`)
+0cf0	3b 0a 20 20 7d 0a 7d 0a  0a 6c 6f 61 64 45 6e 76   ;.  }.}..loadEnv
+0d00	46 69 6c 65 28 29 3b 0a  0a 2f 2f 20 47 65 6e 65   File();..// Gene
+0d10	72 61 74 65 20 53 54 4f  52 41 47 45 5f 45 4e 43   rate STORAGE_ENC
+0d20	52 59 50 54 49 4f 4e 5f  4b 45 59 20 69 66 20 6e   RYPTION_KEY if n
+0d30	6f 74 20 73 65 74 20 28  70 65 72 73 69 73 74 65   ot set (persiste
+0d40	64 20 74 6f 20 7e 2f 2e  6f 6d 6e 69 72 6f 75 74   d to ~/.omnirout
+0d50	65 2f 2e 65 6e 76 29 0a  2f 2f 20 54 68 69 73 20   e/.env).// This 
+0d60	65 6e 73 75 72 65 73 20  74 68 65 20 6b 65 79 20   ensures the key 
+0d70	73 75 72 76 69 76 65 73  20 61 63 72 6f 73 73 20   survives across 
+0d80	75 70 67 72 61 64 65 73  20 61 6e 64 20 69 73 20   upgrades and is 
+0d90	6e 6f 74 20 72 65 67 65  6e 65 72 61 74 65 64 20   not regenerated 
+0da0	6f 6e 20 65 61 63 68 20  69 6e 73 74 61 6c 6c 2e   on each install.
+0db0	0a 2f 2f 20 53 65 65 3a  20 68 74 74 70 73 3a 2f   .// See: https:/
+0dc0	2f 67 69 74 68 75 62 2e  63 6f 6d 2f 64 69 65 67   /github.com/dieg
+0dd0	6f 73 6f 75 7a 61 70 77  2f 4f 6d 6e 69 52 6f 75   osouzapw/OmniRou
+0de0	74 65 2f 69 73 73 75 65  73 2f 31 36 32 32 0a 2f   te/issues/1622./
+0df0	2f 0a 2f 2f 20 4f 6e 6c  79 20 70 72 6f 76 69 73   /.// Only provis
+0e00	69 6f 6e 20 66 6f 72 20  63 6f 6d 6d 61 6e 64 73   ion for commands
+0e10	20 74 68 61 74 20 61 63  74 75 61 6c 6c 79 20 74    that actually t
+0e20	6f 75 63 68 20 65 6e 63  72 79 70 74 65 64 20 73   ouch encrypted s
+0e30	74 6f 72 61 67 65 2e 20  50 75 72 65 6c 79 0a 2f   torage. Purely./
+0e40	2f 20 69 6e 66 6f 72 6d  61 74 69 6f 6e 61 6c 20   / informational 
+0e50	69 6e 76 6f 63 61 74 69  6f 6e 73 20 28 60 2d 2d   invocations (`--
+0e60	76 65 72 73 69 6f 6e 60  2c 20 60 2d 2d 68 65 6c   version`, `--hel
+0e70	70 60 2c 20 60 68 65 6c  70 60 29 20 6d 75 73 74   p`, `help`) must
+0e80	20 6e 6f 74 20 63 72 65  61 74 65 20 61 0a 2f 2f    not create a.//
+0e90	20 6b 65 79 20 6f 72 20  77 72 69 74 65 20 7e 2f    key or write ~/
+0ea0	2e 6f 6d 6e 69 72 6f 75  74 65 2f 2e 65 6e 76 20   .omniroute/.env 
+0eb0	e2 80 94 20 72 75 6e 6e  69 6e 67 20 61 20 72 65   ... running a re
+0ec0	61 64 2d 6f 6e 6c 79 20  63 6f 6d 6d 61 6e 64 20   ad-only command 
+0ed0	73 68 6f 75 6c 64 20 6e  65 76 65 72 0a 2f 2f 20   should never.// 
+0ee0	6d 75 74 61 74 65 20 74  68 65 20 64 61 74 61 20   mutate the data 
+0ef0	64 69 72 2e 0a 69 66 20  28 73 68 6f 75 6c 64 50   dir..if (shouldP
+0f00	72 6f 76 69 73 69 6f 6e  53 74 6f 72 61 67 65 4b   rovisionStorageK
+0f10	65 79 28 70 72 6f 63 65  73 73 2e 61 72 67 76 29   ey(process.argv)
+0f20	29 20 7b 0a 20 20 63 6f  6e 73 74 20 7b 20 72 61   ) {.  const { ra
+0f30	6e 64 6f 6d 42 79 74 65  73 20 7d 20 3d 20 61 77   ndomBytes } = aw
+0f40	61 69 74 20 69 6d 70 6f  72 74 28 22 6e 6f 64 65   ait import("node
+0f50	3a 63 72 79 70 74 6f 22  29 3b 0a 20 20 63 6f 6e   :crypto");.  con
+0f60	73 74 20 7b 20 65 78 69  73 74 73 53 79 6e 63 2c   st { existsSync,
+0f70	20 6d 6b 64 69 72 53 79  6e 63 2c 20 72 65 61 64    mkdirSync, read
+0f80	46 69 6c 65 53 79 6e 63  2c 20 77 72 69 74 65 46   FileSync, writeF
+0f90	69 6c 65 53 79 6e 63 20  7d 20 3d 20 61 77 61 69   ileSync } = awai
+0fa0	74 20 69 6d 70 6f 72 74  28 22 6e 6f 64 65 3a 66   t import("node:f
+0fb0	73 22 29 3b 0a 20 20 63  6f 6e 73 74 20 7b 20 6a   s");.  const { j
+0fc0	6f 69 6e 20 7d 20 3d 20  61 77 61 69 74 20 69 6d   oin } = await im
+0fd0	70 6f 72 74 28 22 6e 6f  64 65 3a 70 61 74 68 22   port("node:path"
+0fe0	29 3b 0a 20 20 63 6f 6e  73 74 20 7b 20 68 6f 6d   );.  const { hom
+0ff0	65 64 69 72 20 7d 20 3d  20 61 77 61 69 74 20 69   edir } = await i
+1000	6d 70 6f 72 74 28 22 6e  6f 64 65 3a 6f 73 22 29   mport("node:os")
+1010	3b 0a 0a 20 20 69 66 20  28 21 70 72 6f 63 65 73   ;..  if (!proces
+1020	73 2e 65 6e 76 2e 53 54  4f 52 41 47 45 5f 45 4e   s.env.STORAGE_EN
+1030	43 52 59 50 54 49 4f 4e  5f 4b 45 59 29 20 7b 0a   CRYPTION_KEY) {.
+1040	20 20 20 20 2f 2f 20 50  65 72 73 69 73 74 20 74       // Persist t
+1050	68 65 20 6b 65 79 20 69  6e 74 6f 20 44 41 54 41   he key into DATA
+1060	5f 44 49 52 20 77 68 65  6e 20 73 65 74 20 e2 80   _DIR when set ..
+1070	94 20 74 68 61 74 27 73  20 74 68 65 20 64 69 72   . that's the dir
+1080	65 63 74 6f 72 79 20 6d  6f 75 6e 74 65 64 20 61   ectory mounted a
+1090	73 20 61 20 76 6f 6c 75  6d 65 20 69 6e 0a 20 20   s a volume in.  
+10a0	20 20 2f 2f 20 44 6f 63  6b 65 72 20 28 77 68 65     // Docker (whe
+10b0	72 65 20 73 74 6f 72 61  67 65 2e 73 71 6c 69 74   re storage.sqlit
+10c0	65 20 6c 69 76 65 73 29  2c 20 73 6f 20 74 68 65   e lives), so the
+10d0	20 6b 65 79 20 73 75 72  76 69 76 65 73 20 60 64    key survives `d
+10e0	6f 63 6b 65 72 20 64 6f  77 6e 60 20 2f 20 60 64   ocker down` / `d
+10f0	6f 63 6b 65 72 20 70 75  6c 6c 60 2e 0a 20 20 20   ocker pull`..   
+1100	20 2f 2f 20 57 72 69 74  69 6e 67 20 6f 6e 6c 79    // Writing only
+1110	20 74 6f 20 7e 2f 2e 6f  6d 6e 69 72 6f 75 74 65    to ~/.omniroute
+1120	20 28 74 68 65 20 63 6f  6e 74 61 69 6e 65 72 20    (the container 
+1130	68 6f 6d 65 2c 20 6e 6f  74 20 61 20 76 6f 6c 75   home, not a volu
+1140	6d 65 29 20 73 69 6c 65  6e 74 6c 79 20 6c 6f 73   me) silently los
+1150	74 20 74 68 65 20 6b 65  79 20 6f 6e 0a 20 20 20   t the key on.   
+1160	20 2f 2f 20 63 6f 6e 74  61 69 6e 65 72 20 72 65    // container re
+1170	63 72 65 61 74 69 6f 6e  2c 20 6c 65 61 76 69 6e   creation, leavin
+1180	67 20 74 68 65 20 70 65  72 73 69 73 74 65 64 20   g the persisted 
+1190	65 6e 63 72 79 70 74 65  64 20 44 42 20 75 6e 64   encrypted DB und
+11a0	65 63 72 79 70 74 61 62  6c 65 20 28 72 65 67 72   ecryptable (regr
+11b0	65 73 73 69 6f 6e 20 6f  66 20 23 31 36 32 32 29   ession of #1622)
+11c0	2e 0a 20 20 20 20 63 6f  6e 73 74 20 64 61 74 61   ..    const data
+11d0	44 69 72 20 3d 20 70 72  6f 63 65 73 73 2e 65 6e   Dir = process.en
+11e0	76 2e 44 41 54 41 5f 44  49 52 20 7c 7c 20 6a 6f   v.DATA_DIR || jo
+11f0	69 6e 28 68 6f 6d 65 64  69 72 28 29 2c 20 22 2e   in(homedir(), ".
+1200	6f 6d 6e 69 72 6f 75 74  65 22 29 3b 0a 20 20 20   omniroute");.   
+1210	20 63 6f 6e 73 74 20 65  6e 76 50 61 74 68 20 3d    const envPath =
+1220	20 6a 6f 69 6e 28 64 61  74 61 44 69 72 2c 20 22    join(dataDir, "
+1230	2e 65 6e 76 22 29 3b 0a  20 20 20 20 63 6f 6e 73   .env");.    cons
+1240	74 20 64 62 50 61 74 68  20 3d 20 6a 6f 69 6e 28   t dbPath = join(
+1250	64 61 74 61 44 69 72 2c  20 22 73 74 6f 72 61 67   dataDir, "storag
+1260	65 2e 73 71 6c 69 74 65  22 29 3b 0a 0a 20 20 20   e.sqlite");..   
+1270	20 2f 2f 20 53 61 66 65  74 79 20 67 75 61 72 64    // Safety guard
+1280	3a 20 6e 65 76 65 72 20  61 75 74 6f 2d 67 65 6e   : never auto-gen
+1290	65 72 61 74 65 20 61 20  66 72 65 73 68 20 6b 65   erate a fresh ke
+12a0	79 20 77 68 65 6e 20 61  20 64 61 74 61 62 61 73   y when a databas
+12b0	65 20 61 6c 72 65 61 64  79 20 65 78 69 73 74 73   e already exists
+12c0	20 69 6e 0a 20 20 20 20  2f 2f 20 44 41 54 41 5f    in.    // DATA_
+12d0	44 49 52 2e 20 41 20 6e  65 77 20 6b 65 79 20 63   DIR. A new key c
+12e0	61 6e 6e 6f 74 20 64 65  63 72 79 70 74 20 70 72   annot decrypt pr
+12f0	65 76 69 6f 75 73 6c 79  2d 65 6e 63 72 79 70 74   eviously-encrypt
+1300	65 64 20 63 72 65 64 65  6e 74 69 61 6c 73 20 61   ed credentials a
+1310	6e 64 20 77 6f 75 6c 64  20 6c 6f 63 6b 20 74 68   nd would lock th
+1320	65 0a 20 20 20 20 2f 2f  20 75 73 65 72 20 6f 75   e.    // user ou
+1330	74 20 28 74 68 65 6e 20  74 68 65 20 65 6e 63 72   t (then the encr
+1340	79 70 74 69 6f 6e 20 6c  61 79 65 72 20 61 62 6f   yption layer abo
+1350	72 74 73 20 6f 6e 20 65  76 65 72 79 20 72 65 61   rts on every rea
+1360	64 29 2e 20 4d 69 72 72  6f 72 73 20 62 6f 6f 74   d). Mirrors boot
+1370	73 74 72 61 70 45 6e 76  27 73 0a 20 20 20 20 2f   strapEnv's.    /
+1380	2f 20 68 61 73 45 6e 63  72 79 70 74 65 64 43 72   / hasEncryptedCr
+1390	65 64 65 6e 74 69 61 6c  73 20 67 75 61 72 64 2e   edentials guard.
+13a0	20 52 65 73 74 6f 72 69  6e 67 20 74 68 65 20 70    Restoring the p
+13b0	72 65 76 69 6f 75 73 20  6b 65 79 20 69 6e 20 44   revious key in D
+13c0	41 54 41 5f 44 49 52 2f  2e 65 6e 76 20 72 65 63   ATA_DIR/.env rec
+13d0	6f 76 65 72 73 20 69 74  2e 0a 20 20 20 20 2f 2f   overs it..    //
+13e0	20 28 23 31 36 32 32 20  66 6f 6c 6c 6f 77 2d 75    (#1622 follow-u
+13f0	70 20 e2 80 94 20 72 65  70 6f 72 74 65 64 20 62   p ... reported b
+1400	79 20 44 61 6e 69 65 6c  20 4e 61 63 68 3b 20 6f   y Daniel Nach; o
+1410	72 69 67 69 6e 61 6c 20  70 65 72 73 69 73 74 65   riginal persiste
+1420	6e 63 65 20 62 79 20 40  43 68 65 77 6a 69 39 38   nce by @Chewji98
+1430	37 35 29 0a 20 20 20 20  69 66 20 28 65 78 69 73   75).    if (exis
+1440	74 73 53 79 6e 63 28 64  62 50 61 74 68 29 29 20   tsSync(dbPath)) 
+1450	7b 0a 20 20 20 20 20 20  63 6f 6e 73 6f 6c 65 2e   {.      console.
+1460	77 61 72 6e 28 0a 20 20  20 20 20 20 20 20 60 20   warn(.        ` 
+1470	20 5c 78 31 62 5b 33 33  6d e2 9a a0 20 53 54 4f    \x1b[33m... STO
+1480	52 41 47 45 5f 45 4e 43  52 59 50 54 49 4f 4e 5f   RAGE_ENCRYPTION_
+1490	4b 45 59 20 69 73 20 6e  6f 74 20 73 65 74 20 62   KEY is not set b
+14a0	75 74 20 61 20 64 61 74  61 62 61 73 65 20 61 6c   ut a database al
+14b0	72 65 61 64 79 20 65 78  69 73 74 73 20 61 74 5c   ready exists at\
+14c0	78 31 62 5b 30 6d 5c 6e  60 20 2b 0a 20 20 20 20   x1b[0m\n` +.    
+14d0	20 20 20 20 20 20 60 20  20 5c 78 31 62 5b 33 33         `  \x1b[33
+14e0	6d 20 20 24 7b 64 62 50  61 74 68 7d 5c 78 31 62   m  ${dbPath}\x1b
+14f0	5b 30 6d 5c 6e 60 20 2b  0a 20 20 20 20 20 20 20   [0m\n` +.       
+1500	20 20 20 60 20 20 5c 78  31 62 5b 33 33 6d 20 20      `  \x1b[33m  
+1510	4e 6f 74 20 61 75 74 6f  2d 67 65 6e 65 72 61 74   Not auto-generat
+1520	69 6e 67 20 61 20 6e 65  77 20 6b 65 79 20 e2 80   ing a new key ..
+1530	94 20 69 74 20 63 6f 75  6c 64 20 6e 6f 74 20 64   . it could not d
+1540	65 63 72 79 70 74 20 65  78 69 73 74 69 6e 67 20   ecrypt existing 
+1550	64 61 74 61 2e 20 52 65  73 74 6f 72 65 20 79 6f   data. Restore yo
+1560	75 72 5c 78 31 62 5b 30  6d 5c 6e 60 20 2b 0a 20   ur\x1b[0m\n` +. 
+1570	20 20 20 20 20 20 20 20  20 60 20 20 5c 78 31 62            `  \x1b
+1580	5b 33 33 6d 20 20 70 72  65 76 69 6f 75 73 20 6b   [33m  previous k
+1590	65 79 20 69 6e 20 24 7b  65 6e 76 50 61 74 68 7d   ey in ${envPath}
+15a0	2c 20 6f 72 20 6d 6f 76  65 2f 72 65 6d 6f 76 65   , or move/remove
+15b0	20 74 68 65 20 64 61 74  61 62 61 73 65 20 74 6f    the database to
+15c0	20 73 74 61 72 74 20 66  72 65 73 68 2e 5c 78 31    start fresh.\x1
+15d0	62 5b 30 6d 60 0a 20 20  20 20 20 20 29 3b 0a 20   b[0m`.      );. 
+15e0	20 20 20 7d 20 65 6c 73  65 20 7b 0a 20 20 20 20      } else {.    
+15f0	20 20 2f 2f 20 46 69 72  73 74 20 72 75 6e 20 28     // First run (
+1600	6e 6f 20 64 61 74 61 62  61 73 65 20 79 65 74 29   no database yet)
+1610	20 e2 80 94 20 67 65 6e  65 72 61 74 65 20 61 6e    ... generate an
+1620	64 20 70 65 72 73 69 73  74 20 61 20 66 72 65 73   d persist a fres
+1630	68 20 6b 65 79 2e 0a 20  20 20 20 20 20 69 66 20   h key..      if 
+1640	28 21 65 78 69 73 74 73  53 79 6e 63 28 64 61 74   (!existsSync(dat
+1650	61 44 69 72 29 29 20 7b  0a 20 20 20 20 20 20 20   aDir)) {.       
+1660	20 6d 6b 64 69 72 53 79  6e 63 28 64 61 74 61 44    mkdirSync(dataD
+1670	69 72 2c 20 7b 20 72 65  63 75 72 73 69 76 65 3a   ir, { recursive:
+1680	20 74 72 75 65 20 7d 29  3b 0a 20 20 20 20 20 20    true });.      
+1690	7d 0a 0a 20 20 20 20 20  20 63 6f 6e 73 74 20 6b   }..      const k
+16a0	65 79 20 3d 20 72 61 6e  64 6f 6d 42 79 74 65 73   ey = randomBytes
+16b0	28 33 32 29 2e 74 6f 53  74 72 69 6e 67 28 22 68   (32).toString("h
+16c0	65 78 22 29 3b 0a 0a 20  20 20 20 20 20 2f 2f 20   ex");..      // 
+16d0	52 65 61 64 20 65 78 69  73 74 69 6e 67 20 2e 65   Read existing .e
+16e0	6e 76 20 63 6f 6e 74 65  6e 74 20 6f 72 20 73 74   nv content or st
+16f0	61 72 74 20 66 72 65 73  68 0a 20 20 20 20 20 20   art fresh.      
+1700	6c 65 74 20 63 6f 6e 74  65 6e 74 20 3d 20 22 22   let content = ""
+1710	3b 0a 20 20 20 20 20 20  69 66 20 28 65 78 69 73   ;.      if (exis
+1720	74 73 53 79 6e 63 28 65  6e 76 50 61 74 68 29 29   tsSync(envPath))
+1730	20 7b 0a 20 20 20 20 20  20 20 20 63 6f 6e 74 65    {.        conte
+1740	6e 74 20 3d 20 72 65 61  64 46 69 6c 65 53 79 6e   nt = readFileSyn
+1750	63 28 65 6e 76 50 61 74  68 2c 20 22 75 74 66 2d   c(envPath, "utf-
+1760	38 22 29 3b 0a 20 20 20  20 20 20 7d 0a 0a 20 20   8");.      }..  
+1770	20 20 20 20 2f 2f 20 41  70 70 65 6e 64 20 6b 65       // Append ke
+1780	79 20 69 66 20 6e 6f 74  20 61 6c 72 65 61 64 79   y if not already
+1790	20 70 72 65 73 65 6e 74  0a 20 20 20 20 20 20 69    present.      i
+17a0	66 20 28 21 63 6f 6e 74  65 6e 74 2e 69 6e 63 6c   f (!content.incl
+17b0	75 64 65 73 28 22 53 54  4f 52 41 47 45 5f 45 4e   udes("STORAGE_EN
+17c0	43 52 59 50 54 49 4f 4e  5f 4b 45 59 3d 22 29 29   CRYPTION_KEY="))
+17d0	20 7b 0a 20 20 20 20 20  20 20 20 63 6f 6e 73 74    {.        const
+17e0	20 73 65 70 61 72 61 74  6f 72 20 3d 20 63 6f 6e    separator = con
+17f0	74 65 6e 74 2e 74 72 69  6d 28 29 20 3f 20 22 5c   tent.trim() ? "\
+1800	6e 22 20 3a 20 22 22 3b  0a 20 20 20 20 20 20 20   n" : "";.       
+1810	20 63 6f 6e 73 74 20 6e  65 77 43 6f 6e 74 65 6e    const newConten
+1820	74 20 3d 20 63 6f 6e 74  65 6e 74 2e 74 72 69 6d   t = content.trim
+1830	45 6e 64 28 29 20 2b 20  73 65 70 61 72 61 74 6f   End() + separato
+1840	72 20 2b 20 60 53 54 4f  52 41 47 45 5f 45 4e 43   r + `STORAGE_ENC
+1850	52 59 50 54 49 4f 4e 5f  4b 45 59 3d 24 7b 6b 65   RYPTION_KEY=${ke
+1860	79 7d 60 3b 0a 20 20 20  20 20 20 20 20 77 72 69   y}`;.        wri
+1870	74 65 46 69 6c 65 53 79  6e 63 28 65 6e 76 50 61   teFileSync(envPa
+1880	74 68 2c 20 6e 65 77 43  6f 6e 74 65 6e 74 20 2b   th, newContent +
+1890	20 22 5c 6e 22 2c 20 22  75 74 66 2d 38 22 29 3b    "\n", "utf-8");
+18a0	0a 20 20 20 20 20 20 20  20 63 6f 6e 73 6f 6c 65   .        console
+18b0	2e 6c 6f 67 28 60 20 20  5c 78 31 62 5b 32 6d e2   .log(`  \x1b[2m.
+18c0	9c a8 20 47 65 6e 65 72  61 74 65 64 20 53 54 4f   .. Generated STO
+18d0	52 41 47 45 5f 45 4e 43  52 59 50 54 49 4f 4e 5f   RAGE_ENCRYPTION_
+18e0	4b 45 59 20 69 6e 20 24  7b 65 6e 76 50 61 74 68   KEY in ${envPath
+18f0	7d 5c 78 31 62 5b 30 6d  60 29 3b 0a 20 20 20 20   }\x1b[0m`);.    
+1900	20 20 7d 0a 0a 20 20 20  20 20 20 2f 2f 20 53 65     }..      // Se
+1910	74 20 69 6e 20 70 72 6f  63 65 73 73 2e 65 6e 76   t in process.env
+1920	20 66 6f 72 20 69 6d 6d  65 64 69 61 74 65 20 75    for immediate u
+1930	73 65 0a 20 20 20 20 20  20 70 72 6f 63 65 73 73   se.      process
+1940	2e 65 6e 76 2e 53 54 4f  52 41 47 45 5f 45 4e 43   .env.STORAGE_ENC
+1950	52 59 50 54 49 4f 4e 5f  4b 45 59 20 3d 20 6b 65   RYPTION_KEY = ke
+1960	79 3b 0a 20 20 20 20 7d  0a 20 20 7d 0a 7d 0a 0a   y;.    }.  }.}..
+1970	2f 2f 20 41 70 70 6c 79  20 2d 2d 6c 61 6e 67 20   // Apply --lang 
+1980	62 65 66 6f 72 65 20 43  6f 6d 6d 61 6e 64 65 72   before Commander
+1990	20 70 61 72 73 65 73 20  28 70 72 6f 67 72 61 6d    parses (program
+19a0	20 64 65 73 63 72 69 70  74 69 6f 6e 73 20 63 61    descriptions ca
+19b0	6c 6c 20 74 28 29 20 64  75 72 69 6e 67 20 73 65   ll t() during se
+19c0	74 75 70 29 0a 7b 0a 20  20 63 6f 6e 73 74 20 6c   tup).{.  const l
+19d0	61 6e 67 49 64 78 20 3d  20 70 72 6f 63 65 73 73   angIdx = process
+19e0	2e 61 72 67 76 2e 66 69  6e 64 49 6e 64 65 78 28   .argv.findIndex(
+19f0	28 61 29 20 3d 3e 20 61  20 3d 3d 3d 20 22 2d 2d   (a) => a === "--
+1a00	6c 61 6e 67 22 29 3b 0a  20 20 63 6f 6e 73 74 20   lang");.  const 
+1a10	6c 61 6e 67 41 72 67 20  3d 20 6c 61 6e 67 49 64   langArg = langId
+1a20	78 20 3e 3d 20 30 20 3f  20 70 72 6f 63 65 73 73   x >= 0 ? process
+1a30	2e 61 72 67 76 5b 6c 61  6e 67 49 64 78 20 2b 20   .argv[langIdx + 
+1a40	31 5d 20 3a 20 6e 75 6c  6c 3b 0a 20 20 63 6f 6e   1] : null;.  con
+1a50	73 74 20 6c 61 6e 67 45  6e 76 20 3d 20 70 72 6f   st langEnv = pro
+1a60	63 65 73 73 2e 65 6e 76  2e 4f 4d 4e 49 52 4f 55   cess.env.OMNIROU
+1a70	54 45 5f 4c 41 4e 47 3b  0a 20 20 63 6f 6e 73 74   TE_LANG;.  const
+1a80	20 63 68 6f 73 65 6e 20  3d 20 6c 61 6e 67 41 72    chosen = langAr
+1a90	67 20 7c 7c 20 6c 61 6e  67 45 6e 76 3b 0a 20 20   g || langEnv;.  
+1aa0	69 66 20 28 63 68 6f 73  65 6e 29 20 7b 0a 20 20   if (chosen) {.  
+1ab0	20 20 63 6f 6e 73 74 20  7b 20 73 65 74 4c 6f 63     const { setLoc
+1ac0	61 6c 65 20 7d 20 3d 20  61 77 61 69 74 20 69 6d   ale } = await im
+1ad0	70 6f 72 74 28 0a 20 20  20 20 20 20 70 61 74 68   port(.      path
+1ae0	54 6f 46 69 6c 65 55 52  4c 28 6a 6f 69 6e 28 52   ToFileURL(join(R
+1af0	4f 4f 54 2c 20 22 62 69  6e 22 2c 20 22 63 6c 69   OOT, "bin", "cli
+1b00	22 2c 20 22 69 31 38 6e  2e 6d 6a 73 22 29 29 2e   ", "i18n.mjs")).
+1b10	68 72 65 66 0a 20 20 20  20 29 3b 0a 20 20 20 20   href.    );.    
+1b20	73 65 74 4c 6f 63 61 6c  65 28 63 68 6f 73 65 6e   setLocale(chosen
+1b30	29 3b 0a 20 20 7d 0a 7d  0a 0a 2f 2f 20 52 65 67   );.  }.}..// Reg
+1b40	69 73 74 65 72 20 75 70  64 61 74 65 20 6e 6f 74   ister update not
+1b50	69 66 69 65 72 20 e2 80  94 20 63 68 65 63 6b 73   ifier ... checks
+1b60	20 6e 70 6d 20 6f 6e 63  65 20 70 65 72 20 32 34    npm once per 24
+1b70	68 2c 20 6e 6f 74 69 66  69 65 73 20 6f 6e 20 65   h, notifies on e
+1b80	78 69 74 20 76 69 61 20  73 74 64 65 72 72 2e 0a   xit via stderr..
+1b90	63 6f 6e 73 74 20 5f 70  6b 67 20 3d 20 4a 53 4f   const _pkg = JSO
+1ba0	4e 2e 70 61 72 73 65 28  72 65 61 64 46 69 6c 65   N.parse(readFile
+1bb0	53 79 6e 63 28 6a 6f 69  6e 28 52 4f 4f 54 2c 20   Sync(join(ROOT, 
+1bc0	22 70 61 63 6b 61 67 65  2e 6a 73 6f 6e 22 29 2c   "package.json"),
+1bd0	20 22 75 74 66 38 22 29  29 3b 0a 63 6f 6e 73 74    "utf8"));.const
+1be0	20 5f 6e 6f 74 69 66 69  65 72 20 3d 20 75 70 64    _notifier = upd
+1bf0	61 74 65 4e 6f 74 69 66  69 65 72 28 7b 20 70 6b   ateNotifier({ pk
+1c00	67 3a 20 5f 70 6b 67 2c  20 75 70 64 61 74 65 43   g: _pkg, updateC
+1c10	68 65 63 6b 49 6e 74 65  72 76 61 6c 3a 20 31 30   heckInterval: 10
+1c20	30 30 20 2a 20 36 30 20  2a 20 36 30 20 2a 20 32   00 * 60 * 60 * 2
+1c30	34 20 7d 29 3b 0a 70 72  6f 63 65 73 73 2e 6f 6e   4 });.process.on
+1c40	28 22 65 78 69 74 22 2c  20 28 29 20 3d 3e 20 7b   ("exit", () => {
+1c50	0a 20 20 69 66 20 28 70  72 6f 63 65 73 73 2e 65   .  if (process.e
+1c60	6e 76 2e 4f 4d 4e 49 52  4f 55 54 45 5f 4e 4f 5f   nv.OMNIROUTE_NO_
+1c70	55 50 44 41 54 45 5f 4e  4f 54 49 46 49 45 52 29   UPDATE_NOTIFIER)
+1c80	20 72 65 74 75 72 6e 3b  0a 20 20 69 66 20 28 70    return;.  if (p
+1c90	72 6f 63 65 73 73 2e 65  6e 76 2e 43 49 29 20 72   rocess.env.CI) r
+1ca0	65 74 75 72 6e 3b 0a 20  20 69 66 20 28 70 72 6f   eturn;.  if (pro
+1cb0	63 65 73 73 2e 61 72 67  76 2e 69 6e 63 6c 75 64   cess.argv.includ
+1cc0	65 73 28 22 2d 2d 71 75  69 65 74 22 29 20 7c 7c   es("--quiet") ||
+1cd0	20 70 72 6f 63 65 73 73  2e 61 72 67 76 2e 69 6e    process.argv.in
+1ce0	63 6c 75 64 65 73 28 22  2d 71 22 29 29 20 72 65   cludes("-q")) re
+1cf0	74 75 72 6e 3b 0a 20 20  63 6f 6e 73 74 20 6f 75   turn;.  const ou
+1d00	74 70 75 74 49 64 78 20  3d 20 70 72 6f 63 65 73   tputIdx = proces
+1d10	73 2e 61 72 67 76 2e 69  6e 64 65 78 4f 66 28 22   s.argv.indexOf("
+1d20	2d 2d 6f 75 74 70 75 74  22 29 3b 0a 20 20 63 6f   --output");.  co
+1d30	6e 73 74 20 6f 75 74 70  75 74 56 61 6c 20 3d 20   nst outputVal = 
+1d40	6f 75 74 70 75 74 49 64  78 20 3e 3d 20 30 20 3f   outputIdx >= 0 ?
+1d50	20 70 72 6f 63 65 73 73  2e 61 72 67 76 5b 6f 75    process.argv[ou
+1d60	74 70 75 74 49 64 78 20  2b 20 31 5d 20 3a 20 6e   tputIdx + 1] : n
+1d70	75 6c 6c 3b 0a 20 20 69  66 20 28 6f 75 74 70 75   ull;.  if (outpu
+1d80	74 56 61 6c 20 3d 3d 3d  20 22 6a 73 6f 6e 22 20   tVal === "json" 
+1d90	7c 7c 20 6f 75 74 70 75  74 56 61 6c 20 3d 3d 3d   || outputVal ===
+1da0	20 22 6a 73 6f 6e 6c 22  20 7c 7c 20 6f 75 74 70    "jsonl" || outp
+1db0	75 74 56 61 6c 20 3d 3d  3d 20 22 63 73 76 22 29   utVal === "csv")
+1dc0	20 72 65 74 75 72 6e 3b  0a 20 20 69 66 20 28 70    return;.  if (p
+1dd0	72 6f 63 65 73 73 2e 61  72 67 76 2e 73 6f 6d 65   rocess.argv.some
+1de0	28 28 61 29 20 3d 3e 20  61 2e 73 74 61 72 74 73   ((a) => a.starts
+1df0	57 69 74 68 28 22 2d 2d  6f 75 74 70 75 74 3d 6a   With("--output=j
+1e00	73 6f 6e 22 29 20 7c 7c  20 61 2e 73 74 61 72 74   son") || a.start
+1e10	73 57 69 74 68 28 22 2d  2d 6f 75 74 70 75 74 3d   sWith("--output=
+1e20	6a 73 6f 6e 6c 22 29 20  7c 7c 20 61 2e 73 74 61   jsonl") || a.sta
+1e30	72 74 73 57 69 74 68 28  22 2d 2d 6f 75 74 70 75   rtsWith("--outpu
+1e40	74 3d 63 73 76 22 29 29  29 20 72 65 74 75 72 6e   t=csv"))) return
+1e50	3b 0a 20 20 69 66 20 28  5f 6e 6f 74 69 66 69 65   ;.  if (_notifie
+1e60	72 2e 75 70 64 61 74 65  29 20 7b 0a 20 20 20 20   r.update) {.    
+1e70	5f 6e 6f 74 69 66 69 65  72 2e 6e 6f 74 69 66 79   _notifier.notify
+1e80	28 7b 0a 20 20 20 20 20  20 64 65 66 65 72 3a 20   ({.      defer: 
+1e90	66 61 6c 73 65 2c 0a 20  20 20 20 20 20 69 73 47   false,.      isG
+1ea0	6c 6f 62 61 6c 3a 20 74  72 75 65 2c 0a 20 20 20   lobal: true,.   
+1eb0	20 20 20 6d 65 73 73 61  67 65 3a 0a 20 20 20 20      message:.    
+1ec0	20 20 20 20 60 55 70 64  61 74 65 20 61 76 61 69       `Update avai
+1ed0	6c 61 62 6c 65 3a 20 24  7b 5f 6e 6f 74 69 66 69   lable: ${_notifi
+1ee0	65 72 2e 75 70 64 61 74  65 2e 63 75 72 72 65 6e   er.update.curren
+1ef0	74 7d 20 e2 86 92 20 24  7b 5f 6e 6f 74 69 66 69   t} ... ${_notifi
+1f00	65 72 2e 75 70 64 61 74  65 2e 6c 61 74 65 73 74   er.update.latest
+1f10	7d 5c 6e 60 20 2b 0a 20  20 20 20 20 20 20 20 22   }\n` +.        "
+1f20	52 75 6e 20 60 6e 70 6d  20 69 6e 73 74 61 6c 6c   Run `npm install
+1f30	20 2d 67 20 6f 6d 6e 69  72 6f 75 74 65 60 20 6f    -g omniroute` o
+1f40	72 20 60 6f 6d 6e 69 72  6f 75 74 65 20 75 70 64   r `omniroute upd
+1f50	61 74 65 20 2d 2d 61 70  70 6c 79 60 22 2c 0a 20   ate --apply`",. 
+1f60	20 20 20 7d 29 3b 0a 20  20 7d 0a 7d 29 3b 0a 0a      });.  }.});..
+1f70	69 66 20 28 70 72 6f 63  65 73 73 2e 61 72 67 76   if (process.argv
+1f80	2e 69 6e 63 6c 75 64 65  73 28 22 2d 2d 6d 63 70   .includes("--mcp
+1f90	22 29 29 20 7b 0a 20 20  74 72 79 20 7b 0a 20 20   ")) {.  try {.  
+1fa0	20 20 63 6f 6e 73 74 20  7b 20 73 74 61 72 74 4d     const { startM
+1fb0	63 70 43 6c 69 20 7d 20  3d 20 61 77 61 69 74 20   cpCli } = await 
+1fc0	69 6d 70 6f 72 74 28 70  61 74 68 54 6f 46 69 6c   import(pathToFil
+1fd0	65 55 52 4c 28 6a 6f 69  6e 28 52 4f 4f 54 2c 20   eURL(join(ROOT, 
+1fe0	22 62 69 6e 22 2c 20 22  6d 63 70 2d 73 65 72 76   "bin", "mcp-serv
+1ff0	65 72 2e 6d 6a 73 22 29  29 2e 68 72 65 66 29 3b   er.mjs")).href);
+2000	0a 20 20 20 20 61 77 61  69 74 20 73 74 61 72 74   .    await start
+2010	4d 63 70 43 6c 69 28 52  4f 4f 54 29 3b 0a 20 20   McpCli(ROOT);.  
+2020	7d 20 63 61 74 63 68 20  28 65 72 72 29 20 7b 0a   } catch (err) {.
+2030	20 20 20 20 63 6f 6e 73  6f 6c 65 2e 65 72 72 6f       console.erro
+2040	72 28 22 5c 78 31 62 5b  33 31 6d e2 9c 96 20 46   r("\x1b[31m... F
+2050	61 69 6c 65 64 20 74 6f  20 73 74 61 72 74 20 4d   ailed to start M
+2060	43 50 20 73 65 72 76 65  72 3a 5c 78 31 62 5b 30   CP server:\x1b[0
+2070	6d 22 2c 20 65 72 72 2e  6d 65 73 73 61 67 65 20   m", err.message 
+2080	7c 7c 20 65 72 72 29 3b  0a 20 20 20 20 70 72 6f   || err);.    pro
+2090	63 65 73 73 2e 65 78 69  74 28 31 29 3b 0a 20 20   cess.exit(1);.  
+20a0	7d 0a 20 20 70 72 6f 63  65 73 73 2e 65 78 69 74   }.  process.exit
+20b0	28 30 29 3b 0a 7d 0a 0a  69 66 20 28 70 72 6f 63   (0);.}..if (proc
+20c0	65 73 73 2e 61 72 67 76  2e 69 6e 63 6c 75 64 65   ess.argv.include
+20d0	73 28 22 72 65 73 65 74  2d 65 6e 63 72 79 70 74   s("reset-encrypt
+20e0	65 64 2d 63 6f 6c 75 6d  6e 73 22 29 29 20 7b 0a   ed-columns")) {.
+20f0	20 20 63 6f 6e 73 74 20  7b 20 72 75 6e 52 65 73     const { runRes
+2100	65 74 45 6e 63 72 79 70  74 65 64 43 6f 6c 75 6d   etEncryptedColum
+2110	6e 73 20 7d 20 3d 20 61  77 61 69 74 20 69 6d 70   ns } = await imp
+2120	6f 72 74 28 0a 20 20 20  20 70 61 74 68 54 6f 46   ort(.    pathToF
+2130	69 6c 65 55 52 4c 28 6a  6f 69 6e 28 52 4f 4f 54   ileURL(join(ROOT
+2140	2c 20 22 62 69 6e 22 2c  20 22 63 6c 69 22 2c 20   , "bin", "cli", 
+2150	22 63 6f 6d 6d 61 6e 64  73 22 2c 20 22 72 65 73   "commands", "res
+2160	65 74 2d 65 6e 63 72 79  70 74 65 64 2d 63 6f 6c   et-encrypted-col
+2170	75 6d 6e 73 2e 6d 6a 73  22 29 29 2e 68 72 65 66   umns.mjs")).href
+2180	0a 20 20 29 3b 0a 20 20  63 6f 6e 73 74 20 65 78   .  );.  const ex
+2190	69 74 43 6f 64 65 20 3d  20 61 77 61 69 74 20 72   itCode = await r
+21a0	75 6e 52 65 73 65 74 45  6e 63 72 79 70 74 65 64   unResetEncrypted
+21b0	43 6f 6c 75 6d 6e 73 28  70 72 6f 63 65 73 73 2e   Columns(process.
+21c0	61 72 67 76 2e 73 6c 69  63 65 28 32 29 29 3b 0a   argv.slice(2));.
+21d0	20 20 70 72 6f 63 65 73  73 2e 65 78 69 74 28 65     process.exit(e
+21e0	78 69 74 43 6f 64 65 20  3f 3f 20 30 29 3b 0a 7d   xitCode ?? 0);.}
+21f0	0a 0a 74 72 79 20 7b 0a  20 20 63 6f 6e 73 74 20   ..try {.  const 
+2200	7b 20 63 72 65 61 74 65  50 72 6f 67 72 61 6d 20   { createProgram 
+2210	7d 20 3d 20 61 77 61 69  74 20 69 6d 70 6f 72 74   } = await import
+2220	28 0a 20 20 20 20 70 61  74 68 54 6f 46 69 6c 65   (.    pathToFile
+2230	55 52 4c 28 6a 6f 69 6e  28 52 4f 4f 54 2c 20 22   URL(join(ROOT, "
+2240	62 69 6e 22 2c 20 22 63  6c 69 22 2c 20 22 70 72   bin", "cli", "pr
+2250	6f 67 72 61 6d 2e 6d 6a  73 22 29 29 2e 68 72 65   ogram.mjs")).hre
+2260	66 0a 20 20 29 3b 0a 20  20 63 6f 6e 73 74 20 70   f.  );.  const p
+2270	72 6f 67 72 61 6d 20 3d  20 63 72 65 61 74 65 50   rogram = createP
+2280	72 6f 67 72 61 6d 28 29  3b 0a 20 20 61 77 61 69   rogram();.  awai
+2290	74 20 70 72 6f 67 72 61  6d 2e 70 61 72 73 65 41   t program.parseA
+22a0	73 79 6e 63 28 70 72 6f  63 65 73 73 2e 61 72 67   sync(process.arg
+22b0	76 29 3b 0a 7d 20 63 61  74 63 68 20 28 65 72 72   v);.} catch (err
+22c0	29 20 7b 0a 20 20 69 66  20 28 65 72 72 2e 65 78   ) {.  if (err.ex
+22d0	69 74 43 6f 64 65 20 21  3d 3d 20 75 6e 64 65 66   itCode !== undef
+22e0	69 6e 65 64 29 20 70 72  6f 63 65 73 73 2e 65 78   ined) process.ex
+22f0	69 74 28 65 72 72 2e 65  78 69 74 43 6f 64 65 29   it(err.exitCode)
+2300	3b 0a 20 20 63 6f 6e 73  6f 6c 65 2e 65 72 72 6f   ;.  console.erro
+2310	72 28 22 5c 78 31 62 5b  33 31 6d e2 9c 96 22 2c   r("\x1b[31m...",
+2320	20 65 72 72 2e 6d 65 73  73 61 67 65 2c 20 22 5c    err.message, "\
+2330	78 31 62 5b 30 6d 22 29  3b 0a 20 20 70 72 6f 63   x1b[0m");.  proc
+2340	65 73 73 2e 65 78 69 74  28 31 29 3b 0a 7d 0a      ess.exit(1);.}.

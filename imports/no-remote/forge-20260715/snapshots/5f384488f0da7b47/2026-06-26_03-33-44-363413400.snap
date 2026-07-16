@@ -1,0 +1,14 @@
+{
+  "name": "Civis",
+  "role": "civ-lab-engine",
+  "lifecycle": "active",
+  "description": "Canonical workspace for CivLab — a headless, deterministic civilization simulation engine (Rust, hecs ECS, fixed-point i64). 33+ crates spanning engine, server, voxel, build, genetics, economy, species, agents, diplomacy, laws, research, tactics, planet, protocol-3d, mod-host, and 20+ more.",
+  "repo_path": "KooshaPari/Civis",
+  "default_branch": "main",
+  "language": "Rust",
+  "size_kb": 2322641,
+  "is_archived": false,
+  "audit_artifact": "Civis-2026-06-25.md",
+  "summary": "AFFIRM — canonical home. 780+ commits, 113/212 FRs, 82.6% coverage, pre-MVP, Q3 2026 target.",
+  "status": "active"
+}

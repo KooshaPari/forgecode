@@ -1,0 +1,243 @@
+//! Tracery/template fallback for LLM garnish (FR-CIV-LLM-006).
+//!
+//! When the cache misses AND the allowed-use guard forbids a live provider call,
+//! the fallback produces generated text from a small set of seed templates
+//! instead of failing or blocking the sim tick.
+//!
+//! The fallback uses `tracery` grammars (same crate used by `civ-legends` for
+//! rumor prose, FR-CIV-LEGENDS-004). Each domain (lore, diplomacy, ε tie-break)
+//! has its own grammar with a handful of rules so the output is varied but
+//! avoids any raw world state leakage.
+
+use crate::prompt_tags::{PromptDomain, PromptTag};
+use rand::Rng;
+use std::collections::HashMap;
+
+/// A collection of tracery grammars keyed by [`PromptDomain`].
+///
+/// Each grammar is a JSON string with a `"origin"` rule and any supporting
+/// substitution rules. The grammar is parsed once at construction and reused.
+#[derive(Clone)]
+pub struct TemplateFallback {
+    grammars: HashMap<PromptDomain, tracery::Grammar>,
+}
+
+impl TemplateFallback {
+    /// Build a fallback with the default set of grammars.
+    ///
+    /// The grammars are deliberately short (3–6 alternatives per rule) so the
+    /// output is varied without being semantically rich enough to be
+    /// confusable with a real LLM generation.
+    #[must_use]
+    pub fn new() -> Self {
+        let mut grammars = HashMap::new();
+
+        // ── Lore grammar ──────────────────────────────────────────────
+        if let Ok(g) = tracery::Grammar::from_json(
+            r#"{
+                "origin": ["#subject# #verb# in the #adj# annals of #domain#."],
+                "verb": ["is remembered", "is recorded", "appears", "fades"],
+                "adj": ["ancient", "dusty", "faded", "gilded", "iron"],
+                "domain": ["the old kingdom", "the lost age", "the bronze collapse", "the silver march"]
+            }"#,
+        ) {
+            grammars.insert(PromptDomain::Lore, g);
+        }
+
+        // ── Diplomacy grammar ─────────────────────────────────────────
+        if let Ok(g) = tracery::Grammar::from_json(
+            r#"{
+                "origin": ["#subject# #verb# #tone# #outcome#."],
+                "verb": ["proposes", "seeks", "offers", "requests"],
+                "tone": ["a cautious", "a generous", "a measured", "a firm"],
+                "outcome": ["trade corridor", "mutual defense", "resource pact", "non-aggression accord"]
+            }"#,
+        ) {
+            grammars.insert(PromptDomain::Diplomacy, g);
+        }
+
+        // ── ε tie-break grammar ───────────────────────────────────────
+        if let Ok(g) = tracery::Grammar::from_json(
+            r#"{
+                "origin": ["tie resolves toward #direction# (#weight#)"],
+                "direction": ["left", "right", "north-east", "south-west", "center"],
+                "weight": ["ε=0.01", "ε=0.02", "ε=0.005", "ε=0.03"]
+            }"#,
+        ) {
+            grammars.insert(PromptDomain::ETieBreak, g);
+        }
+
+        // ── Unknown / forbidden fallback ───────────────────────────────
+        if let Ok(g) = tracery::Grammar::from_json(
+            r#"{
+                "origin": ["[fallback] generation blocked by policy guard — #reason#"],
+                "reason": ["use not in allowed set", "domain not permitted", "live call forbidden by guard"]
+            }"#,
+        ) {
+            grammars.insert(PromptDomain::Unknown, g);
+        }
+
+        Self { grammars }
+    }
+
+    /// Produce fallback text for a given [`PromptTag`].
+    ///
+    /// If a grammar exists for the tag's domain, the text is generated from
+    /// the grammar using `rng` for the random choices. If no grammar is
+    /// registered, a plain placeholder is returned.
+    ///
+    /// The `subject_hint` is substituted into the `#subject#` slot if the
+    /// grammar template uses it; otherwise it is appended as a suffix.
+    pub fn generate<R: Rng + ?Sized>(
+        &self,
+        tag: &PromptTag,
+        subject_hint: &str,
+        rng: &mut R,
+    ) -> String {
+        let Some(grammar) = self.grammars.get(&tag.domain) else {
+            return format!(
+                "[no grammar for domain {:?}] {}",
+                tag.domain, tag.text
+            );
+        };
+
+        let mut g = grammar.clone();
+        g.set_default_rule("origin");
+
+        // Inject subject into the grammar if the templates reference it.
+        if !subject_hint.is_empty() {
+            g.add_rules(&[("subject", vec![subject_hint.to_string()])]);
+        }
+
+        match g.flatten(rng) {
+            Ok(text) => {
+                // Append the domain tag so consumers can distinguish fallback
+                // output from genuine provider output.
+                format!("{text} [domain:{:?}]", tag.domain)
+            }
+            Err(_) => {
+                // Grammar flatten can fail on malformed input; fall back to
+                // plain placeholder.
+                format!(
+                    "[template error for domain {:?}] {}",
+                    tag.domain, tag.text
+                )
+            }
+        }
+    }
+}
+
+impl Default for TemplateFallback {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
+
+    #[test]
+    fn fr_civ_llm_006_lore_fallback_produces_text() {
+        let fb = TemplateFallback::new();
+        let tag = PromptTag::lore("old kingdom fell to sea");
+        let mut rng = StdRng::seed_from_u64(1);
+        let text = fb.generate(&tag, "Ash-Veined Tsar", &mut rng);
+        // Must contain domain tag and not be empty.
+        assert!(!text.is_empty());
+        assert!(text.contains("[domain:Lore]"));
+        // Must NOT leak the raw prompt text (just the subject + domain).
+        assert!(!text.contains("old kingdom fell to sea"));
+    }
+
+    #[test]
+    fn fr_civ_llm_006_diplomacy_fallback_produces_text() {
+        let fb = TemplateFallback::new();
+        let tag = PromptTag::diplomacy("propose trade corridor");
+        let mut rng = StdRng::seed_from_u64(2);
+        let text = fb.generate(&tag, "Faction-A", &mut rng);
+        assert!(!text.is_empty());
+        assert!(text.contains("[domain:Diplomacy]"));
+    }
+
+    #[test]
+    fn fr_civ_llm_006_epsilon_tie_break_fallback_produces_text() {
+        let fb = TemplateFallback::new();
+        let tag = PromptTag::epsilon_tie_break("flicker epsilon");
+        let mut rng = StdRng::seed_from_u64(3);
+        let text = fb.generate(&tag, "", &mut rng);
+        assert!(!text.is_empty());
+        assert!(text.contains("[domain:ETieBreak]"));
+    }
+
+    #[test]
+    fn fr_civ_llm_006_unknown_domain_fallback_messages_policy_block() {
+        let fb = TemplateFallback::new();
+        let tag = PromptTag {
+            domain: PromptDomain::Unknown,
+            text: "raw world state dump".into(),
+        };
+        let mut rng = StdRng::seed_from_u64(4);
+        let text = fb.generate(&tag, "", &mut rng);
+        // Fallback for Unknown should mention policy guard.
+        assert!(text.contains("blocked") || text.contains("guard"));
+    }
+
+    #[test]
+    fn fr_civ_llm_006_fallback_is_deterministic_with_same_seed() {
+        let fb = TemplateFallback::new();
+        let tag = PromptTag::lore("chronicle");
+        let a = {
+            let mut rng = StdRng::seed_from_u64(99);
+            fb.generate(&tag, "Duke", &mut rng)
+        };
+        let b = {
+            let mut rng = StdRng::seed_from_u64(99);
+            fb.generate(&tag, "Duke", &mut rng)
+        };
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn fr_civ_llm_006_fallback_varies_with_different_seeds() {
+        let fb = TemplateFallback::new();
+        let tag = PromptTag::diplomacy("treaty proposal");
+        let a = {
+            let mut rng = StdRng::seed_from_u64(10);
+            fb.generate(&tag, "Kingdom-A", &mut rng)
+        };
+        let b = {
+            let mut rng = StdRng::seed_from_u64(20);
+            fb.generate(&tag, "Kingdom-A", &mut rng)
+        };
+        // Different seeds SHOULD produce different output (grammar has
+        // multiple alternatives for each slot).
+        assert_ne!(
+            a, b,
+            "different seeds should produce different fallback text"
+        );
+    }
+
+    #[test]
+    fn fr_civ_llm_006_fallback_never_calls_provider() {
+        // This test asserts that the fallback works without ANY AiProvider.
+        // If a caller supplies a forbidden-domain tag, the fallback should
+        // still produce output without the guard ever making a provider call.
+        let fb = TemplateFallback::new();
+        let tag = PromptTag {
+            domain: PromptDomain::Unknown,
+            text: "simulate event outcome".into(),
+        };
+        let mut rng = StdRng::seed_from_u64(7);
+        let text = fb.generate(&tag, "World", &mut rng);
+        assert!(!text.is_empty());
+        // The text should indicate that something was blocked, not that
+        // generation succeeded.
+        assert!(
+            text.contains("blocked") || text.contains("forbidden") || text.contains("guard"),
+            "fallback for unknown domain must signal policy block: {text}"
+        );
+    }
+}

@@ -1,0 +1,296 @@
+#requires -Version 5.1
+$ErrorActionPreference = 'Continue'
+$root = 'C:\Users\koosh\ecosystem'
+$owner = 'KooshaPari'
+
+# Load inventory
+$invPath = Join-Path $root 'repo_inventory.json'
+$repos = Get-Content $invPath -Raw | ConvertFrom-Json
+Write-Host ("Inventory loaded: " + $repos.Count + " repos")
+
+# Output cache dir for raw API responses (for debugging)
+$rawDir = Join-Path $root '__raw'
+if (-not (Test-Path $rawDir)) { New-Item -ItemType Directory -Path $rawDir | Out-Null }
+
+# ---- helpers ----
+function Get-GhJson {
+  param([string]$Endpoint, [string]$OutFile = $null)
+  $tmp = [System.IO.Path]::GetTempFileName()
+  & gh api $Endpoint *> $tmp
+  $content = Get-Content $tmp -Raw
+  Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+  if ($null -eq $content) { $content = '' }
+  $clean = [regex]::Replace($content, "\x1B\[[0-9;]*m", '')
+  if ($OutFile) { $clean | Out-File -FilePath $OutFile -Encoding UTF8 }
+  return $clean
+}
+
+function Get-GhJsonSafe {
+  param([string]$Endpoint, [string]$Repo, [string]$Kind)
+  try {
+    $raw = Get-GhJson $Endpoint
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+    return ($raw | ConvertFrom-Json)
+  } catch {
+    Write-Host ("  ! " + $Repo + " " + $Kind + " failed: " + $_.Exception.Message) -ForegroundColor Yellow
+    return $null
+  }
+}
+
+# Minimal YAML inspection: extract name, on (triggers), and job names
+# We don't have a YAML parser available, so we do simple regex-based scanning.
+function Get-WorkflowSummary {
+  param([string]$YAML)
+  if ([string]::IsNullOrEmpty($YAML)) { return $null }
+  $summary = [ordered]@{
+    name = $null
+    triggers = @()
+    jobs = @()
+    checks = @()
+  }
+  # name: (top-level)
+  $m = [regex]::Match($YAML, '(?m)^name:\s*["'']?([^"''\r\n#]+)["'']?\s*$')
+  if ($m.Success) { $summary.name = $m.Groups[1].Value.Trim() }
+  # on: (top-level triggers) — collect until next top-level key (no indent)
+  $onBlock = [regex]::Match($YAML, '(?ms)^on:\s*(?:\r?\n)+((?:[ \t]+[^\r\n]+\r?\n?)+)|^on:\s+([^\r\n#]+)')
+  if ($onBlock.Success) {
+    $body = if ($onBlock.Groups[1].Success) { $onBlock.Groups[1].Value } else { $onBlock.Groups[2].Value }
+    $candidates = @()
+    foreach ($line in ($body -split '\r?\n')) {
+      $t = $line.Trim() -replace ':\s*$',''
+      $t = $t.Trim() -replace '^["'']','' -replace '["'']$',''
+      if ($t -and $t -notmatch '^[#-]') { $candidates += $t }
+    }
+    $summary.triggers = $candidates | Where-Object { $_ } | Select-Object -Unique
+  }
+  # jobs: <id>:\s*\n  ... name: ... runs-on: ...
+  $jobsMatches = [regex]::Matches($YAML, '(?ms)^  ([A-Za-z0-9_\-]+):\s*\r?\n(?:    [^\r\n]+\r?\n)+')
+  foreach ($j in $jobsMatches) {
+    $jobId = $j.Groups[1].Value
+    $jobBody = $j.Groups[0].Value
+    $nameMatch = [regex]::Match($jobBody, '(?m)^\s+name:\s*["'']?([^"''\r\n#]+)')
+    $name = if ($nameMatch.Success) { $nameMatch.Groups[1].Value.Trim() } else { $jobId }
+    $runsOn = ''
+    $rMatch = [regex]::Match($jobBody, '(?m)^\s+runs-on:\s*([^\r\n#]+)')
+    if ($rMatch.Success) { $runsOn = $rMatch.Groups[1].Value.Trim() }
+    # Steps summary: collect first non-`uses:`/`run:` name (job-name) and "run" command lines
+    $stepNames = @()
+    $stepRuns = @()
+    foreach ($sline in ($jobBody -split '\r?\n')) {
+      if ($sline -match '^\s+- name:\s*(.+)$') { $stepNames += $Matches[1].Trim() }
+      elseif ($sline -match '^\s+- run:\s*(.+)$') { $stepRuns += $Matches[1].Trim() }
+      elseif ($sline -match '^\s+- uses:\s*(.+)$') { $stepNames += "[uses] " + $Matches[1].Trim() }
+    }
+    $checksForJob = @()
+    $checksForJob += $stepNames
+    $checksForJob += $stepRuns
+    $summary.jobs += [ordered]@{ id = $jobId; name = $name; runs_on = $runsOn; steps = ($stepNames + $stepRuns | Select-Object -First 25) }
+    $summary.checks += $checksForJob
+  }
+  # dedupe checks and trim
+  $summary.checks = $summary.checks | Where-Object { $_ } | Select-Object -Unique -First 50
+  return $summary
+}
+
+# Classify CI presence based on workflow count + check types
+function Get-CIClass {
+  param([object]$Workflows, [object]$Runs)
+  $wfCount = 0
+  if ($Workflows -and $Workflows.Count) { $wfCount = @($Workflows).Count }
+  $hasRuns = $false
+  if ($Runs -and $Runs.workflow_runs -and $Runs.workflow_runs.Count -gt 0) { $hasRuns = $true }
+  if ($wfCount -eq 0 -and -not $hasRuns) { return 'none' }
+  if ($wfCount -eq 0) { return 'none' }
+  # Count triggers/coverage
+  $hasRelease = $false; $hasScheduled = $false; $hasPR = $false; $hasPush = $false; $hasManual = $false
+  foreach ($w in $Workflows) {
+    if ($w.summary -and $w.summary.triggers) {
+      foreach ($t in $w.summary.triggers) {
+        $tl = $t.ToLower()
+        if ($tl -match 'release|publish|deploy') { $hasRelease = $true }
+        if ($tl -match 'schedule|cron') { $hasScheduled = $true }
+        if ($tl -match 'pull_request|pr_') { $hasPR = $true }
+        if ($tl -eq 'push') { $hasPush = $true }
+        if ($tl -match 'workflow_dispatch|workflow_call|repository_dispatch') { $hasManual = $true }
+      }
+    }
+  }
+  $channels = ($hasRelease, $hasScheduled, $hasPR, $hasPush, $hasManual) | Where-Object { $_ } | Measure-Object | Select-Object -ExpandProperty Count
+  if ($wfCount -ge 3 -and $channels -ge 2) { return 'full' }
+  if ($wfCount -le 1) { return 'light' }
+  if ($wfCount -eq 2 -and $channels -lt 2) { return 'light' }
+  return 'full'
+}
+
+function Get-LastRunStatus {
+  param([object]$Runs)
+  if (-not $Runs -or -not $Runs.workflow_runs -or $Runs.workflow_runs.Count -eq 0) { return 'never' }
+  $last = $Runs.workflow_runs[0]
+  if ($last.status -ne 'completed') { return $last.status } # in_progress / queued / requested / waiting
+  return $last.conclusion
+}
+
+# ---- main loop ----
+$results = New-Object System.Collections.Generic.List[object]
+$idx = 0
+foreach ($r in $repos) {
+  $idx++
+  $name = $r.name
+  Write-Host ("[{0,3}/{1}] {2}" -f $idx, $repos.Count, $name)
+  $rec = [ordered]@{
+    name = $name
+    language = $r.language
+    description = $r.description
+    commits_main = @()
+    workflows = @()
+    workflow_count = 0
+    ci_presence = 'none'
+    last_run_status = 'never'
+    last_run = $null
+    checks = @()
+    checks_pass = @()
+    checks_fail = @()
+    error = $null
+  }
+
+  # 1. commits on main
+  $cm = Get-GhJsonSafe "repos/$owner/$name/commits?sha=main&per_page=3" $name 'commits'
+  if ($cm) {
+    foreach ($c in ($cm | Select-Object -First 3)) {
+      $msg = ($c.commit.message -split "`n")[0]
+      $rec.commits_main += [ordered]@{
+        sha = $c.sha
+        short_sha = $c.sha.Substring(0, [Math]::Min(8, $c.sha.Length))
+        date = $c.commit.author.date
+        author = $c.commit.author.name
+        message = $msg
+        url = $c.html_url
+      }
+    }
+  } elseif ($cm -eq $null) {
+    # try master as fallback
+    $cm2 = Get-GhJsonSafe "repos/$owner/$name/commits?sha=master&per_page=3" $name 'commits-master'
+    if ($cm2) {
+      foreach ($c in ($cm2 | Select-Object -First 3)) {
+        $msg = ($c.commit.message -split "`n")[0]
+        $rec.commits_main += [ordered]@{
+          sha = $c.sha
+          short_sha = $c.sha.Substring(0, [Math]::Min(8, $c.sha.Length))
+          date = $c.commit.author.date
+          author = $c.commit.author.name
+          message = $msg
+          url = $c.html_url
+        }
+      }
+    }
+  }
+
+  # 2. workflows
+  $wfList = Get-GhJsonSafe "repos/$owner/$name/contents/.github/workflows" $name 'workflows'
+  if ($wfList) {
+    foreach ($w in $wfList) {
+      if ($w.type -ne 'file') { continue }
+      $pathSegs = $w.path -split '/'
+      $wfFile = Get-GhJsonSafe "repos/$owner/$name/contents/$($w.path)" $name ('wf:' + $w.name)
+      $yaml = $null
+      if ($wfFile -and $wfFile.content) {
+        try {
+          $bytes = [Convert]::FromBase64String($wfFile.content)
+          $yaml = [System.Text.Encoding]::UTF8.GetString($bytes)
+        } catch {
+          $yaml = $null
+        }
+      }
+      $summary = Get-WorkflowSummary $yaml
+      $rec.workflows += [ordered]@{
+        name = $w.name
+        path = $w.path
+        size = $w.size
+        sha = $w.sha
+        summary = $summary
+      }
+    }
+    $rec.workflow_count = $rec.workflows.Count
+  }
+
+  # 3. actions runs (last 5)
+  $runs = Get-GhJsonSafe "repos/$owner/$name/actions/runs?per_page=5" $name 'runs'
+  $rec.last_run_status = Get-LastRunStatus $runs
+  if ($runs -and $runs.workflow_runs -and $runs.workflow_runs.Count -gt 0) {
+    $last = $runs.workflow_runs[0]
+    $rec.last_run = [ordered]@{
+      id = $last.id
+      name = $last.name
+      conclusion = $last.conclusion
+      status = $last.status
+      event = $last.event
+      branch = $last.head_branch
+      sha = $last.head_sha
+      created_at = $last.created_at
+      url = $last.html_url
+    }
+  }
+
+  # 4. check-runs on last main commit
+  if ($rec.commits_main.Count -gt 0) {
+    $headSha = $rec.commits_main[0].sha
+    $cr = Get-GhJsonSafe "repos/$owner/$name/commits/$headSha/check-runs?per_page=20" $name 'checkruns'
+    if ($cr -and $cr.check_runs) {
+      foreach ($chk in $cr.check_runs) {
+        $status = $chk.conclusion
+        if (-not $status) { $status = $chk.status }
+        $rec.checks += [ordered]@{
+          name = $chk.name
+          status = $status
+          app = if ($chk.app) { $chk.app.slug } else { $null }
+          details_url = $chk.details_url
+          html_url = $chk.html_url
+        }
+        if ($status -eq 'success') { $rec.checks_pass += $chk.name }
+        elseif ($status -in @('failure','timed_out','startup_failure','stale','cancelled')) { $rec.checks_fail += $chk.name }
+      }
+    }
+  }
+
+  # 5. classify CI presence
+  $rec.ci_presence = Get-CIClass $rec.workflows $runs
+
+  $results.Add([PSCustomObject]$rec)
+  # small throttle to be polite
+  Start-Sleep -Milliseconds 150
+}
+
+# Build final output
+$summary = [ordered]@{
+  generated_at = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ssZ')
+  owner = $owner
+  total_repos = $results.Count
+  counts = [ordered]@{
+    none = ($results | Where-Object { $_.ci_presence -eq 'none' }).Count
+    light = ($results | Where-Object { $_.ci_presence -eq 'light' }).Count
+    full = ($results | Where-Object { $_.ci_presence -eq 'full' }).Count
+  }
+  last_run = [ordered]@{
+    success = ($results | Where-Object { $_.last_run_status -eq 'success' }).Count
+    failure = ($results | Where-Object { $_.last_run_status -eq 'failure' }).Count
+    cancelled = ($results | Where-Object { $_.last_run_status -eq 'cancelled' }).Count
+    in_progress = ($results | Where-Object { $_.last_run_status -in @('in_progress','queued','requested','waiting','pending') }).Count
+    never = ($results | Where-Object { $_.last_run_status -eq 'never' }).Count
+    other = ($results | Where-Object { $_.last_run_status -notin @('success','failure','cancelled','in_progress','queued','requested','waiting','pending','never') }).Count
+  }
+  total_workflows = ($results | Measure-Object -Property workflow_count -Sum).Sum
+  total_checks = ($results | Measure-Object -Property { $_.checks.Count } -Sum).Sum
+}
+
+$out = [ordered]@{
+  summary = $summary
+  repos = $results
+}
+
+$outPath = Join-Path $root 'ci_inventory.json'
+$out | ConvertTo-Json -Depth 12 | Out-File -FilePath $outPath -Encoding UTF8
+Write-Host ""
+Write-Host ("Wrote: " + $outPath)
+Write-Host ("Repos: " + $results.Count)
+Write-Host ("CI presence: none=" + $summary.counts.none + " light=" + $summary.counts.light + " full=" + $summary.counts.full)
+Write-Host ("Last run: success=" + $summary.last_run.success + " failure=" + $summary.last_run.failure + " cancelled=" + $summary.last_run.cancelled + " in_progress=" + $summary.last_run.in_progress + " never=" + $summary.last_run.never)

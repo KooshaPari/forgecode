@@ -1,0 +1,16 @@
+[package]
+name = "civ-physics-substrate"
+description = "Shared physics-field substrate (T, M, E, F, P, B) that every emergent layer reads and writes through, per docs/design/PHYSICS_COUPLING_SUBSTRATE.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "civ_physics_substrate"
+path = "src/lib.rs"
+
+[dependencies]
+glam = "0.30.10"
+serde = { version = "1", features = ["derive"] }
+thiserror = "1"

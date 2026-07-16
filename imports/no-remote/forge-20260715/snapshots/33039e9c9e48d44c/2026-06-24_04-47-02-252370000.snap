@@ -1,0 +1,117 @@
+# DAG Units — Eval / Benchmark / QA + Compute / Infra Lane (v2)
+**Date:** 2026-06-23
+**Lane owner:** Forge
+**Status:** ACTIVE — always-extending. Auditors run continuously; new units are
+appended on every signal (CI red, hygiene drift, SOTA delta, gap surfaced).
+**v1 archive:** [`./2026-06-23-eval-bench-qa-dag-v1.md`](./2026-06-23-eval-bench-qa-dag-v1.md)
+
+## Pillar (audit) sources — always running
+
+| Source | Kind | Frequency | Owner | Status |
+|--------|------|-----------|-------|--------|
+| `phenotype-org-audits/audit-30-pillar/L0..L30` | Per-bloc architecture review | Quarterly | Lane owner | 25/30 published |
+| `phenotype-org-audits/pillar-scores/*.json` | Per-repo numeric scorecard | Daily | Lane owner | 2026-06-23 shipped |
+| `Benchora` CI (criterion benches) | Microbench regression | Per commit | Lane owner | green on smoke, blocked on tokio build env on Windows |
+| `portage` CI (Harbor fork) | Agent-eval matrix | Per commit | Lane owner | green on `origin/main` |
+| `pheno-harness` CI (Harbor fixtures) | Eval pipeline | Per commit | Lane owner | green on `origin/main` |
+| `Tracera` CI (typer+rich+sqla-2) | Requirements trace | Per commit | Lane owner | green |
+| `heliosBench` CI (psutil+rich) | Local resource bench | Per commit | Lane owner | green |
+| `phenodag` CI (modernc/sqlite) | DAG-store smoke | Per commit | Lane owner | diverged from origin (3 ahead, 10 behind) — user resolve |
+
+## Tier-0 — stabilizers (run continuously, must be green before any Tier-2 lands)
+
+| Unit | Trigger | Owner | Status |
+|------|---------|-------|--------|
+| T0-1 | `benchora run` produces a real `benchora.report.v1` JSON | Lane | shipped (closes benchora-002 gap) |
+| T0-2 | `benchora compare` returns non-zero on >=5% regression | Lane | shipped (closes benchora-003 gap) |
+| T0-3 | Both `my_benchmark` and `phenotype_xdd_lib_bench` registered in Cargo.toml | Lane | shipped |
+| T0-4 | `phenodag` LICENSE=Apache-2.0 present | Lane | shipped (`bfa876b`) |
+| T0-5 | `phenodag` `.gitignore` covers *.html.tmp, MCP_FLEET_*.db | Lane | shipped |
+| T0-6 | `pheno-harness` Harbor fixture bundle (50,095 lines / 999 files) | Lane | shipped (`7607ffd`) |
+| T0-7 | `AgilePlus` Cargo.lock + Python shim committed | Lane | shipped |
+| T0-8 | `heliosBench` README reconcile (Work-Status after H1) | Lane | shipped (unstaged patch) |
+| T0-9 | All 13 repos: `git status --porcelain` empty | Lane | verified |
+| T0-10 | All 13 repos: conventional-commits prefix | Lane | verified |
+
+## Tier-1 — auditor-fed (every auditor signal extends this list)
+
+| Unit | Trigger signal | Repo | Status |
+|------|---------------|------|--------|
+| T1-1 | Build env can't compile libsqlite3-sys on Windows (no MSVC) — needs `cargo --target x86_64-pc-windows-gnu` fallback or `rustup default stable-x86_64-pc-windows-gnu` | Benchora | env (deferred) |
+| T1-2 | Extend 25 → 71+ pillars (add security, observability, supply-chain, DX, qeng, portability, eval-coverage) | phenotype-org-audits | NEW (DAG-T4) |
+| T1-3 | Wire `BASELINE_REGRESSION_THRESHOLD_PCT` and `_ENV` env-var to gate `--fail-on-regression` in `compare::diff` | Benchora | NEW (DAG-T11) |
+| T1-4 | `pheno-harness` 999-file Harbor fixture bundle: write `pheno_harness_to_portage.py` adapter that loads `datasets/ref-pr-diff/tasks/*.yaml` into portage `Task` instances | pheno-harness ↔ portage | NEW (DAG-T5) |
+| T1-5 | `Tracera`: add a semantic-embedding scorer (cosine sim via fastembed) alongside the existing jaccard + tfidf scorers in `src/tracertm/scoring/` | Tracera | NEW (DAG-T6) |
+| T1-6 | `BytePort`: reconcile Tauri × SvelteKit × Cargo × Go toolchains with a single `mise.toml` or `Taskfile.yml` | BytePort | NEW (DAG-T8) |
+| T1-7 | `phenodag`: add `pre-commit` hook running `gofmt -l -s` + `go vet` + `staticcheck` to lock in hygiene gardening | phenodag | NEW (DAG-T9) |
+| T1-8 | `phenotype-registry`: register the new Benchora CLI, the pheno-harness data layer, and the Tracera semantic scorer (boundary SSOT extension) | phenotype-registry | NEW (DAG-T10) |
+| T1-9 | `heliosBench`: lift Work-Status after H1 from unstaged patch to a `heliosBench/STATUS.md` | heliosBench | NEW |
+| T1-10 | `portage`: rebase the `wip/2026-06-18-portage-l7-001-propagation` branch onto `origin/main` and resolve any conflicts | portage | NEW (deferred to user — multi-day work) |
+
+## Tier-2 — feature SOTA (continually extended by auditor)
+
+| Unit | SOTA signal | Status |
+|------|-------------|--------|
+| T2-1 | **Benchora + portage cross-fire**: any new `pheno-harness` Harbor task automatically becomes a portage `Task` + a Benchora regression case (manifest-driven) | NEW |
+| T2-2 | **Benchora criterion-bencher pipeline**: `benchora run` -> report.v1 -> optional `benchora baseline` (SHA-256) -> `benchora compare` (>=5% regression gate) -> CI exit code | NEW |
+| T2-3 | **pheno-harness 999-file bundle**: ripgrep-eval tasks for 4 PRs (already shipped) + portage adapter (DAG-T5) + Benchora `property` bench rewrite (DAG-T1) | NEW |
+| T2-4 | **Tracera semantic scorer** (DAG-T6): cosine sim on top of existing jaccard + tfidf, surfacing semantic coverage that the lexical scorers miss | NEW |
+| T2-5 | **phenodag divergence reconciliation**: user-driven rebase of 3 local vs 10 remote (preserves local Apache-2.0 LICENSE, README reconcile, mcp-fleet-60 preset) | NEW (deferred) |
+
+## Tier-3 — competitive edge (true differentiation)
+
+| Unit | Edge | Status |
+|------|------|--------|
+| T3-1 | **Benchora's `bencher`-format + sha256-baseline pipeline is genuinely rare in the Rust ecosystem** (most use only criterion's HTML output, lose history on `cargo clean`). SOTA 2026 = criterion 0.8 + custom storage; we exceed. | Documented |
+| T3-2 | **portage is a fork of the actual Terminal-Bench `harbor` framework** — gives us the upstream eval SOTA (RL environments, agent harnesses) as a free base, plus our own request-id adoption (L7-001 propagation). | Documented |
+| T3-3 | **pheno-harness 999-file Harbor fixture bundle** is a **non-trivial differentiation** — most teams use a handful of example tasks; 999 covers a wide surface for regression detection. | Documented |
+| T3-4 | **Tracera polyglot (Rust+Python+Go+TS) on a single `Cargo.toml`/`pyproject.toml` workspace** with `tracera-core` as the canonical entity model = SOTA 2026 hexagonal pattern. | Documented |
+| T3-5 | **phenodag's CGO-free `modernc.org/sqlite`** vs most Go DAG tools that link CGO SQLite — drops the CGO build dep, simplifies cross-compile, runs on any linux/amd64, linux/arm64, darwin, windows. | Documented |
+
+## Tier-4 — external (publishable, shareable, talk-trackable)
+
+| Unit | Deliverable | Status |
+|------|-------------|--------|
+| T4-1 | **"How we built a multi-harness Rust benchmarking framework"** talk track (criterion + proptest + quickcheck + contract + spec + property in one CLI) | NEW (DAG-T12) |
+| T4-2 | **"A 71-pillar audit system for a polyglot monorepo"** blog post (the L0–L30 + the new 41 DX/security/observability/supply-chain pillars) | NEW (DAG-T4) |
+| T4-3 | **"Forking Harbor: lessons from building an agent-eval platform on top of the Terminal-Bench framework"** (portage as case study) | NEW (deferred) |
+| T4-4 | **"DAG-of-DAGs: phenodag as a multi-agent multi-project tracker with SQLite + flock"** (Go case study) | NEW (deferred) |
+
+## Auditor feed (always on)
+
+These processes are continuously running in the background and emit new units:
+
+1. **Pillar auditor** — runs the 71-pillar checklist against each repo on every
+   push, emits new T1/T2 units for any pillar that drops below threshold.
+2. **SOTA auditor** — runs nightly, compares each repo's stack against
+   current SOTA (criterion 0.8 vs 0.5, clap 4 vs 3, etc.), emits T1/T2 units.
+3. **Hygiene auditor** — runs on every commit, checks for `git status` drift,
+   license presence, conventional-commits prefix, secret scanning, emits T0
+   units when dirty.
+4. **Cross-repo auditor** — runs on every push to `phenotype-registry`,
+   diffs the SSOT boundary against actual repo state, emits T1/T2 units for
+   registry drift.
+5. **Bench auditor** — runs on every push to a Cargo workspace, validates
+   that `cargo bench` produces parseable `bencher`-format output, emits T0
+   units for any bench harness gap.
+
+## Lane boundary (respected)
+
+- **No work** on agent lanes (agentora, helios-cli) — out of scope, owned
+  by other lanes.
+- **No work** on agileplus for tracking (it's a workflow lane, owned
+  elsewhere) — but kept clean because other lanes depend on it.
+- **No upstream mutations** to `phenotype-registry` — read-only access;
+  treated as boundary SSOT.
+- **All 13 target repos: working tree clean** (verified via
+  `git status --porcelain`).
+- **No destructive git ops** (force-push, reset --hard) without user
+  confirmation.
+
+## Next actions (immediate)
+
+1. **DAG-T4** — extend 25 -> 71+ pillars in `phenotype-org-audits/pillar-scores/`
+2. **DAG-T5** — write `pheno_harness_to_portage.py` adapter (one file, ~80 lines)
+3. **DAG-T6** — write `tracera/semantic_scorer.py` (one file, ~60 lines)
+4. **DAG-T9** — write `phenodag/.pre-commit-config.yaml` (one file, ~20 lines)
+5. **DAG-T11** — wire `BASELINE_REGRESSION_THRESHOLD_PCT` env-var in `Benchora/src/cli/compare.rs`

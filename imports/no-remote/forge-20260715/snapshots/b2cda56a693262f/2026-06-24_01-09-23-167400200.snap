@@ -1,0 +1,26 @@
+## Summary
+
+Fix 3 CI workflow configuration issues that would prevent successful runs once the GitHub billing problem is resolved.
+
+## Context
+
+Three recent CI runs (IDs: 28054794294, 28038768908, 27750633652) all failed with the same GitHub billing issue preventing job startup. While that is an account-level problem, the workflow itself has 3 defects that would cause failures once billing is unblocked.
+
+## Changes
+
+- **Add `name: CI`** — Without a name field, GitHub Actions UI displays the raw filename (`ci.yml`) instead of a readable workflow name
+- **Unquote `on` key** — Quoted YAML keys (`"on":`) can cause parsers to reject or misinterpret the workflow trigger section
+- **Replace deprecated `--all` with `--workspace`** — Cargo 1.96+ deprecates the `--all` flag in favor of `--workspace`; `--all` will be removed in a future release
+
+## Testing
+
+After the billing issue is resolved, verify that:
+
+```bash
+# All three CI steps pass
+cargo check --workspace
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+```
+
+The CI run itself should show "CI" as a readable name in the GitHub Actions UI.

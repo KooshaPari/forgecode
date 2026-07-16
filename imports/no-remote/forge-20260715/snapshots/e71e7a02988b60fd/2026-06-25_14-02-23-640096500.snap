@@ -1,0 +1,43 @@
+# Rust
+target/
+agileplus-agents/target/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+
+# Generated stubs (regenerated at build time)
+rust/src/gen/
+python/src/gen/
+
+# OS
+.DS_Store
+*.swp
+*~
+
+# IDE
+.idea/
+.vscode/
+*.iml
+# Excluded via sparse-checkout
+agileplus-specs/
+
+# Local environment files
+.env
+.env.local
+
+# Local development data
+.agileplus/
+
+# Reference repos (not submodules)
+references/
+
+# Node / VitePress (added 2026-06-05 for kitty->agileplus brand rename preservation)
+node_modules/
+yarn.lock
+docs/.vitepress/cache/
+docs/.vitepress/dist/

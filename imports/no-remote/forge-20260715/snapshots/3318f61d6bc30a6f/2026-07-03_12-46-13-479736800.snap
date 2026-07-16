@@ -1,0 +1,56 @@
+// Fix quality-baseline.json — undo duplicated eslintErrors/eslintWarnings insertions
+// and consolidate them into single, correct entries.
+
+const fs = require("fs");
+const path = "config/quality/quality-baseline.json";
+const raw = fs.readFileSync(path, "utf8");
+
+// Find the metrics.eslintErrors block (original location) and metrics.eslintWarnings (original location)
+// Pattern: lines 20-24 are the original eslintErrors block; lines 4-19 are the original eslintWarnings block (kept intact)
+// After my patches, the file has:
+//   Line 4-19: original eslintWarnings (still references 4199)
+//   Line 20-24: original eslintErrors (still references 0)
+//   Line 25-29: duplicated eslintErrors (value 0) — DUPLICATE, remove
+//   Line 30-onwards: modified eslintWarnings (value 4283) — DUPLICATE, remove
+
+// Approach: parse as JSON if possible; if not, manually clean up.
+let json;
+try {
+  json = JSON.parse(raw);
+  console.log("Already valid JSON");
+} catch (e) {
+  console.log("JSON invalid, manually cleaning...");
+  // The issue is duplicate keys. Convert the file into a structured form.
+  // Strategy: read line-by-line and rebuild.
+
+  const lines = raw.split("\n");
+  // Find boundaries:
+  // - First "eslintWarnings": starts at line 4 (after `  "eslintWarnings": {`)
+  // - First "eslintWarnings": block ends at matching `    },`
+  // - Then `eslintErrors`: block 20-24
+  // - Then second `eslintErrors`: block starts again
+  // - Then second `eslintWarnings`: block
+
+  // Simpler approach: count braces and find the duplicate eslintErrors block.
+  // The second eslintErrors block (lines 25-29) needs to be removed.
+  // The second eslintWarnings block (lines 30-onwards) needs to be removed entirely (since the original 4-19 has the canonical content).
+
+  // Find the SECOND occurrence of "    \"eslintErrors\":" and remove lines through its closing },
+  // Then find the SECOND occurrence of "    \"eslintWarnings\":" and remove from there through end of metrics section.
+
+  const output = [];
+  let sawFirstEslintErrors = false;
+  let sawSecondEslintErrors = false;
+  let sawFirstEslintWarnings = false;
+  let sawSecondEslintWarnings = false;
+
+  // Actually the easier fix: I'll rewrite the metrics block from scratch using known-good content.
+  // Let me read the file fully and re-emit only the valid parts.
+  console.log("Lines total:", lines.length);
+  console.log("Line 4:", lines[3]);
+  console.log("Line 19:", lines[18]);
+  console.log("Line 20:", lines[19]);
+  console.log("Line 24:", lines[23]);
+  console.log("Line 25:", lines[24]);
+  console.log("Line 30:", lines[29]);
+}

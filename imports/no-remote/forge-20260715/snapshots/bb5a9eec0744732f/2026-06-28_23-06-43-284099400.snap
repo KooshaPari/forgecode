@@ -1,0 +1,679 @@
+# Extracts per-trace raw material for the augmentation pipeline.
+# Produces three JSONL streams:
+#   raw_extract_index.jsonl       trace_id, source, paths, sizes, token totals, models, etc.
+#   raw_extract_turns.jsonl       one row per turn (text + tool calls + token_count)
+#   raw_extract_artifacts.jsonl   one row per file/spec/ADR mention in any user/tool block
+# Per-trace sampling is bounded via -MaxFiles per source.
+
+param(
+    [int]$MaxClaude = 132,
+    [int]$MaxCodex = 50,
+    [int]$MaxForge = 4,
+    [string]$OutDir = 'C:\Users\koosh\AppData\Local\Temp\extract_stream'
+)
+
+$ErrorActionPreference = 'Stop'
+
+# --- Helper: write a JSON line out ---
+function Emit([string]$line, [string]$path) {
+    Add-Content -LiteralPath $path -Value $line -Encoding utf8
+}
+
+# --- Helper: classify length bucket ---
+function Get-Bucket([long]$size, [int]$turnCount, [string]$firstTs, [string]$lastTs) {
+    $isLong = $false
+    if ($firstTs -and $lastTs) {
+        try {
+            $span = ([datetime]::Parse($lastTs) - [datetime]::Parse($firstTs)).TotalSeconds
+            if ($span -ge 86400) { $isLong = $true }
+        } catch {}
+    }
+    if ($turnCount -ge 500 -or $size -ge 524288) { $isLong = $true }
+    if ($isLong) { return 'long_horizon' }
+    if ($turnCount -le 5 -and $size -le 5120) { return 'short' }
+    return 'medium'
+}
+
+function Get-LengthClass([string]$bucket) {
+    if ($bucket -eq 'long_horizon') { return 'long' }
+    return $bucket
+}
+
+# --- Per-trace extractor: Claude Code ---
+function Extract-ClaudCodeTrace {
+    param([string]$Path)
+
+    $turns = New-Object System.Collections.Generic.List[object]
+    $artifacts = New-Object System.Collections.Generic.List[object]
+    $lineCount = 0
+    $size = (Get-Item -LiteralPath $Path).Length
+    $firstTs = ''
+    $lastTs = ''
+    $models = New-Object System.Collections.Generic.HashSet[string]
+    $toolUse = 0
+    $toolResult = 0
+    $inputT = 0L
+    $outputT = 0L
+    $cacheCreationT = 0L
+    $cacheReadT = 0L
+    $sessionId = ''
+    $parentSessionId = ''
+    $agentId = ''
+    $isSidechain = $false
+    $cwd = ''
+    $gitBranch = ''
+    $version = ''
+    $slug = ''
+    $firstUserMsg = ''
+    $lastUserMsgLen = 0
+    $turnIdx = 0
+    $prevTs = 0
+    $contextSize = 0
+
+    $reader = $null
+    try {
+        $reader = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+    } catch {
+        return $null
+    }
+    $sr = New-Object System.IO.StreamReader($reader)
+    while (-not $sr.EndOfStream) {
+        $line = $sr.ReadLine()
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $lineCount++
+        $rec = $null
+        try { $rec = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+
+        if (-not $sessionId -and $rec.sessionId) { $sessionId = $rec.sessionId }
+        if ($rec.'sessionId' -and $rec.'isSidechain') { $isSidechain = $true }
+        if ($rec.cwd) { $cwd = $rec.cwd }
+        if ($rec.'gitBranch') { $gitBranch = $rec.'gitBranch' }
+        if ($rec.'version') { $version = $rec.'version' }
+        if ($rec.'slug') { $slug = $rec.'slug' }
+        if ($rec.'agentId') { $agentId = $rec.'agentId' }
+
+        $tsMs = 0
+        $tsStr = ''
+        if ($rec.timestamp) {
+            $parsedTs = [datetime]::MinValue
+            if ([datetime]::TryParse($rec.timestamp, [ref]$parsedTs)) {
+                $tsMs = [long](([datetime]$parsedTs.ToUniversalTime() - [datetime]'1970-01-01').TotalMilliseconds)
+                $tsStr = $rec.timestamp
+                if (-not $firstTs) { $firstTs = $rec.timestamp } else { $lastTs = $rec.timestamp }
+            }
+        }
+
+        $type = $rec.type
+        if ($type -eq 'user' -or $type -eq 'assistant') {
+            $msg = $rec.message
+            if (-not $msg) { continue }
+            if ($msg.model) { [void]$models.Add($msg.model) }
+
+            $text = ''
+            $toolUseThisTurn = 0
+            $toolResultThisTurn = 0
+            $toolInputs = @()
+            $toolResults = @()
+
+            if ($msg.content -is [string]) {
+                $text = $msg.content
+            } elseif ($msg.content -is [array]) {
+                $parts = @()
+                foreach ($b in $msg.content) {
+                    if ($b.type -eq 'text') {
+                        $parts += $b.text
+                        $regex = [regex]'(?i)([A-Za-z0-9_\-\./\\]+\.(?:md|markdown|json|ya?ml|toml|rs|py|ts|tsx|js|jsx|sh|ps1|bat|txt|sql|html|css))'
+                        foreach ($m in $regex.Matches($b.text)) {
+                            $artifacts.Add([ordered]@{ trace_id = $null; path_norm = ($m.Value.Replace('\', '/').ToLower()); source_block = $type; tool_name = ''; chars = $m.Length })
+                        }
+                        $regexAdr = [regex]'(?i)((?:adr|architecture[-_]decision)[-_]?\d{2,4})'
+                        foreach ($m in $regexAdr.Matches($b.text)) {
+                            $artifacts.Add([ordered]@{ trace_id = $null; path_norm = ('/adr/' + $m.Value.ToLower()); source_block = $type; tool_name = ''; chars = $m.Length })
+                        }
+                        $regexSpec = [regex]'(?i)(/spec[s]?/[\w\-./]+)'
+                        foreach ($m in $regexSpec.Matches($b.text)) {
+                            $artifacts.Add([ordered]@{ trace_id = $null; path_norm = ($m.Value.ToLower()); source_block = $type; tool_name = ''; chars = $m.Length })
+                        }
+                    } elseif ($b.type -eq 'tool_use') {
+                        $toolUse++
+                        $toolUseThisTurn++
+                        $toolInputs += $b
+                        if ($b.name) { [void]$models.Add('tool:' + $b.name) }
+                        $ti = $b.input
+                        if ($ti) {
+                            $fp = ''
+                            if ($ti.'file_path') { $fp = $ti.'file_path' }
+                            elseif ($ti.'filePath') { $fp = $ti.'filePath' }
+                            elseif ($ti.'path') { $fp = $ti.'path' }
+                            elseif ($ti.'command') { $fp = 'cmd:' + ($ti.'command'.Substring(0, [Math]::Min(120, $ti.'command'.Length))) }
+                            elseif ($ti.'url') { $fp = 'url:' + $ti.'url' }
+                            if ($fp -and -not $fp.StartsWith('cmd:') -and -not $fp.StartsWith('url:')) {
+                                $artifacts.Add([ordered]@{ trace_id = $null; path_norm = ($fp.Replace('\', '/').ToLower()); source_block = $type; tool_name = $b.name; chars = $fp.Length })
+                            }
+                        }
+                    } elseif ($b.type -eq 'tool_result') {
+                        $toolResult++
+                        $toolResultThisTurn++
+                        $toolResults += $b
+                    }
+                }
+                $text = ($parts -join "`n")
+            }
+
+            $usage = $msg.usage
+            $inputTokensTurn = 0
+            $outputTokensTurn = 0
+            $cachedTokensTurn = 0
+            if ($usage) {
+                $inputTokensTurn = [int](if ($usage.input_tokens) { $usage.input_tokens } else { 0 })
+                $outputTokensTurn = [int](if ($usage.output_tokens) { $usage.output_tokens } else { 0 })
+                $cachedTokensTurn = [int](if ($usage.cache_read_input_tokens) { $usage.cache_read_input_tokens } else { 0 })
+                $inputT += [long]$inputTokensTurn
+                $outputT += [long]$outputTokensTurn
+                $cached = [long](if ($usage.cache_read_input_tokens) { $usage.cache_read_input_tokens } else { 0 })
+                $cacheReadT += $cached
+                $ccr = [long](if ($usage.cache_creation_input_tokens) { $usage.cache_creation_input_tokens } else { 0 })
+                $cacheCreationT += $ccr
+            }
+
+            $turnIdx++
+            $contextSize += $text.Length
+            $elapsedMs = 0
+            if ($prevTs -gt 0) { $elapsedMs = ($tsMs - $prevTs) }
+            $prevTs = $tsMs
+
+            $couldUseCache = $false
+            $couldUseHandle = ($toolResultThisTurn -ge 3)
+            $couldUseSummary = ($contextSize -gt 20000 -and $turnIdx -gt 5)
+            $requiresFullContext = ($type -eq 'user' -and $text.Length -gt 5000)
+            if ($turnIdx -gt 1 -and $contextSize -gt 4000 -and $cacheReadT -eq 0) { $couldUseCache = $true }
+
+            $toolNameHere = ''
+            if ($toolInputs.Count -gt 0) { $toolNameHere = $toolInputs[0].name }
+            $toolInputChars = 0
+            foreach ($ti2 in $toolInputs) {
+                $j = if ($ti2.input) { ($ti2.input | ConvertTo-Json -Depth 3 -Compress) } else { '' }
+                $toolInputChars += $j.Length
+            }
+
+            $turns.Add([ordered]@{
+                turn_idx = $turnIdx
+                role = $type
+                text_chars = $text.Length
+                tool_name = $toolNameHere
+                tool_input_chars = $toolInputChars
+                tool_result_chars = 0
+                input_tokens = $inputTokensTurn
+                cached_input_tokens = $cachedTokensTurn
+                output_tokens = $outputTokensTurn
+                elapsed_ms_since_prev = $elapsedMs
+                context_size_at_turn = $contextSize
+                could_use_cache = $couldUseCache
+                could_use_handle = $couldUseHandle
+                could_use_summary = $couldUseSummary
+                requires_full_context = $requiresFullContext
+                ts = $tsStr
+            })
+
+            if ($type -eq 'user' -and $text.Length -gt 0) {
+                if (-not $firstUserMsg) { $firstUserMsg = $text }
+                $lastUserMsgLen = $text.Length
+            }
+        }
+    }
+    $sr.Close()
+    $reader.Close()
+
+    $isSub = ($Path -match '[\\/]subagents[\\/]')
+    $depth = 0
+    if ($isSub) {
+        $depth = 1
+        $segments = $Path -split '[\\/]'
+        for ($i = 0; $i -lt $segments.Length; $i++) {
+            if ($segments[$i] -match '^(subagents|nested|sub)$') { $depth++ }
+        }
+    }
+
+    $bucket = Get-Bucket -size $size -turnCount $turns.Count -firstTs $firstTs -lastTs $lastTs
+
+    return [ordered]@{
+        source = 'claudecode'
+        source_path = $Path
+        source_file = [System.IO.Path]::GetFileName($Path)
+        size_bytes = $size
+        line_count = $lineCount
+        turn_count = $turns.Count
+        first_ts = $firstTs
+        last_ts = $lastTs
+        session_id = $sessionId
+        parent_session_id = $parentSessionId
+        agent_id = $agentId
+        is_subagent = $isSub
+        is_sidechain = $isSidechain
+        fork_depth = $depth
+        agent_tree_depth = $depth
+        driver_type = if ($isSub) { 'agent_spawned' } else { 'human' }
+        driver_signal = if ($isSub) { 'subagents_dir' } else { 'project_root' }
+        driver_source = 'claude_path_heuristic'
+        project_root = Split-Path -Path $Path -Parent | Split-Path -Leaf
+        cwd = $cwd
+        git_branch = $gitBranch
+        version = $version
+        slug = $slug
+        models = ($models | Sort-Object) -join ','
+        input_tokens = $inputT
+        output_tokens = $outputT
+        cache_creation_input_tokens = $cacheCreationT
+        cache_read_input_tokens = $cacheReadT
+        tool_use = $toolUse
+        tool_result = $toolResult
+        sent_tokens = ($cacheReadT + $inputT)
+        first_user_message = $firstUserMsg.Substring(0, [Math]::Min(4000, $firstUserMsg.Length))
+        last_user_message_length = $lastUserMsgLen
+        bucket = $bucket
+        length_class = (Get-LengthClass $bucket)
+        turns = $turns
+        artifacts = $artifacts
+    }
+}
+
+# --- Per-trace extractor: Codex ---
+function Extract-CodexTrace {
+    param([string]$Path)
+
+    $turns = New-Object System.Collections.Generic.List[object]
+    $artifacts = New-Object System.Collections.Generic.List[object]
+    $lineCount = 0
+    $size = (Get-Item -LiteralPath $Path).Length
+    $firstTs = ''
+    $lastTs = ''
+    $models = New-Object System.Collections.Generic.HashSet[string]
+    $toolUse = 0
+    $toolResult = 0
+    $inputT = 0L
+    $outputT = 0L
+    $cacheCreationT = 0L
+    $cacheReadT = 0L
+    $sessionId = ''
+    $agentId = ''
+    $cwd = ''
+    $gitBranch = ''
+    $firstUserMsg = ''
+    $lastUserMsgLen = 0
+    $turnIdx = 0
+    $prevTs = 0
+    $contextSize = 0
+    $driverType = 'human'
+    $driverSignal = ''
+    $driverSource = ''
+    $threadSource = ''
+
+    $reader = $null
+    try {
+        $reader = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+    } catch {
+        return $null
+    }
+    $sr = New-Object System.IO.StreamReader($reader)
+
+    while (-not $sr.EndOfStream) {
+        $line = $sr.ReadLine()
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        $lineCount++
+        $rec = $null
+        try { $rec = $line | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+        $ts = $rec.timestamp
+        $tsMs = 0
+        if ($ts) {
+            $parsedTs = [datetime]::MinValue
+            if ([datetime]::TryParse($ts, [ref]$parsedTs)) {
+                $tsMs = [long](([datetime]$parsedTs.ToUniversalTime() - [datetime]'1970-01-01').TotalMilliseconds)
+                if (-not $firstTs) { $firstTs = $ts } else { $lastTs = $ts }
+            }
+        }
+        $t = $rec.type
+        $payload = $rec.payload
+
+        $bucket = ''  # placeholder, set per-trace
+        if ($t -eq 'session_meta') {
+            $sessionId = $payload.id
+            $cwd = $payload.cwd
+            $gitBranch = $payload.git_branch
+            $agentId = $payload.model_provider
+            $srcVal = $payload.source
+            $driverType = 'human'
+            if ($srcVal -and $srcVal -ne 'exec') { $driverType = 'agent_spawned' }
+            if ($payload.thread_source -eq 'agent') { $driverType = 'agent_spawned' }
+            $driverSignal = ('source=' + $srcVal)
+            $driverSource = 'codex_session_meta.source'
+            $threadSource = $payload.thread_source
+        } elseif ($t -eq 'turn_context') {
+            if ($payload.model) { [void]$models.Add($payload.model) }
+        } elseif ($t -eq 'event_msg') {
+            $pt = $payload.type
+            if ($pt -eq 'user_message') {
+                $msgText = ''
+                if ($payload.message -is [string]) { $msgText = $payload.message }
+                elseif ($payload.message) { $msgText = ($payload.message | ConvertTo-Json -Depth 5 -Compress) }
+                if (-not $firstUserMsg -and $msgText.Length -gt 0) { $firstUserMsg = $msgText }
+                $lastUserMsgLen = $msgText.Length
+                $regex = [regex]'(?i)([A-Za-z0-9_\-\./\\]+\.(?:md|markdown|json|ya?ml|toml|rs|py|ts|tsx|js|jsx|sh|ps1|bat|txt|sql|html|css))'
+                foreach ($m in $regex.Matches($msgText)) {
+                    $artifacts.Add([ordered]@{ trace_id = $null; path_norm = ($m.Value.Replace('\', '/').ToLower()); source_block = 'user_message'; tool_name = ''; chars = $m.Length })
+                }
+            } elseif ($pt -eq 'token_count') {
+                $info = $payload.info
+                if ($info -and $info.total_token_usage) {
+                    $inputT = [long](if ($info.total_token_usage.input_tokens) { $info.total_token_usage.input_tokens } else { 0 })
+                    $outputT = [long](if ($info.total_token_usage.output_tokens) { $info.total_token_usage.output_tokens } else { 0 })
+                    $cacheReadT = [long](if ($info.total_token_usage.cached_input_tokens) { $info.total_token_usage.cached_input_tokens } else { 0 })
+                }
+                $turnIdx++
+                $elapsedMs = 0
+                if ($prevTs -gt 0) { $elapsedMs = ($tsMs - $prevTs) }
+                $prevTs = $tsMs
+                $turns.Add([ordered]@{
+                    turn_idx = $turnIdx
+                    role = 'token_count'
+                    text_chars = 0
+                    tool_name = ''
+                    tool_input_chars = 0
+                    tool_result_chars = 0
+                    input_tokens = [int]$inputT
+                    cached_input_tokens = [int]$cacheReadT
+                    output_tokens = [int]$outputT
+                    elapsed_ms_since_prev = $elapsedMs
+                    context_size_at_turn = [int]$contextSize
+                    could_use_cache = ($turnIdx -gt 1 -and ($cacheCreationT + $cacheReadT) -eq 0)
+                    could_use_handle = $false
+                    could_use_summary = ($contextSize -gt 20000 -and $turnIdx -gt 5)
+                    requires_full_context = $false
+                    ts = $ts
+                })
+                $contextSize = $inputT * 4
+            } elseif ($pt -eq 'task_started') {
+                $turnIdx++
+                if ($payload.model_context_window) { $contextSize = [int]$payload.model_context_window * 4 }
+            }
+        } elseif ($t -eq 'response_item') {
+            $pt = $payload.type
+            if ($pt -eq 'message') {
+                $role = $payload.role
+                $content = $payload.content
+                $text = ''
+                if ($content -is [array]) {
+                    $parts = @()
+                    foreach ($b in $content) {
+                        if ($b.type -eq 'input_text' -or $b.type -eq 'output_text' -or $b.type -eq 'text') {
+                            $parts += $b.text
+                        }
+                    }
+                    $text = ($parts -join "`n")
+                } elseif ($content -is [string]) { $text = $content }
+                if ($role -eq 'user' -and -not $firstUserMsg -and $text.Length -gt 0) {
+                    $firstUserMsg = $text.Substring(0, [Math]::Min(4000, $text.Length))
+                }
+                if ($role -eq 'user') { $lastUserMsgLen = $text.Length }
+                $turnIdx++
+                $elapsedMs = 0
+                if ($prevTs -gt 0) { $elapsedMs = ($tsMs - $prevTs) }
+                $prevTs = $tsMs
+                $turns.Add([ordered]@{
+                    turn_idx = $turnIdx
+                    role = ('message_' + $role)
+                    text_chars = $text.Length
+                    tool_name = ''
+                    tool_input_chars = 0
+                    tool_result_chars = 0
+                    input_tokens = 0
+                    cached_input_tokens = 0
+                    output_tokens = 0
+                    elapsed_ms_since_prev = $elapsedMs
+                    context_size_at_turn = [int]$contextSize
+                    could_use_cache = $false
+                    could_use_handle = $false
+                    could_use_summary = $false
+                    requires_full_context = $false
+                    ts = $ts
+                })
+                $regex = [regex]'(?i)([A-Za-z0-9_\-\./\\]+\.(?:md|markdown|json|ya?ml|toml|rs|py|ts|tsx|js|jsx|sh|ps1|bat|txt|sql|html|css))'
+                foreach ($m in $regex.Matches($text)) {
+                    $artifacts.Add([ordered]@{ trace_id = $null; path_norm = ($m.Value.Replace('\', '/').ToLower()); source_block = ('message_' + $role); tool_name = ''; chars = $m.Length })
+                }
+            } elseif ($pt -eq 'function_call' -or $pt -eq 'custom_tool_call') {
+                $toolUse++
+                $argStr = ''
+                if ($payload.arguments -is [string]) { $argStr = $payload.arguments }
+                elseif ($payload.input) { $argStr = ($payload.input | ConvertTo-Json -Depth 3 -Compress) }
+                $turnIdx++
+                $elapsedMs = 0
+                if ($prevTs -gt 0) { $elapsedMs = ($tsMs - $prevTs) }
+                $prevTs = $tsMs
+                $turns.Add([ordered]@{
+                    turn_idx = $turnIdx
+                    role = $pt
+                    text_chars = 0
+                    tool_name = $payload.name
+                    tool_input_chars = $argStr.Length
+                    tool_result_chars = 0
+                    input_tokens = 0
+                    cached_input_tokens = 0
+                    output_tokens = 0
+                    elapsed_ms_since_prev = $elapsedMs
+                    context_size_at_turn = [int]$contextSize
+                    could_use_cache = $false
+                    could_use_handle = $false
+                    could_use_summary = $false
+                    requires_full_context = $false
+                    ts = $ts
+                })
+            } elseif ($pt -eq 'function_call_output' -or $pt -eq 'custom_tool_call_output') {
+                $toolResult++
+                $outStr = ''
+                if ($payload.output -is [string']) { $outStr = $payload.output }
+                elseif ($payload.output) { $outStr = ($payload.output | ConvertTo-Json -Depth 3 -Compress) }
+                $turnIdx++
+                $elapsedMs = 0
+                if ($prevTs -gt 0) { $elapsedMs = ($tsMs - $prevTs) }
+                $prevTs = $tsMs
+                $turns.Add([ordered]@{
+                    turn_idx = $turnIdx
+                    role = $pt
+                    text_chars = 0
+                    tool_name = ''
+                    tool_input_chars = 0
+                    tool_result_chars = $outStr.Length
+                    input_tokens = 0
+                    cached_input_tokens = 0
+                    output_tokens = 0
+                    elapsed_ms_since_prev = $elapsedMs
+                    context_size_at_turn = [int]$contextSize
+                    could_use_cache = $false
+                    could_use_handle = $false
+                    could_use_summary = $false
+                    requires_full_context = $false
+                    ts = $ts
+                })
+            } elseif ($pt -eq 'reasoning') {
+                $turnIdx++
+                $elapsedMs = 0
+                if ($prevTs -gt 0) { $elapsedMs = ($tsMs - $prevTs) }
+                $prevTs = $tsMs
+                $turns.Add([ordered]@{
+                    turn_idx = $turnIdx
+                    role = 'reasoning'
+                    text_chars = 0
+                    tool_name = ''
+                    tool_input_chars = 0
+                    tool_result_chars = 0
+                    input_tokens = 0
+                    cached_input_tokens = 0
+                    output_tokens = 0
+                    elapsed_ms_since_prev = $elapsedMs
+                    context_size_at_turn = [int]$contextSize
+                    could_use_cache = $false
+                    could_use_handle = $false
+                    could_use_summary = $false
+                    requires_full_context = $false
+                    ts = $ts
+                })
+            }
+        }
+    }
+    $sr.Close()
+    $reader.Close()
+
+    $bucket = Get-Bucket -size $size -turnCount $turns.Count -firstTs $firstTs -lastTs $lastTs
+
+    return [ordered]@{
+        source = 'codex'
+        source_path = $Path
+        source_file = [System.IO.Path]::GetFileName($Path)
+        size_bytes = $size
+        line_count = $lineCount
+        turn_count = ($turns | Where-Object { $_.role -in @('message_user', 'user') }).Count
+        first_ts = $firstTs
+        last_ts = $lastTs
+        session_id = $sessionId
+        parent_session_id = ''
+        agent_id = $agentId
+        is_subagent = ($driverType -eq 'agent_spawned')
+        is_sidechain = $false
+        fork_depth = 0
+        agent_tree_depth = 0
+        driver_type = $driverType
+        driver_signal = ($driverSignal + ';thread_source=' + $threadSource)
+        driver_source = $driverSource
+        project_root = $cwd
+        cwd = $cwd
+        git_branch = $gitBranch
+        version = ''
+        slug = ''
+        models = ($models | Sort-Object) -join ','
+        input_tokens = $inputT
+        output_tokens = $outputT
+        cache_creation_input_tokens = $cacheCreationT
+        cache_read_input_tokens = $cacheReadT
+        tool_use = $toolUse
+        tool_result = $toolResult
+        sent_tokens = ($cacheReadT + $inputT)
+        first_user_message = $firstUserMsg
+        last_user_message_length = $lastUserMsgLen
+        bucket = $bucket
+        length_class = (Get-LengthClass $bucket)
+        turns = $turns
+        artifacts = $artifacts
+    }
+}
+
+# --- Main ---
+
+if (-not (Test-Path -LiteralPath $OutDir)) { New-Item -ItemType Directory -Path $OutDir | Out-Null }
+$indexPath = Join-Path $OutDir 'raw_extract_index.jsonl'
+$turnsPath = Join-Path $OutDir 'raw_extract_turns.jsonl'
+$artifactsPath = Join-Path $OutDir 'raw_extract_artifacts.jsonl'
+if (Test-Path -LiteralPath $indexPath) { Remove-Item -LiteralPath $indexPath -Force }
+if (Test-Path -LiteralPath $turnsPath) { Remove-Item -LiteralPath $turnsPath -Force }
+if (Test-Path -LiteralPath $artifactsPath) { Remove-Item -LiteralPath $artifactsPath -Force }
+
+Write-Output ('OutDir: {0}' -f $OutDir)
+
+# 1. Codex (bounded)
+$codexFiles = Get-ChildItem -LiteralPath "$env:USERPROFILE\.codex\sessions" -Recurse -File -Filter '*.jsonl' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First $MaxCodex
+Write-Output ('Codex files to process: {0}' -f $codexFiles.Count)
+$cxId = 0
+foreach ($f in $codexFiles) {
+    $cxId++
+    $traceId = 'cx' + ('{0:D3}' -f $cxId)
+    $obj = Extract-CodexTrace -Path $f.FullName
+    if ($null -eq $obj) { continue }
+    $obj.trace_id = $traceId
+    foreach ($tn in $obj.turns) {
+        $tn.trace_id = $traceId
+        Add-Content -LiteralPath $turnsPath -Value ($tn | ConvertTo-Json -Depth 4 -Compress) -Encoding utf8
+    }
+    foreach ($ar in $obj.artifacts) {
+        $ar.trace_id = $traceId
+        Add-Content -LiteralPath $artifactsPath -Value ($ar | ConvertTo-Json -Depth 4 -Compress) -Encoding utf8
+    }
+    $obj.turns = $null
+    $obj.artifacts = $null
+    Add-Content -LiteralPath $indexPath -Value ($obj | ConvertTo-Json -Depth 4 -Compress) -Encoding utf8
+}
+
+# 2. Claude Code (bounded)
+$claudeFiles = Get-ChildItem -LiteralPath "$env:USERPROFILE\.claude\projects" -Recurse -File -Filter '*.jsonl' -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 200 } | Sort-Object LastWriteTime -Descending | Select-Object -First $MaxClaude
+Write-Output ('Claude files to process: {0}' -f $claudeFiles.Count)
+$clId = 0
+foreach ($f in $claudeFiles) {
+    $clId++
+    $traceId = 'cl' + ('{0:D3}' -f $clId)
+    $obj = Extract-ClaudCodeTrace -Path $f.FullName
+    if ($null -eq $obj) { continue }
+    $obj.trace_id = $traceId
+    foreach ($tn in $obj.turns) {
+        $tn.trace_id = $traceId
+        Add-Content -LiteralPath $turnsPath -Value ($tn | ConvertTo-Json -Depth 4 -Compress) -Encoding utf8
+    }
+    foreach ($ar in $obj.artifacts) {
+        $ar.trace_id = $traceId
+        Add-Content -LiteralPath $artifactsPath -Value ($ar | ConvertTo-Json -Depth 4 -Compress) -Encoding utf8
+    }
+    $obj.turns = $null
+    $obj.artifacts = $null
+    Add-Content -LiteralPath $indexPath -Value ($obj | ConvertTo-Json -Depth 4 -Compress) -Encoding utf8
+}
+
+# 3. Forge (no conversation traces; mark as such)
+$forgeRoot = "$env:USERPROFILE\.forge\sessions"
+if (Test-Path -LiteralPath $forgeRoot) {
+    $forgeFiles = Get-ChildItem -LiteralPath $forgeRoot -Recurse -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First $MaxForge
+    Write-Output ('Forge files (non-conversation): {0}' -f $forgeFiles.Count)
+    $fgId = 0
+    foreach ($f in $forgeFiles) {
+        $fgId++
+        $traceId = 'fg' + ('{0:D3}' -f $fgId)
+        $obj = [ordered]@{
+            source = 'forge'
+            source_path = $f.FullName
+            source_file = $f.Name
+            size_bytes = $f.Length
+            line_count = 0
+            turn_count = 0
+            first_ts = ''
+            last_ts = ''
+            session_id = ''
+            parent_session_id = ''
+            agent_id = ''
+            is_subagent = $false
+            is_sidechain = $false
+            fork_depth = 0
+            agent_tree_depth = 0
+            driver_type = 'unknown'
+            driver_signal = 'forge_no_conversation_trace'
+            driver_source = 'forge_no_conversation_trace'
+            project_root = [System.IO.Path]::GetFileName($f.DirectoryName)
+            cwd = ''
+            models = ''
+            input_tokens = 0
+            output_tokens = 0
+            cache_creation_input_tokens = 0
+            cache_read_input_tokens = 0
+            tool_use = 0
+            tool_result = 0
+            sent_tokens = 0
+            first_user_message = ''
+            last_user_message_length = 0
+            bucket = 'short'
+            length_class = 'short'
+            trace_id = $traceId
+        }
+        Add-Content -LiteralPath $indexPath -Value ($obj | ConvertTo-Json -Depth 4 -Compress) -Encoding utf8
+    }
+}
+
+if (Test-Path -LiteralPath $indexPath) {
+    Write-Output ('Index size: {0:N0} bytes' -f (Get-Item -LiteralPath $indexPath).Length)
+    Write-Output ('Turns size: {0:N0} bytes' -f (Get-Item -LiteralPath $turnsPath).Length)
+    Write-Output ('Artifacts size: {0:N0} bytes' -f (Get-Item -LiteralPath $artifactsPath).Length)
+}

@@ -1,0 +1,6 @@
+import json
+d = json.load(open('ci_run.json'))
+for job in d:
+    print('JOB:', job['name'], '->', job['conclusion'])
+    for step in job.get('steps', []):
+        print(f"  [{step['conclusion']}] {step['name']}")

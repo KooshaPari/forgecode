@@ -1,0 +1,42 @@
+## Summary
+Add DAG unit executor (`run_dag_units.py`) that reads a JSON manifest and generates AgilePlus-conformant spec.md and work-package files, enabling automated pipeline execution for the epic_F compute/infra epic.
+
+## Context
+The DAG foundation epic (epic_F) needs a script that can consume a structured DAG manifest and produce the full set of specification and work-package artifacts following AgilePlus conventions. This PR delivers unit F2 — the executor that wires the DAG processing pipeline into the agileplus workspace.
+
+## Changes
+- **`scripts/run_dag_units.py`** — new Python script that:
+  - Reads a DAG manifest JSON with `epic`, `title`, `units` (unit_id, title, type, description, dependencies, subtasks)
+  - Validates the manifest: no duplicate unit_ids, all required fields present
+  - Generates `specs/<epic>/spec.md` — epic-level specification with unit table
+  - Generates `specs/<epic>/tasks.md` — aggregated work-package index
+  - Generates `specs/<epic>/tasks/WP<unit_id>.md` — individual WP files with AgilePlus YAML frontmatter (work_package_id, lane, dependencies, subtasks, history)
+  - Generates `specs/<epic>/meta.json` — metadata file
+- **`scripts/test-manifest-epic_F.json`** — test manifest with F1 and F2 units
+- **`specs/epic_F/`** — generated output for the test manifest
+
+### Key Implementation Details
+- Follows AgilePlus WP00-style work-package format exactly (YAML frontmatter with `work_package_id`, `lane`, `dependencies`, `subtasks`, `phase`, `history`)
+- Duplicate unit_id detection runs before any file writes, preventing partial output
+- All files are UTF-8 encoded per AgilePlus CLAUDE.md policy
+- Output respects the `specs/<epic>/tasks/` directory structure used by existing AgilePlus specs
+
+## Use Cases
+- Automate work-package creation from DAG execution plans
+- Ensure consistent spec/WP format across all epic_F units
+- Validate unit manifest integrity before pipeline execution
+- Enable CI/CD to consume the generated spec artifacts
+
+## Testing
+```bash
+# Run against the test manifest (validates output generation)
+python scripts/run_dag_units.py scripts/test-manifest-epic_F.json --output-dir .
+
+# Test duplicate detection
+python scripts/run_dag_units.py <manifest-with-duplicates> --output-dir .
+# Expected: exits with code 1 and error message identifying the duplicate
+```
+
+## Links
+- Epic: epic_F — DAG foundation + automation
+- Unit: F2 — Wire DAG executor to agileplus

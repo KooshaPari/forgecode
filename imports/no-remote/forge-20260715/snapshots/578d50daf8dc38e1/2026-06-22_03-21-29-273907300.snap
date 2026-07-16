@@ -1,0 +1,52 @@
+//! Integration tests for the TracingCompat shim.
+//!
+//! Verifies CompatEvent is constructible, TracingCompat<S> wires through
+//! to a SpanSink, and emit_span/emit_event accept nominal inputs.
+
+use pheno_tracing::adapters::VecSpanSink;
+use pheno_tracing::compat::{CompatEvent, TracingCompat};
+use pheno_tracing::port::{SpanKind, SpanSink};
+use std::collections::BTreeMap;
+
+#[test]
+fn compat_event_carries_payload() {
+    let e = CompatEvent {
+        target: "absorb".to_string(),
+        message: "hello".to_string(),
+        fields: BTreeMap::new(),
+    };
+    assert_eq!(e.target, "absorb");
+    assert_eq!(e.message, "hello");
+    assert!(e.fields.is_empty());
+}
+
+#[test]
+fn tracing_compat_wires_sink() {
+    let sink = VecSpanSink::default();
+    let compat = TracingCompat::new(sink);
+    // Sink accessor returns the inner sink.
+    let _inner = compat.sink();
+}
+
+#[test]
+fn tracing_compat_emit_span_uses_sink() {
+    let mut compat = TracingCompat::new(VecSpanSink::default());
+    compat.emit_span("op-1", SpanKind::Server, BTreeMap::new(), 0, 1);
+    compat.emit_span("op-2", SpanKind::Client, BTreeMap::new(), 1, 2);
+    // Internal sink should have recorded both.
+    let snap = compat.sink().snapshot();
+    assert_eq!(snap.len(), 2);
+    assert_eq!(snap[0].name, "op-1");
+    assert_eq!(snap[1].name, "op-2");
+}
+
+#[test]
+fn tracing_compat_emit_event_does_not_panic() {
+    let mut compat = TracingCompat::new(VecSpanSink::default());
+    let e = CompatEvent {
+        target: "t".to_string(),
+        message: "m".to_string(),
+        fields: BTreeMap::new(),
+    };
+    compat.emit_event(&e);
+}

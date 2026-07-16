@@ -1,0 +1,11 @@
+import json, glob, os
+files = sorted(glob.glob('_arch_*.json'))
+out = []
+for f in files:
+    try:
+        d = json.load(open(f, 'r', encoding='utf-8'))
+        out.append(f"{f}|{d.get('full_name','')}|arc={d.get('archived','')}|fork={d.get('fork','')}|lang={d.get('language','')}|sz={d.get('size','')}|pushed={d.get('pushed_at','')}|{((d.get('description') or '')[:100])}")
+    except Exception as e:
+        out.append(f'{f}|ERR|{e}')
+open('_arch_summary.txt','w',encoding='utf-8').write('\n'.join(out))
+print(f'WROTE {len(out)} arch lines')

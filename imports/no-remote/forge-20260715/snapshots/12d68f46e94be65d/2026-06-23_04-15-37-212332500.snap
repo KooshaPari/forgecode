@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""List KooshaPari repos matching compute/infra/obs patterns."""
+import json
+import os
+import subprocess
+
+env = os.environ.copy()
+# Load token from .env
+try:
+    with open(r"C:\Users\koosh\.env", "r", encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("GITHUB_TOKEN="):
+                env["GH_TOKEN"] = line.split("=", 1)[1].strip()
+                env["GITHUB_TOKEN"] = env["GH_TOKEN"]
+                break
+except Exception as e:
+    print(f"env load err: {e}", flush=True)
+
+patterns = [
+    "nano", "byteport", "compose", "pheno", "infra", "observ",
+    "kit", "spine", "registry", "kits", "specs", "otel", "forge",
+    "sdk", "dag", "journey", "harness", "absorb",
+    "mcp", "cli", "agent", "phenokits", "phenoproc", "phenorouter",
+    "phenodocs", "phenofastmcp", "phenodag", "phenohub",
+    "phenoforge", "phenoshared", "phenocli", "phenospecs",
+    "phenomcp", "phenoflow", "phenobyte",
+]
+
+all_repos = []
+for page in range(1, 6):
+    try:
+        r = subprocess.run(
+            ["gh", "api", f"user/repos?per_page=100&page={page}&sort=updated"],
+            capture_output=True, env=env, timeout=60,
+        )
+        # gh on Windows outputs cp1252; cp1252 is a strict superset of ASCII
+        # and every byte 0x00-0xFF decodes successfully, so use cp1252 + replace.
+        stdout = r.stdout.decode("cp1252", errors="replace")
+        print(f"page {page} rc={r.returncode} stdout_len={len(stdout)} stderr={r.stderr[:300] if r.stderr else ''}", flush=True)
+        if r.returncode != 0 or not stdout.strip():
+            print(f"  STDOUT preview: {stdout[:300]}", flush=True)
+            break
+        # Save raw page for forensic
+        with open(f"C:\Users\koosh\_gh_page{page}.json", "w", encoding="utf-8") as f:
+            f.write(stdout)
+        try:
+            page_data = json.loads(stdout)
+        except Exception as e:
+            print(f"  JSON err: {e}", flush=True)
+            # try to find the bad char offset
+            try:
+                # parse incrementally to find the failure offset
+                import re
+                # show last 200 chars before the failure
+                m = re.match(r".*char (\d+)", str(e))
+                if m:
+                    off = int(m.group(1))
+                    print(f"  context [{max(0,off-100)}:{off+100}]: {stdout[max(0,off-100):off+100]!r}", flush=True)
+            except Exception:
+                pass
+            break
+        if not page_data:
+            break
+        all_repos.extend(page_data)
+        print(f"  loaded {len(page_data)} repos", flush=True)
+    except Exception as e:
+        print(f"err: {e}", flush=True)
+        break
+
+print(f"\ntotal repos: {len(all_repos)}", flush=True)
+
+seen = set()
+matching = []
+for r in all_repos:
+    name = r.get("name", "")
+    name_l = name.lower()
+    if name in seen:
+        continue
+    for p in patterns:
+        if p in name_l:
+            matching.append(r)
+            seen.add(name)
+            break
+
+print(f"\n=== {len(matching)} MATCHING REPOS ===\n", flush=True)
+for r in sorted(matching, key=lambda x: x.get("name", "").lower()):
+    fork = "F" if r.get("fork") else " "
+    arch = "A" if r.get("archived") else " "
+    priv = "P" if r.get("private") else " "
+    print(f"[{fork}{arch}{priv}] {r.get('full_name'):55s} | {(r.get('description') or '')[:75]}", flush=True)
+
+# Save for later
+with open(r"C:\Users\koosh\_all_repos.json", "w", encoding="utf-8") as f:
+    json.dump(all_repos, f, indent=2)
+with open(r"C:\Users\koosh\_all_repos_match.json", "w", encoding="utf-8") as f:
+    json.dump(matching, f, indent=2)
+print(f"\nsaved _all_repos.json + _all_repos_match.json", flush=True)

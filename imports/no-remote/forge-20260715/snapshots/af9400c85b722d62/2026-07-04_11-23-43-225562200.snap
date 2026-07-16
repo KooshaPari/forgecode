@@ -1,0 +1,19 @@
+@echo off
+set TOKEN=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
+set BASE=https://api.github.com/repos/KooshaPari/OmniRoute/branches
+set OUTDIR=C:\Users\koosh
+set PAGE=1
+:loop
+set OUTFILE=%OUTDIR%\_omniroute_branches_p%PAGE%.json
+set URL=%BASE%?per_page=100&page=%PAGE%
+echo Fetching page %PAGE% -> %OUTFILE%
+curl -sS -L -H "Authorization: Bearer %TOKEN%" "%URL%" > "%OUTFILE%"
+if errorlevel 1 goto :done
+REM Check if file is empty or has less than 100 entries
+for %%F in ("%OUTFILE%") do set SIZE=%%~zF
+if %SIZE% LSS 100 goto :done
+set /a PAGE+=1
+if %PAGE% GTR 10 goto :done
+goto :loop
+:done
+echo Done at page %PAGE%

@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""
+Dead-code audit, streaming version.
+Reads each source file ONCE and counts all pub item names at once using
+a single big alternation regex.
+"""
+import os, re, sys
+from collections import defaultdict
+
+ROOT = r'C:\Users\koosh\Dev\Civis'
+INVENTORY = r'C:\Users\koosh\inv2.txt'
+FILELIST = r'C:\Users\koosh\filelist.txt'
+
+inv_pat = re.compile(r'^\s*(\d+):(\S+)\s+(fn|struct|enum|trait|const|type|static)\s+([A-Za-z_][A-Za-z0-9_]*)\s*$')
+crate_pat = re.compile(r'^===(.+)===')
+
+items = []
+current_crate = None
+with open(INVENTORY, 'r', encoding='utf-8') as f:
+    for line in f:
+        line = line.rstrip('\n')
+        m = crate_pat.match(line)
+        if m:
+            current_crate = m.group(1)
+            continue
+        m = inv_pat.match(line)
+        if m and current_crate:
+            line_no = int(m.group(1))
+            path = m.group(2)
+            kind = m.group(3)
+            name = m.group(4)
+            items.append((current_crate, path, line_no, kind, name))
+
+print(f"Total items: {len(items)}", file=sys.stderr)
+
+COMMON = {
+    'Iterator','Display','Debug','Default','Clone','PartialEq','Serialize',
+    'Deserialize','FromStr','AsRef','AsMut','IntoIterator','Send','Sync','Unpin',
+    'Hash','Eq','Sized','Copy','Builder','Factory','Service','Handler','Options',
+    'Config','Settings','Context','Manager','Registry','Controller','Provider',
+    'Adapter','Wrapper','Error','Result','Option','Vec','String','Value',
+    'new','build','default','from_str','from_bytes','from_value','as_bytes','as_str',
+    'as_ref','as_mut','as_slice','to_string','to_vec','to_bytes','to_str','to_owned',
+    'to_string_pretty','to_value','into_inner','into_bytes','into_string','into_vec',
+    'into_iter','to_writer','from_reader','to_reader','try_from','try_into',
+    'is_empty','len','iter','iter_mut','fmt','display','serialize','deserialize',
+    'run','main','init','setup','teardown','reset','start','stop','close','open',
+    'read','write','send','recv','publish','subscribe','connect','disconnect',
+    'register','unregister','unsubscribe','begin','end','finish','complete','cancel',
+    'abort','kill','pause','resume','flush','clear','update','create','delete',
+    'remove','add','insert','push','pop','append','extend','next','prev','first',
+    'last','get','set','put','post','head','patch','enable','disable','allow',
+    'deny','require','item','items','value','values','key','keys','name','names',
+    'id','ids','idx','index','indices','ptr','ref','mut','box','arc','rc','pin',
+    'cell','atomic','sync','async','await','yield','return','break','continue',
+    'loop','while','for','if','else','match','let','const','static','pub','priv',
+    'use','mod','fn','struct','enum','trait','impl','dyn','unsafe','extern',
+    'move','where','as','in','of','to','from','with','by','at','on','into','onto',
+    'over','under','above','below','before','after','during','since','until',
+    'about','against','among','across','around','behind','beside','between',
+    'beyond','down','except','inside','like','near','off','opposite','out',
+    'outside','past','round','through','throughout','till','toward','towards',
+    'under','underneath','unlike','up','upon','with','within','without','proc',
+    'func','method','function','module','crate','self','super','partial','ok','err',
+    'none','some','yes','no','true','false','enable','disable','must','should',
+    'will','can','may','might','would','could','head','sub','mul','div','rem',
+    'neg','abs','min','max','sum','avg','count','empty','full','reject','accept',
+    'process','compute','check','verify','validate','parse','format','convert',
+    'load','save','store','fetch','retrieve','query','handle','dispatch','apply',
+    'serialize','deserialize','encode','decode','compress','decompress','encrypt',
+    'decrypt','sign','verify','hash','digest','materialize','instantiate',
+    'deinit','shutdown','terminate','graceful','force','try_publish','do_work',
+    'do_loop','tick','run_loop','spawn','despawn','cleanup','simulate','step',
+    'iterate','sequence','chain','compose','pipe','forward','reverse','swap',
+    'rotate','flip','mirror','copy','move','shift','sort','search','find','lookup',
+    'contain','contains','present','absent','exists','is_valid','is_ready',
+    'is_done','is_some','is_none','is_ok','is_err','has','take','drop','drain',
+    'retain','truncate','split','join','concat','append_str','prepend','consume',
+    'produce','emit','observe','watch','monitor','listen','record','log','trace',
+    'debug','info','warn','error','fatal','panic','abort','halt','wait','sleep',
+    'wake','notify','signal','trigger','invoke','execute','perform','do_run',
+    'do_call','call_apply','apply_to','to_id','to_name','from_id','from_name',
+    'into_id','as_id','as_u32','as_u64','as_i32','as_i64','as_usize','as_f32',
+    'as_f64','from_u32','from_u64','from_i32','from_i64','from_usize','from_f32',
+    'from_f64','to_u32','to_u64','to_i32','to_i64','to_usize','to_f32','to_f64',
+    'into_u32','into_u64','into_i32','into_i64','into_usize','into_f32','into_f64',
+    'mut_ref','const_ref','as_dyn','boxed','shared','unique','owned','borrowed',
+    'raw','safe','quick','slow','lazy','eager','strict','loose','fast','cold','hot',
+    'warm','cool','frozen','melted','liquid','gas','solid','alive','dead',
+    'active','inactive','enabled','disabled','visible','hidden','shown','opened',
+    'closed','sealed','unsealed','locked','unlocked','bound','free','attached',
+    'detached','connected','disconnected','paired','unpaired','synced','out_of_sync',
+    'aligned','misaligned','center','origin','zero','one','two','three','four',
+    'first','second','third','fourth','last','final','initial','current','next',
+    'previous','old','new','default','sample','example','dummy','mock','fake',
+    'stub','placeholder','todo','wip','draft','final','stable','unstable',
+    'production','development','test','tests','spec','impl','detail','details',
+    'metadata','header','footer','body','head','tail','begin','end','start','stop',
+    'first','last','outer','inner','top','bottom','left','right','center','edge',
+    'corner','side','front','back','north','south','east','west','up','down',
+    'forward','backward','forward_iter','reverse_iter','bidir','one_way','two_way',
+    'main_loop','event_loop','game_loop','tick_loop','update_loop','render_loop',
+    'spawn_loop','pool','channel','queue','stack','heap','cache','buffer','pool',
+}
+
+filtered = []
+for crate, path, line, kind, name in items:
+    if len(name) < 8: continue
+    if name in COMMON: continue
+    filtered.append((crate, path, line, kind, name))
+
+print(f"Filtered items: {len(filtered)}", file=sys.stderr)
+
+# Group by (kind, name) for dedup
+groups = defaultdict(list)
+for crate, path, line, kind, name in filtered:
+    groups[(kind, name)].append((crate, path, line))
+
+unique_names = sorted({n for _, n in groups.keys()})
+print(f"Unique names: {len(unique_names)}", file=sys.stderr)
+
+# Build single alternation regex (word boundaries on each)
+# Use re.findall with one regex. Group capture: which name matched.
+# Use a single regex of the form: \b(name1|name2|...)\b
+# Sort by length desc to avoid prefix issues
+sorted_names = sorted(unique_names, key=lambda x: -len(x))
+pattern = r'\b(' + '|'.join(re.escape(n) for n in sorted_names) + r')\b'
+print(f"Pattern length: {len(pattern)}", file=sys.stderr)
+
+# Read file list
+with open(FILELIST, 'r', encoding='utf-8') as f:
+    files = [l.strip() for l in f if l.strip()]
+print(f"Files: {len(files)}", file=sys.stderr)
+
+# Stream: for each file, count occurrences of each name.
+# Use collections.Counter for accumulation.
+counter = defaultdict(int)
+file_count = 0
+for fp in files:
+    file_count += 1
+    if file_count % 50 == 0:
+        print(f"  ... file {file_count}/{len(files)}", file=sys.stderr)
+    try:
+        with open(fp, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+    except Exception:
+        continue
+    for m in re.finditer(pattern, content):
+        counter[m.group(1)] += 1
+
+print(f"Names matched at least once: {len(counter)}", file=sys.stderr)
+
+# Now check each item
+results = []
+for (kind, name), defs in groups.items():
+    total = counter.get(name, 0)
+    # external refs = total - num definitions of that name
+    ext = total - len(defs)
+    if ext <= 0:
+        for crate, path, line in defs:
+            results.append((crate, path, line, kind, name, total, ext))
+
+print(f"Candidates with 0 external refs: {len(results)}", file=sys.stderr)
+print('---')
+for r in results:
+    print(f"{r[0]}|{r[1]}:{r[2]}|{r[3]}|{r[4]}|total={r[5]}|ext={r[6]}")

@@ -1,0 +1,40 @@
+{
+  "project": "wave_3lane",
+  "display_name": "substrate/tests/wave_3lane.rs",
+  "repo": "KooshaPari/substrate",
+  "path": "tests/wave_3lane.rs",
+  "kind": "integration_test",
+  "tier": "C",
+  "status": "active",
+  "disposition": "NEW",
+  "language": "rust",
+  "test_framework": "cargo test",
+  "test_count_target": 6,
+  "lanes_under_test": [
+    "sync",
+    "fanout",
+    "tree"
+  ],
+  "covers": [
+    "substrate::wave::runner",
+    "substrate::wave::fanout",
+    "substrate::substrate_dag",
+    "substrate::a2a",
+    "substrate::engine_conformance",
+    "engine_agentapi"
+  ],
+  "commit": "f482cec",
+  "pushed": true,
+  "parent_commit": "2c7f557",
+  "added_on": "2026-06-24",
+  "rationale": "Tier C substrate crate from plans/2026-06-22-phenotype-ecosystem-router-architecture-v1.md. Exercises all three execution lanes (sync, fanout, tree) provided by substrate::wave against in-memory stub engines + engine-agentapi (offline mode). Gates the worktree at the type-system boundary so future lane refactors break the build rather than silently degrade.",
+  "test_names": [
+    "sync_lane_start_post_message_dump_completes",
+    "fanout_lane_dispatches_to_all_engines_with_partial_failure",
+    "tree_lane_parent_orchestrates_children_via_a2a",
+    "fanout_lane_semaphore_bounds_concurrency",
+    "tree_lane_a2a_task_tree_correlates_events",
+    "sync_lane_conformance_suite_passes_for_engine_agentapi"
+  ],
+  "notes": "Hermetic by design — no network, no subprocess. Production paths are stubbed; integration with real engines (engine-agentapi, engine-claude, engine-codex, engine-forge) is verified via the conformance suite assertion in the last test."
+}

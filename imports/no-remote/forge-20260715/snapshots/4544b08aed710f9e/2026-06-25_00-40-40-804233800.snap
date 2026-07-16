@@ -1,0 +1,611 @@
+/**
+ * Unit tests — open-sse/services/compression/telemetry/
+ *
+ * Covers the in-memory corpus, the query engine, the delta detector, the
+ * recorder hook, the JSONL persister (sync write path; async path is
+ * covered by the SQLite tests in `tests/unit/db/compression-telemetry`),
+ * and `buildRunRecord` (the canonical shape).
+ *
+ * These tests do NOT touch the SQLite layer — they only exercise the
+ * in-memory + JSONL paths. The DB layer is tested via a separate suite so
+ * a SQLite outage does not block fast feedback on the hot-path code.
+ */
+
+import { describe, it, before, after, beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  CompressionRunCorpus,
+  DEFAULT_DELTA_THRESHOLDS,
+  JsonlRunPersister,
+  aggregateRuns,
+  bucketRunsByTime,
+  buildRunRecord,
+  diffCorpusStats,
+  diffRuns,
+  getDefaultRunCorpus,
+  loadJsonlPersisterFromEnv,
+  percentiles,
+  queryAndAggregate,
+  recordCompressionRun,
+  recordCompressionRunOn,
+  resolveWindowCutoff,
+  runQuery,
+  setDefaultRunCorpus,
+  statsFor,
+  type CompressionRunRecord,
+  type CompressionStats,
+} from "../../../open-sse/services/compression/telemetry/index.ts";
+
+function makeStats(overrides: Partial<CompressionStats> = {}): CompressionStats {
+  return {
+    originalTokens: 1000,
+    compressedTokens: 600,
+    savingsPercent: 40,
+    techniquesUsed: ["caveman", "rtk"],
+    mode: "stacked",
+    engine: "caveman",
+    timestamp: Date.now(),
+    durationMs: 12,
+    rulesApplied: ["filler-1"],
+    ...overrides,
+  };
+}
+
+function makeRecord(overrides: Partial<CompressionRunRecord> = {}): CompressionRunRecord {
+  return {
+    id: generateRunId(),
+    timestamp: Date.now(),
+    mode: "stacked",
+    engine: "caveman",
+    provider: "openai",
+    model: "gpt-4o",
+    originalTokens: 1000,
+    compressedTokens: 600,
+    tokensSaved: 400,
+    savingsPercent: 40,
+    durationMs: 12,
+    compressed: true,
+    techniquesUsed: ["caveman", "rtk"],
+    source: "live",
+    ...overrides,
+  };
+}
+
+describe("telemetry/types", () => {
+  it("buildRunRecord computes tokensSaved and compressed flag", () => {
+    const stats = makeStats();
+    const record = buildRunRecord(stats, { provider: "openai", model: "gpt-4o" });
+    assert.equal(record.originalTokens, 1000);
+    assert.equal(record.compressedTokens, 600);
+    assert.equal(record.tokensSaved, 400);
+    assert.equal(record.savingsPercent, 40);
+    assert.equal(record.compressed, true);
+    assert.equal(record.provider, "openai");
+    assert.equal(record.model, "gpt-4o");
+    assert.equal(typeof record.id, "string");
+    assert.ok(record.id.startsWith("cr_"));
+  });
+
+  it("buildRunRecord marks compressed=false when savings are zero or negative", () => {
+    const record = buildRunRecord(makeStats({ savingsPercent: 0 }));
+    assert.equal(record.compressed, false);
+  });
+
+  it("generateRunId returns unique ids", () => {
+    const a = generateRunId();
+    const b = generateRunId();
+    assert.notEqual(a, b);
+  });
+
+  it("buildRunRecord preserves engineBreakdown shape", () => {
+    const stats = makeStats({
+      engineBreakdown: [
+        {
+          engine: "rtk",
+          originalTokens: 1000,
+          compressedTokens: 700,
+          savingsPercent: 30,
+          durationMs: 4,
+        },
+        {
+          engine: "caveman",
+          originalTokens: 700,
+          compressedTokens: 350,
+          savingsPercent: 50,
+          durationMs: 8,
+        },
+      ],
+    });
+    const record = buildRunRecord(stats);
+    assert.ok(Array.isArray(record.engineBreakdown));
+    assert.equal(record.engineBreakdown?.length, 2);
+    assert.equal(record.engineBreakdown?.[0].engine, "rtk");
+  });
+});
+
+describe("telemetry/corpus", () => {
+  it("respects maxRuns and evicts oldest (FIFO)", () => {
+    const corpus = new CompressionRunCorpus({ maxRuns: 3 });
+    const r1 = makeRecord({ id: "r1", timestamp: 1 });
+    const r2 = makeRecord({ id: "r2", timestamp: 2 });
+    const r3 = makeRecord({ id: "r3", timestamp: 3 });
+    const r4 = makeRecord({ id: "r4", timestamp: 4 });
+    corpus.append(r1);
+    corpus.append(r2);
+    corpus.append(r3);
+    corpus.append(r4);
+    assert.equal(corpus.size(), 3);
+    assert.equal(corpus.get("r1"), null, "oldest should be evicted");
+    assert.equal(corpus.get("r4")?.id, "r4");
+    assert.equal(corpus.totalIngestedCount(), 4);
+  });
+
+  it("record() rejects invalid stats and never throws", () => {
+    const corpus = new CompressionRunCorpus();
+    // Missing tokens fields.
+    const badStats = { ...makeStats(), originalTokens: NaN as unknown as number };
+    const r = corpus.record(badStats);
+    assert.equal(r, null);
+    assert.equal(corpus.size(), 0);
+
+    // Null / undefined are no-ops.
+    assert.equal(corpus.record(null), null);
+    assert.equal(corpus.record(undefined), null);
+
+    // Valid stats.
+    const valid = corpus.record(makeStats());
+    assert.ok(valid);
+    assert.equal(corpus.size(), 1);
+  });
+
+  it("hydrate loads a bulk set and trims to maxRuns", () => {
+    const corpus = new CompressionRunCorpus({ maxRuns: 2 });
+    corpus.hydrate([
+      makeRecord({ id: "a" }),
+      makeRecord({ id: "b" }),
+      makeRecord({ id: "c" }),
+      makeRecord({ id: "d" }),
+    ]);
+    assert.equal(corpus.size(), 2);
+    assert.equal(corpus.get("c")?.id, "c");
+    assert.equal(corpus.get("d")?.id, "d");
+    assert.equal(corpus.get("a"), null);
+  });
+
+  it("resize() evicts immediately when shrunk", () => {
+    const corpus = new CompressionRunCorpus({ maxRuns: 10 });
+    for (let i = 0; i < 10; i++) corpus.append(makeRecord({ id: `r${i}`, timestamp: i }));
+    assert.equal(corpus.size(), 10);
+    corpus.resize(3);
+    assert.equal(corpus.size(), 3);
+    assert.equal(corpus.get("r9")?.id, "r9");
+    assert.equal(corpus.get("r0"), null);
+  });
+
+  it("addHook fires once per record and unsubscribe stops further calls", () => {
+    const corpus = new CompressionRunCorpus();
+    let count = 0;
+    const off = corpus.addHook(() => {
+      count += 1;
+    });
+    corpus.record(makeStats({ originalTokens: 500, compressedTokens: 250, savingsPercent: 50 }));
+    corpus.record(makeStats({ originalTokens: 500, compressedTokens: 250, savingsPercent: 50 }));
+    assert.equal(count, 2);
+    off();
+    corpus.record(makeStats({ originalTokens: 500, compressedTokens: 250, savingsPercent: 50 }));
+    assert.equal(count, 2, "unsubscribed hook should not fire");
+  });
+
+  it("hook exceptions do not break the recorder", () => {
+    const corpus = new CompressionRunCorpus();
+    corpus.addHook(() => {
+      throw new Error("boom");
+    });
+    const r = corpus.record(makeStats());
+    assert.ok(r);
+    assert.equal(corpus.size(), 1);
+  });
+
+  it("snapshot returns a defensive copy", () => {
+    const corpus = new CompressionRunCorpus();
+    corpus.append(makeRecord({ id: "x" }));
+    const snap = corpus.snapshot();
+    snap.pop();
+    assert.equal(corpus.size(), 1, "mutating snapshot must not affect the live corpus");
+  });
+
+  it("clear() empties the corpus but keeps the persister attached", () => {
+    const corpus = new CompressionRunCorpus();
+    corpus.append(makeRecord({ id: "x" }));
+    corpus.clear();
+    assert.equal(corpus.size(), 0);
+  });
+});
+
+describe("telemetry/queryEngine", () => {
+  it("resolveWindowCutoff maps shorthand to ms offsets", () => {
+    const now = 10_000_000;
+    assert.equal(resolveWindowCutoff("1h", now), now - 60 * 60 * 1000);
+    assert.equal(resolveWindowCutoff("24h", now), now - 24 * 60 * 60 * 1000);
+    assert.equal(resolveWindowCutoff("7d", now), now - 7 * 24 * 60 * 60 * 1000);
+    assert.equal(resolveWindowCutoff("30d", now), now - 30 * 24 * 60 * 60 * 1000);
+    assert.equal(resolveWindowCutoff("all", now), null);
+    assert.equal(resolveWindowCutoff(undefined, now), null);
+    assert.equal(resolveWindowCutoff(5000, now), now - 5000);
+  });
+
+  it("runQuery filters by provider, model, mode, engine, requestId, source", () => {
+    const records: CompressionRunRecord[] = [
+      makeRecord({ id: "1", provider: "openai", model: "gpt-4o", mode: "stacked", engine: "caveman" }),
+      makeRecord({ id: "2", provider: "anthropic", model: "claude-3", mode: "aggressive", engine: "aggressive" }),
+      makeRecord({ id: "3", provider: "openai", model: "gpt-4o", mode: "lite", engine: "lite", source: "preview" }),
+    ];
+    assert.equal(runQuery(records, { provider: "openai" }).map((r) => r.id).join(","), "1,3");
+    assert.equal(runQuery(records, { mode: "aggressive" }).map((r) => r.id).join(","), "2");
+    assert.equal(runQuery(records, { engine: "caveman" }).map((r) => r.id).join(","), "1");
+    assert.equal(runQuery(records, { model: "gpt-4o", provider: "openai" }).map((r) => r.id).join(","), "1,3");
+    assert.equal(runQuery(records, { source: "preview" }).map((r) => r.id).join(","), "3");
+  });
+
+  it("runQuery honours time window / since / until", () => {
+    const records: CompressionRunRecord[] = [
+      makeRecord({ id: "old", timestamp: 1_000 }),
+      makeRecord({ id: "mid", timestamp: 5_000 }),
+      makeRecord({ id: "new", timestamp: 9_000 }),
+    ];
+    assert.deepEqual(
+      runQuery(records, { since: 2_000, until: 8_000 }).map((r) => r.id),
+      ["mid"]
+    );
+    assert.deepEqual(
+      runQuery(records, { window: 4_000 }).map((r) => r.id),
+      ["mid", "new"]
+    );
+  });
+
+  it("runQuery paginates with limit + offset and sorts by order", () => {
+    const records = Array.from({ length: 10 }, (_, i) =>
+      makeRecord({ id: `r${i}`, timestamp: i })
+    );
+    const desc = runQuery(records, { limit: 3 });
+    assert.deepEqual(
+      desc.map((r) => r.id),
+      ["r9", "r8", "r7"]
+    );
+    const asc = runQuery(records, { limit: 3, offset: 2, order: "asc" });
+    assert.deepEqual(
+      asc.map((r) => r.id),
+      ["r2", "r3", "r4"]
+    );
+  });
+
+  it("runQuery tag filter requires all key/value pairs to match", () => {
+    const records: CompressionRunRecord[] = [
+      makeRecord({ id: "a", tags: { env: "prod", region: "us" } }),
+      makeRecord({ id: "b", tags: { env: "prod", region: "eu" } }),
+      makeRecord({ id: "c", tags: { env: "staging" } }),
+    ];
+    assert.deepEqual(
+      runQuery(records, { tags: { env: "prod" } }).map((r) => r.id),
+      ["a", "b"]
+    );
+    assert.deepEqual(
+      runQuery(records, { tags: { env: "prod", region: "us" } }).map((r) => r.id),
+      ["a"]
+    );
+  });
+
+  it("runQuery onlyCompressed excludes zero-savings runs", () => {
+    const records: CompressionRunRecord[] = [
+      makeRecord({ id: "c", savingsPercent: 30, compressed: true }),
+      makeRecord({ id: "n", savingsPercent: 0, compressed: false }),
+    ];
+    assert.deepEqual(
+      runQuery(records, { onlyCompressed: true }).map((r) => r.id),
+      ["c"]
+    );
+  });
+
+  it("aggregateRuns computes count, totals, p50/p95/p99, byMode/Engine/Provider", () => {
+    const records: CompressionRunRecord[] = [
+      makeRecord({ id: "1", originalTokens: 100, compressedTokens: 60, tokensSaved: 40, savingsPercent: 40, durationMs: 10, mode: "stacked", engine: "caveman", provider: "openai" }),
+      makeRecord({ id: "2", originalTokens: 200, compressedTokens: 100, tokensSaved: 100, savingsPercent: 50, durationMs: 20, mode: "stacked", engine: "caveman", provider: "openai" }),
+      makeRecord({ id: "3", originalTokens: 300, compressedTokens: 270, tokensSaved: 30, savingsPercent: 10, durationMs: 30, mode: "lite", engine: "lite", provider: "anthropic" }),
+    ];
+    const stats = aggregateRuns(records);
+    assert.equal(stats.count, 3);
+    assert.equal(stats.totalOriginalTokens, 600);
+    assert.equal(stats.totalCompressedTokens, 430);
+    assert.equal(stats.totalTokensSaved, 170);
+    assert.equal(stats.avgSavingsPercent, 33.33);
+    assert.equal(stats.avgDurationMs, 20);
+    assert.equal(stats.p50SavingsPercent, 40);
+    assert.equal(stats.p95SavingsPercent, 50);
+    assert.equal(stats.p99SavingsPercent, 50);
+    assert.equal(stats.byMode["stacked"]?.count, 2);
+    assert.equal(stats.byMode["lite"]?.count, 1);
+    assert.equal(stats.byEngine["caveman"]?.count, 2);
+    assert.equal(stats.byProvider["openai"]?.count, 2);
+    assert.equal(stats.byProvider["anthropic"]?.count, 1);
+    assert.equal(stats.earliest, Math.min(...records.map((r) => r.timestamp)));
+    assert.equal(stats.latest, Math.max(...records.map((r) => r.timestamp)));
+  });
+
+  it("aggregateRuns is safe on empty input", () => {
+    const stats = aggregateRuns([]);
+    assert.equal(stats.count, 0);
+    assert.equal(stats.avgSavingsPercent, 0);
+    assert.equal(stats.p99SavingsPercent, 0);
+    assert.equal(stats.earliest, null);
+    assert.equal(stats.latest, null);
+  });
+
+  it("queryAndAggregate filters, paginates, and aggregates", () => {
+    const records = Array.from({ length: 20 }, (_, i) =>
+      makeRecord({
+        id: `r${i}`,
+        timestamp: i,
+        originalTokens: 100 + i,
+        compressedTokens: 50,
+        tokensSaved: 50 + i,
+        savingsPercent: 50 - i * 2,
+        provider: i % 2 === 0 ? "openai" : "anthropic",
+      })
+    );
+    const { matches, stats } = queryAndAggregate(records, { limit: 5, offset: 0 });
+    assert.equal(matches.length, 5);
+    // Stats must be over the full match set, not the page.
+    assert.equal(stats.count, 20);
+  });
+
+  it("percentiles returns 0 for empty input", () => {
+    assert.deepEqual(percentiles([], [50, 95]), [0, 0]);
+  });
+
+  it("percentiles picks the nearest rank", () => {
+    assert.equal(percentiles([1, 2, 3, 4, 5], [50])[0], 3);
+    assert.equal(percentiles([1, 2, 3, 4, 5], [95])[0], 5);
+    assert.equal(percentiles([1, 2, 3, 4, 5], [0])[0], 1);
+    assert.equal(percentiles([1, 2, 3, 4, 5], [100])[0], 5);
+  });
+});
+
+describe("telemetry/deltaDetector", () => {
+  it("diffRuns reports savings regressions as alert/warn", () => {
+    const baseline = makeRecord({ id: "b", savingsPercent: 40 });
+    const current = makeRecord({ id: "c", savingsPercent: 33 });
+    const deltas = diffRuns(baseline, current);
+    const savingsDelta = deltas.find((d) => d.kind === "savings");
+    assert.ok(savingsDelta, "savings delta should be present");
+    assert.equal(savingsDelta?.severity, "alert");
+    assert.ok((savingsDelta?.delta ?? 0) < 0);
+  });
+
+  it("diffRuns reports duration spikes as alert when relative > 0.5", () => {
+    const baseline = makeRecord({ id: "b", durationMs: 10, savingsPercent: 50 });
+    const current = makeRecord({ id: "c", durationMs: 30, savingsPercent: 51 });
+    const deltas = diffRuns(baseline, current);
+    const duration = deltas.find((d) => d.kind === "duration");
+    assert.ok(duration, "duration delta should be present");
+    assert.equal(duration?.severity, "alert");
+  });
+
+  it("diffRuns flags newly applied fallback as alert", () => {
+    const baseline = makeRecord({ id: "b", fallbackApplied: false, savingsPercent: 50 });
+    const current = makeRecord({ id: "c", fallbackApplied: true, savingsPercent: 49 });
+    const deltas = diffRuns(baseline, current);
+    const fallback = deltas.find((d) => d.kind === "fallback");
+    assert.ok(fallback);
+    assert.equal(fallback?.severity, "alert");
+  });
+
+  it("diffRuns reports no deltas when current matches baseline", () => {
+    const baseline = makeRecord({ id: "b", durationMs: 10, savingsPercent: 50 });
+    const current = makeRecord({ id: "c", durationMs: 10, savingsPercent: 50 });
+    assert.equal(diffRuns(baseline, current).length, 0);
+  });
+
+  it("diffRuns reports validation error count increase as warn/alert", () => {
+    const baseline = makeRecord({ id: "b", validationErrors: ["a"], savingsPercent: 50 });
+    const current = makeRecord({ id: "c", validationErrors: ["a", "b"], savingsPercent: 50 });
+    const deltas = diffRuns(baseline, current);
+    const v = deltas.find((d) => d.kind === "validation");
+    assert.ok(v);
+    assert.equal(v?.severity, "warn");
+  });
+
+  it("diffCorpusStats flags total-tokens-saved regression", () => {
+    const baseline = {
+      count: 100,
+      totalOriginalTokens: 10_000,
+      totalCompressedTokens: 6_000,
+      totalTokensSaved: 4_000,
+      avgSavingsPercent: 40,
+      avgDurationMs: 10,
+      p50SavingsPercent: 40,
+      p95SavingsPercent: 45,
+      p99SavingsPercent: 50,
+      earliest: 0,
+      latest: 100,
+      byMode: {},
+      byEngine: {},
+      byProvider: {},
+    };
+    const current = {
+      ...baseline,
+      totalTokensSaved: 2_000,
+      avgSavingsPercent: 20,
+    };
+    const deltas = diffCorpusStats(baseline, current);
+    assert.ok(deltas.some((d) => d.kind === "tokens" && d.severity === "alert"));
+    assert.ok(deltas.some((d) => d.kind === "savings" && d.severity === "alert"));
+  });
+
+  it("diffAgainstLast compares the most recent two records", () => {
+    const records = [
+      makeRecord({ id: "a", timestamp: 1, savingsPercent: 30 }),
+      makeRecord({ id: "b", timestamp: 2, savingsPercent: 31 }),
+      makeRecord({ id: "c", timestamp: 3, savingsPercent: 30 }),
+    ];
+    const deltas = diffAgainstLast(records);
+    const savings = deltas.find((d) => d.kind === "savings");
+    assert.ok(savings);
+    assert.equal(savings?.current, 30);
+    assert.equal(savings?.baseline, 31);
+  });
+
+  it("bucketRunsByTime groups records into fixed-width buckets", () => {
+    const records = [
+      makeRecord({ id: "1", timestamp: 0, tokensSaved: 10 }),
+      makeRecord({ id: "2", timestamp: 100, tokensSaved: 20 }),
+      makeRecord({ id: "3", timestamp: 1_100, tokensSaved: 30 }),
+    ];
+    const buckets = bucketRunsByTime(records, 1_000);
+    assert.equal(buckets.length, 2);
+    assert.equal(buckets[0].count, 2);
+    assert.equal(buckets[0].tokensSaved, 30);
+    assert.equal(buckets[1].count, 1);
+    assert.equal(buckets[1].tokensSaved, 30);
+  });
+
+  it("statsFor is an alias for aggregateRuns", () => {
+    const records = [makeRecord({ id: "x" })];
+    const a = statsFor(records);
+    const b = aggregateRuns(records);
+    assert.deepEqual(a, b);
+  });
+
+  it("defaultDeltaThresholds are exposed and reasonable", () => {
+    assert.ok(DEFAULT_DELTA_THRESHOLDS.alertSavingsDropPct >= DEFAULT_DELTA_THRESHOLDS.warnSavingsDropPct);
+    assert.ok(DEFAULT_DELTA_THRESHOLDS.alertTokensDropRel > 0);
+  });
+});
+
+describe("telemetry/recorder", () => {
+  before(() => {
+    // Use a fresh isolated corpus for these tests.
+    setDefaultRunCorpus(new CompressionRunCorpus());
+  });
+  after(() => {
+    setDefaultRunCorpus(null);
+  });
+
+  it("recordCompressionRun produces a stored record alongside stats", () => {
+    setDefaultRunCorpus(new CompressionRunCorpus());
+    const { stats, record } = recordCompressionRun(
+      { hello: "x".repeat(4000) },
+      { hello: "x".repeat(2000) },
+      "stacked",
+      ["caveman", "rtk"],
+      { provider: "openai", model: "gpt-4o" }
+    );
+    assert.ok(stats);
+    assert.ok(record);
+    assert.equal(record?.provider, "openai");
+    assert.equal(record?.model, "gpt-4o");
+    assert.equal(record?.engine, "stacked");
+    assert.equal(getDefaultRunCorpus().size(), 1);
+  });
+
+  it("recordCompressionRunOn uses the supplied corpus", () => {
+    const corpus = new CompressionRunCorpus();
+    const { record } = recordCompressionRunOn(
+      corpus,
+      { x: "a".repeat(4000) },
+      { x: "a".repeat(1000) },
+      "lite",
+      ["lite"],
+      { provider: "anthropic" }
+    );
+    assert.ok(record);
+    assert.equal(corpus.size(), 1);
+  });
+
+  it("recordCompressionRun never throws on bad input", () => {
+    // Missing fields should not throw — it should return stats + null record.
+    const result = recordCompressionRun(
+      null as unknown as Record<string, unknown>,
+      {},
+      "lite",
+      []
+    );
+    assert.equal(result.record, null);
+  });
+});
+
+describe("telemetry/persister", () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "omniroute-persister-"));
+  });
+
+  it("writeSync appends a JSONL line and readAll hydrates it", () => {
+    const file = join(tmpDir, "runs.jsonl");
+    const p = new JsonlRunPersister({ filePath: file });
+    p.writeSync(makeRecord({ id: "r1" }));
+    p.writeSync(makeRecord({ id: "r2" }));
+    assert.ok(existsSync(file));
+    const text = readFileSync(file, "utf8");
+    assert.equal(text.split("\n").filter(Boolean).length, 2);
+  });
+
+  it("loadJsonlPersisterFromEnv returns null when env is unset", () => {
+    const prevEnable = process.env.OMNIROUTE_COMPRESSION_TELEMETRY_PERSIST;
+    const prevPath = process.env.OMNIROUTE_COMPRESSION_TELEMETRY_PATH;
+    delete process.env.OMNIROUTE_COMPRESSION_TELEMETRY_PERSIST;
+    delete process.env.OMNIROUTE_COMPRESSION_TELEMETRY_PATH;
+    try {
+      assert.equal(loadJsonlPersisterFromEnv(), null);
+    } finally {
+      if (prevEnable !== undefined) process.env.OMNIROUTE_COMPRESSION_TELEMETRY_PERSIST = prevEnable;
+      if (prevPath !== undefined) process.env.OMNIROUTE_COMPRESSION_TELEMETRY_PATH = prevPath;
+    }
+  });
+
+  it("loadJsonlPersisterFromEnv returns a persister when OMNIROUTE_COMPRESSION_TELEMETRY_PERSIST=1", () => {
+    const prevEnable = process.env.OMNIROUTE_COMPRESSION_TELEMETRY_PERSIST;
+    const prevPath = process.env.OMNIROUTE_COMPRESSION_TELEMETRY_PATH;
+    const target = join(tmpDir, "env.jsonl");
+    process.env.OMNIROUTE_COMPRESSION_TELEMETRY_PERSIST = "1";
+    process.env.OMNIROUTE_COMPRESSION_TELEMETRY_PATH = target;
+    try {
+      const p = loadJsonlPersisterFromEnv();
+      assert.ok(p instanceof JsonlRunPersister);
+      assert.equal(p?.path, target);
+    } finally {
+      if (prevEnable === undefined) delete process.env.OMNIROUTE_COMPRESSION_TELEMETRY_PERSIST;
+      else process.env.OMNIROUTE_COMPRESSION_TELEMETRY_PERSIST = prevEnable;
+      if (prevPath === undefined) delete process.env.OMNIROUTE_COMPRESSION_TELEMETRY_PATH;
+      else process.env.OMNIROUTE_COMPRESSION_TELEMETRY_PATH = prevPath;
+    }
+  });
+
+  it("readAll skips malformed lines without throwing", async () => {
+    const file = join(tmpDir, "bad.jsonl");
+    const fs = await import("node:fs/promises");
+    const good = JSON.stringify(makeRecord({ id: "good" }));
+    await fs.writeFile(file, `${good}\n{not-json}\n${good}\n`, "utf8");
+    const p = new JsonlRunPersister({ filePath: file });
+    const records = await p.readAll();
+    assert.equal(records.length, 2);
+    assert.equal(records[0].id, "good");
+  });
+
+  it("rotate trims the file down to maxRows", async () => {
+    const file = join(tmpDir, "rotate.jsonl");
+    const p = new JsonlRunPersister({ filePath: file, maxRows: 2 });
+    p.writeSync(makeRecord({ id: "a" }));
+    p.writeSync(makeRecord({ id: "b" }));
+    p.writeSync(makeRecord({ id: "c" }));
+    p.writeSync(makeRecord({ id: "d" }));
+    await p.rotate();
+    const records = await p.readAll();
+    assert.equal(records.length, 2);
+    assert.equal(records[0].id, "c");
+    assert.equal(records[1].id, "d");
+  });
+});

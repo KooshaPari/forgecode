@@ -1,0 +1,28 @@
+## Summary
+Extract the last remaining inline helper `isTokenExpiringSoon` from `chatCore.ts` into a named, documented export in `upstreamTimeouts.ts`, completing the modularization of the chatCore surface. Also includes TypeScript type annotations resolving 9 TSC errors across the combos route.
+
+## Context
+The chatCore handler previously had several inline helper checks embedded directly in the request-processing logic. Prior PRs extracted the larger helpers; this PR handles the final remaining item — `isTokenExpiringSoon`, a small but important utility that determines whether an auth token is within 5 minutes of expiry so callers can proactively re-auth before making an upstream request.
+
+Additionally, the combos test route had 9 TypeScript errors from untyped parameters and implicit `any` casts. These are cleaned up with proper type annotations across three functions.
+
+## Changes
+- **`open-sse/handlers/chatCore/upstreamTimeouts.ts`**: Extracted `isTokenExpiringSoon(expiresAt, bufferMs)` as an exported function with full JSDoc. Accepts `string | Date | number | null | undefined`, defaults to a 5-minute buffer. Significant internal restructuring of the module to group related exports.
+- **`src/app/api/combos/test/route.ts`**: Added explicit parameter type signatures to `buildComboTestResult` and `testComboTarget`, fixed a `keys as unknown as Array<...>` cast to satisfy strict type checking, and added explicit `Parameters<typeof ...>` casts on `resolveNestedComboTargets` calls.
+
+## Testing
+```bash
+# Verify chatCore types
+npx tsc --noEmit --project open-sse/tsconfig.json
+
+# Verify combos types
+npx tsc --noEmit --project src/tsconfig.json
+
+# Run relevant tests
+npm test -- --testPathPattern="chatCore"
+npm test -- --testPathPattern="combos"
+```
+
+## Notes
+- The `isTokenExpiringSoon` function signature is backward-compatible: existing inline usage already passed the same shape of arguments.
+- The combos type fixes are purely additive (annotations only, no logic changes).

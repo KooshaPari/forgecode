@@ -1,0 +1,23 @@
+{
+  "project": "BytePort",
+  "stack": "rust",
+  "mode": "e1-recovery",
+  "score": 7,
+  "max": 10,
+  "percentage": 70,
+  "grade": "C+",
+  "checks": [
+    {"name":"build","status":"pass","score":2,"max":2,"detail":"cargo check -p byteport-transport passed (files verified on origin/main)"},
+    {"name":"recovery-files","status":"pass","score":3,"max":3,"detail":"3 terminal UI files recovered: terminal_ui.rs(370 lines), ui.rs(389 lines), mod.rs(5 lines)"},
+    {"name":"branch","status":"pass","score":1,"max":1,"detail":"recover/E1-terminal-ui-worktree created from origin/main"},
+    {"name":"pr","status":"pass","score":1,"max":1,"detail":"PR #248 opened with area:compute-infra + epic-e labels"},
+    {"name":"deny","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},
+    {"name":"audit-entry","status":"pass","score":1,"max":1,"detail":"worklog appended with E1 entry"},
+    {"name":"test-snapshot","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},
+    {"name":"test-fuzz","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},
+    {"name":"coverage","status":"skipped","score":0,"max":2,"detail":"skipped in fast mode"},
+    {"name":"audit","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"},
+    {"name":"bench","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"}
+  ],
+  "timestamp": "2026-06-25T22:55:00Z"
+}

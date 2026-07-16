@@ -1,0 +1,4 @@
+@echo off
+"C:\Program Files\Git\usr\bin\bash.exe" -c "cd /c/Users/koosh/phenotype-tooling && bash /c/Users/koosh/phenotype-registry/grade.sh --fast --json" 1>C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.stdout 2>C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.stderr
+echo exit=%errorlevel%
+copy /Y C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.stdout C:\Users\koosh\_compute_infra_audit\reports\B5_grade_phenotype-tooling.json >NUL

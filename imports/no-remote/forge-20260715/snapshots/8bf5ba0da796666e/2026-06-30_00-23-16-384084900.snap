@@ -1,0 +1,41 @@
+[package]
+name = "phenoctl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Phenoctl — command-line interface to the Configra/Phenotype config substrate (get/set/validate/encrypt/decrypt/watch/layers), wrapping the real pheno-config, settly, and config-schema library crates."
+repository = "https://github.com/KooshaPari/Configra"
+keywords = ["cli", "phenoctl", "config", "phenotype", "configra"]
+categories = ["command-line-utilities", "config"]
+publish = false
+
+[[bin]]
+name = "phenoctl"
+path = "src/main.rs"
+
+[dependencies]
+# Real library crates — every phenoctl subcommand wraps a function from one
+# of these, never a stub.
+pheno-config = { path = "../pheno-config" }
+settly = { path = "../settly" }
+config-schema = { path = "../config-schema" }
+phenotype-config-loader = { path = "../phenotype-config-loader" }
+
+# CLI surface only.
+clap = { workspace = true }
+
+# JSON / TOML codec for the user-facing get/set store (which lets
+# `phenoctl get <key>` work against arbitrary keys, not just the
+# pheno-config schema's url/port/log_level/db_path/feature_flags).
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+# Error / ergonomics.
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

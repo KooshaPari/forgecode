@@ -1,0 +1,94 @@
+name: Deep Security Scan
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    - cron: '0 0 * * *'  # Daily
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+
+jobs:
+  # 1. Dependency Vulnerability Scan (Snyk-style)
+  dependency-scan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@bfa4b33a029b9aa80ddb784b45574c30e072c59e # v-latest: @master
+        with:
+          scan-type: 'fs'
+          ignore-unfixed: true
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+      
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@8dca8a82e2fa1a2c8908956f711300f9c4a4f4f6 # v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # 2. Secret Scanning (Trufflehog)
+  secret-scan:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+      
+      - name: Secrets scan (trufflehog)
+        uses: trufflesecurity/trufflehog@75add79b929b263dae147d2e5bcf0daf292165cf # v-latest: @main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          extra_args: --only-verified
+  # 3. Code Security Analysis (CodeQL)
+  codeql-analysis:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['rust', 'go', 'python', 'typescript']
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+      
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@8dca8a82e2fa1a2c8908956f711300f9c4a4f4f6 # v2
+        with:
+          languages: ${{ matrix.language }}
+      
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@8dca8a82e2fa1a2c8908956f711300f9c4a4f4f6 # v2
+      
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@8dca8a82e2fa1a2c8908956f711300f9c4a4f4f6 # v2
+
+  # 4. Container Security (if Dockerfile exists)
+  container-scan:
+    runs-on: ubuntu-24.04
+    if: hashFiles('**/Dockerfile') != ''
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+      
+      - name: Build image
+        run: docker build -t app:${{ github.sha }} .
+      
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@bfa4b33a029b9aa80ddb784b45574c30e072c59e # v-latest: @master
+        with:
+          image-ref: 'app:${{ github.sha }}'
+          format: 'sarif'
+          output: 'trivy-image-results.sarif'
+      
+      - name: Upload image scan results
+        uses: github/codeql-action/upload-sarif@8dca8a82e2fa1a2c8908956f711300f9c4a4f4f6 # v2
+        with:
+          sarif_file: 'trivy-image-results.sarif'

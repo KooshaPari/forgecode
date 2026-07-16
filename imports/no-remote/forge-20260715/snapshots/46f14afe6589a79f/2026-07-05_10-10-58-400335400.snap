@@ -1,0 +1,30 @@
+# Replace `claude` with a stub that captures its args + env state
+function claude {
+    Write-Host '[stub] claude invoked with:' -ForegroundColor Yellow
+    Write-Host "  ANTHROPIC_BASE_URL = $env:ANTHROPIC_BASE_URL"
+    Write-Host "  ANTHROPIC_MODEL = $env:ANTHROPIC_MODEL"
+    Write-Host "  ANTHROPIC_AUTH_TOKEN length = $($env:ANTHROPIC_AUTH_TOKEN.Length)"
+    Write-Host "  CLAUDE_CODE_AUTO_COMPACT_WINDOW = $env:CLAUDE_CODE_AUTO_COMPACT_WINDOW"
+    Write-Host "  args: $($args -join ' ')"
+}
+
+# Load real profile (this redefines `claude` to wrap claude-omni, which calls our stub)
+. 'D:\koosh\Documents\PowerShell\Microsoft.PowerShell_profile.ps1'
+
+Write-Host '=== Test 1: claude-omni -p "test query" --dangerously-skip-permissions ===' -ForegroundColor Cyan
+claude-omni -p 'test query' --dangerously-skip-permissions
+
+Write-Host ''
+Write-Host '=== Test 2: claude-mm --resume some-id ===' -ForegroundColor Cyan
+claude-mm --resume some-id
+
+Write-Host ''
+Write-Host '=== Test 3: bare `claude` (should default to omni) ===' -ForegroundColor Cyan
+claude --version
+
+Write-Host ''
+Write-Host '=== Test 4: codex-omni -p "test" ===' -ForegroundColor Cyan
+# Don't actually invoke codex-omni (would launch codex); just check the function exists and resolves
+$cmd = Get-Command codex-omni
+Write-Host "  codex-omni exists: $($null -ne $cmd)"
+Write-Host "  Definition: $($cmd.Definition)"

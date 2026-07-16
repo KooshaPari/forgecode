@@ -1,0 +1,163 @@
+//! Phenotype Tool eXtensions (PTX) — Phase 3 governance gate wrapper.
+//!
+//! PTX is the thin CLI layer that orchestrates Phase 1/2/3 governance
+//! against the workspace. It is intentionally a **facade** over the
+//! proven Phase 2 sub-crates plus the Phase 3 WP-09 observability and
+//! WP-10 fuzz surfaces, with two extra governance primitives:
+//!
+//! 1. `ptx check` — runs the four-gate sequence (format → clippy →
+//!    test → audit) and emits a single `--deny-data` JSON summary.
+//! 2. `ptx wrap <subcommand>` — delegates to the phase-crate binary
+//!    in the same way `pt <subcommand>` does in WP-07.
+//!
+//! PTX never embeds business logic — every behavior lives in the
+//! existing crate. This keeps PTX a single, auditable wrapper that PR
+//! reviewers can read in one sitting.
+//!
+//! ## Module map
+//!
+//! - [`check`]       — local pre-Push / pre-PR gate runner.
+//! - [`wrap`]        — process delegate into any of the Phase 1/2/3
+//!                     sub-crates, mirroring `pt`'s coercion.
+//! - [`manifest`]    — parse `ptx.yaml` governance manifests so PRs
+//!                     can declare their own admission contract.
+//! - [`report`]      — render the final gate verdict to stdout so CI
+//!                     and humans both read the same shape.
+
+#![deny(
+    missing_debug_implementations,
+    rust_2018_idioms,
+    unsafe_op_in_unsafe_fn,
+    clippy::correctness,
+    clippy::suspicious,
+    clippy::complexity,
+    clippy::perf,
+    clippy::style
+)]
+#![warn(
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::cargo,
+    clippy::module_name_repetitions,
+    clippy::must_use_candidate,
+    clippy::missing_const_for_fn,
+    missing_docs
+)]
+#![allow(
+    // lib.rs is the module root by definition.
+    clippy::module_name_repetitions,
+)]
+
+pub mod check;
+pub mod manifest;
+pub mod report;
+pub mod wrap;
+
+/// PTX version constant — keep in lock-step with `Cargo.toml`.
+pub const PTX_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Exit codes returned by the CLI binary.
+///
+/// `ptx run` mirrors the OSes' contract (0 = pass, 1 = gate failure)
+/// and adds two extras for tooling ergonomics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ExitCode {
+    /// All gates passed.
+    Success = 0,
+    /// At least one gate failed.
+    GateFailure = 1,
+    /// Manifest parse error (no gate ran).
+    ManifestError = 2,
+    /// Unexpected internal error (IO, propagation failure).
+    InternalError = 3,
+}
+
+impl From<ExitCode> for u8 {
+    #[inline]
+    #[must_use]
+    const fn from_code(code: ExitCode) -> u8 {
+        code as u8
+    }
+}
+
+impl std::process::Termination for ExitCode {
+    #[inline]
+    #[must_use]
+    fn report(self) -> i32 {
+        i32::from(self as u8)
+    }
+}
+
+/// Returns true if every gate in `gates` reports `Passed`.
+#[inline]
+#[must_use]
+pub const fn all_passed(gates: &[check::Gate]) -> bool {
+    matches!(gates.last(), Some(check::Gate { status: check::Status::Passed, .. }))
+}
+
+/// Top-level PTX errors. Kept intentionally small — anything deeper
+/// belongs in a child crate, not in this facade.
+#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
+pub enum PtxError {
+    #[error("io error at {path}: {source}")]
+    Io {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("parse error: {0}")]
+    Parse(String),
+    #[error("manifest version mismatch: expected {expected}, found {found}")]
+    ManifestVersion { expected: u32, found: u32 },
+    #[error("missing field {field} in {kind}")]
+    MissingField { kind: String, field: String },
+    #[error("exit code {0} not representable")]
+    ExitCode(i32),
+}
+    #[error("manifest error in {path}: {message}")]
+    Manifest {
+        /// Path to the offending manifest file.
+        path: String,
+        /// Schema validation message.
+        message: String,
+    },
+    /// IO error from a config or report file.
+    #[error("io error reading {path}: {source}")]
+    Io {
+        /// The file we were reading or writing.
+        path: String,
+        /// Underlying io::Error.
+        #[source]
+        source: std::io::Error,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    #[allow(unused_imports)]
+    use super::{ExitCode, PtxError, PTX_VERSION, all_passed};
+
+    #[test]
+    fn version_constant_is_not_empty() {
+        assert!(!PTX_VERSION.is_empty());
+    }
+
+    #[test]
+    fn all_passed_rejects_empty() {
+        assert!(!all_passed(&[]));
+    }
+
+    #[test]
+    fn exit_code_reports_i32_zero_on_success() {
+        let code = ExitCode::Success;
+        assert_eq!(code.report(), 0);
+    }
+
+    #[test]
+    fn exit_code_reports_gate_failure_as_one() {
+        let code = ExitCode::GateFailure;
+        assert_eq!(code.report(), 1);
+    }
+}

@@ -1,0 +1,73 @@
+# Agent continuation guide — pheno-harness
+
+Read this before any multi-step work. Specs live in `agileplus-specs/` (AgilePlus intent model).
+
+## North star
+
+**Accepted verified steps / sec / GB / $** — not raw tok/s. See `config/eval_pillars.yaml` and SPEC-005.
+
+## Cloud model (2026-06)
+
+- **Firepass Kimi is sunset** — do not route TB2 or routine work through Fireworks fpk.
+- **OmniRoute `Main` combo** is the primary cloud worker: one OpenAI-compatible endpoint blending Claude Max, OpenAI Codex/Chat, MiniMax M3, and local 3090 tiers via subscription quotas.
+- Forge / agent-runner use `OPENAI_BASE_URL=http://127.0.0.1:20128/v1`, model **`Main`**. Never override `OPENAI_*` in harness scripts.
+
+## Hardware
+
+- **1× RTX 3090 Ti (24 GB)** for training and local inference only.
+- Burst 5090 / multi-GPU deferred unless spec explicitly approves.
+
+## Safety
+
+- **Risky-action gate always on** for agents with shell access: `config/risky_action_gate.yaml`, `verifier/risky_action.py`.
+- Activation edits (abliteration, DFlash drafts) never bypass pre-execution verification.
+
+## Key commands
+
+```powershell
+cd C:\Users\koosh\pheno-harness
+pip install -r requirements.txt
+
+# Specs index
+type agileplus-specs\index\spec.md
+
+# Eval suite
+python scripts/collect_traces.py
+python scripts/analyze_wastage.py
+python scripts/run_eval_suite.py --small-grid
+
+# Harbor TB2 (OmniRoute Main)
+python scripts/probe_omniroute_models.py --force
+python scripts/run_tbench_route_matrix.py --route-kind omniroute_combo --pilot --force
+
+# Local model / decode / MoE gates
+python scripts/list_local_bench_candidates.py
+python scripts/decode_prepare.py list
+python scripts/moe_prepare.py list
+python scripts/activation_prepare.py list
+```
+
+## Spec map (quick)
+
+| ID | Topic |
+|----|-------|
+| SPEC-001 | Compression (W/K/F_d, REAP, KV, DFlash) |
+| SPEC-002 | Needle context compiler |
+| SPEC-003 | Small MoE routing |
+| SPEC-004 | Throughput & budget |
+| SPEC-005 | Eval pillars |
+| SPEC-006 | Harbor terminal-bench@2.0 |
+| SPEC-008 | Nested RLVR-AF |
+| SPEC-011 | Cloud sunset |
+| SPEC-016 | **OmniRoute Main worker blend** |
+
+## Do not edit
+
+- Cursor plan files under `~/.cursor/plans/` unless the user asks.
+- `~/forge/.credentials.json` contents in commits.
+
+ChatGPT research lineage lives in the **pheno-specs** submodule:
+
+- `agileplus-specs/research-doc-map.md`
+- `agileplus-specs/sources/chatgpt-master-digest.md`
+- Drop raw exports in pheno-specs repo: `sources/raw/`

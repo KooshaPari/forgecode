@@ -1,0 +1,16 @@
+import collections
+import sys
+
+families = collections.Counter()
+for line in open('fr_untraced.txt').read().splitlines():
+    if not line: continue
+    parts = line.split('-')
+    if line.startswith('FR-CIV-') and len(parts) >= 4:
+        fam = '-'.join(parts[:3])
+    elif line.startswith('FR-'):
+        fam = '-'.join(parts[:2])
+    else:
+        fam = parts[0]
+    families[fam] += 1
+for f,c in sorted(families.items(), key=lambda x: -x[1]):
+    print(c, f)

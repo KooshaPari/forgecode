@@ -1,0 +1,22 @@
+$ErrorActionPreference = 'Continue'
+$path = "C:\Users\koosh\_top_repos.json"
+$bytes = [System.IO.File]::ReadAllBytes($path)
+# Try UTF-8 strict
+$utf8 = [System.Text.Encoding]::UTF8
+$utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
+$content = $utf8Strict.GetString($bytes)
+try {
+    $json = $content | ConvertFrom-Json
+    Write-Host ("UTF8 strict parse OK | total_count={0} | items={1}" -f $json.total_count, $json.items.Count)
+} catch {
+    Write-Host ("UTF8 strict FAILED: {0}" -f $_.Exception.Message)
+    # Fall back: replace invalid bytes
+    $content2 = $utf8.GetString($bytes)
+    $json = $content2 | ConvertFrom-Json
+    Write-Host ("FALLBACK parse OK | total_count={0} | items={1}" -f $json.total_count, $json.items.Count)
+}
+$top = $json.items |
+    Where-Object { -not $_.fork } |
+    Sort-Object { $_.size } -Descending |
+    Select-Object -First 25 name, size, stargazers_count, language, pushed_at
+$top | Format-Table -AutoSize | Out-String -Width 220

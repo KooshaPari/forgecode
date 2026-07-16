@@ -1,0 +1,27 @@
+import json, re, codecs, sys
+
+src = open(r'C:\Users\koosh\_189cr.json', 'rb').read()
+# Strip UTF-16 LE BOM
+if src.startswith(b'\xff\xfe'):
+    src = src[2:]
+data = src.decode('utf-16-le', errors='replace')
+data = re.sub(r'\x1b\[[0-9;]*m', '', data)
+
+with codecs.open(r'C:\Users\koosh\_189clean.json', 'w', 'utf-8-sig') as f:
+    f.write(data)
+
+with codecs.open(r'C:\Users\koosh\_189clean.json', 'r', 'utf-8-sig') as f:
+    d = json.load(f)
+
+print(f"Total check_runs: {d['total_count']}")
+print()
+print("=== FAILURES ===")
+for c in d['check_runs']:
+    if c.get('conclusion') == 'failure':
+        print(f"  {c['name']}")
+        print(f"    {c['html_url']}")
+print()
+print("=== SUCCESSES ===")
+for c in d['check_runs']:
+    if c.get('conclusion') == 'success':
+        print(f"  {c['name']}")

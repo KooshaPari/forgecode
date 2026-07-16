@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""Strip any path containing ANSI escape sequences from git history.
+
+This is a one-time corruption remediation for KooshaPari/Eidolon
+where a file with literal ANSI color codes in its name got committed
+via a botched `git add` of terminal output. The corruption blocks
+ALL Windows checkouts of the repo.
+"""
+import sys
+from git_filter_repo import FilterRepo
+
+
+def has_ansi_escape(s: str) -> bool:
+    """True if string contains literal ESC + '[' sequence (ANSI CSI)."""
+    return "\x1b[" in s or "\033[" in s
+
+
+def callback_for_blob(blob, metadata):
+    # Drop the blob entirely if its path has ANSI escapes
+    if has_ansi_escape(blob.path.decode("utf-8", errors="replace")):
+        blob.data = b""  # mark for deletion
+    else:
+        # Recurse into tree blobs
+        pass
+
+
+def callback_for_commit(commit, metadata):
+    # Annotate the commit message so we know which commits were rewritten
+    if not commit.message.endswith(b"\nfilter-an: strip ANSI-escape paths\n"):
+        commit.message += b"\nfilter-an: strip ANSI-escape paths\n"
+
+
+arg = sys.argv[1] if len(sys.argv) > 1 else "."
+fr = FilterRepo(
+    arg,
+    blob_callback=lambda b, m: setattr(b, "data", b"") if has_ansi_escape(b.path.decode("utf-8", errors="replace")) else None,
+    commit_callback=lambda c, m: c.message.__setattr__("__delitem__", None) or c.message.__iadd__(b"\nfilter-an: strip ANSI-escape paths\n") if not c.message.endswith(b"filter-an: strip ANSI-escape paths\n") else None,
+    force=True,
+)

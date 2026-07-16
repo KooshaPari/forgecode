@@ -1,0 +1,38 @@
+## Summary
+Add `byteport-registry-adapter` crate that bridges BytePort with the phenotype-registry grading system by invoking `grade.sh` and parsing its JSON output.
+
+## Context
+This adapter is part of the compute/infra governance epic (E5). BytePort needs to programmatically invoke the phenotype-registry's grading pipeline to assess project quality. Rather than shelling out and parsing ad-hoc text output, this crate provides typed Rust structs and a clean `run_grade()` / `print_summary()` API.
+
+## Changes
+- Add `byteport-registry-adapter` workspace member to `Cargo.toml`
+- New crate with:
+  - `GradeReport` and `CheckResult` structs (deserialized from `grade.sh --json`)
+  - `run_grade()` — invokes `grade.sh --json` via `std::process::Command`, then reads and parses `.grade-reports/grade.json`
+  - `print_summary()` — prints human-readable grade summary to stdout
+  - `AdapterError` enum covering I/O, subprocess, JSON parsing, and missing-report errors
+  - Unit tests for deserialization and smoke testing `print_summary()`
+
+### Key Implementation Details
+- Relies on `serde_json` for type-safe JSON deserialization
+- `grade.sh` is expected as a sibling path (default: `../phenotype-registry/grade.sh`)
+- The adapter works with both fast and full grading modes
+- If `grade.sh` exits with a non-zero code (e.g. grade < 85%), the adapter still reads the written report file rather than failing outright
+
+## Use Cases
+- CI pipeline can run `grade.sh` and programmatically decide whether to block/allow a merge
+- Dashboards can render per-check grade breakdowns without re-parsing shell output
+- Other Rust tooling in the BytePort workspace can depend on this crate for governance gates
+
+## Testing
+```bash
+# Run unit tests
+cargo test -p byteport-registry-adapter
+
+# Integration test (requires phenotype-registry as sibling)
+cargo run -p byteport-registry-adapter
+```
+
+## Links
+- Related: phenotype-registry `grade.sh` interface
+- Epic: compute/infra governance (E5)

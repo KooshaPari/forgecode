@@ -1,0 +1,58 @@
+$env:CARGO_TERM_COLOR = 'never'
+$ErrorActionPreference = 'Continue'
+Set-Location 'C:\Users\koosh\Civis'
+
+$branches = @(
+    @{name='main'; sha='ff5ef30eb'; skip=$false},
+    @{name='feat/fr-civ-life-classifiers-tick'; sha='50b13418c'; skip=$false},
+    @{name='feat/fr-civ-life-reproduction-params'; sha='352dc57bf'; skip=$false},
+    @{name='feat/fr-civ-life-labor-economy'; sha='f68f1c74c'; skip=$false},
+    @{name='chore/governance-forge-agents'; sha='1e1d92698'; skip=$true}
+)
+
+$results = @()
+
+foreach ($b in $branches) {
+    $branch = $b.name
+    $sha = $b.sha
+    Write-Host "=== $branch @ $sha ==="
+    if ($b.skip) {
+        Write-Host "  (docs only, skipping cargo check)"
+        $results += [PSCustomObject]@{Branch=$branch; SHA=$sha; Status='SKIP'; Errors=0}
+        continue
+    }
+
+    git checkout $branch 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        git fetch origin ${branch}:refs/remotes/origin/${branch} 2>&1 | Out-Null
+        git checkout $branch 2>&1 | Out-Null
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  CHECKOUT FAILED"
+        $results += [PSCustomObject]@{Branch=$branch; SHA=$sha; Status='CHECKOUT-FAIL'; Errors=-1}
+        continue
+    }
+
+    $logfile = "_cargo_check_$($branch -replace '/','_').txt"
+    cargo check -p civ-engine --offline 2>&1 | Out-File -Encoding utf8 $logfile
+    $exit = $LASTEXITCODE
+
+    $errCount = 0
+    $summary = ''
+    if (Test-Path $logfile) {
+        $content = Get-Content $logfile -Raw
+        $summaryLine = ($content -split "`n") | Where-Object { $_ -match 'previous errors' } | Select-Object -First 1
+        if ($summaryLine) { $summary = $summaryLine.Trim() }
+        # Count distinct error codes (lines starting with 'error[')
+        $errCount = ((Get-Content $logfile) | Where-Object { $_ -match '^error\[' } | Select-Object -Unique).Count
+    }
+
+    $status = if ($exit -eq 0) { 'GREEN' } else { "RED ($errCount errors)" }
+    Write-Host "  exit=$exit  $status"
+    Write-Host "  $summary"
+    $results += [PSCustomObject]@{Branch=$branch; SHA=$sha; Status=$status; Errors=$errCount; Summary=$summary}
+}
+
+Write-Host ""
+Write-Host "============= SUMMARY TABLE ============="
+$results | Format-Table -AutoSize Branch,SHA,Status,Errors

@@ -1,0 +1,313 @@
+//! Optional OpenTelemetry / OTLP export.
+//!
+//! Enabled with the `otel` feature. When `otel` is **off** this module is a
+//! no-op stub so the default build is unchanged (no OTEL runtime pulled
+//! in). When `otel` is on, [`init_otlp`] wires `tracing` spans — including
+//! the OTEL-shaped spans emitted by the outbox relay — to an OTLP
+//! exporter, propagating W3C trace context end-to-end across the event
+//! bus.
+//!
+//! ## Event-bus propagation
+//!
+//! `tracing-opentelemetry` is a `Layer<tracing_subscriber::Registry>` that
+//! attaches to every span the host creates. Because the existing
+//! `OutboxSpan` helpers in `phenotype-event-bus::outbox_metrics` and the
+//! [`with_correlation_id`](crate::correlation::with_correlation_id) helper
+//! already emit OTEL-shaped spans, opting into OTLP export here is the
+//! single switch needed to start seeing outbox / bus spans in the
+//! collector. The correlation ID is recorded as a span field so log
+//! streams can join on `correlation_id` and trace context can flow
+//! across process boundaries.
+//!
+//! ## Configuration
+//!
+//! Environment variables consumed:
+//! - `OTEL_EXPORTER_OTLP_ENDPOINT` — base URL (default `http://localhost:4317`)
+//! - `OTEL_SERVICE_NAME` — service name reported in resource attrs
+//!   (default `eventkit-obs`)
+//! - `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` — OTLP export timeout, seconds
+//!   (default 10)
+//!
+//! ## Shutdown
+//!
+//! Call [`shutdown`] before process exit so the tracer flushes its
+//! pending batch. Dropping the [`TracerGuard`] returned by [`init_otlp`]
+//! does the same.
+
+#[cfg(not(feature = "otel"))]
+mod inner {
+    // ---------- Stub surface when the `otel` feature is off ----------
+    //
+    // The default build must not pull in `opentelemetry` / `opentelemetry-otlp`.
+
+    /// Configuration for OTLP export. Ignored unless the `otel` feature is on.
+    #[derive(Debug, Clone, Default)]
+    pub struct OtlpConfig {
+        pub endpoint: Option<String>,
+        pub service_name: Option<String>,
+        pub timeout_secs: Option<u64>,
+    }
+
+    impl OtlpConfig {
+        pub fn from_env() -> Self {
+            Self {
+                endpoint: std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok(),
+                service_name: std::env::var("OTEL_SERVICE_NAME").ok(),
+                timeout_secs: std::env::var("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT")
+                    .ok()
+                    .and_then(|s| s.parse().ok()),
+            }
+        }
+    }
+
+    /// No-op guard. Returned from `init_otlp` when the feature is off.
+    #[derive(Debug, Default)]
+    pub struct TracerGuard;
+
+    /// No-op. The `otel` feature is disabled; tracing is unaffected.
+    pub fn init_otlp(_cfg: OtlpConfig) -> Result<TracerGuard, OtelError> {
+        Ok(TracerGuard)
+    }
+
+    /// No-op.
+    pub fn shutdown(_guard: TracerGuard) {}
+
+    /// No-op flush.
+    pub fn flush(_guard: &TracerGuard) {}
+
+    /// Errors returned by the OTEL helpers. With the feature off the only
+    /// error variant is reserved for future use; `init_otlp` never fails.
+    #[derive(Debug)]
+    pub enum OtelError {
+        NotEnabled,
+    }
+
+    impl std::fmt::Display for OtelError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                OtelError::NotEnabled => f.write_str(
+                    "OTEL export is not enabled; rebuild with `--features otel` to enable",
+                ),
+            }
+        }
+    }
+
+    impl std::error::Error for OtelError {}
+}
+
+#[cfg(feature = "otel")]
+mod inner {
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry::KeyValue;
+    use opentelemetry_otlp::WithExportConfig;
+    use opentelemetry_sdk::trace::{Config, TracerProvider};
+    use opentelemetry_sdk::Resource;
+    use std::time::Duration;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::EnvFilter;
+
+    /// Configuration for OTLP export.
+    #[derive(Debug, Clone)]
+    pub struct OtlpConfig {
+        /// OTLP gRPC base URL. Defaults to `http://localhost:4317`.
+        pub endpoint: Option<String>,
+        /// `service.name` resource attribute. Defaults to `eventkit-obs`.
+        pub service_name: Option<String>,
+        /// Per-batch export timeout. Defaults to 10 seconds.
+        pub timeout_secs: Option<u64>,
+    }
+
+    impl Default for OtlpConfig {
+        fn default() -> Self {
+            Self {
+                endpoint: None,
+                service_name: None,
+                timeout_secs: None,
+            }
+        }
+    }
+
+    impl OtlpConfig {
+        /// Default `OtlpConfig` populated from well-known env vars.
+        pub fn from_env() -> Self {
+            Self {
+                endpoint: std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok(),
+                service_name: std::env::var("OTEL_SERVICE_NAME").ok(),
+                timeout_secs: std::env::var("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT")
+                    .ok()
+                    .and_then(|s| s.parse().ok()),
+            }
+        }
+
+        fn endpoint_url(&self) -> String {
+            self.endpoint
+                .clone()
+                .unwrap_or_else(|| "http://localhost:4317".to_string())
+        }
+
+        fn service_name(&self) -> String {
+            self.service_name
+                .clone()
+                .unwrap_or_else(|| "eventkit-obs".to_string())
+        }
+
+        fn timeout(&self) -> Duration {
+            Duration::from_secs(self.timeout_secs.unwrap_or(10))
+        }
+    }
+
+    /// Errors raised by OTLP helpers.
+    #[derive(Debug, thiserror::Error)]
+    pub enum OtelError {
+        #[error("OTLP exporter setup failed: {0}")]
+        Setup(String),
+        #[error("Tracing subscriber install failed: {0}")]
+        Subscriber(String),
+    }
+
+    /// RAII guard that flushes + shuts down the tracer provider on drop.
+    /// Keep one of these for the lifetime of the process.
+    pub struct TracerGuard {
+        provider: Option<TracerProvider>,
+    }
+
+    impl std::fmt::Debug for TracerGuard {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("TracerGuard")
+                .field("active", &self.provider.is_some())
+                .finish()
+        }
+    }
+
+    impl TracerGuard {
+        /// Flush pending spans to the OTLP endpoint.
+        pub fn flush(&self) {
+            if let Some(p) = &self.provider {
+                let _ = p.force_flush();
+            }
+        }
+    }
+
+    impl Drop for TracerGuard {
+        fn drop(&mut self) {
+            if let Some(p) = self.provider.take() {
+                let _ = p.shutdown();
+            }
+        }
+    }
+
+    /// Build the OTLP span exporter + tracer provider with the provided
+    /// configuration.
+    fn build_provider(cfg: &OtlpConfig) -> Result<TracerProvider, OtelError> {
+        let exporter = opentelemetry_otlp::new_exporter()
+            .tonic()
+            .with_endpoint(cfg.endpoint_url())
+            .with_timeout(cfg.timeout())
+            .build_span_exporter()
+            .map_err(|e| OtelError::Setup(e.to_string()))?;
+
+        let resource = Resource::new(vec![
+            KeyValue::new("service.name", cfg.service_name()),
+            KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+        ]);
+
+        let provider = TracerProvider::builder()
+            .with_config(Config::default().with_resource(resource))
+            .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+            .build();
+        Ok(provider)
+    }
+
+    /// Initialize the global `tracing` subscriber (idempotent) with OTLP
+    /// export wired in. Subsequent calls ignore the new exporter but
+    /// still return a working guard for the *current* call's provider.
+    ///
+    /// The guard's `Drop` flushes the new exporter, so the caller
+    /// should keep it alive until process shutdown.
+    pub fn init_otlp(cfg: OtlpConfig) -> Result<TracerGuard, OtelError> {
+        let provider = build_provider(&cfg)?;
+        let tracer = provider.tracer("eventkit-obs");
+        let env_filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("info,eventkit=debug,eventkit_obs=debug"));
+
+        let layer = tracing_opentelemetry::layer().with_tracer(tracer);
+        // try_init is idempotent: first call wins. Subsequent calls
+        // (rare — usually only relevant in tests) succeed but no log
+        // output is double-installed because `tracing` rejects the
+        // second install with an error.
+        let _ = tracing_subscriber::registry()
+            .with(env_filter)
+            .with(layer)
+            .try_init();
+
+        Ok(TracerGuard {
+            provider: Some(provider),
+        })
+    }
+
+    /// Flush pending spans without dropping the exporter.
+    pub fn flush(guard: &TracerGuard) {
+        guard.flush();
+    }
+
+    /// Explicit shutdown. Equivalent to dropping the guard.
+    pub fn shutdown(mut guard: TracerGuard) {
+        if let Some(p) = guard.provider.take() {
+            let _ = p.shutdown();
+        }
+    }
+}
+
+pub use inner::*;
+
+/// Tag a `tracing::Span` with the outbox event's correlation ID so
+/// downstream consumers can join their traces. No-op on the span if the
+/// field wasn't recorded in the `info_span!` macro, but the underlying
+/// mechanism is identical with or without the `otel` feature.
+pub fn record_correlation(span: &tracing::Span, correlation_id: &str) {
+    span.record("correlation_id", tracing::field::display(correlation_id));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn otlp_config_from_env_returns_defaults_when_unset() {
+        std::env::remove_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+        std::env::remove_var("OTEL_SERVICE_NAME");
+        std::env::remove_var("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT");
+        let cfg = OtlpConfig::from_env();
+        assert!(cfg.endpoint.is_none());
+        assert!(cfg.service_name.is_none());
+        assert!(cfg.timeout_secs.is_none());
+    }
+
+    #[test]
+    fn init_otlp_is_noop_when_feature_off() {
+        let cfg = OtlpConfig::default();
+        let guard = init_otlp(cfg).expect("stub init must succeed");
+        shutdown(guard);
+    }
+
+    #[test]
+    fn record_correlation_records_field() {
+        let span = tracing::info_span!("test.span");
+        record_correlation(&span, "abc-123");
+        // Span exists; can't introspect fields without a subscriber,
+        // but the call must not panic.
+    }
+
+    #[test]
+    fn otlp_config_clones() {
+        let mut a = OtlpConfig::default();
+        a.endpoint = Some("http://localhost:4317".to_string());
+        a.service_name = Some("svc".to_string());
+        a.timeout_secs = Some(5);
+        let b = a.clone();
+        assert_eq!(a.endpoint, b.endpoint);
+        assert_eq!(a.service_name, b.service_name);
+        assert_eq!(a.timeout_secs, b.timeout_secs);
+    }
+}

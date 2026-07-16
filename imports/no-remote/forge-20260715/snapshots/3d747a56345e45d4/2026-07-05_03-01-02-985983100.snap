@@ -1,0 +1,21 @@
+{
+  "name": "phenotype-sdk",
+  "path": "KooshaPari/phenotype-sdk",
+  "size_mb": 0.0,
+  "default_branch": "main",
+  "languages": ["go", "mojo", "python", "rust", "ts", "zig"],
+  "absorption_targets": {
+    "rust": "phenotype-sdk/lang/rust/packages (17 crates) -> pheno-runtime",
+    "python": "phenotype-sdk/lang/python/packages (14 pkgs) -> python monorepo",
+    "go": "phenotype-sdk/lang/go -> go-nippon hydrate path",
+    "ts": "phenotype-sdk/lang/ts/packages -> @phenotype/sdk workspace",
+    "zig": "phenotype-sdk/lang/zig/phenotype-core -> standalone build.zig",
+    "mojo": "phenotype-sdk/lang/mojo -> Magic >=24.x pin"
+  },
+  "audit": "audits/absorption-justifications/phenotype-sdk-2026-07-02.md",
+  "grade": "L4",
+  "score": "14/14",
+  "pillars_pass": ["manifest", "parity-evidence", "scope-rationale", "verification", "restore-mechanism", "project-card", "rebuttal"],
+  "last_audit": "2026-07-02",
+  "registry_status": "AFFIRM"
+}

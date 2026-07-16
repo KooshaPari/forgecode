@@ -1,0 +1,69 @@
+{
+  "meta": {
+    "dag_id": "compute-infra-observability-2026-06-23",
+    "version": "1.0.0",
+    "harness": "agileplus",
+    "date": "2026-06-23",
+    "generator": "Forge L1-Delta",
+    "total_units": 12,
+    "completed": 7,
+    "pending": 3,
+    "blocked": 0,
+    "in_progress": 2
+  },
+  "lanes": [
+    {
+      "id": "L1-Alpha",
+      "name": "Compute/Infra Consolidation",
+      "units": [
+        {"id": "A-01", "name": "Create phenotype-infra monorepo shell", "status": "completed", "sha": "59b8a0a3f", "repo": "phenotype-infra"},
+        {"id": "A-02", "name": "Absorb nanovms (Go) as crate", "status": "completed", "sha": "59b8a0a3f", "repo": "phenotype-infra"},
+        {"id": "A-03", "name": "Absorb PhenoCompose (Rust) as crate", "status": "completed", "sha": "59b8a0a3f", "repo": "phenotype-infra"},
+        {"id": "A-04", "name": "Absorb BytePort (Svelte) as crate", "status": "completed", "sha": "59b8a0a3f", "repo": "phenotype-infra"},
+        {"id": "A-05", "name": "Known issues doc + consolidated ADR", "status": "completed", "sha": "59b8a0a3f", "repo": "phenotype-infra"},
+        {"id": "A-06", "name": "CI/CD pipeline (crates-build + test)", "status": "completed", "sha": "59b8a0a3f", "repo": "phenotype-infra"},
+        {"id": "A-07", "name": "Ref-level docs + feature-parity check", "status": "completed", "sha": "59b8a0a3f", "repo": "phenotype-infra"},
+        {"id": "A-08", "name": "Port governance from phenotype-infra-ci-fix", "status": "completed", "sha": "59b8a0a3f", "repo": "phenotype-infra"},
+        {"id": "A-09", "name": "71+ audit scorecard for compute/infra", "status": "completed", "sha": "d528c9a", "repo": "phenotype-infra"},
+        {"id": "A-10", "name": "Fix violations — tests + health-check + CONTRIBUTING", "status": "completed", "sha": "12c416b", "repo": "phenotype-infra"}
+      ]
+    },
+    {
+      "id": "L1-Bravo",
+      "name": "Observability Monorepo Compression",
+      "units": [
+        {"id": "B-01", "name": "Fork diff analysis — pr178, cve-openssl, ObservabilityKit, Tracely, pheno-tracing", "status": "completed", "note": "pr178 in-sync, cve opened 1 commit openssl 0.10.80, others already archived/404"},
+        {"id": "B-02", "name": "Merge cve-openssl-0.10.80 fix into main", "status": "completed", "sha": "842662e", "repo": "PhenoObservability"},
+        {"id": "B-03", "name": "Archive/prune cve fork (physical deletion)", "status": "pending", "repo": "PhenoObservability-cve-openssl-0.10.80"},
+        {"id": "B-04", "name": "Archive/prune pr178 fork (physical deletion)", "status": "pending", "note": "pr178 is in-sync — confirm no unique branches before deletion"}
+      ]
+    },
+    {
+      "id": "L1-Charlie",
+      "name": "71+ Audit/Grading Injection",
+      "units": [
+        {"id": "C-01", "name": "phenotype-infra scorecard (aggregate master)", "status": "completed", "sha": "d528c9a"},
+        {"id": "C-02", "name": "nanovms scorecard", "status": "completed", "sha": "e9d87c8"},
+        {"id": "C-03", "name": "PhenoCompose scorecard", "status": "completed", "sha": "d960bde"},
+        {"id": "C-04", "name": "BytePort scorecard", "status": "completed", "sha": "8612f3a4"},
+        {"id": "C-05", "name": "PhenoObservability scorecard", "status": "pending", "repo": "PhenoObservability"}
+      ]
+    },
+    {
+      "id": "L1-Delta",
+      "name": "Harness Dogfood + Stabilization",
+      "units": [
+        {"id": "D-01", "name": "Bootstrap agileplus DAG manifest (this file)", "status": "completed"},
+        {"id": "D-02", "name": "Final verification sweep across all repos", "status": "in_progress"},
+        {"id": "D-03", "name": "Push all commits to remotes", "status": "pending"}
+      ]
+    }
+  ],
+  "next_actions": [
+    "Push all 4 repos (phenotype-infra, nanovms, PhenoCompose, PhenoObservability) to remote",
+    "Verify BytePort git status (was cloning when timed out)",
+    "Delete pr178 and cve-openssl-0.10.80 forks from GitHub",
+    "Create PhenoObservability C-05 scorecard",
+    "Update disposition-index.json with BytePort entry"
+  ]
+}

@@ -1,0 +1,3 @@
+bash -n "C:\Users\koosh\OmniRoute-upstream\.worktrees\sprint-pr011-sre\scripts\sre\slo-report.sh" && echo "slo-report.sh syntax OK"
+bash -n "C:\Users\koosh\OmniRoute-upstream\.worktrees\sprint-pr011-sre\scripts\sre\page-rotation.sh" && echo "page-rotation.sh syntax OK"
+bash -n "C:\Users\koosh\OmniRoute-upstream\.worktrees\sprint-pr011-sre\tests\unit\scripts\slo-report.test.sh" && echo "slo-report.test.sh syntax OK"

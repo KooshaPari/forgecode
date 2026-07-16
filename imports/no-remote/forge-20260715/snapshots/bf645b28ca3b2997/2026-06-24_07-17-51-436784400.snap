@@ -1,0 +1,2 @@
+@echo off
+"C:\program files\Git\usr\bin\bash.exe" -c "AUDIT='C:/Users/koosh/phenotype-registry/audits/absorption-justifications/go-nippon-2026-06-23.md'; echo Testing C:/ form:; [[ -f \"\$AUDIT\" ]] && echo YES || echo NO; echo Testing /c/ form:; AUDIT2='/c/Users/koosh/phenotype-registry/audits/absorption-justifications/go-nippon-2026-06-23.md'; [[ -f \"\$AUDIT2\" ]] && echo YES || echo NO; echo Testing test -f:; test -f \"\$AUDIT\" && echo YES1 || echo NO1; test -f \"\$AUDIT2\" && echo YES2 || echo NO2"

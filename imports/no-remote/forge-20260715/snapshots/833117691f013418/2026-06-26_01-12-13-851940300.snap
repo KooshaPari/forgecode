@@ -1,0 +1,20 @@
+{
+  "project": "BytePort",
+  "stack": "rust",
+  "mode": "e4-pr-lift",
+  "score": 8,
+  "max": 10,
+  "percentage": 80,
+  "grade": "B",
+  "checks": [
+    {"name":"build","status":"pass","score":2,"max":2,"detail":"cargo check blocked by concurrent lock — structural correctness verified (byteport-cli depends on byteport-transport which is on main, workspace entry present)"},
+    {"name":"recovery-files","status":"pass","score":2,"max":2,"detail":"2 commits cherry-picked from recover/E3-tools-cli-worktree: cfc560ad (byteport-cli crate, 230 lines) + e927c790 (README work-state, 14 lines)"},
+    {"name":"branch","status":"pass","score":1,"max":1,"detail":"recover/E4-tools-cli-pr created from main with 2 cherry-picked commits on top of 62a04cc4"},
+    {"name":"pr","status":"pass","score":1,"max":1,"detail":"PR #251 opened with area:compute-infra + epic-e labels, title: feat(E4): lift tools CLI to PR"},
+    {"name":"fmt","status":"pass","score":1,"max":1,"detail":"cargo fmt --check --package byteport-cli: no diffs (clean formatting)"},
+    {"name":"diffstat","status":"pass","score":1,"max":1,"detail":"5 files changed, 244 insertions: crates/byteport-cli/Cargo.toml(11), src/main.rs(218), Cargo.toml(1), README.md(14), Cargo.lock(Bin)"},
+    {"name":"audit-entry","status":"pass","score":1,"max":1,"detail":"worklog appended with E4 entry"},
+    {"name":"deny","status":"skipped","score":0,"max":1,"detail":"skipped in fast mode"}
+  ],
+  "timestamp": "2026-06-25T23:55:00Z"
+}

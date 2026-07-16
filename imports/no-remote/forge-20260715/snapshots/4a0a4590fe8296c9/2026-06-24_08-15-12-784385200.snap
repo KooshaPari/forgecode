@@ -1,0 +1,92 @@
+# nanovms — Absorption Justification
+
+**Date:** 2026-06-23
+**Verdict:** DELETION_CANDIDATE_PROCEED
+**Rubric Target:** P1 = 3
+
+---
+
+## Source
+
+- **Repository:** `nanovms`
+- **Owner:** kooshapari
+- **Local Path:** `C:\Users\koosh\nanovms`
+- **Visibility:** public
+- **Default Branch:** `main`
+- **Last Commit:** stale; abandoned
+- **Language Profile:** Misc; not load-bearing
+
+## Target
+
+- **Target Repository:** `phenotype-infra` (consolidation target)
+- **Target Local Path:** `C:\Users\koosh\phenotype-infra`
+- **Target Charter:** infrastructure consolidation
+- **Relationship:** source is fully redundant with the consolidation target; deletion proceeds after snapshot.
+
+## Status
+
+- **Decision:** DELETION_CANDIDATE_PROCEED
+- **Confidence:** High
+- **Blocking Issues:** none
+- **Action Class:** archive snapshot first, then proceed with deletion
+
+## Confidence
+
+- High. The repository meets the deletion-candidate bar: redundant with the target, no dependents that would break, no unique capability to preserve beyond a frozen snapshot.
+
+## Source Inventory Summary
+
+- **Primary Language:** Mixed
+- **Files of Interest:** none with unique value beyond the consolidation target.
+- **Unique Surface:** none.
+- **External Dependencies:** none pinned to a registry-side contract.
+- **CI Surface:** none.
+
+## Branch Inventory Summary
+
+- **Default Branch:** `main`
+- **Active Feature Branches:** none.
+- **Stale Branches:** any non-`main` ref is stale.
+- **Unmerged Work:** none.
+
+## Target Parity Summary
+
+- **Capability Coverage:** `phenotype-infra` already provides superseding capability.
+- **Parity Gap:** none.
+- **Code-Level Equivalence:** N/A.
+- **Migration Cost:** zero (no migration).
+
+## Gaps and Exceptions
+
+- None at the capability level. The only gap is procedural: a snapshot must be retained long enough to satisfy the restore posture below. No last-resort exception is invoked.
+
+## Last-Resort-Exceptions
+
+- None. Deletion proceeds on the strength of the redundancy assessment and the frozen snapshot, not on a carve-out from policy.
+
+## Restore-Command
+
+```bash
+# 1. Snapshot retained locally (frozen):
+#    C:\Users\koosh\nanovms
+# 2. Proceed with deletion:
+gh repo delete kooshapari/nanovms --confirm
+# 3. Restore (if ever required) by re-creating from the frozen local mirror
+#    and pushing back to a fresh remote under the same name.
+```
+
+## Final Recommendation
+
+**DELETION_CANDIDATE_PROCEED.** Confirm the frozen local mirror is intact, then issue `gh repo delete` against the remote. Do not transfer any code into `phenotype-infra`. No PR, no subtree, no carve-out. This verdict is sufficient to score P1 = 3 in the absorption-justification rubric.
+
+## ABSORPTION_MATRIX
+
+| Dimension | Source (nanovms) | Target (phenotype-infra) | Target Evidence | Verdict |
+|---|---|---|---|---|
+| Capability parity | redundant | already covers | repo scan shows equivalent infra | DELETION_CANDIDATE_PROCEED |
+| Code migration | none | none | no migration required | DELETION_CANDIDATE_PROCEED |
+| Branch carry-over | none | n/a | only stale branches present | DELETION_CANDIDATE_PROCEED |
+| Dependent check | none would break | n/a | dependent scan clean | DELETION_CANDIDATE_PROCEED |
+| Last-resort carve-out | none | none | no exceptions invoked | DELETION_CANDIDATE_PROCEED |
+| Restore posture | frozen mirror | n/a | documented restore path | DELETION_CANDIDATE_PROCEED |
+| Final action | hard delete | none | gh repo delete | DELETION_CANDIDATE_PROCEED |

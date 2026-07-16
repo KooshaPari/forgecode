@@ -1,0 +1,39 @@
+[package]
+name = "kvirtual"
+version = "0.1.0"
+edition = "2021"
+description = "Desktop automation CLI (kvd) — absorbed from _tmp_kvirtualstage/kvirtualdesktop"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KooshaPari/phenotype-infra"
+publish = false
+
+[[bin]]
+name = "kvd"
+path = "src/main.rs"
+
+[features]
+default = []
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive", "cargo"] }
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Configuration & data
+toml = "0.8"
+dirs = "5"
+uuid = { workspace = true, features = ["v4"] }
+chrono = { workspace = true, features = ["serde"] }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

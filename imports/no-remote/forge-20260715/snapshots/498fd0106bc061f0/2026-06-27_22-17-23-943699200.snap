@@ -1,0 +1,31 @@
+import json
+from collections import Counter
+
+d = json.load(open('docs/audits/fr-matrix.json', encoding='utf-8'))
+rows = d['rows']
+
+cand = [r for r in rows if r.get('status') == 'SPEC-ONLY' and r.get('test_refs') and not r.get('code_refs')]
+
+# Extract crate from test_ref path like "crates/agents/src/lib.rs:232"
+def crate_from_ref(path):
+    parts = path.split('/')
+    if len(parts) >= 3 and parts[0] == 'crates:':
+        # path like "crates/agents/src/lib.rs:232"
+        return parts[1]  # agents
+    return path  # fallback
+
+test_crates = Counter()
+for r in cand:
+    for t in r['test_refs']:
+        c = crate_from_ref(t)
+        test_crates[c] += 1
+
+print("SPEC-ONLY with tests by path (top):")
+for path, count in test_crates.most_common(40):
+    print(f"  {path}: {count}")
+
+# Also print the actual test_ref paths for top crates
+for r in cand[:10]:
+    print(f"\n{r['id']}:")
+    for t in r['test_refs']:
+        print(f"  test: {t}")

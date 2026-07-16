@@ -1,0 +1,31 @@
+@echo off
+cd /d C:\Users\koosh\phenocompose
+echo Scanning 20 candidate stale branches in phenocompose...
+echo.
+for %%b in (
+  "chore/CC1-005-sota-2026-06-11"
+  "chore/CC2-005-sota-2026-06-11"
+  "chore/CC3-005-sota-2026-06-11"
+  "chore/CC4-005-sota-2026-06-11"
+  "chore/QC1-005-sota-2026-06-11"
+  "chore/QC2-005-sota-2026-06-11"
+  "chore/QC3-005-sota-2026-06-11"
+  "chore/QC4-005-sota-2026-06-11"
+  "chore/SD2-004-sota-2026-06-11"
+  "chore/SD3-004-sota-2026-06-11"
+  "chore/SD4-004-sota-2026-06-11"
+  "wip/auto-stash-before-chore-merges-2026-06-17"
+  "wip/auto-stash-before-chore-merges-2026-06-17-v2"
+  "wip/auto-stash-chore-merges-2026-06-17"
+  "wip/fix-npm-name-collision-2026-06-17"
+  "cursor/duplicate-permissions-key-4004"
+  "ci/add-golangci-lint"
+  "ci/go-mod"
+  "ci/pin-trufflehog"
+  "v22-SD2-stale-branches-PhenoCompose-2026-06-22"
+) do (
+  for /f "delims=" %%a in ('git log --oneline origin/main..origin/%%b 2^>nul ^| find /c /v ""') do set ahead=%%a
+  for /f "delims=" %%c in ('git log --oneline origin/%%b..origin/main 2^>nul ^| find /c /v ""') do set behind=%%c
+  for /f "delims=" %%d in ('gh pr list --head %%b --state all 2^>nul ^| find /c /v ""') do set prs=%%d
+  echo %%b  ahead=!ahead! behind=!behind! prs=!prs!
+)

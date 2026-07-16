@@ -1,0 +1,35 @@
+@echo off
+setlocal
+set DB=C:\Users\koosh\AppData\Roaming\omniroute\storage.sqlite
+set SQLITE=C:\Users\koosh\platform-tools\sqlite3.exe
+
+echo === DELETE proxy_logs ===
+set N=0
+:loop_proxy
+type "%TEMP%\del_proxy.sql" | "%SQLITE%" "%DB%"
+if "%ERRORLEVEL%" NEQ "0" goto done_proxy
+type "%TEMP%\del_proxy_count.sql" | "%SQLITE%" "%DB%" > "%TEMP%\proxy_count.txt"
+set /p CNT=<"%TEMP%\proxy_count.txt"
+if "%CNT%"=="0" goto done_proxy
+set /a N+=CNT
+echo proxy_logs deleted=%N%
+goto loop_proxy
+:done_proxy
+echo proxy_logs total=%N%
+
+echo === DELETE usage_history ===
+set N=0
+:loop_usage
+type "%TEMP%\del_usage.sql" | "%SQLITE%" "%DB%"
+type "%TEMP%\del_usage_count.sql" | "%SQLITE%" "%DB%" > "%TEMP%\usage_count.txt"
+set /p CNT=<"%TEMP%\usage_count.txt"
+if "%CNT%"=="0" goto done_usage
+set /a N+=CNT
+echo usage_history deleted=%N%
+goto loop_usage
+:done_usage
+echo usage_history total=%N%
+
+echo === VACUUM ===
+echo VACUUM; | "%SQLITE%" "%DB%"
+echo DONE

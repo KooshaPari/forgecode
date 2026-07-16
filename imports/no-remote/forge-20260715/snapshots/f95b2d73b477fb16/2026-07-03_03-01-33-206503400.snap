@@ -1,0 +1,18 @@
+import re, json, sys
+
+p = r'C:\Users\koosh\_repos_fresh.json'
+with open(p, 'rb') as f:
+    raw = f.read()
+# strip BOM, decode UTF-16LE, strip ANSI color codes
+text = raw.decode('utf-16-le').lstrip('\ufeff')
+text = re.sub(r'\x1b\[[0-9;]*m', '', text)
+text = text.replace('\r\n', '\n').strip()
+d = json.loads(text)
+print('count:', len(d))
+print('fields:', list(d[0].keys()))
+print('owner login sample:', d[0].get('owner', {}).get('login'))
+
+# Persist cleaned version
+out = r'C:\Users\koosh\_repos_fresh_clean.json'
+json.dump(d, open(out, 'w', encoding='utf-8'), indent=2, ensure_ascii=False)
+print('cleaned ->', out)

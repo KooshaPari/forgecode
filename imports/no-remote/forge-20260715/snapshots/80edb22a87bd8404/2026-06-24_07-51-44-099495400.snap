@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+cd "C:/Users/koosh/phenotype-registry" || exit 1
+bash "./registry/audit-absorption-justification/grade.sh" "C:/Users/koosh/_sample_audit.md"
+echo "---EXIT_CODE=$?---"

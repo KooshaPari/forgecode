@@ -1,0 +1,13 @@
+# Owned Scope Grade Sweep v3 (2026-06-24)
+
+v1=initial (all 0/10-0/11 F). v2=after rustfmt-nightly pin. v3=current.
+
+| Repo | Stack | Score | Grade | Key failures |
+|---|---|---|---|---|
+| eyetracker | ? | ? | ? | [FAIL] build;[FAIL] test-unit;[FAIL] clippy |
+| Eventra | ? | ? | ? | [FAIL] build;[FAIL] test-unit;[FAIL] clippy |
+| Configra | ? | ? | ? | [FAIL] build;[FAIL] test-unit;[FAIL] clippy |
+| Benchora | ? | ? | ? | [FAIL] build;[FAIL] test-unit;[FAIL] clippy |
+| Authvault | ? | ? | ? | [FAIL] build;[FAIL] test-unit;[FAIL] clippy |
+| Quillr | ? | ? | ? | [FAIL] lint;[FAIL] fmt;[FAIL] typecheck |
+| AuthKit | ? | ? | ? | [FAIL] build;[FAIL] test-unit;[FAIL] fmt |

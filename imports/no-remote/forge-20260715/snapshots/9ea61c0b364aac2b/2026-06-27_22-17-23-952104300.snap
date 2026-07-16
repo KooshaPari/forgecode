@@ -1,0 +1,13 @@
+import json
+from collections import Counter
+
+d = json.load(open('docs/audits/fr-matrix.json', encoding='utf-8'))
+rows = d['rows']
+cand = [r for r in rows if r.get('status')=='SPEC-ONLY' and r.get('test_refs') and not r.get('code_refs') and r['id'].startswith('FR-CIV-')]
+print('Total candidates after this turn:', len(cand))
+epics = Counter()
+for r in cand:
+    prefix = '-'.join(r['id'].split('-')[:3])
+    epics[prefix] += 1
+for prefix, count in epics.most_common(30):
+    print(f'  {prefix}: {count}')

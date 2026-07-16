@@ -1,0 +1,106 @@
+"""Phase launcher — emits the per-pool subagent batch plan from the DAG.
+
+Reads compute_infra_dag.yaml, groups units by pool (per the parallelism model),
+respects the proposed phase gate (Phase 1 = A+B+F+G1..G15, Phase 2 = rest).
+
+For each phase, prints:
+  - which pool
+  - which units (ids + titles)
+  - recommended concurrency
+  - the per-subagent prompt (using subagent_prompt_template.md)
+
+This does NOT spawn subagents — that requires user approval.
+It produces a human-readable + machine-parseable execution plan ready to feed
+into `forge -p` or `task` calls.
+"""
+import yaml, pathlib, json, textwrap, sys
+
+ROOT = pathlib.Path(r"C:\Users\koosh\_compute_infra_audit")
+DAG = ROOT / "dags" / "compute_infra_dag.yaml"
+TEMPLATE = (ROOT / "scaffolding" / "subagent_prompt_template.md").read_text(encoding="utf-8")
+data = yaml.safe_load(DAG.read_text(encoding="utf-8"))
+
+
+def unit_pool(repo: str) -> str:
+    """Map unit.repo to one of the parallelism pools."""
+    if repo in ("phenotype-infra",):
+        return "infra-pool"
+    if repo in ("PhenoCompose", "nanovms", "nanovms-archive", "phenotype-tooling"):
+        return "compose-pool"
+    if repo in ("BytePort",):
+        return "byteport-pool"
+    if repo in ("phenotype-registry", "PhenoSpecs", "PhenoHandbook", "phenoregistry"):
+        return "registry-pool"
+    if repo in ("agileplus", "pheno-cli", "agileplus-mcp", "agileplus-agents"):
+        return "agileplus-pool"
+    if repo == "all":
+        return "validator-pool"  # cross-repo; serialize to avoid races
+    return "landing-pool"  # phenotype-landing, others
+
+
+def unit_phase(unit_id: str, epic_key: str) -> int:
+    """Phase gate per brainstorming proposal."""
+    if epic_key in ("epic_A", "epic_B", "epic_F"):
+        return 1
+    if epic_key == "epic_G":
+        gid = int(unit_id[1:])
+        return 1 if gid <= 15 else 2
+    return 2
+
+
+def render_prompt(unit: dict, epic_key: str, epic_title: str) -> str:
+    return TEMPLATE.format(
+        unit_id=unit["id"],
+        title=unit["title"],
+        type=unit["type"],
+        repo=unit["repo"],
+        epic_id=epic_key,
+        epic_title=epic_title,
+    )
+
+
+def emit_phase(phase: int):
+    by_pool = {}
+    for epic_key in sorted(k for k in data if k.startswith("epic_")):
+        epic = data[epic_key]
+        for u in epic["units"]:
+            if unit_phase(u["id"], epic_key) != phase:
+                continue
+            p = unit_pool(u["repo"])
+            by_pool.setdefault(p, []).append((epic_key, u))
+
+    out_dir = ROOT / "scaffolding" / f"phase{phase}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    summary = {
+        "phase": phase,
+        "pools": {},
+        "total_units": 0,
+    }
+    for pool, items in by_pool.items():
+        pool_size = next(
+            (p["size"] for p in data["parallelism"]["pools"] if p["name"] == pool),
+            2,
+        )
+        concurrency = min(pool_size, len(items))
+        summary["pools"][pool] = {
+            "units": len(items),
+            "concurrency": concurrency,
+            "unit_ids": [u["id"] for _, u in items],
+        }
+        summary["total_units"] += len(items)
+
+        # Per-unit prompt files
+        for epic_key, u in items:
+            prompt = render_prompt(u, epic_key, data[epic_key]["title"])
+            (out_dir / f"{pool}__{u['id']}.md").write_text(prompt, encoding="utf-8")
+
+    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    print(f"Phase {phase}: {summary['total_units']} units across {len(by_pool)} pools")
+    for pool, info in summary["pools"].items():
+        print(f"  {pool}: {info['units']} units @ concurrency {info['concurrency']}")
+
+
+if __name__ == "__main__":
+    phase = int(sys.argv[1]) if len(sys.argv) > 1 else 1
+    emit_phase(phase)

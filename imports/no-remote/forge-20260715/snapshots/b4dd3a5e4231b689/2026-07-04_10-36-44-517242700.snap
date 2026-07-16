@@ -1,0 +1,130 @@
+---
+metadata:
+  title: Compute/Infra SOTA Improvement Audit
+  scope_repos:
+    - phenotype-infra
+    - PhenoCompose
+    - BytePort
+  pillars: 8
+  units_total: 12
+  generated: 2026-07-04
+dag:
+  title: Compute/Infra SOTA Improvement Audit
+  scope:
+    repos:
+      - phenotype-infra
+      - PhenoCompose
+      - BytePort
+    pillars: 8
+  units:
+    # ── A. hygiene (4 units) ──
+    - id: A1
+      repo: all
+      pillar: branch_hygiene
+      title: Stale branch audit (>30d, cursor/wip)
+      verify: "gh api repos/{owner}/{repo}/branches --paginate | jq '[.[] | select(.protected==false) | {name, age: .commit.committer.date}] | map(select((now - (.age | fromdateiso8601)) > 2592000)) | length'"
+    - id: A2
+      repo: all
+      pillar: branch_hygiene
+      title: Recover/reconcile branch inventory
+      verify: "git for-each-ref --format='%(refname:short)|%(committerdate:short)|%(subject)' refs/heads/ refs/remotes/ | wc -l"
+    - id: A3
+      repo: all
+      pillar: branch_hygiene
+      title: Cursor and WIP branch sweep
+      verify: "git branch -a | grep -ciE 'cursor/|wip/' || true"
+    - id: A4
+      repo: all
+      pillar: branch_hygiene
+      title: Branch TTL policy check
+      verify: "test -f .git/branch-ttl-policy.md && echo HAS_POLICY || echo MISSING"
+
+    # ── B. config (3 units) ──
+    - id: B1
+      repo: all
+      pillar: editorconfig
+      title: Harmonize .editorconfig to phenoshared standard
+      verify: "diff -q .editorconfig ../phenoshared/standards/.editorconfig && echo MATCH || echo DIFF"
+    - id: B2
+      repo: all
+      pillar: gitignore
+      title: Harmonize .gitignore to phenoshared standard
+      verify: "diff -q .gitignore ../phenoshared/standards/.gitignore && echo MATCH || echo DIFF"
+    - id: B3
+      repo: all
+      pillar: gitattributes
+      title: Harmonize .gitattributes to phenoshared standard
+      verify: "diff -q .gitattributes ../phenoshared/standards/.gitattributes && echo MATCH || echo DIFF"
+
+    # ── C. security (2 units) ──
+    - id: C1
+      repo: all
+      pillar: security
+      title: CVE sweep against Cargo.lock / package.json
+      verify: "test -f Cargo.lock && cargo audit --deny warnings 2>&1 | tail -5 || test -f package.json && npm audit --audit-level=high 2>&1 | tail -5"
+    - id: C2
+      repo: all
+      pillar: security
+      title: Secret-scanner coverage
+      verify: "grep -rE 'gitleaks|trufflehog|detect-secrets' .github/workflows/ | wc -l"
+
+    # ── D. depend (1 unit) ──
+    - id: D1
+      repo: all
+      pillar: dependencies
+      title: Cargo.lock vs package.json duplication analysis
+      verify: "find . -name 'Cargo.lock' -o -name 'package.json' | wc -l"
+
+    # ── E. test (1 unit) ──
+    - id: E1
+      repo: all
+      pillar: test_coverage
+      title: Test pyramid and coverage baseline
+      verify: "find . -path ./node_modules -prune -o -name '*.test.*' -print | wc -l"
+
+    # ── F. governance (1 unit) ──
+    - id: F1
+      repo: all
+      pillar: governance
+      title: CODEOWNERS, SECURITY.md, CONTRIBUTING.md presence
+      verify: "for f in CODEOWNERS SECURITY.md CONTRIBUTING.md LICENSE; do test -f $f && echo $f EXISTS || echo $f MISSING; done"
+execution:
+  total_concurrent: 4
+  per_repo_workers: 2
+  gate: must_pass_pillar_audit_before_merge
+risks:
+  - id: R1
+    description: Cargo.lock v4 needs nightly resolver feature
+    mitigation: pin resolver version in Cargo.toml
+  - id: R2
+    description: Tauri Referrer-Policy field incompatible with current tauri-build
+    mitigation: pin tauri-build to compatible version
+  - id: R3
+    description: PhenoCompose rustfmt config has nightly-only options
+    mitigation: replace with stable rustfmt rules
+  - id: R4
+    description: 518 of 759 BytePort filenames duplicated in phenotype-infra subtree
+    mitigation: vendor subtree cleanup pass
+  - id: R5
+    description: Cargo.lock v4 incompatibility root cause
+    mitigation: downgrade to Cargo.lock v3 or pin resolver=2
+  - id: R6
+    description: stable edition2024 cargo feature unstable
+    mitigation: pin to edition2021 or wait for stable
+gates:
+  - branch_hygiene: must be PASS before any code changes
+  - editorconfig_gitignore_gitattributes: must be in registry standard
+  - security_audit: no HIGH or CRITICAL CVEs
+  - dependencies: no circular references
+  - test_coverage: > baseline
+  - governance: all 4 files exist
+  - cross_repo: registry must record this audit run
+auditor_loop:
+  - run_grade_sh_baseline
+  - run_cargo_audit
+  - run_cargo_clippy
+  - run_pillar_audit_registry
+  - diff_against_phenoshared_standard
+  - cross_repo_dependency_check
+  - registry_emit_audit_event
+---

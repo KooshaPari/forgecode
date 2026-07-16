@@ -1,0 +1,165 @@
+"""WP-19: Synthetic SLO breach generator.
+
+Generates a one-time breach event against the `cli_success_rate` SLO
+and submits it to the in-process Prometheus `/metrics` endpoint to
+exercise the end-to-end WP-13 → WP-19 closure loop:
+
+    synthetic breach → /metrics scrape → Prometheus alert rule fires
+        → slo-backlog.yml opens GitHub issue → oncall ack
+            → post-mortem commit closes the loop
+
+Usage:
+    cargo run -p phenotype-tooling-observability --bin breach-sim -- \
+        --target http://127.0.0.1:9090/metrics \
+        --slo cli_success_rate \
+        --error-count 250 \
+        --success-count 500
+
+Intended to run in CI smoke mode against the local Prometheus stack
+from `observability/docker-compose.yml`. Produces verifiable metrics
+that trigger `PHENOTYPE-1` (the burn-rate alert already configured
+in `observability/prometheus/phenotype-tooling.rules.yml`).
+
+Not for production use — the only way this script exists is so the
+governance loop has end-to-end coverage, not to manufacture alerts.
+"""
+
+use std::env;
+
+use reqwest::blocking::Client;
+use serde_json::json;
+
+const METRICS_PATH: &str = "/metrics";
+
+fn parse_args() -> Result<Args, String> {
+    let mut target = String::from("http://127.0.0.1:9090");
+    let mut slo = String::from("cli_success_rate");
+    let mut error_count: u64 = 100;
+    let mut success_count: u64 = 900;
+    let mut iterations: u32 = 1;
+
+    let mut iter = env::args().skip(1);
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--target" => {
+                target = iter
+                    .next()
+                    .ok_or_else(|| "--target requires a value".to_string())?
+            }
+            "--slo" => {
+                slo = iter
+                    .next()
+                    .ok_or_else(|| "--slo requires a value".to_string())?
+            }
+            "--error-count" => {
+                error_count = iter
+                    .next()
+                    .ok_or_else(|| "--error-count requires a value".to_string())?
+                    .parse()
+                    .map_err(|e| format!("--error-count must be u64: {e}"))?
+            }
+            "--success-count" => {
+                success_count = iter
+                    .next()
+                    .ok_or_else(|| "--success-count requires a value".to_string())?
+                    .parse()
+                    .map_err(|e| format!("--success-count must be u64: {e}"))?
+            }
+            "--iterations" => {
+                iterations = iter
+                    .next()
+                    .ok_or_else(|| "--iterations requires a value".to_string())?
+                    .parse()
+                    .map_err(|e| format!("--iterations must be u32: {e}"))?
+            }
+            "--help" | "-h" => {
+                println!(
+                    "breach-sim — Synthetic SLO breach generator\n\n\
+                     USAGE:\n  breach-sim [OPTIONS]\n\n\
+                     OPTIONS:\n  \
+                         --target <URL>          Metrics endpoint (default http://127.0.0.1:9090)\n  \
+                         --slo <NAME>            SLO name (default cli_success_rate)\n  \
+                         --error-count <N>      Errors to inject (default 100)\n  \
+                         --success-count <N>    Successes to inject (default 900)\n  \
+                         --iterations <N>       Repeat cycle count (default 1)\n  \
+                         --help                 Print this help\n"
+                );
+                std::process::exit(0);
+            }
+            other => return Err(format!("unknown argument: {other}")),
+        }
+    }
+
+    Ok(Args {
+        target,
+        slo,
+        error_count,
+        success_count,
+        iterations,
+    })
+}
+
+#[derive(Debug)]
+struct Args {
+    target: String,
+    slo: String,
+    error_count: u64,
+    success_count: u64,
+    iterations: u32,
+}
+
+fn main() -> Result<(), String> {
+    let args = parse_args()?;
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("build http client: {e}"))?;
+
+    let metric = format!("phenotype_cli_{}_error_total", args.slo);
+    let success_metric = format!("phenotype_cli_{}_success_total", args.slo);
+
+    println!(
+        "breach-sim: targeting {} on slo {} (errors={}, successes={}, iterations={})",
+        args.target, args.slo, args.error_count, args.success_count, args.iterations
+    );
+
+    for it in 0..args.iterations {
+        println!("iteration {}/{}", it + 1, args.iterations);
+
+        // POST a vector of synthetic samples for both metrics. Format:
+        // {"series": [{"name": "...", "samples": [{"value": N, "timestamp": T}]}]}
+        let body = json!({
+            "series": [
+                {"name": metric, "samples": [{"value": args.error_count, "timestamp": now()}]},
+                {"name": success_metric, "samples": [{"value": args.success_count, "timestamp": now()}]}
+            ]
+        });
+
+        let resp = client
+            .post(format!("{}{}", args.target, METRICS_PATH))
+            .json(&body)
+            .send()
+            .map_err(|e| format!("metrics POST failed: {e}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(format!("metrics endpoint returned {}", status));
+        }
+        println!("  posted {} errors + {} successes", args.error_count, args.success_count);
+    }
+
+    println!(
+        "breach-sim: complete. Verify in Prometheus that the burn-rate alert\n  \
+         `PHENOTYPE-1: cli_success_rate burn > 5x for 30m` fired, then check\n  \
+         .github for the auto-generated `slo:phase1:crit` issue template."
+    );
+
+    Ok(())
+}
+
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}

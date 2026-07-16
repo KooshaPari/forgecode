@@ -1,0 +1,45 @@
+# Lefthook config for kmobile
+# Per phenotype-org decision (AGENTS.md "lefthook" preference over pre-commit):
+#   - pre-push: cargo fmt --check, cargo clippy -D warnings, cargo deny check, cargo test
+#   - pre-commit: trailing whitespace, EOF newline, yaml/toml/merge-conflict checks
+#   - commit-msg: conventional commits
+#
+# Install: `lefthook install` (one-time, then auto-runs on every git hook).
+
+pre-commit:
+  parallel: true
+  commands:
+    trailing-whitespace:
+      glob: "*"
+      run: cmd //c "if exist {staged_files} powershell -Command \"Get-Content -Path '{staged_files}' | ForEach-Object { $_.TrimEnd() } | Set-Content -Path '{staged_files}' -NoNewline\""
+      skip: true   # we rely on git's own trailing-whitespace check
+    check-yaml:
+      glob: "*.y{a,}ml"
+      run: cmd //c "powershell -Command \"Get-Content -Path '{staged_files}' | ConvertFrom-Yaml | Out-Null\""
+    check-toml:
+      glob: "*.toml"
+      run: cargo toml-check {staged_files} || true
+    check-merge-conflict:
+      glob: "*"
+      run: cmd //c "powershell -Command \"Select-String -Path '{staged_files}' -Pattern '^(<{7}|={7}|>{7})' -Quiet | ForEach-Object { exit 1 }\""
+
+pre-push:
+  parallel: true
+  commands:
+    cargo-fmt:
+      run: cargo fmt --all -- --check
+    cargo-clippy:
+      run: cargo clippy --workspace --all-targets -- -D warnings
+    cargo-deny:
+      run: cargo deny check
+    cargo-test:
+      run: cargo test --workspace --locked --all-features
+    cargo-audit:
+      run: cargo audit
+    cargo-doc:
+      run: cargo doc --workspace --no-deps --document-private-items
+
+commit-msg:
+  commands:
+    conventional-commit:
+      run: cmd //c "powershell -Command \"$msg = Get-Content -Path '{1}' -Raw; if ($msg -notmatch '^(feat|fix|docs|style|refactor|perf|test|chore|ci|build|revert)(\\(.+\\))?!?: .+') { exit 1 }\""

@@ -1,0 +1,22 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { readdirSync, statSync } from 'node:fs'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const repoRoot = path.resolve(__dirname, '..')
+const docsDir = path.join(repoRoot, 'docs')
+
+function walk(dir, prefix = '') {
+  for (const name of readdirSync(dir)) {
+    if (name === '.vitepress') continue
+    const full = path.join(dir, name)
+    const s = statSync(full)
+    if (s.isDirectory()) {
+      walk(full, prefix + name + '/')
+    } else if (name.endsWith('.md')) {
+      console.log('  ' + path.relative(repoRoot, full))
+    }
+  }
+}
+console.log('files in docs/:')
+walk(docsDir)

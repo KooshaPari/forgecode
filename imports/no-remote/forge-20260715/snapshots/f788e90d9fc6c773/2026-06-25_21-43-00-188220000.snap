@@ -1,0 +1,19 @@
+## Summary
+Add org-convention work-state header blockquote to README.md and replace the verbose `## Work state` section.
+
+## Context
+BytePort's README was missing the phenotype-org `> **Work state:**` blockquote that is checked by `conventions-lint.sh`. The existing `## Work state` heading section was verbose and not at the top of the file where the linter expects it.
+
+## Changes
+- Insert `> **Work state:** ACTIVE · **Progress:** \`█████████░ 90%\`` blockquote right after `<!-- AI-DD-META:END -->`, matching the canonical pattern used by `phenotype-registry/README.md:22`
+- Remove the redundant `## Work state` table section (13 lines) which duplicated information now captured in the blockquote + STATUS.md
+
+## Testing
+```bash
+# Verify conventions-lint passes the work-state header check
+head -n 8 README.md | grep "Work state:"  # should match
+```
+
+## Links
+- Reference: phenotype-registry/scripts/conventions-lint.sh:30 (org convention check)
+- Canonical: phenotype-registry/README.md:22

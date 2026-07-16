@@ -1,0 +1,11 @@
+pub mod religion;
+pub mod demographics;
+/// Re-export of the engine module so callers can use `civ_engine::Building`
+/// etc. without reaching into the `engine::engine` double-namespace.
+pub mod engine;
+
+pub use religion::{emerge_belief, spread_religion, Belief, BeliefConcept, Religion};
+pub use demographics::{
+    carrying_capacity_from_food, tick_demographics, total_population, AgeGroup, Demographics,
+};
+pub use engine::{spawn, Building, BuildingType, Position, Simulation};

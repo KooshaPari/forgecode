@@ -1,0 +1,44 @@
+## Summary
+
+Adds a dedicated **speed-optimized routing mode** that scores every provider×model pair in a combo against **TTFT, tokens-per-second, E2E latency, p95 latency, circuit-breaker health, failure rate, and latency stability (std-dev)** — and ranks them so the *fastest reliable* pair wins.
+
+The runtime router (`routerStrategy.ts → LatencyStrategyImpl`) and the new MCP tool (`omniroute_pick_fastest_model`) now share a **single pure scoring core** at `open-sse/services/autoCombo/speedRanking.ts → rankBySpeed()`, so the user-facing preview and the live router pick the same winner.
+
+## What
+
+- **`rankBySpeed(candidates, weights?)`** — pure scoring function. Per-candidate factor breakdown (`ttft/tps/e2e/p95/health/reliability/stability`), weighted composite, OPEN-circuit penalty, deterministic ordering. Tunable weights via `SpeedRankingWeights` (defaults bias toward perceived speed: TTFT 0.30, TPS 0.20, E2E 0.20, p95 0.10, health 0.08, reliability 0.07, stability 0.05).
+- **`LatencyStrategyImpl`** refactored to delegate to `rankBySpeed` — the runtime router now benefits from the same rigorous scoring (was previously only `p95LatencyMs` + `errorRate`).
+- **New MCP tool `omniroute_pick_fastest_model`** (`schemas/tools.ts` + `tools/advancedTools.ts`) — returns the **full ranked list** with per-factor scores and per-metric breakdown, not just a winner. Optionally applies the result to a target combo by switching its strategy to `auto` + `autoRoutingStrategy: "latency"`. `includeUnhealthy=true` retains OPEN-circuit candidates (default drops them).
+- **12 unit tests** in `open-sse/services/autoCombo/__tests__/speedRanking.test.ts` covering: ranking stability, OPEN-circuit drop, weights effect, missing-telemetry neutrality, deterministic tie-breaks, malformed-input rejection, fast-but-flaky vs steady slower, apply-to-combo mutation.
+
+## Why
+
+The current `latency` strategy is naive — it inverts `p95LatencyMs` against the pool max and adds `1 - errorRate`, ignoring **TTFT** (the metric users actually *feel*), **tokens-per-second** (throughput), **E2E latency**, and **latency stability** (a flaky-fast provider can devastate UX). This PR brings the strategy up to par with how users actually think about "fast".
+
+## Test results
+
+- **All 88 related tests pass**: 56 existing `autoCombo.test.ts` + 12 new `speedRanking.test.ts` + 8 existing `routingStrategyTool.test.ts` + 12 un-touched tests in adjacent files.
+- 6 pre-existing failures in `open-sse/mcp-server/__tests__/{cacheTools,dbHealthTool,essentialTools,httpAuthContext,toolSearch.catalog,toolSearch.tool}.test.ts` are **unrelated** — caused by missing `safe-regex` dependency on `ccrQuery.ts`, present on upstream `release/v3.8.44` before this PR.
+- `tsc --noEmit -p open-sse/tsconfig.json` clean (only pre-existing `baseUrl` TS7 deprecation).
+- `eslint` clean on all 6 modified files (only 3 pre-existing `@typescript-eslint/no-explicit-any` warnings in unrelated `memoryTools` registration).
+
+## Files
+
+| File | Change |
+|---|---|
+| `open-sse/services/autoCombo/speedRanking.ts` | **new** (336 lines) — pure scoring core |
+| `open-sse/services/autoCombo/routerStrategy.ts` | refactor `LatencyStrategyImpl` → `rankBySpeed`; drop dead helpers |
+| `open-sse/mcp-server/schemas/tools.ts` | add `pickFastestModelInput` / `pickFastestModelOutput` / `pickFastestModelTool` |
+| `open-sse/mcp-server/tools/advancedTools.ts` | add `handlePickFastestModel` handler |
+| `open-sse/mcp-server/server.ts` | register `omniroute_pick_fastest_model` |
+| `open-sse/services/autoCombo/__tests__/speedRanking.test.ts` | **new** (226 lines) — 12 vitest cases |
+| `CHANGELOG.md` | entry under `[3.8.44] → ✨ New Features` |
+
+## Compatibility
+
+- All added fields on `ProviderCandidate` (`health`, `quotaRemainingPct`, `capacityScore`, etc. used by the MCP input mapping) are **optional** — existing callers are unaffected.
+- The MCP tool is purely additive.
+- The runtime strategy is behaviorally compatible: same `routerStrategy: "latency"` value, same response shape from `select()`, just a more accurate winner.
+- Default weights were tuned to match the previous `LatencyStrategyImpl` for the average case (TTFT-heavy for perceived speed, reliability multiplier prevents flakey-fast wins).
+
+Closes #6010

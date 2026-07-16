@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SHIM_DIR="$(mktemp -d -t quality-shims-XXXXXX)"
+declare -A TOOL_SRC=(
+  [ruff]=/mnt/c/Python313/Scripts/ruff.exe
+  [pytest]=/mnt/c/Python313/Scripts/pytest.exe
+  [mypy]=/mnt/c/Python314/Scripts/mypy.exe
+  [bandit]=/mnt/c/Python314/Scripts/bandit.exe
+  [pip-audit]=/mnt/c/Python314/Scripts/pip-audit.exe
+  [uv]=/mnt/c/Python314/Scripts/uv.exe
+)
+for tool in "${!TOOL_SRC[@]}"; do
+  src="${TOOL_SRC[$tool]}"
+  cat >"$SHIM_DIR/$tool" <<EOF
+#!/bin/bash
+exec "$src" "\$@"
+EOF
+  chmod +x "$SHIM_DIR/$tool"
+done
+
+ls "$SHIM_DIR"
+echo "---"
+echo "$SHIM_DIR"

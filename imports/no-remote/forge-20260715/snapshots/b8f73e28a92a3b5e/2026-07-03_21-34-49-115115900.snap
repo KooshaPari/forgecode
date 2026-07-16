@@ -1,0 +1,28 @@
+const fs = require("node:fs");
+const txt = fs.readFileSync("open-sse/executors/index.ts", "utf8");
+console.log("total chars:", txt.length);
+console.log("first 200:", JSON.stringify(txt.slice(0, 200)));
+console.log("bytes 0..50 hex:", Buffer.from(txt).slice(0, 50).toString("hex"));
+
+const impRe = /import\s*\{\s*([A-Za-z0-9_]+)\s*\}\s*from\s*"\.\\/([A-Za-z0-9_-]+)\.ts"\s*;?/g;
+let m,
+  n = 0;
+while ((m = impRe.exec(txt))) {
+  n++;
+  if (n <= 3) console.log("imp", m[1], m[2]);
+}
+console.log("imports matched:", n);
+
+const start = txt.indexOf("const executors = {");
+console.log("executors block at:", start);
+const block = txt.slice(start, start + 600);
+console.log("block head:", JSON.stringify(block.slice(0, 400)));
+
+const lineRe = /^\s*"?([a-zA-Z0-9_-]+)"?\s*:\s*new\s+([A-Za-z0-9_]+)\s*\(/gm;
+let mm,
+  k = 0;
+while ((mm = lineRe.exec(block))) {
+  k++;
+  if (k <= 5) console.log("map", JSON.stringify(mm[1]), "<-- id", "|", JSON.stringify(mm[2]), "<-- class");
+}
+console.log("map entries:", k);

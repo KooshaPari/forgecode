@@ -1,0 +1,303 @@
+/**
+ * resolveExecutorProxy — focused unit tests.
+ *
+ * The wrapper is the smallest extractable leaf from `chatCore.ts` (~73 LoC
+ * moved into a 174 LoC file with exported types). The tests target the
+ * exported surface directly, without booting the full chatCore harness.
+ *
+ * Each test exercises one branch:
+ *   1. mode=native       → returns the native executor unchanged.
+ *   2. mode=cliproxyapi   → returns the CLIProxyAPI executor.
+ *   3. mode=fallback, success on native       → native result returned.
+ *   4. mode=fallback, native 5xx              → proxy executor called.
+ *   5. mode=fallback, native 200 with 5xx code in body? not retried.
+ *   6. mode=fallback, native 404              → native result returned.
+ *   7. mode=fallback, native throws           → proxy executor called.
+ *   8. mode=fallback, both fail               → last error thrown.
+ *   9. fallback codes from settings           → user codes respected.
+ *  10. fallback codes malformed               → defaults used.
+ *  11. fallback codes isRetryableStatus(0)     → always retryable.
+ *  12. disabled mode returns native executor  → no proxy call.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// === Module mocks ===
+
+// We mock the three external dependencies of resolveExecutorProxy so we can
+// drive each branch deterministically without setting up a real DB / executor
+// registry.
+
+const mockGetUpstreamProxyConfigCached = vi.fn();
+const mockGetCachedSettings = vi.fn();
+const mockGetExecutor = vi.fn();
+const mockNativeExecute = vi.fn();
+const mockProxyExecute = vi.fn();
+
+vi.mock("../resolveExecutorProxy.ts", async () => {
+  // Re-export the real module — we only need the real exported functions.
+  const actual = await vi.importActual<typeof import("../resolveExecutorProxy.ts")>(
+    "../resolveExecutorProxy.ts",
+  );
+  return actual;
+});
+
+vi.mock("../../comboContextCache.ts", () => ({
+  getUpstreamProxyConfigCached: mockGetUpstreamProxyConfigCached,
+}));
+
+vi.mock("@/lib/db/readCache", () => ({
+  getCachedSettings: mockGetCachedSettings,
+}));
+
+vi.mock("../../../executors/index.ts", () => ({
+  getExecutor: mockGetExecutor,
+}));
+
+// After all mocks are wired, import the module under test.
+import {
+  DEFAULT_CLIPROXYAPI_FALLBACK_CODES,
+  isRetryableStatus,
+  readCliproxyapiFallbackCodes,
+  resolveExecutorWithProxy,
+} from "../resolveExecutorProxy.ts";
+
+/**
+ * Build a minimal executor stub. Real executors extend BaseExecutor and
+ * have a long shape; the wrapper only needs an `.execute()` method.
+ */
+function makeExecutor(name: string, exec: ReturnType<typeof vi.fn>) {
+  return { name, execute: exec } as unknown as ReturnType<typeof mockGetExecutor>;
+}
+
+describe("resolveExecutorWithProxy", () => {
+  beforeEach(() => {
+    mockGetUpstreamProxyConfigCached.mockReset();
+    mockGetCachedSettings.mockReset();
+    mockGetExecutor.mockReset();
+    mockNativeExecute.mockReset();
+    mockProxyExecute.mockReset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the native executor when the proxy is disabled", async () => {
+    mockGetUpstreamProxyConfigCached.mockResolvedValue({ enabled: false, mode: "native" });
+    const nativeExec = makeExecutor("anthropic", mockNativeExecute);
+    mockGetExecutor.mockReturnValue(nativeExec);
+
+    const result = await resolveExecutorWithProxy("anthropic");
+
+    expect(mockGetExecutor).toHaveBeenCalledWith("anthropic");
+    expect(mockGetExecutor).not.toHaveBeenCalledWith("cliproxyapi");
+    expect(result).toBe(nativeExec);
+  });
+
+  it("returns the native executor when mode is 'native'", async () => {
+    mockGetUpstreamProxyConfigCached.mockResolvedValue({ enabled: true, mode: "native" });
+    const nativeExec = makeExecutor("anthropic", mockNativeExecute);
+    mockGetExecutor.mockReturnValue(nativeExec);
+
+    const result = await resolveExecutorWithProxy("anthropic");
+
+    expect(result).toBe(nativeExec);
+  });
+
+  it("returns the CLIProxyAPI executor when mode is 'cliproxyapi'", async () => {
+    mockGetUpstreamProxyConfigCached.mockResolvedValue({ enabled: true, mode: "cliproxyapi" });
+    const nativeExec = makeExecutor("anthropic", mockNativeExecute);
+    const proxyExec = makeExecutor("cliproxyapi", mockProxyExecute);
+    mockGetExecutor.mockImplementation((p: string) => (p === "cliproxyapi" ? proxyExec : nativeExec));
+
+    const result = await resolveExecutorWithProxy("anthropic");
+
+    expect(mockGetExecutor).toHaveBeenCalledWith("cliproxyapi");
+    expect(mockGetExecutor).not.toHaveBeenCalledWith("anthropic");
+    expect(result).toBe(proxyExec);
+  });
+
+  it("fallback: returns the native result on a 200 response", async () => {
+    mockGetUpstreamProxyConfigCached.mockResolvedValue({ enabled: true, mode: "fallback" });
+    mockGetCachedSettings.mockResolvedValue({});
+    const nativeExec = makeExecutor("anthropic", mockNativeExecute);
+    const proxyExec = makeExecutor("cliproxyapi", mockProxyExecute);
+    mockGetExecutor.mockImplementation((p: string) => (p === "cliproxyapi" ? proxyExec : nativeExec));
+    mockNativeExecute.mockResolvedValue({ response: new Response(null, { status: 200 }) });
+
+    const wrapper = await resolveExecutorWithProxy("anthropic");
+    const result = await wrapper.execute({} as never);
+
+    expect(mockNativeExecute).toHaveBeenCalledTimes(1);
+    expect(mockProxyExecute).not.toHaveBeenCalled();
+    expect(result.response.status).toBe(200);
+  });
+
+  it("fallback: retries via proxy on a 5xx response", async () => {
+    mockGetUpstreamProxyConfigCached.mockResolvedValue({ enabled: true, mode: "fallback" });
+    mockGetCachedSettings.mockResolvedValue({});
+    const nativeExec = makeExecutor("anthropic", mockNativeExecute);
+    const proxyExec = makeExecutor("cliproxyapi", mockProxyExecute);
+    mockGetExecutor.mockImplementation((p: string) => (p === "cliproxyapi" ? proxyExec : nativeExec));
+    mockNativeExecute.mockResolvedValue({ response: new Response(null, { status: 502 }) });
+    mockProxyExecute.mockResolvedValue({ response: new Response(null, { status: 200 }) });
+
+    const wrapper = await resolveExecutorWithProxy("anthropic");
+    const result = await wrapper.execute({} as never);
+
+    expect(mockNativeExecute).toHaveBeenCalledTimes(1);
+    expect(mockProxyExecute).toHaveBeenCalledTimes(1);
+    expect(result.response.status).toBe(200);
+  });
+
+  it("fallback: does NOT retry on a non-retryable status (e.g. 404)", async () => {
+    mockGetUpstreamProxyConfigCached.mockResolvedValue({ enabled: true, mode: "fallback" });
+    mockGetCachedSettings.mockResolvedValue({});
+    const nativeExec = makeExecutor("anthropic", mockNativeExecute);
+    const proxyExec = makeExecutor("cliproxyapi", mockProxyExecute);
+    mockGetExecutor.mockImplementation((p: string) => (p === "cliproxyapi" ? proxyExec : nativeExec));
+    mockNativeExecute.mockResolvedValue({ response: new Response(null, { status: 404 }) });
+
+    const wrapper = await resolveExecutorWithProxy("anthropic");
+    const result = await wrapper.execute({} as never);
+
+    expect(mockNativeExecute).toHaveBeenCalledTimes(1);
+    expect(mockProxyExecute).not.toHaveBeenCalled();
+    expect(result.response.status).toBe(404);
+  });
+
+  it("fallback: retries via proxy on a thrown native error", async () => {
+    mockGetUpstreamProxyConfigCached.mockResolvedValue({ enabled: true, mode: "fallback" });
+    mockGetCachedSettings.mockResolvedValue({});
+    const nativeExec = makeExecutor("anthropic", mockNativeExecute);
+    const proxyExec = makeExecutor("cliproxyapi", mockProxyExecute);
+    mockGetExecutor.mockImplementation((p: string) => (p === "cliproxyapi" ? proxyExec : nativeExec));
+    mockNativeExecute.mockRejectedValue(new Error("network unreachable"));
+    mockProxyExecute.mockResolvedValue({ response: new Response(null, { status: 200 }) });
+
+    const wrapper = await resolveExecutorWithProxy("anthropic");
+    const result = await wrapper.execute({} as never);
+
+    expect(mockNativeExecute).toHaveBeenCalledTimes(1);
+    expect(mockProxyExecute).toHaveBeenCalledTimes(1);
+    expect(result.response.status).toBe(200);
+  });
+
+  it("fallback: re-throws the proxy error if both executors fail", async () => {
+    mockGetUpstreamProxyConfigCached.mockResolvedValue({ enabled: true, mode: "fallback" });
+    mockGetCachedSettings.mockResolvedValue({});
+    const nativeExec = makeExecutor("anthropic", mockNativeExecute);
+    const proxyExec = makeExecutor("cliproxyapi", mockProxyExecute);
+    mockGetExecutor.mockImplementation((p: string) => (p === "cliproxyapi" ? proxyExec : nativeExec));
+    mockNativeExecute.mockRejectedValue(new Error("native 502"));
+    mockProxyExecute.mockRejectedValue(new Error("proxy 502"));
+
+    const wrapper = await resolveExecutorWithProxy("anthropic");
+    await expect(wrapper.execute({} as never)).rejects.toThrow("proxy 502");
+  });
+
+  it("fallback: respects custom fallback codes from settings", async () => {
+    mockGetUpstreamProxyConfigCached.mockResolvedValue({ enabled: true, mode: "fallback" });
+    mockGetCachedSettings.mockResolvedValue({ cliproxyapi_fallback_codes: "401,403" });
+    const nativeExec = makeExecutor("anthropic", mockNativeExecute);
+    const proxyExec = makeExecutor("cliproxyapi", mockProxyExecute);
+    mockGetExecutor.mockImplementation((p: string) => (p === "cliproxyapi" ? proxyExec : nativeExec));
+
+    // 401 should be retried under the custom codes...
+    mockNativeExecute.mockResolvedValueOnce({ response: new Response(null, { status: 401 }) });
+    mockProxyExecute.mockResolvedValueOnce({ response: new Response(null, { status: 200 }) });
+    const wrapper = await resolveExecutorWithProxy("anthropic");
+    let result = await wrapper.execute({} as never);
+    expect(result.response.status).toBe(200);
+    expect(mockProxyExecute).toHaveBeenCalledTimes(1);
+
+    // ...but 502 should NOT (it's not in the custom list).
+    mockNativeExecute.mockResolvedValueOnce({ response: new Response(null, { status: 502 }) });
+    result = await wrapper.execute({} as never);
+    expect(result.response.status).toBe(502);
+    expect(mockProxyExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it("fallback: falls back to defaults on malformed fallback codes", async () => {
+    mockGetUpstreamProxyConfigCached.mockResolvedValue({ enabled: true, mode: "fallback" });
+    mockGetCachedSettings.mockResolvedValue({ cliproxyapi_fallback_codes: ",,," });
+    const nativeExec = makeExecutor("anthropic", mockNativeExecute);
+    const proxyExec = makeExecutor("cliproxyapi", mockProxyExecute);
+    mockGetExecutor.mockImplementation((p: string) => (p === "cliproxyapi" ? proxyExec : nativeExec));
+    mockNativeExecute.mockResolvedValue({ response: new Response(null, { status: 502 }) });
+    mockProxyExecute.mockResolvedValue({ response: new Response(null, { status: 200 }) });
+
+    const wrapper = await resolveExecutorWithProxy("anthropic");
+    const result = await wrapper.execute({} as never);
+
+    expect(result.response.status).toBe(200);
+    expect(mockProxyExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it("fallback: settings cache errors fail-open to defaults", async () => {
+    mockGetUpstreamProxyConfigCached.mockResolvedValue({ enabled: true, mode: "fallback" });
+    mockGetCachedSettings.mockRejectedValue(new Error("settings DB offline"));
+    const nativeExec = makeExecutor("anthropic", mockNativeExecute);
+    const proxyExec = makeExecutor("cliproxyapi", mockProxyExecute);
+    mockGetExecutor.mockImplementation((p: string) => (p === "cliproxyapi" ? proxyExec : nativeExec));
+    mockNativeExecute.mockResolvedValue({ response: new Response(null, { status: 500 }) });
+    mockProxyExecute.mockResolvedValue({ response: new Response(null, { status: 200 }) });
+
+    const wrapper = await resolveExecutorWithProxy("anthropic");
+    const result = await wrapper.execute({} as never);
+
+    expect(result.response.status).toBe(200);
+    expect(mockProxyExecute).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("isRetryableStatus", () => {
+  it("status 0 is always retryable (network / parse error)", () => {
+    expect(isRetryableStatus(0)).toBe(true);
+  });
+
+  it("uses the default fallback codes for unknown statuses", () => {
+    for (const code of DEFAULT_CLIPROXYAPI_FALLBACK_CODES) {
+      expect(isRetryableStatus(code)).toBe(true);
+    }
+    expect(isRetryableStatus(404)).toBe(false);
+    expect(isRetryableStatus(400)).toBe(false);
+  });
+
+  it("honors a custom fallback code list", () => {
+    expect(isRetryableStatus(403, [403])).toBe(true);
+    expect(isRetryableStatus(500, [403])).toBe(false);
+    expect(isRetryableStatus(0, [403])).toBe(true); // 0 always retryable
+  });
+});
+
+describe("readCliproxyapiFallbackCodes", () => {
+  beforeEach(() => {
+    mockGetCachedSettings.mockReset();
+  });
+
+  it("returns defaults when the setting is missing", async () => {
+    mockGetCachedSettings.mockResolvedValue({});
+    const codes = await readCliproxyapiFallbackCodes();
+    expect(codes).toEqual(DEFAULT_CLIPROXYAPI_FALLBACK_CODES);
+  });
+
+  it("returns defaults when the setting is not a string", async () => {
+    mockGetCachedSettings.mockResolvedValue({ cliproxyapi_fallback_codes: 12345 });
+    const codes = await readCliproxyapiFallbackCodes();
+    expect(codes).toEqual(DEFAULT_CLIPROXYAPI_FALLBACK_CODES);
+  });
+
+  it("returns defaults on a settings cache error", async () => {
+    mockGetCachedSettings.mockRejectedValue(new Error("offline"));
+    const codes = await readCliproxyapiFallbackCodes();
+    expect(codes).toEqual(DEFAULT_CLIPROXYAPI_FALLBACK_CODES);
+  });
+
+  it("parses a comma-separated list and drops invalid codes", async () => {
+    mockGetCachedSettings.mockResolvedValue({ cliproxyapi_fallback_codes: "401, 500, abc, 99, 600" });
+    const codes = await readCliproxyapiFallbackCodes();
+    expect(codes).toEqual([401, 500]);
+  });
+});

@@ -1,0 +1,54 @@
+$ErrorActionPreference = 'SilentlyContinue'
+$exts = @('*.md','*.txt','*.json','*.toml','*.yaml','*.yml')
+$root = 'C:\Users\koosh'
+
+# Phase 1: home-root files (already known list)
+$rootFiles = @(Get-ChildItem -LiteralPath $root -File -Include $exts -Force -ErrorAction SilentlyContinue)
+Write-Host ("Phase 1: scanning {0} home-root files..." -f $rootFiles.Count)
+$hits = @($rootFiles | Select-String -Pattern 'nippon' -CaseSensitive:$false)
+Write-Host ("Phase 1 hits: {0}" -f $hits.Count)
+$hits | ForEach-Object {
+  Write-Host ("  {0}:L{1}: {2}" -f $_.Path, $_.LineNumber, $_.Line.Trim())
+}
+
+# Phase 2: top-level files in candidate subdirs (excluding known heavy subtrees)
+$heavyDirNames = @(
+  'Library','AppData','OneDrive','scoop','anaconda3','Downloads',
+  '.cargo','.rustup','.dotnet','node_modules','npm-cache','.pnpm-store','.cache',
+  '.gradle','.m2','.bun','.android','.aws','.azure','.conda','.docker',
+  '.kube','.nuget','.expo','.factory','.harbor','.ollama',
+  'Pictures','Videos','Music','Desktop','Templates','Links','Favorites',
+  'Saved Games','Searches','Contacts','Courses','Documents','Postman','Powercord',
+  'PrintHood','SendTo','Start Menu','Recent','My Documents','Local Settings',
+  'NetHood','Creative Cloud','CreativeCloud','_pheno_absorb','_tmp-rk-check',
+  '_tc_cache','_vendor_rck','_wsm3d_audit','_fold','_audit_logs','forge','plans',
+  '-p','go','Portage','wsm-decomp','pluggedin-app','civis-prompts','newthing Project',
+  'byteport','kmobile','kmobile-inv','thegent-partial','Civis','OmniRoute-main-check',
+  'OmniRoute-upstream','HeliosApp-mirror','HeliosBench','Helioslab-bootstrap',
+  'dino-warfare-airforce','dinoshot','muuri-test','MuuriTest',
+  'DINOForge-UnityDoorstop','Dino','kmobile-inv'
+)
+
+$dirs = @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue |
+  Where-Object { $heavyDirNames -notcontains $_.Name })
+
+Write-Host ""
+Write-Host ("Phase 2: {0} candidate dirs..." -f $dirs.Count)
+
+$phase2Hits = 0
+foreach ($d in $dirs) {
+  # Top-level files only
+  $files = @(Get-ChildItem -LiteralPath $d.FullName -File -Include $exts -Force -ErrorAction SilentlyContinue)
+  if ($files.Count -eq 0) { continue }
+  $h = @($files | Select-String -Pattern 'nippon' -CaseSensitive:$false)
+  if ($h.Count -gt 0) {
+    Write-Host ("-- {0} ({1} hits)" -f $d.FullName, $h.Count)
+    foreach ($x in $h) {
+      Write-Host ("   {0}:L{1}: {2}" -f $x.Path, $x.LineNumber, $x.Line.Trim())
+      $phase2Hits++
+    }
+  }
+}
+
+Write-Host ""
+Write-Host ("=== TOTAL HITS: {0} (phase1={1}, phase2={2}) ===" -f ($hits.Count + $phase2Hits), $hits.Count, $phase2Hits)

@@ -1,0 +1,34 @@
+@echo off
+REM delete_archived_20260625.cmd
+REM Tier 3.5: Delete local _ARCHIVED_20260623/ directories after upload verification
+REM Per ADR-040 deletion-recipe. All archives already preserved at
+REM GH release v0.40.0 in KooshaPari/phenotype-org-audits (tag id 344498706).
+
+set LOGFILE=C:\Users\koosh\_cu_audit\delete_archived_20260625.log
+echo [%DATE% %TIME%] Tier 3.5 starting > "%LOGFILE%"
+
+cd /d C:\Users\koosh
+
+for %%d in (
+    _Dino_ARCHIVED_20260623
+    _Dino-tempclone_ARCHIVED_20260623
+    _DINOForge-UnityDoorstop_ARCHIVED_20260623
+    _dinoshot_ARCHIVED_20260623
+    _dino-warfare-airforce_ARCHIVED_20260623
+    _Dino_ARCHIVED_20260623_partial
+) do (
+    if exist "%%d" (
+        echo [%DATE% %TIME%] Deleting %%d ... >> "%LOGFILE%"
+        rmdir /S /Q "%%d"
+        if exist "%%d" (
+            echo [%DATE% %TIME%] FAILED: %%d still exists >> "%LOGFILE%"
+        ) else (
+            echo [%DATE% %TIME%] OK: %%d deleted >> "%LOGFILE%"
+        )
+    ) else (
+        echo [%DATE% %TIME%] SKIP: %%d not found >> "%LOGFILE%"
+    )
+)
+
+echo [%DATE% %TIME%] Tier 3.5 complete >> "%LOGFILE%"
+exit /b 0

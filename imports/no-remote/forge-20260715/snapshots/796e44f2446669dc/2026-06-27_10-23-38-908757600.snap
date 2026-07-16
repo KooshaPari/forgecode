@@ -1,0 +1,27 @@
+"""Parse a GitHub commit JSON file and print summary."""
+import json
+import re
+import sys
+
+
+def main(path):
+    data = open(path, "rb").read()
+    clean = re.sub(rb"\x1b\[[0-9;]*m", b"", data).decode("utf-8", errors="replace")
+    d = json.loads(clean)
+    msg = (d.get("commit", {}).get("message", "") or "").splitlines()[0]
+    print("sha:", d.get("sha", "")[:12])
+    print("message:", msg[:100])
+    files = d.get("files", [])
+    print("files_changed:", len(files))
+    for f in files:
+        print(
+            "  ",
+            f.get("status", "?"),
+            f.get("filename", "?"),
+            "+", f.get("additions", 0),
+            "-", f.get("deletions", 0),
+        )
+
+
+if __name__ == "__main__":
+    main(sys.argv[1])

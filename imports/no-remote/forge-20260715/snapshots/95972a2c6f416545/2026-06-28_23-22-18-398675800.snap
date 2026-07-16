@@ -1,0 +1,519 @@
+#!/usr/bin/env python3
+"""
+augment.py — cross-trace aggregation and derived feature computation.
+
+Reads raw_extract_index.jsonl, raw_extract_turns.jsonl, raw_extract_artifacts.jsonl
+and emits:
+  - full.csv, lite.csv (rebuilt from index + derived columns)
+  - conversation_graph.csv (parent/child/fork relationships, agent lineage)
+  - turn_metrics.csv (one row per turn with token counts, cache stats, tool usage, context size, heuristic flags)
+  - artifact_graph.csv (referenced paths + reuse frequency across traces)
+
+Usage: python augment.py --in-dir DIR --out-dir DIR
+"""
+import argparse
+import csv
+import hashlib
+import json
+import re
+import sys
+import time
+from collections import Counter, defaultdict
+from pathlib import Path
+
+# ---- Heuristic tokens ----
+SYSTEM_OVERHEAD_TOKENS = 800
+PER_TURN_AVG_TOKENS = 350
+PROMPT_OVERHEAD_TOKENS = 150
+UNIQUE_TOOL_OUTPUT_DEDUPE_TOKENS = 600
+
+# ---- Helpers ----
+def h(s: str) -> str:
+    if not s:
+        return ''
+    return hashlib.sha256(s.encode('utf-8', errors='ignore')).hexdigest()[:16]
+
+
+def estimate_working_set(index):
+    """Heuristic: estimated minimum tokens the trace actually needs."""
+    turns = index['turn_count'] or 1
+    tools = index['tool_use'] or 0
+    return SYSTEM_OVERHEAD_TOKENS + (PER_TURN_AVG_TOKENS * min(turns, 30)) + (UNIQUE_TOOL_OUTPUT_DEDUPE_TOKENS * min(tools, 20))
+
+
+def estimate_compression_potential(sent_tokens, working_set):
+    if working_set == 0:
+        return 0.0
+    return round(sent_tokens / working_set, 2)
+
+
+# ---- Load ----
+def load_index(p: Path):
+    out = []
+    with p.open('r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            out.append(json.loads(line))
+    return out
+
+
+def load_turns(p: Path):
+    out = []
+    with p.open('r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except Exception:
+                pass
+    return out
+
+
+def load_artifacts(p: Path):
+    out = []
+    with p.open('r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except Exception:
+                pass
+    return out
+
+
+# ---- Build conversation_graph ----
+def build_conversation_graph(index_rows):
+    by_sid = {r['session_id']: r for r in index_rows if r.get('session_id')}
+    out_rows = []
+    for r in index_rows:
+        sid = r.get('session_id') or ''
+        parent_sid = ''
+        fork_origin = ''
+        spawn_children = []
+        for other in index_rows:
+            if other is r:
+                continue
+            if other.get('session_id') and r.get('agent_id') and other.get('agent_id') == r.get('agent_id'):
+                if other['session_id'] != sid and other.get('is_subagent') and not r.get('is_subagent'):
+                    spawn_children.append(other['session_id'])
+        if r.get('is_subagent'):
+            # Parent = same cwd or project, not subagent
+            candidates = [o for o in index_rows if not o.get('is_subagent') and o.get('cwd') == r.get('cwd') and o.get('session_id') != sid]
+            if candidates:
+                parent_sid = candidates[0]['session_id']
+        out_rows.append({
+            'trace_id': r['trace_id'],
+            'session_id': sid,
+            'parent_session_id': parent_sid,
+            'spawn_children_ids': '|'.join(spawn_children[:10]),
+            'fork_origin_trace_id': fork_origin,
+            'fork_depth': r.get('fork_depth', 0),
+            'agent_tree_depth': r.get('agent_tree_depth', 0),
+            'is_subagent': r.get('is_subagent', False),
+            'is_sidechain': r.get('is_sidechain', False),
+            'derived_from_trace_id': parent_sid,
+            'cwd': r.get('cwd', ''),
+            'git_branch': r.get('git_branch', ''),
+            'project_root': r.get('project_root', ''),
+            'driver_type': r.get('driver_type', ''),
+        })
+    return out_rows
+
+
+# ---- Build artifact_graph ----
+def build_artifact_graph(index_rows, artifact_rows):
+    # aggregate: path_norm -> {trace_count, total_chars, sources_set, trace_ids_set}
+    agg = defaultdict(lambda: {'trace_count': 0, 'total_chars': 0, 'sources': set(), 'trace_ids': set(), 'kind': 'file'})
+    adr_keys = ('/adr/', 'adr-', 'adr_')
+    for a in artifact_rows:
+        p = a['path_norm']
+        kind = 'adr' if any(k in p for k in adr_keys) else ('spec' if '/spec' in p else ('cmd' if p.startswith('cmd:') else ('url' if p.startswith('url:') else 'file')))
+        e = agg[p]
+        e['trace_count'] += 1
+        e['total_chars'] += a['chars']
+        e['sources'].add(a['source_block'])
+        e['trace_ids'].add(a['trace_id'])
+        e['kind'] = kind
+
+    out_rows = []
+    for path, e in agg.items():
+        if e['trace_count'] >= 2:
+            out_rows.append({
+                'path_norm': path,
+                'kind': e['kind'],
+                'trace_count': e['trace_count'],
+                'total_chars': e['total_chars'],
+                'distinct_sources': '|'.join(sorted(e['sources']))[:300],
+                'trace_ids_sample': '|'.join(sorted(e['trace_ids'])[:20]),
+            })
+    out_rows.sort(key=lambda r: r['trace_count'], reverse=True)
+    return out_rows
+
+
+# ---- Build prompt-reuse clusters ----
+def build_prompt_clusters(index_rows):
+    """Cluster by first-200 + last-200 chars of first user message."""
+    bucket_to_traces = defaultdict(list)
+    for r in index_rows:
+        msg = (r.get('first_user_message') or '').strip()
+        if not msg:
+            continue
+        head = msg[:200].lower()
+        tail = msg[-200:].lower() if len(msg) > 200 else head
+        bucket_to_traces[(head, tail)].append(r['trace_id'])
+    clusters = []
+    cid = 0
+    for (head, tail), traces in bucket_to_traces.items():
+        if len(traces) >= 2:
+            cid += 1
+            clusters.append({
+                'cluster_id': f'pc{cid:04d}',
+                'size': len(traces),
+                'head_norm': head[:80],
+                'tail_norm': tail[:80],
+                'trace_ids': '|'.join(sorted(traces)[:30]),
+            })
+    return clusters
+
+
+# ---- Per-trace augmentation ----
+def augment_index_rows(index_rows, artifact_rows, prompt_clusters):
+    # Map cluster_id by trace
+    cluster_by_trace = {}
+    for c in prompt_clusters:
+        for tid in c['trace_ids'].split('|'):
+            cluster_by_trace[tid] = c['cluster_id']
+
+    # Map artifact counts per trace
+    artifact_counts = defaultdict(lambda: defaultdict(int))
+    for a in artifact_rows:
+        artifact_counts[a['trace_id']][a['path_norm']] += 1
+
+    by_trace_artifacts = {}
+    for tid, paths in artifact_counts.items():
+        by_trace_artifacts[tid] = {
+            'total_artifact_mentions': sum(paths.values()),
+            'unique_paths': len(paths),
+            'repeated_paths': sum(1 for v in paths.values() if v > 1),
+            'top_path': max(paths.items(), key=lambda kv: kv[1])[0] if paths else '',
+            'top_path_repeat': max(paths.values()) if paths else 0,
+        }
+
+    out = []
+    for r in index_rows:
+        tid = r['trace_id']
+        first_msg = (r.get('first_user_message') or '').strip()
+        head200 = first_msg[:200]
+        tail200 = first_msg[-200:] if len(first_msg) > 200 else head200
+        ws = estimate_working_set(r)
+        cp = estimate_compression_potential(r.get('sent_tokens', 0) or 0, ws)
+        ar = by_trace_artifacts.get(tid, {})
+        out.append({
+            'trace_id': tid,
+            'source': r['source'],
+            'source_path': r['source_path'],
+            'source_file': r['source_file'],
+            'size_bytes': r['size_bytes'],
+            'line_count': r['line_count'],
+            'bad_lines': r.get('bad_lines', 0),
+            'turn_count': r['turn_count'],
+            'span_seconds': compute_span_seconds(r.get('first_ts', ''), r.get('last_ts', '')),
+            'first_ts': r.get('first_ts', ''),
+            'last_ts': r.get('last_ts', ''),
+            'driver_type': r.get('driver_type', ''),
+            'driver_signal': r.get('driver_signal', ''),
+            'driver_source': r.get('driver_source', ''),
+            'is_subagent': r.get('is_subagent', False),
+            'is_sidechain': r.get('is_sidechain', False),
+            'fork_depth': r.get('fork_depth', 0),
+            'agent_tree_depth': r.get('agent_tree_depth', 0),
+            'session_id': r.get('session_id', ''),
+            'parent_session_id': r.get('parent_session_id', ''),
+            'agent_id': r.get('agent_id', ''),
+            'project_root': r.get('project_root', ''),
+            'cwd': r.get('cwd', ''),
+            'git_branch': r.get('git_branch', ''),
+            'version': r.get('version', ''),
+            'slug': r.get('slug', ''),
+            'models': r.get('models', ''),
+            'input_tokens': r.get('input_tokens', 0),
+            'output_tokens': r.get('output_tokens', 0),
+            'cache_creation_input_tokens': r.get('cache_creation_input_tokens', 0),
+            'cache_read_input_tokens': r.get('cache_read_input_tokens', 0),
+            'sent_tokens': r.get('sent_tokens', 0),
+            'tool_use': r.get('tool_use', 0),
+            'tool_result': r.get('tool_result', 0),
+            # ---- derived ----
+            'bucket': r.get('bucket', ''),
+            'length_class': r.get('length_class', ''),
+            'seed_prompt_hash': h(first_msg),
+            'seed_prompt_length': len(first_msg),
+            'seed_prefix_200': head200,
+            'seed_suffix_200': tail200,
+            'generic_template_hash': h(head200 + '|' + tail200),
+            'prompt_similarity_cluster': cluster_by_trace.get(tid, ''),
+            'shared_prefix_tokens': (r.get('cache_read_input_tokens', 0) or 0),
+            'duplicate_context_tokens': (r.get('cache_read_input_tokens', 0) or 0),
+            'tool_output_repeated_count': ar.get('repeated_paths', 0),
+            'repo_docs_repeated': ar.get('repeated_paths', 0),
+            'specs_repeated': sum(1 for k in artifact_counts[tid] if '/spec' in k),
+            'adrs_repeated': sum(1 for k in artifact_counts[tid] if 'adr' in k),
+            'file_path_repeated_count': ar.get('repeated_paths', 0),
+            'unique_artifact_paths': ar.get('unique_paths', 0),
+            'total_artifact_mentions': ar.get('total_artifact_mentions', 0),
+            'top_artifact_path': ar.get('top_path', ''),
+            'top_artifact_repeat': ar.get('top_path_repeat', 0),
+            'working_set_tokens': ws,
+            'compression_potential_ratio': cp,
+            'compression_potential_band': band(cp),
+            'transcript_path': r['source_path'],
+            'transcript_json': '',
+            'sampled_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            'sampling_notes': '',
+        })
+    return out
+
+
+def compute_span_seconds(a, b):
+    if not a or not b:
+        return 0
+    try:
+        from datetime import datetime
+        aa = datetime.fromisoformat(a.replace('Z', '+00:00'))
+        bb = datetime.fromisoformat(b.replace('Z', '+00:00'))
+        return int((bb - aa).total_seconds())
+    except Exception:
+        return 0
+
+
+def band(cp):
+    if cp <= 0:
+        return 'na'
+    if cp < 1.5:
+        return 'minimal'
+    if cp < 3.0:
+        return 'low'
+    if cp < 8.0:
+        return 'medium'
+    return 'high'
+
+
+# ---- CSV writer with RFC 4180 quoting ----
+def write_csv(path: Path, rows, columns, drop_json_columns=('transcript_json',)):
+    """Write CSV with proper RFC 4180 quoting (uses csv module which already does this)."""
+    with path.open('w', encoding='utf-8-sig', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=columns, quoting=csv.QUOTE_MINIMAL, lineterminator='\r\n')
+        w.writeheader()
+        for r in rows:
+            row = dict(r)
+            for col in drop_json_columns:
+                if col in row:
+                    row[col] = ''  # CSV shouldn't carry the full transcript; pointer does
+            w.writerow(row)
+
+
+# ---- Sampler ----
+def sample_with_constraints(index_rows, target_total=300, driver_split_target=0.5, min_short=2, min_long_horizon=50):
+    """Sample rows to satisfy per-source targets, driver split, and length-bucket spread."""
+    # Per-source buckets
+    by_source = defaultdict(list)
+    for r in index_rows:
+        by_source[r['source']].append(r)
+
+    # Allocate per source: prefer the source with most data; bias to long_horizon and short
+    out = []
+    # Driver-balanced sub-pools per source
+    for source, rows in by_source.items():
+        rows.sort(key=lambda r: r['sent_tokens'], reverse=True)
+        humans = [r for r in rows if r['driver_type'] == 'human']
+        spawns = [r for r in rows if r['driver_type'] == 'agent_spawned']
+        long = [r for r in rows if r['bucket'] == 'long_horizon']
+        med = [r for r in rows if r['bucket'] == 'medium']
+        short = [r for r in rows if r['bucket'] == 'short']
+        # Always include all long and short
+        for r in long + short:
+            if r not in out:
+                out.append(r)
+        # Then alternate humans/spawns to keep driver balance
+        for h in humans:
+            if len([x for x in out if x['source'] == source]) >= 200:
+                break
+            if h not in out:
+                out.append(h)
+        for s in spawns:
+            if s not in out:
+                out.append(s)
+        for m in med:
+            if len([x for x in out if x['source'] == source]) >= 200:
+                break
+            if m not in out:
+                out.append(m)
+    return out
+
+
+def build_lite(rows, n_per_source=2):
+    by_source = defaultdict(list)
+    for r in rows:
+        by_source[r['source']].append(r)
+    out = []
+    for source, source_rows in by_source.items():
+        # Try to pick 1 long_horizon + 1 short if possible
+        long_horizon = [r for r in source_rows if r['bucket'] == 'long_horizon']
+        short = [r for r in source_rows if r['bucket'] == 'short']
+        med = [r for r in source_rows if r['bucket'] == 'medium']
+        # Pick representative diversity
+        picks = []
+        for cat in [long_horizon, short, med, source_rows]:
+            for r in cat:
+                if r not in picks:
+                    picks.append(r)
+                if len(picks) >= n_per_source:
+                    break
+            if len(picks) >= n_per_source:
+                break
+        out.extend(picks[:n_per_source])
+    return out
+
+
+# ---- Main ----
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--in-dir', default=r'C:\Users\koosh\AppData\Local\Temp\extract_stream')
+    ap.add_argument('--out-dir', default=r'C:\Users\koosh\Downloads')
+    ap.add_argument('--lite-per-source', type=int, default=2)
+    args = ap.parse_args()
+
+    in_dir = Path(args.in_dir)
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    index_rows = load_index(in_dir / 'raw_extract_index.jsonl')
+    turn_rows = load_turns(in_dir / 'raw_extract_turns.jsonl')
+    artifact_rows = load_artifacts(in_dir / 'raw_extract_artifacts.jsonl')
+
+    print(f'Loaded {len(index_rows)} traces, {len(turn_rows)} turns, {len(artifact_rows)} artifact mentions', file=sys.stderr)
+
+    # Build derived structures
+    prompt_clusters = build_prompt_clusters(index_rows)
+    print(f'Prompt-reuse clusters (size>=2): {len(prompt_clusters)}', file=sys.stderr)
+
+    # Augment
+    augmented = augment_index_rows(index_rows, artifact_rows, prompt_clusters)
+
+    # Sample Full and Lite
+    full_rows = sample_with_constraints(augmented, target_total=300)
+    print(f'Full candidate rows: {len(full_rows)}', file=sys.stderr)
+
+    # Per-source cap: keep source balance
+    # We don't artificially cap; we just include everything we have
+    lite_rows = build_lite(augmented, args.lite_per_source)
+    print(f'Lite candidate rows: {len(lite_rows)}', file=sys.stderr)
+
+    # Drop Forge rows from final (they're not conversation traces)
+    full_rows = [r for r in full_rows if r['source'] != 'forge']
+    lite_rows = [r for r in lite_rows if r['source'] != 'forge']
+
+    # Column order: derived cols placed alongside their conceptual siblings
+    full_columns = [
+        'trace_id', 'source', 'source_path', 'source_file',
+        'size_bytes', 'line_count', 'bad_lines', 'turn_count',
+        'span_seconds', 'first_ts', 'last_ts',
+        'driver_type', 'driver_signal', 'driver_source',
+        'is_subagent', 'is_sidechain', 'fork_depth', 'agent_tree_depth',
+        'session_id', 'parent_session_id', 'agent_id',
+        'project_root', 'cwd', 'git_branch', 'version', 'slug',
+        'models',
+        'input_tokens', 'output_tokens',
+        'cache_creation_input_tokens', 'cache_read_input_tokens',
+        'sent_tokens',
+        'tool_use', 'tool_result',
+        'bucket', 'length_class',
+        'seed_prompt_hash', 'seed_prompt_length',
+        'seed_prefix_200', 'seed_suffix_200',
+        'generic_template_hash', 'prompt_similarity_cluster',
+        'shared_prefix_tokens', 'duplicate_context_tokens',
+        'tool_output_repeated_count',
+        'repo_docs_repeated', 'specs_repeated', 'adrs_repeated',
+        'file_path_repeated_count', 'unique_artifact_paths',
+        'total_artifact_mentions', 'top_artifact_path', 'top_artifact_repeat',
+        'working_set_tokens', 'compression_potential_ratio', 'compression_potential_band',
+        'transcript_path', 'transcript_json', 'sampled_at', 'sampling_notes',
+    ]
+    # ---- Atomic overwrite: rename existing -> .bak then write fresh ----
+    def safe_write(path, rows, columns):
+        bak = path.with_suffix(path.suffix + '.bak')
+        if path.exists():
+            try:
+                if bak.exists():
+                    bak.unlink()
+                path.rename(bak)
+            except Exception:
+                pass
+        write_csv(path, rows, columns)
+
+    safe_write(out_dir / 'traces_full.csv', full_rows, full_columns)
+    safe_write(out_dir / 'traces_lite.csv', lite_rows, full_columns)
+
+    # turn_metrics.csv
+    turn_columns = [
+        'trace_id', 'turn_idx', 'role', 'tool_name',
+        'text_chars', 'tool_input_chars', 'tool_result_chars',
+        'input_tokens', 'cached_input_tokens', 'output_tokens',
+        'elapsed_ms_since_prev', 'context_size_chars_at_turn',
+        'could_use_cache', 'could_use_handle', 'could_use_summary', 'requires_full_context',
+        'ts',
+    ]
+    write_csv(out_dir / 'turn_metrics.csv', turn_rows, turn_columns)
+
+    # conversation_graph.csv
+    graph_rows = build_conversation_graph(index_rows)
+    graph_rows = [r for r in graph_rows if r['source'] != 'forge']
+    graph_columns = [
+        'trace_id', 'session_id', 'parent_session_id',
+        'spawn_children_ids', 'fork_origin_trace_id',
+        'fork_depth', 'agent_tree_depth',
+        'is_subagent', 'is_sidechain', 'derived_from_trace_id',
+        'cwd', 'git_branch', 'project_root', 'driver_type',
+    ]
+    write_csv(out_dir / 'conversation_graph.csv', graph_rows, graph_columns)
+
+    # artifact_graph.csv
+    artifact_graph_rows = build_artifact_graph(index_rows, artifact_rows)
+    artifact_columns = ['path_norm', 'kind', 'trace_count', 'total_chars', 'distinct_sources', 'trace_ids_sample']
+    write_csv(out_dir / 'artifact_graph.csv', artifact_graph_rows, artifact_columns)
+
+    # Summary report
+    print('', file=sys.stderr)
+    print(f'==== SUMMARY ====', file=sys.stderr)
+    print(f'  traces_full.csv    : {len(full_rows)} rows -> {(out_dir / "traces_full.csv").stat().st_size:,} bytes', file=sys.stderr)
+    print(f'  traces_lite.csv    : {len(lite_rows)} rows -> {(out_dir / "traces_lite.csv").stat().st_size:,} bytes', file=sys.stderr)
+    print(f'  turn_metrics.csv   : {len(turn_rows)} rows -> {(out_dir / "turn_metrics.csv").stat().st_size:,} bytes', file=sys.stderr)
+    print(f'  conversation_graph : {len(graph_rows)} rows -> {(out_dir / "conversation_graph.csv").stat().st_size:,} bytes', file=sys.stderr)
+    print(f'  artifact_graph     : {len(artifact_graph_rows)} rows -> {(out_dir / "artifact_graph.csv").stat().st_size:,} bytes', file=sys.stderr)
+    print(f'', file=sys.stderr)
+    print(f'  Driver split (full):', file=sys.stderr)
+    by_d = Counter(r['driver_type'] for r in full_rows)
+    for k, v in by_d.most_common():
+        print(f'    {k}: {v}', file=sys.stderr)
+    print(f'  Bucket split (full):', file=sys.stderr)
+    by_b = Counter(r['bucket'] for r in full_rows)
+    for k, v in by_b.most_common():
+        print(f'    {k}: {v}', file=sys.stderr)
+    print(f'  Source split (full):', file=sys.stderr)
+    by_s = Counter(r['source'] for r in full_rows)
+    for k, v in by_s.most_common():
+        print(f'    {k}: {v}', file=sys.stderr)
+    print(f'  Compression bands:', file=sys.stderr)
+    by_c = Counter(r['compression_potential_band'] for r in full_rows)
+    for k, v in by_c.most_common():
+        print(f'    {k}: {v}', file=sys.stderr)
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,32 @@
+import yaml
+import os
+
+files = [
+    '.github/workflows/security-deep-scan.yml',
+    '.github/workflows/ci.yml',
+    '.github/workflows/cargo-deny.yml',
+    '.github/workflows/scorecard.yml',
+    '.github/workflows/audit.yml',
+    '.github/workflows/release.yml',
+    '.github/workflows/pages-deploy.yml',
+    '.github/workflows/trufflehog.yml',
+    '.github/workflows/quality-gate.yml',
+    '.github/workflows/sast.yml',
+    '.github/workflows/security-guard.yml',
+    '.github/workflows/coverage.yml',
+]
+for f in files:
+    with open(f, encoding='utf-8') as fh:
+        raw = fh.read()
+    docs = list(yaml.safe_load_all(raw))
+    # Re-check duplicate keys by parsing event manually
+    import re
+    # Count occurrences of top level keys
+    dups = {}
+    for line in raw.splitlines():
+        m = re.match(r'^([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*$', line)
+        if m:
+            key = m.group(1)
+            dups[key] = dups.get(key, 0) + 1
+    dup_keys = {k: v for k, v in dups.items() if v > 1}
+    print(f, 'docs=', len(docs), 'dupkeys=', dup_keys)

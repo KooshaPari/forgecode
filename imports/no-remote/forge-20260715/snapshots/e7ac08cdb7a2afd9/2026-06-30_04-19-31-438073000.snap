@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+import json, re, sys
+
+# Read raw file, strip ANSI, handle encoding
+with open(r'C:\Users\koosh\_repos_inventory.json', 'rb') as f:
+    raw = f.read()
+
+# Decode with UTF-8 first, strip BOM if present
+text = raw.decode('utf-8', errors='replace')
+if text.startswith('\ufeff'):
+    text = text[1:]
+
+# Strip ANSI escape codes
+ansi = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
+clean = ansi.sub('', text)
+
+data = json.loads(clean)
+nonforks = [r for r in data if not r['fork']]
+forks = [r for r in data if r['fork']]
+
+lines = []
+lines.append(f'TOTAL: {len(data)}  NON-FORKS: {len(nonforks)}  FORKS: {len(forks)}')
+lines.append('')
+
+# Language breakdown
+from collections import Counter
+langs = Counter(r['lang'] for r in nonforks)
+for l, c in sorted(langs.items(), key=lambda x: -x[1]):
+    lines.append(f'  {l or "(none)":20s}  {c}')
+
+lines.append('')
+lines.append('ALL NON-FORK REPOS:')
+lines.append('')
+
+for r in sorted(nonforks, key=lambda x: x['name']):
+    lang = r.get('lang', '') or ''
+    desc = (r.get('desc', '') or '')[:80]
+    # Strip any remaining problematic chars for cp1252
+    safe_desc = desc.encode('ascii', 'replace').decode('ascii')
+    safe_lang = lang.encode('ascii', 'replace').decode('ascii')
+    lines.append(f'{r["name"]:35s} {safe_lang:15s} {safe_desc}')
+
+lines.append('')
+lines.append('FORKS:')
+lines.append('')
+for r in sorted(forks, key=lambda x: x['name']):
+    lang = r.get('lang', '') or ''
+    desc = (r.get('desc', '') or '')[:80]
+    safe_desc = desc.encode('ascii', 'replace').decode('ascii')
+    safe_lang = lang.encode('ascii', 'replace').decode('ascii')
+    lines.append(f'{r["name"]:35s} {safe_lang:15s} FORK - {safe_desc}')
+
+result = '\n'.join(lines)
+
+# Write to file (UTF-8) and print to stdout
+with open(r'C:\Users\koosh\repos_list.txt', 'w', encoding='utf-8') as f:
+    f.write(result)
+
+print(result)

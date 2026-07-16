@@ -1,0 +1,9 @@
+@echo off
+setlocal enabledelayedexpansion
+set REPOS=decolua/9router musistudio/claude-code-router kaitranntt/CLIProxyAPIPlus mksglu/context-mode MaximAI/bifrost diegosouzapw/OmniRoute coder/agentapi KooshaPari/agentapi-plusplus KooshaPari/cliproxyapi-plusplus KooshaPari/OmniRoute KooshaPari/substrate KooshaPari/phenotype-registry KooshaPari/phenokits KooshaPari/phenoAI
+echo full                                 stars arch   pushed      lic        desc
+for %%r in (%REPOS%) do (
+    gh api "/repos/%%r" > "_t_%%~nr.json" 2> "_t_%%~nr.err"
+    python -c "import json,sys;d=json.load(open(r'_t_%%~nr.json',encoding='utf-8',errors='replace'));lic=(d.get('license') or {}).get('name') or '-';push=(d.get('pushed_at') or '')[:10];print(f\"{d.get('full_name'):<35} {d.get('stargazers_count',0):>6} {str(d.get('archived',False)):<6} {push:<11} {lic:<10} {(d.get('description') or '')[:80]}\")" 2>nul || echo %%r ^^^< parse_err ^^^>
+    del "_t_%%~nr.json" "_t_%%~nr.err" 2>nul
+)

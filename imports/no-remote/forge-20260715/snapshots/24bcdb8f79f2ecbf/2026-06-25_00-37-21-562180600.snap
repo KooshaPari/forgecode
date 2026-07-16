@@ -1,0 +1,206 @@
+/**
+ * Pure budget calculator — folds a slice of `CompressionStats` history into
+ * a single `BudgetSnapshot`.
+ *
+ * No I/O, no Date.now() — the caller supplies `nowMs` so unit tests can
+ * pin "now" deterministically. The function is referentially transparent.
+ */
+
+import type { CompressionStats } from "../types.ts";
+import type {
+  BudgetSnapshot,
+  ContextBudgetConfig,
+  CompressionStatsLike,
+} from "./types.ts";
+
+/**
+ * Default config. Matches the defaults used by the dashboard when the user
+ * hasn't customised anything yet. All values are safe fallbacks.
+ */
+export const DEFAULT_CONTEXT_BUDGET_CONFIG: ContextBudgetConfig = {
+  maxContextTokens: 128_000,
+  targetContextTokens: 102_400, // 80 % of the default
+  targetSavingsRatio: 0.4,
+  costPer1kInputTokensUsd: 0.003,
+  costPer1kOutputTokensUsd: 0.015,
+  windowMs: 24 * 60 * 60 * 1000,
+  forecastHorizonMs: 60 * 60 * 1000,
+  criticalUtilizationRatio: 0.9,
+};
+
+/**
+ * Normalise an incoming `ContextBudgetConfig`, applying the defaults for
+ * any field the caller did not specify. We don't mutate the input.
+ */
+export function normaliseBudgetConfig(
+  partial: Partial<ContextBudgetConfig> | null | undefined
+): ContextBudgetConfig {
+  const cfg: ContextBudgetConfig = {
+    ...DEFAULT_CONTEXT_BUDGET_CONFIG,
+    ...(partial ?? {}),
+  };
+
+  // Clamp into the allowed ranges. We never throw — the dashboard always
+  // gets a *sane* value, even if the user typed garbage.
+  if (!Number.isFinite(cfg.maxContextTokens) || cfg.maxContextTokens <= 0) {
+    cfg.maxContextTokens = DEFAULT_CONTEXT_BUDGET_CONFIG.maxContextTokens;
+  }
+  if (!Number.isFinite(cfg.targetContextTokens) || cfg.targetContextTokens <= 0) {
+    cfg.targetContextTokens = Math.floor(
+      cfg.maxContextTokens * DEFAULT_CONTEXT_BUDGET_CONFIG.targetSavingsRatio
+    );
+  }
+  if (cfg.targetContextTokens > cfg.maxContextTokens) {
+    cfg.targetContextTokens = cfg.maxContextTokens;
+  }
+  if (!Number.isFinite(cfg.targetSavingsRatio)) {
+    cfg.targetSavingsRatio = DEFAULT_CONTEXT_BUDGET_CONFIG.targetSavingsRatio;
+  }
+  cfg.targetSavingsRatio = clamp01(cfg.targetSavingsRatio);
+  if (!Number.isFinite(cfg.costPer1kInputTokensUsd) || cfg.costPer1kInputTokensUsd < 0) {
+    cfg.costPer1kInputTokensUsd = DEFAULT_CONTEXT_BUDGET_CONFIG.costPer1kInputTokensUsd;
+  }
+  if (!Number.isFinite(cfg.costPer1kOutputTokensUsd) || cfg.costPer1kOutputTokensUsd < 0) {
+    cfg.costPer1kOutputTokensUsd = DEFAULT_CONTEXT_BUDGET_CONFIG.costPer1kOutputTokensUsd;
+  }
+  if (!Number.isFinite(cfg.windowMs) || cfg.windowMs <= 0) {
+    cfg.windowMs = DEFAULT_CONTEXT_BUDGET_CONFIG.windowMs;
+  }
+  if (!Number.isFinite(cfg.forecastHorizonMs) || cfg.forecastHorizonMs <= 0) {
+    cfg.forecastHorizonMs = DEFAULT_CONTEXT_BUDGET_CONFIG.forecastHorizonMs;
+  }
+  if (!Number.isFinite(cfg.criticalUtilizationRatio)) {
+    cfg.criticalUtilizationRatio = DEFAULT_CONTEXT_BUDGET_CONFIG.criticalUtilizationRatio;
+  }
+  cfg.criticalUtilizationRatio = clamp01(cfg.criticalUtilizationRatio);
+  return cfg;
+}
+
+/**
+ * `calculateBudgetSavings` — the canonical entry point.
+ *
+ * @param original       Array of pre-compression token counts, one per
+ *                       request in the window. Treated as a plain number
+ *                       list so the dashboard can pass either raw token
+ *                       deltas or expanded samples.
+ * @param compressed     Array of post-compression token counts, paired 1:1
+ *                       with `original`.
+ * @param config         The full budget config (use `normaliseBudgetConfig`
+ *                       first if the caller has a partial).
+ * @param sampleStats    Optional parallel array of the original
+ *                       `CompressionStats` rows. When present, real
+ *                       provider-reported usage is preferred over the
+ *                       local estimate.
+ * @param nowMs          Caller-supplied "now" in ms since epoch. Defaults
+ *                       to `Date.now()` but is overridable for tests.
+ */
+export function calculateBudgetSavings(
+  original: ReadonlyArray<number>,
+  compressed: ReadonlyArray<number>,
+  config: ContextBudgetConfig,
+  sampleStats?: ReadonlyArray<CompressionStats>,
+  nowMs: number = Date.now()
+): BudgetSnapshot {
+  const safeConfig = normaliseBudgetConfig(config);
+  const len = Math.min(original.length, compressed.length);
+
+  let totalOriginal = 0;
+  let totalCompressed = 0;
+  for (let i = 0; i < len; i++) {
+    const o = safeNonNegativeNumber(original[i]);
+    const c = safeNonNegativeNumber(compressed[i]);
+    totalOriginal += o;
+    totalCompressed += c;
+  }
+
+  const isEmpty = len === 0 || totalOriginal === 0;
+  const tokensSaved = Math.max(0, totalOriginal - totalCompressed);
+  const savingsRatio = isEmpty ? 0 : clamp01(tokensSaved / totalOriginal);
+  const savingsPercent = Math.round(savingsRatio * 10_000) / 100;
+
+  const utilizationRatio = safeConfig.maxContextTokens > 0
+    ? totalCompressed / safeConfig.maxContextTokens
+    : 0;
+  const targetUtilizationRatio = safeConfig.targetContextTokens > 0
+    ? totalCompressed / safeConfig.targetContextTokens
+    : 0;
+
+  // Status: critical > warning > healthy, by the order of severity. We
+  // honour BOTH "we're eating too much of the window" and "we're missing
+  // the savings target" — whichever is worse wins.
+  let status: BudgetSnapshot["status"] = "healthy";
+  if (utilizationRatio >= safeConfig.criticalUtilizationRatio) {
+    status = "critical";
+  } else if (
+    targetUtilizationRatio > 1 ||
+    utilizationRatio >= safeConfig.criticalUtilizationRatio * 0.8 ||
+    savingsRatio < safeConfig.targetSavingsRatio
+  ) {
+    status = "warning";
+  }
+
+  return {
+    timestamp: nowMs,
+    originalTokens: totalOriginal,
+    compressedTokens: totalCompressed,
+    tokensSaved,
+    savingsRatio,
+    savingsPercent,
+    utilizationRatio,
+    targetUtilizationRatio,
+    status,
+    isEmpty,
+    sampleCount: len,
+  };
+}
+
+/**
+ * Convenience: fold a list of `CompressionStats` directly into a snapshot.
+ * Mirrors the API of the analytics DB layer — the dashboard can hand its
+ * already-fetched rows to this function without unpacking token counts.
+ */
+export function calculateBudgetFromStats(
+  stats: ReadonlyArray<CompressionStatsLike>,
+  config: ContextBudgetConfig,
+  nowMs: number = Date.now()
+): BudgetSnapshot {
+  const original: number[] = [];
+  const compressed: number[] = [];
+  for (const s of stats) {
+    // Prefer real provider-reported totals when present — the local
+    // estimate is the fallback.
+    const real = s.realUsage?.totalTokens;
+    if (typeof real === "number" && real > 0) {
+      // We can't recover the split between original/compressed from a
+      // single real total, so we model the compressed side as the
+      // estimate and the original as `compressed / (1 - savingsRatio)`.
+      // When savingsRatio is unknown (0), we fall back to the estimate.
+      if (s.savingsRatio && s.savingsRatio > 0) {
+        const compressedTokens = real;
+        const originalTokens = compressedTokens / (1 - s.savingsRatio);
+        original.push(originalTokens);
+        compressed.push(compressedTokens);
+        continue;
+      }
+    }
+    original.push(s.originalTokens);
+    compressed.push(s.compressedTokens);
+  }
+  return calculateBudgetSavings(original, compressed, config, undefined, nowMs);
+}
+
+// ─── internals ────────────────────────────────────────────────────────────
+
+function safeNonNegativeNumber(n: unknown): number {
+  if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return 0;
+  return n;
+}
+
+function clamp01(n: number): number {
+  if (n < 0) return 0;
+  if (n > 1) return 1;
+  return n;
+}
+
+// Re-export the helper so the recommender can stay internally consistent.
+export const __private_clamp01 = clamp01;

@@ -1,0 +1,62 @@
+"""Fetch PR #18 SonarCloud check details and save hotspot info to a file."""
+import re
+import json
+import subprocess
+import sys
+
+# 1. Fetch check-runs
+result = subprocess.run(
+    ["gh", "api", "repos/KooshaPari/phenodag/commits/e8cc1ca/check-runs"],
+    capture_output=True, cwd=r"C:\Users\koosh"
+)
+out_path = r"C:\Users\koosh\_pr18_cr.json"
+with open(out_path, "wb") as f:
+    f.write(result.stdout)
+
+# 2. Strip ANSI
+raw = result.stdout
+clean = re.sub(rb"\x1b\[[0-9;]*[a-zA-Z]", b"", raw)
+start = clean.find(b"{")
+end = clean.rfind(b"}") + 1
+if start < 0 or end <= start:
+    print("ERR: no JSON object in gh output")
+    print("stdout (first 500):", raw[:500].decode("utf-8", errors="replace"))
+    print("stderr (first 500):", result.stderr[:500].decode("utf-8", errors="replace"))
+    sys.exit(1)
+
+d = json.loads(clean[start:end].decode("utf-8"))
+print("total check-runs:", len(d["check_runs"]))
+
+# 3. Find SonarCloud
+sonar = None
+for c in d["check_runs"]:
+    if "sonar" in c["name"].lower():
+        sonar = c
+        break
+
+if not sonar:
+    print("no SonarCloud check-run found")
+    sys.exit(1)
+
+print("ID:", sonar["id"])
+print("Name:", sonar["name"])
+print("Conclusion:", sonar["conclusion"])
+print("HTML URL:", sonar.get("html_url", ""))
+out = sonar.get("output") or {}
+print("Title:", out.get("title", ""))
+print("Summary length:", len(out.get("summary", "")))
+print("Annotations count:", len(out.get("annotations", [])))
+print()
+print("=== FULL SUMMARY ===")
+print(out.get("summary", ""))
+print()
+print("=== ANNOTATIONS (first 10) ===")
+for i, a in enumerate(out.get("annotations", [])[:10]):
+    print(f"--- annotation {i} ---")
+    print(" path:", a.get("path"))
+    print(" start_line:", a.get("start_line"))
+    print(" end_line:", a.get("end_line"))
+    print(" annotation_level:", a.get("annotation_level"))
+    print(" title:", a.get("title", ""))
+    print(" message:", (a.get("message") or "")[:500])
+    print(" raw_details:", (a.get("raw_details") or "")[:300])

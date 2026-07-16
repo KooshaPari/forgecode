@@ -1,0 +1,343 @@
+"""
+Collect git state for computer-use domain repos.
+Outputs JSON for each repo + a final summary.
+"""
+import json
+import os
+import subprocess
+import sys
+import re
+from pathlib import Path
+from datetime import datetime, timezone
+
+G = r"C:\Users\koosh\_cu_audit\_g.bat"
+TS = datetime.now().strftime("%Y%m%d_%H%M%S")
+OUT_DIR = Path(r"C:\Users\koosh\_cu_audit")
+
+REPOS = [
+    (r"C:\Users\koosh\Eidolon", "Eidolon", True),
+    (r"C:\Users\koosh\Dino", "Dino", True),
+    (r"C:\Users\koosh\Dino-tempclone", "Dino-tempclone", True),
+    (r"C:\Users\koosh\kmobile", "kmobile", True),
+    (r"C:\Users\koosh\playcua_ci_test", "playcua_ci_test", True),
+    (r"C:\Users\koosh\phenotype-journeys", "phenotype-journeys", True),
+    (r"C:\Users\koosh\phenotype-org-audits", "phenotype-org-audits", True),
+]
+
+MISSING_CHECK = [
+    (r"C:\Users\koosh\kvirtstage", "kvirtstage"),
+    (r"C:\Users\koosh\kvirtdesktop", "kvirtdesktop"),
+    (r"C:\Users\koosh\mobile-mpc", "mobile-mpc"),
+    (r"C:\Users\koosh\mobilecli", "mobilecli"),
+    (r"C:\Users\koosh\mobile-cli", "mobile-cli"),
+    (r"C:\Users\koosh\playcua", "playcua"),
+]
+
+
+def run(cmd, timeout=60):
+    """Run a command, return (returncode, stdout, stderr)."""
+    try:
+        cp = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=None,
+        )
+        return cp.returncode, cp.stdout, cp.stderr
+    except subprocess.TimeoutExpired:
+        return -1, "", "timeout"
+    except Exception as e:
+        return -2, "", str(e)
+
+
+def gq(path, *args, timeout=60):
+    """Run git via _g wrapper, return stdout (stripped)."""
+    quoted = f'"{path}"' if " " in path else path
+    cmd = f'call {G} -C {quoted} ' + " ".join(args)
+    rc, out, err = run(cmd, timeout=timeout)
+    return rc, out.strip(), err.strip()
+
+
+def list_top(path):
+    """Top-level directory entries at path (depth 1, hidden + visible)."""
+    try:
+        items = []
+        with os.scandir(path) as it:
+            for e in it:
+                if e.name in (".", ".."):
+                    continue
+                if e.name.startswith("$") and e.name.endswith("Recycle.Bin"):
+                    continue
+                tp = "d" if e.is_dir() else "f"
+                items.append(f"{tp}:{e.name}")
+        items.sort()
+        return items
+    except Exception as ex:
+        return [f"ERR:{ex}"]
+
+
+def detect_language(path):
+    """Heuristic primary language detection from top-level markers."""
+    if not os.path.isdir(path):
+        return "missing"
+    top = set()
+    try:
+        with os.scandir(path) as it:
+            for e in it:
+                if not e.name.startswith("."):
+                    top.add(e.name.lower())
+        with os.scandir(path) as it:
+            for e in it:
+                if e.name.startswith(".") and e.name not in (".", ".."):
+                    top.add(e.name.lower())
+    except Exception:
+        pass
+    top_l = {x.lower() for x in top}
+    # Score markers
+    score = {
+        "Rust": 0,
+        "Python": 0,
+        "TypeScript": 0,
+        "JavaScript": 0,
+        "C#": 0,
+        "Unity": 0,
+        "Go": 0,
+        "Shell": 0,
+    }
+    if "cargo.toml" in top_l or any(p.startswith("crates/") for p in top_l):
+        score["Rust"] += 5
+    if "pyproject.toml" in top_l or "setup.py" in top_l or "requirements.txt" in top_l:
+        score["Python"] += 5
+    if "package.json" in top_l:
+        score["TypeScript"] += 1
+        score["JavaScript"] += 1
+        if "tsconfig.json" in top_l:
+            score["TypeScript"] += 3
+    if "csproj" in " ".join(top_l) or any(p.endswith(".csproj") for p in top_l):
+        score["C#"] += 5
+    if "project.godot" in top_l or "godot" in " ".join(top_l).lower():
+        score["Unity"] -= 1
+    if "assets" in top_l or "projectsettings" in top_l or "packages" in top_l:
+        # Unity uses Assets/, ProjectSettings/, Packages/
+        if "Assets" in top or "ProjectSettings" in top or "Packages" in top:
+            score["Unity"] += 6
+    if "go.mod" in top_l:
+        score["Go"] += 5
+    best = max(score, key=score.get)
+    if score[best] == 0:
+        return "unknown"
+    return best
+
+
+def detect_default_branch(remote_out):
+    """Pick a default branch from `git remote show` or branch -a output."""
+    m = re.search(r"HEAD branch:\s*(\S+)", remote_out)
+    if m:
+        return m.group(1)
+    return "main"
+
+
+def parse_remote(out):
+    remotes = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # format: name\turl (fetch/push)
+        parts = re.split(r"\s+", line, maxsplit=2)
+        if len(parts) == 3:
+            remotes.append({"name": parts[0], "url": parts[1], "action": parts[2]})
+    return remotes
+
+
+def collect(path, name):
+    rec = {
+        "name": name,
+        "path": path,
+        "exists": os.path.isdir(path),
+        "is_git": False,
+        "notes": [],
+        "remote": [],
+        "branches_all_count": 0,
+        "branches_recent": [],
+        "stashes": 0,
+        "worktrees_count": 0,
+        "worktrees": [],
+        "log_head": [],
+        "status": "",
+        "ahead_behind": None,
+        "default_branch": None,
+        "last_commit_date": None,
+        "last_commit_subject": None,
+        "head_sha": None,
+        "primary_language": "missing",
+        "top_level": [],
+        "total_commits": 0,
+        "recent_30d_commits": 0,
+        "detached": False,
+        "sparse_checkout": False,
+        "dirty": False,
+        "unpushed": 0,
+    }
+    if not rec["exists"]:
+        rec["notes"].append("MISSING: directory does not exist")
+        return rec
+
+    rec["primary_language"] = detect_language(path)
+    rec["top_level"] = list_top(path)[:80]
+
+    # sparse-checkout?
+    info_sparse = os.path.join(path, ".git", "info", "sparse-checkout")
+    if os.path.isfile(info_sparse):
+        rec["sparse_checkout"] = True
+        rec["notes"].append("sparse-checkout enabled")
+
+    git_dir = os.path.join(path, ".git")
+    if not os.path.isdir(git_dir):
+        rec["notes"].append("NOT a git repo (no .git directory)")
+        return rec
+    rec["is_git"] = True
+
+    # remote -v
+    rc, out, err = gq(path, "remote", "-v")
+    rec["remote"] = parse_remote(out)
+
+    # branch -a
+    rc, out, err = gq(path, "branch", "-a")
+    if out:
+        all_branches = [l.strip() for l in out.splitlines() if l.strip()]
+        rec["branches_all_count"] = len(all_branches)
+        # Strip decorations: leading "* " or "  remotes/" prefix; keep unique names
+        seen = set()
+        rec_branches = []
+        for l in all_branches:
+            b = l.lstrip("* ").strip()
+            if b.startswith("remotes/"):
+                b = b[len("remotes/"):]
+            if b not in seen:
+                seen.add(b)
+                rec_branches.append(l)
+        rec["branches_recent"] = rec_branches[:20]
+
+    # stash list
+    rc, out, err = gq(path, "stash", "list")
+    if out:
+        rec["stashes"] = len([l for l in out.splitlines() if l.strip()])
+
+    # worktree list
+    rc, out, err = gq(path, "worktree", "list")
+    if out:
+        wt_lines = [l for l in out.splitlines() if l.strip()]
+        rec["worktrees_count"] = len(wt_lines)
+        rec["worktrees"] = wt_lines
+
+    # log --oneline -5
+    rc, out, err = gq(path, "log", "--oneline", "-5")
+    if out:
+        rec["log_head"] = out.splitlines()[:5]
+        # First line is HEAD SHA + subject
+        first = rec["log_head"][0]
+        m = re.match(r"^([0-9a-f]{7,40})\s+(.*)$", first)
+        if m:
+            rec["head_sha"] = m.group(1)
+            rec["last_commit_subject"] = m.group(2)
+
+    # status --short --branch
+    rc, out, err = gq(path, "status", "--short", "--branch")
+    rec["status"] = out
+    if out.strip():
+        rec["dirty"] = True
+        # count dirty files (lines starting with ??, M, A, D, R, C, U)
+        dirty_files = [l for l in out.splitlines() if l.strip() and not l.startswith("##")]
+        if dirty_files:
+            pass
+    # Parse "## branchname...upstream [ahead N, behind M]" or "[ahead N]" / "[behind M]"
+    m = re.search(r"\[ahead\s+(\d+)(?:,\s*behind\s+(\d+))?\]", out)
+    if m:
+        ahead = int(m.group(1))
+        behind = int(m.group(2) or 0)
+        rec["unpushed"] = ahead
+        rec["ahead_behind"] = {"ahead": ahead, "behind": behind}
+
+    # Detached HEAD?
+    rc, out, err = gq(path, "symbolic-ref", "--short", "HEAD")
+    if rc != 0:
+        rec["detached"] = True
+        rec["notes"].append("HEAD is detached")
+
+    # default branch detection
+    rc, out, err = gq(path, "remote", "show", "origin")
+    if rc == 0 and out:
+        rec["default_branch"] = detect_default_branch(out)
+
+    # Fallback: look for main / master / develop in branches
+    if not rec["default_branch"]:
+        for cand in ("main", "master", "develop", "trunk"):
+            for b in rec["branches_recent"]:
+                if cand in b and "remotes/origin/" in b:
+                    rec["default_branch"] = cand
+                    break
+            if rec["default_branch"]:
+                break
+
+    # Last commit date
+    rc, out, err = gq(path, "log", "-1", "--format=%H %ci %s")
+    if out:
+        parts = out.split(maxsplit=2)
+        if len(parts) >= 2:
+            rec["last_commit_date"] = parts[1]
+        # First log line already gave subject; head_sha already set
+
+    # rev-list counts
+    rc, out, err = gq(path, "rev-list", "--count", "HEAD")
+    if out and out.strip().isdigit():
+        rec["total_commits"] = int(out.strip())
+    rc, out, err = gq(path, "rev-list", "--count", "HEAD", "--since=30 days ago")
+    if out and out.strip().isdigit():
+        rec["recent_30d_commits"] = int(out.strip())
+
+    # ahead/behind explicit (when origin/HEAD resolvable)
+    if rec["remote"]:
+        # Try origin/<default>...HEAD
+        db = rec["default_branch"] or "main"
+        rc, out, err = gq(path, "rev-list", "--left-right", "--count", f"origin/{db}...HEAD")
+        if rc == 0 and out.strip():
+            parts = out.strip().split()
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                rec["ahead_behind"] = {
+                    "ahead": int(parts[1]),
+                    "behind": int(parts[0]),
+                }
+                rec["unpushed"] = int(parts[1])
+
+    return rec
+
+
+def main():
+    report = {"timestamp": TS, "repos": [], "missing": []}
+
+    for path, name, _ in REPOS:
+        rec = collect(path, name)
+        report["repos"].append(rec)
+
+    for path, name in MISSING_CHECK:
+        if not os.path.isdir(path):
+            report["missing"].append(name)
+        else:
+            # exists — also collect it
+            rec = collect(path, name)
+            rec["notes"].append("extra: exists in scope but not in primary list")
+            report["repos"].append(rec)
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    json_path = OUT_DIR / f"git_state_raw_{TS}.json"
+    json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print(f"JSON: {json_path}")
+    # Also print to stdout
+    print(json.dumps(report, indent=2))
+
+
+if __name__ == "__main__":
+    main()

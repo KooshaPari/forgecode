@@ -1,0 +1,15 @@
+// This script extracts the file from a stash without shell escape issues.
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+// Try the untracked third parent of stash@{0}
+try {
+    const sha = execSync('git rev-parse "stash@{0}^3"', { cwd: 'C:/Users/koosh/Civis_fresh', encoding: 'utf8' }).trim();
+    console.log('Untracked tree SHA:', sha);
+    const listing = execSync(`git ls-tree -r ${sha}`, { cwd: 'C:/Users/koosh/Civis_fresh', encoding: 'utf8' });
+    console.log('Files in untracked tree:');
+    console.log(listing);
+} catch (e) {
+    console.error('Failed:', e.message);
+}

@@ -1,0 +1,77 @@
+=== main.rs ===
+// Phenotype tooling CLI facade — `pt <subcmd>` entrypoint.
+//
+// This binary is intentionally a thin wrapper around `phenotype_cli::run()` so
+// that the entire behaviour is unit-testable from `lib.rs` without spawning a
+// subprocess. Keeping `main` minimal is the standard pattern for CLI design.
+
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
+    // Delegate all behaviour to the library entry point so that integration
+    // tests can exercise the same code path via `phenotype_cli::run`.
+    match phenotype_cli::run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            // Print errors to stderr in a stable format so that downstream
+            // tooling (CI logs, wrappers) can grep for `error:` reliably.
+            eprintln!("error: {err}");
+            // Use a non-zero exit code that the error can hint at via Debug
+            // (we deliberately avoid Display-with-newlines to keep parsing
+            // stable for scripting).
+            ExitCode::FAILURE
+        }
+    }
+}
+
+=== lib.rs (first 50 lines) ===
+1://! phenotype-cli: top-level CLI facade for the phenotype-tooling ecosystem.
+2://!
+3://! Provides a unified `pt <subcmd>` entry-point that dispatches to the absorbed
+4://! sub-crates (`docs-health`, `quality-gate`, `fr-trace`, `release-cut`,
+5://! `sbom-gen`, etc.) via the spine's subcommand router pattern.
+6://!
+7://! ## Design
+8://!
+9://! - **Subcommand enum**: each absorbed crate declares a variant with its
+10://!   own clap-derived arg set. New crates add a variant without touching
+11://!   the router.
+12://! - **Versioning**: `--version` reports the workspace `Cargo.toml`
+13://!   version (single source of truth).
+14://! - **Error handling**: any subcommand failure is converted to a
+15://!   `ClapError` and the process exits non-zero with a user-facing
+16://!   message (no panics in `main`).
+17://!
+18://! See SPEC.md §CLI for the full contract.
+19:
+20:use clap::{Parser, Subcommand};
+21:
+22:/// CLI version string — sourced from the workspace `Cargo.toml`.
+23:pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+24:
+25:/// CLI name (short alias).
+26:pub const NAME: &str = "pt";
+27:
+28:/// Top-level CLI args.
+29:#[derive(Debug, Parser)]
+30:#[command(
+31:    name = NAME,
+32:    version = VERSION,
+33:    about = "Phenotype tooling — unified CLI for absorbed sub-crates",
+34:    long_about = "pt is the unified entry-point for the phenotype-tooling ecosystem. \
+35:                  It dispatches to docs-health, quality-gate, fr-trace, release-cut, \
+36:                  sbom-gen, and other absorbed sub-crates via subcommands."
+37:)]
+38:pub struct Cli {
+39:    /// Subcommand to execute.
+40:    #[command(subcommand)]
+41:    pub command: Command,
+42:
+43:    /// Increase verbosity (-v, -vv, -vvv).
+44:    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
+45:    pub verbose: u8,
+46:}
+47:
+48:/// All supported subcommands.
+49:///
+50:/// Each variant mirrors a workspace crate. Adding a new absorbed crate

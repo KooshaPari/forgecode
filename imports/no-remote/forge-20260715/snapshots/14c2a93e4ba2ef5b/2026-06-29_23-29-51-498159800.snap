@@ -1,0 +1,19 @@
+{
+  "epic": "epic_F",
+  "title": "DAG foundation + automation",
+  "phase": "Phase 1",
+  "units": [
+    {
+      "unit_id": "F1",
+      "title": "First unit",
+      "type": "automation",
+      "description": "First test unit"
+    },
+    {
+      "unit_id": "F1",
+      "title": "Duplicate unit",
+      "type": "automation",
+      "description": "This should fail validation"
+    }
+  ]
+}

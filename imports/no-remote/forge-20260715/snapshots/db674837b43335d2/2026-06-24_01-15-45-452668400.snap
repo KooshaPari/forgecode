@@ -1,0 +1,20 @@
+$root = 'C:\Users\koosh\Dev\Civis'
+$dirs = @('crates', 'clients', 'web', 'mods', 'tools', 'scripts')
+$files = @()
+foreach ($d in $dirs) {
+    $base = Join-Path $root $d
+    if (-not (Test-Path $base)) { continue }
+    Get-ChildItem -Path $base -Recurse -File | Where-Object {
+        $_.FullName -notmatch '\\target\\' -and
+        $_.FullName -notmatch '\\node_modules\\' -and
+        $_.FullName -notmatch '\\dist\\' -and
+        $_.FullName -notmatch '\\build\\' -and
+        $_.FullName -notmatch '\\.git\\'
+    } | ForEach-Object {
+        if ($_.Name -match '\.(rs|ts|tsx|js|mjs|toml|json|md|yml|yaml)$') {
+            $files += $_.FullName
+        }
+    }
+}
+$files | Set-Content -Path C:\Users\koosh\filelist.txt -Encoding UTF8
+Write-Host ("Files: {0}" -f $files.Count)

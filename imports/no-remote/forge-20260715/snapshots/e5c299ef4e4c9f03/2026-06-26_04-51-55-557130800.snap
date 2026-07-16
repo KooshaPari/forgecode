@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "tiers": {
+    "unit": {
+      "description": "In-module #[test] functions testing a single type or function",
+      "paths": ["crates/*/src/**/*.rs"],
+      "required": true,
+      "gating_failure_threshold": 0
+    },
+    "integration": {
+      "description": "Crate-level tests/ files testing cross-module or cross-crate interaction",
+      "paths": ["crates/*/tests/**/*.rs", "clients/*/tests/**/*.rs"],
+      "required": true,
+      "minimum_crates_with_tests": ["engine", "server", "physics-substrate", "i18n"]
+    },
+    "property": {
+      "description": "Proptest or fuzz harnesses for invariant properties",
+      "paths": ["crates/*/proptest-regressions/**", "crates/*/src/**/proptest.rs"],
+      "required": false,
+      "target_modules": ["emergence", "religion", "physics-substrate"]
+    }
+  },
+  "coverage": {
+    "global_target_pct": 82,
+    "fr_coverage_gate": true,
+    "exclude_patterns": ["**/tests/**", "**/benches/**", "**/build.rs"]
+  },
+  "ci": {
+    "composite_actions": [
+      { "name": "cargo-test", "path": ".ci/actions/cargo-test/action.yml" },
+      { "name": "cargo-clippy", "path": ".ci/actions/cargo-clippy/action.yml" },
+      { "name": "coverage-check", "path": ".ci/actions/coverage-check/action.yml" }
+    ],
+    "workflows": [
+      "ci.yml",
+      "quality-gate.yml",
+      "cargo-audit.yml",
+      "cargo-deny.yml",
+      "fr-coverage.yml",
+      "pr-governance.yml",
+      "adr-depot.yml",
+      "pages-deploy.yml",
+      "test-numbers.yml"
+    ]
+  },
+  "accessibility": {
+    "target_locales": ["en", "fa", "fa-Latn", "zh-CN", "zh-TW"],
+    "i18n_crate": "crates/i18n",
+    "string_bundle_format": "json",
+    "colorblind_palette_modes": ["deuteranopia", "protanopia", "tritanopia"],
+    "adr": "docs/adr/ADR-021-accessibility-and-l10n-strategy.md"
+  }
+}

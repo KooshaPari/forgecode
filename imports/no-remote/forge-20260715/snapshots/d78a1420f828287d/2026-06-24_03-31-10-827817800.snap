@@ -1,0 +1,406 @@
+"""Audit each compute/infra repo for state. Writes C:\\Users\\_infra_recon.json incrementally."""
+import json
+import os
+import subprocess
+from pathlib import Path
+
+REPOS = [
+    r"C:\Users\koosh\phenotype-infra",
+    r"C:\Users\koosh\nanovms",
+    r"C:\Users\koosh\PhenoCompose",
+    r"C:\Users\koosh\BytePort",
+    r"C:\Users\koosh\heliosBench",
+    r"C:\Users\koosh\helioslab-bootstrap",
+    r"C:\Users\koosh\phenotype-journeys",
+    r"C:\Users\koosh\phenotype-registry",
+    r"C:\Users\koosh\phenotype-voxel",
+    r"C:\Users\koosh\phenotype-infra-ci-fix",
+]
+
+OUT = r"C:\Users\koosh\_infra_recon.json"
+LOG = r"C:\Users\koosh\_infra_audit.log"
+TIMEOUT = 30  # per-repo subprocess timeout
+FILE_LIMIT = 1500  # hard cap on file ext sampling
+
+LANG_MAP = {
+    ".rs": "Rust", ".py": "Python", ".js": "JavaScript", ".ts": "TypeScript",
+    ".tsx": "TypeScript", ".jsx": "JavaScript", ".go": "Go", ".java": "Java",
+    ".cs": "C#", ".cpp": "C++", ".c": "C", ".h": "C", ".hpp": "C++",
+    ".rb": "Ruby", ".php": "PHP", ".sh": "Shell", ".ps1": "PowerShell",
+    ".md": "Markdown", ".yaml": "YAML", ".yml": "YAML", ".toml": "TOML",
+    ".json": "JSON", ".html": "HTML", ".css": "CSS", ".scss": "SCSS",
+    ".swift": "Swift", ".kt": "Kotlin", ".dart": "Dart", ".lua": "Lua",
+    ".vue": "Vue", ".svelte": "Svelte",
+}
+SKIP_DIRS = {"node_modules", "target", "dist", "build", "__pycache__", ".venv", "venv", ".next", ".git", "vendor", "out"}
+
+
+def log(msg):
+    with open(LOG, "a", encoding="utf-8") as f:
+        f.write(msg + "\n")
+    print(msg, flush=True)
+
+
+def _list(args, cwd, timeout=TIMEOUT, extra_env=None):
+    """Run a subprocess with list args (no shell) to avoid cmd.exe % interpolation."""
+    try:
+        env = None
+        if extra_env:
+            env = os.environ.copy()
+            env.update(extra_env)
+        r = subprocess.run(
+            args, cwd=cwd, capture_output=True, text=True,
+            shell=False, timeout=timeout, encoding="utf-8", errors="replace",
+            env=env,
+        )
+        return r.stdout.strip(), r.stderr.strip(), r.returncode
+    except subprocess.TimeoutExpired:
+        return "", "timeout", -1
+    except Exception as e:
+        return "", str(e), -1
+
+
+def run(cmd, cwd, timeout=TIMEOUT, extra_env=None):
+    """Run via cmd.exe shell (used for shell-builtins and pipes)."""
+    try:
+        env = None
+        if extra_env:
+            env = os.environ.copy()
+            env.update(extra_env)
+        r = subprocess.run(
+            cmd, cwd=cwd, capture_output=True, text=True,
+            shell=True, timeout=timeout, encoding="utf-8", errors="replace",
+            env=env,
+        )
+        return r.stdout.strip(), r.stderr.strip(), r.returncode
+    except subprocess.TimeoutExpired:
+        return "", "timeout", -1
+    except Exception as e:
+        return "", str(e), -1
+
+
+def git_one(args, cwd):
+    out, _, _ = run(f"git {args}", cwd)
+    return out
+
+
+def sample_languages(path):
+    """Walk repo with hard cap. Uses os.scandir + BFS, stops at FILE_LIMIT."""
+    ext_count = {}
+    scanned = 0
+    try:
+        # Only descend 5 levels deep
+        base_depth = path.rstrip("\\/").count(os.sep)
+        stack = [path]
+        while stack and scanned < FILE_LIMIT:
+            cur = stack.pop()
+            try:
+                with os.scandir(cur) as it:
+                    entries = list(it)
+            except (PermissionError, OSError):
+                continue
+            dirs = []
+            for e in entries:
+                try:
+                    if e.is_dir(follow_symlinks=False):
+                        if e.name in SKIP_DIRS or e.name.startswith("."):
+                            continue
+                        if e.name.endswith(".egg-info"):
+                            continue
+                        d = cur.rstrip("\\/").count(os.sep) - base_depth
+                        if d < 6:
+                            dirs.append(e.path)
+                    elif e.is_file(follow_symlinks=False):
+                        ext = os.path.splitext(e.name)[1].lower()
+                        if not ext:
+                            continue
+                        ext_count[ext] = ext_count.get(ext, 0) + 1
+                        scanned += 1
+                        if scanned >= FILE_LIMIT:
+                            break
+                except OSError:
+                    continue
+            stack.extend(dirs)
+    except Exception:
+        pass
+    languages = {}
+    for ext, cnt in ext_count.items():
+        lang = LANG_MAP.get(ext, ext.lstrip("."))
+        languages[lang] = languages.get(lang, 0) + cnt
+    primary = max(languages.items(), key=lambda x: x[1])[0] if languages else None
+    return primary, languages
+
+
+def _file_mtime_iso(p):
+    if not os.path.isfile(p):
+        return None
+    try:
+        import datetime
+        return datetime.datetime.fromtimestamp(os.path.getmtime(p)).isoformat()
+    except Exception:
+        return None
+
+
+def _branch_push_ts(path, branch):
+    """Return ISO date of the latest fetched remote push for the given branch.
+
+    Uses `git for-each-ref refs/remotes/origin/<branch>` committerdate.
+    """
+    if not branch:
+        return None
+    fmt = "%(committerdate:iso)|%(refname:short)"
+    out, _, _ = run(
+        f'git for-each-ref --format="{fmt}" "refs/remotes/origin/{branch}"',
+        path, timeout=10,
+    )
+    if not out:
+        return None
+    line = out.splitlines()[0]
+    parts = line.split("|", 1)
+    return parts[0] if parts else None
+
+
+def _latest_remote_push_ts(path):
+    """ISO date of the most recent committerdate across all origin/* remote refs."""
+    out, _, _ = run(
+        'git for-each-ref --format="%(committerdate:iso)|%(refname:short)" '
+        '--sort=-committerdate refs/remotes/origin',
+        path, timeout=20,
+    )
+    if not out:
+        return None
+    line = out.splitlines()[0]
+    parts = line.split("|", 1)
+    return parts[0] if parts else None
+
+
+def gh_default_branch(path):
+    out, _, _ = run("git symbolic-ref --short refs/remotes/origin/HEAD", path, timeout=10)
+    if out and "/" in out:
+        return out.rsplit("/", 1)[-1]
+    return None
+
+
+def gh_branch_protection(path):
+    """Call `gh api` for branch protection on the default branch.
+
+    Returns a dict like:
+        {"ok": True/False, "error": "...", "required_status_checks": ...}
+    """
+    remote = git_one("config --get remote.origin.url", path)
+    if not remote:
+        return {"ok": False, "error": "no remote"}
+    # Convert git URL to owner/repo
+    repo = None
+    s = remote.strip()
+    for prefix in ("git@github.com:", "https://github.com/", "http://github.com/", "git://github.com/"):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+            break
+    s = s.removesuffix(".git")
+    if "/" in s and "github.com" in remote:
+        repo = s
+    if not repo:
+        return {"ok": False, "error": f"non-github remote: {remote}"}
+    # Resolve default branch
+    db = gh_default_branch(path) or "main"
+    cmd = (
+        f'gh api "repos/{repo}/branches/{db}/protection" '
+        f'--jq "{{ok: true, required_status_checks: .required_status_checks.contexts, '
+        f'enforce_admins: .enforce_admins.enabled, required_pull_request_reviews: '
+        f'.required_pull_request_reviews.required_approving_review_count, '
+        f'restrictions_users: (.restrictions.users // [] | length), url: .url}}"'
+    )
+    out, err, rc = run(cmd, path, timeout=20, extra_env={"NO_COLOR": "1", "GH_FORCE_TTY": "0", "TERM": "dumb"})
+    if rc != 0 or not out:
+        # 404 means no protection configured
+        if "404" in err or "Not Found" in err or rc == 0 and not out:
+            return {"ok": False, "configured": False, "error": "no protection configured"}
+        return {"ok": False, "error": err or "gh failed"}
+    # Strip ANSI escape codes (in case NO_COLOR didn't take)
+    import re as _re
+    cleaned = _re.sub(r"\x1b\[[0-9;]*m", "", out)
+    try:
+        return json.loads(cleaned)
+    except Exception as e:
+        return {"ok": False, "error": f"parse: {e}", "raw": cleaned[:300]}
+
+
+def read_readme(path):
+    for cand in ("README.md", "README.MD", "readme.md", "Readme.md", "README.rst", "README.txt", "README"):
+        fp = os.path.join(path, cand)
+        if os.path.isfile(fp):
+            try:
+                with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                    line = f.readline().strip()
+                    return line[:200] if line else None
+            except Exception:
+                return None
+    return None
+
+
+def audit_repo(path):
+    name = os.path.basename(path.rstrip("\\/"))
+    log(f"--- {name} ---")
+    rec = {
+        "name": name,
+        "path": path,
+        "exists": os.path.isdir(path),
+        "is_git": False,
+        "head_sha": None,
+        "head_short": None,
+        "current_branch": None,
+        "upstream_branch": None,
+        "remote_origin_url": None,
+        "dirty_count": 0,
+        "dirty_files_sample": [],
+        "local_branches_count": 0,
+        "local_branches": [],
+        "branches_ahead_of_origin": [],
+        "stashes_count": 0,
+        "stashes_first_lines": [],
+        "worktrees_count": 0,
+        "worktrees": [],
+        "readme_first_line": None,
+        "primary_language": None,
+        "languages": {},
+        "packages": {
+            "Cargo.toml": False,
+            "package.json": False,
+            "pyproject.toml": False,
+            "go.mod": False,
+        },
+        "last_fetch": None,
+        "last_commit_ts": None,
+        "last_commit_subject": None,
+        "recent_commits": [],
+    }
+    if not rec["exists"]:
+        return rec
+
+    rec["is_git"] = os.path.isdir(os.path.join(path, ".git"))
+    for f in ("Cargo.toml", "package.json", "pyproject.toml", "go.mod"):
+        rec["packages"][f] = os.path.isfile(os.path.join(path, f))
+
+    rec["readme_first_line"] = read_readme(path)
+    rec["primary_language"], rec["languages"] = sample_languages(path)
+
+    if not rec["is_git"]:
+        return rec
+
+    rec["head_sha"] = git_one("rev-parse HEAD", path)
+    rec["head_short"] = git_one("rev-parse --short HEAD", path)
+    cb, _, _ = run('git symbolic-ref --short -q HEAD', path)
+    if not cb:
+        cb, _, _ = run("git rev-parse --short HEAD", path)
+    rec["current_branch"] = cb or None
+    up, _, _ = run("git rev-parse --abbrev-ref --symbolic-full-name @{u}", path)
+    rec["upstream_branch"] = up or None
+    rec["remote_origin_url"] = git_one("config --get remote.origin.url", path)
+
+    dirty_out, _, _ = run("git status --porcelain", path)
+    if dirty_out:
+        lines = [l for l in dirty_out.splitlines() if l.strip()]
+        rec["dirty_count"] = len(lines)
+        rec["dirty_files_sample"] = lines[:20]
+
+    fmt = "%(refname:short)|%(upstream:short)|%(upstream:track)|%(objectname:short)|%(committerdate:iso)"
+    branch_out, _, _ = run(f'git for-each-ref --format="{fmt}" refs/heads', path)
+    if branch_out:
+        import re
+        for ln in branch_out.splitlines():
+            parts = ln.split("|")
+            if len(parts) < 5:
+                continue
+            br, upn, track, sha, cdate = parts[0], parts[1], parts[2], parts[3], parts[4]
+            rec["local_branches"].append({
+                "branch": br,
+                "upstream": upn or None,
+                "tracking": track,
+                "sha": sha,
+                "commit_date": cdate,
+            })
+            ma = re.search(r"ahead\s+(\d+)", track)
+            mb = re.search(r"behind\s+(\d+)", track)
+            if ma or mb:
+                ahead = int(ma.group(1)) if ma else 0
+                behind = int(mb.group(1)) if mb else 0
+                if ahead > 0 or behind > 0:
+                    rec["branches_ahead_of_origin"].append({
+                        "branch": br,
+                        "upstream": upn,
+                        "ahead": ahead,
+                        "behind": behind,
+                    })
+        rec["local_branches_count"] = len(rec["local_branches"])
+
+    stash_out, _, _ = run("git stash list --format='%gd|%s'", path)
+    if stash_out:
+        slines = [l for l in stash_out.splitlines() if l.strip()]
+        rec["stashes_count"] = len(slines)
+        for s in slines:
+            parts = s.split("|", 1)
+            if len(parts) == 2:
+                rec["stashes_first_lines"].append({"ref": parts[0], "subject": parts[1][:200]})
+            else:
+                rec["stashes_first_lines"].append({"ref": s, "subject": ""})
+
+    wt_out, _, _ = run("git worktree list --porcelain", path)
+    if wt_out:
+        wts = []
+        cur = {}
+        for ln in wt_out.splitlines():
+            if ln.startswith("worktree "):
+                if cur:
+                    wts.append(cur)
+                cur = {"path": ln[len("worktree "):]}
+            elif ln.startswith("HEAD "):
+                cur["head"] = ln[len("HEAD "):]
+            elif ln.startswith("branch "):
+                cur["branch"] = ln[len("branch "):]
+            elif ln == "detached":
+                cur["detached"] = True
+        if cur:
+            wts.append(cur)
+        rec["worktrees"] = wts
+        rec["worktrees_count"] = len(wts)
+
+    # Use list-form subprocess to avoid cmd.exe % interpolation breaking git's format.
+    log_out, _, _ = _list(
+        ["git", "log", "--pretty=format:%h|%ai|%s", "-n", "5"],
+        path, timeout=20,
+    )
+    if log_out:
+        for ln in log_out.splitlines():
+            parts = ln.split("|", 2)
+            if len(parts) >= 3:
+                rec["recent_commits"].append({"sha": parts[0], "date": parts[1], "subject": parts[2][:200]})
+                if rec["last_commit_ts"] is None:
+                    rec["last_commit_ts"] = parts[1]
+                    rec["last_commit_subject"] = parts[2][:200]
+
+    rec["last_fetch"] = _file_mtime_iso(os.path.join(path, ".git", "FETCH_HEAD"))
+    rec["last_push"]  = _branch_push_ts(path, rec.get("current_branch"))
+    rec["last_push_any_branch"] = _latest_remote_push_ts(path)
+    rec["branch_protection_status"] = gh_branch_protection(path)
+    rec["default_branch"] = gh_default_branch(path)
+    return rec
+
+
+def main():
+    open(LOG, "w").close()
+    results = []
+    for path in REPOS:
+        try:
+            rec = audit_repo(path)
+        except Exception as e:
+            rec = {"name": os.path.basename(path), "path": path, "error": str(e)}
+        results.append(rec)
+        with open(OUT, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+        log(f"wrote {len(results)} records -> {OUT}")
+    log(f"DONE: {len(results)} repos")
+
+
+if __name__ == "__main__":
+    main()

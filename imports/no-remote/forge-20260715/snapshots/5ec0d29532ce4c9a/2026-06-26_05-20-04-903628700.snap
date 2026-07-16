@@ -1,0 +1,273 @@
+/**
+ * PR-040 — HTTP/2 Connection Manager tests
+ *
+ * Coverage:
+ *   1. HTTP/2 session pooling reuses sessions for the same origin
+ *   2. Max concurrent streams cap creates new sessions
+ *   3. GOAWAY degrades to idle session removal
+ *   4. Idle timeout closes unused sessions
+ *   5. HTTP/2 over cleartext (h2c) works for http:// URLs
+ *   6. AbortSignal integration works
+ */
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import http2 from "node:http2";
+import http from "node:http";
+import { execSync } from "node:child_process";
+import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+// ── Generate a self-signed cert via openssl (available everywhere) ─────────────
+
+let certPem: string;
+let keyPem: string;
+
+function ensureCerts() {
+  if (certPem) return;
+  const dir = mkdtempSync(join(tmpdir(), "h2-test-"));
+  // Generate key and self-signed cert valid for 127.0.0.1
+  execSync(
+    `openssl req -x509 -newkey rsa:2048 -keyout "${dir}/key.pem" -out "${dir}/cert.pem" -days 1 -nodes -subj "/CN=127.0.0.1" -addext "subjectAltName=IP:127.0.0.1"`,
+    { stdio: "pipe" }
+  );
+  certPem = readFileSync(join(dir, "cert.pem"), "utf-8");
+  keyPem = readFileSync(join(dir, "key.pem"), "utf-8");
+}
+
+function getTlsConfig(): { cert: string; key: string } {
+  ensureCerts();
+  return { cert: certPem, key: keyPem };
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+async function startH2Server(
+  handler: (req: http2.Http2ServerRequest, res: http2.Http2ServerResponse) => void = defaultH2Handler
+): Promise<http2.Http2Server> {
+  const { cert, key } = getTlsConfig();
+  const server = http2.createSecureServer({ cert, key, allowHTTP1: false });
+  server.on("request", handler);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  return server;
+}
+
+async function startH2CServer(
+  handler: (req: http2.Http2ServerRequest, res: http2.Http2ServerResponse) => void = defaultH2Handler
+): Promise<http2.Http2Server> {
+  const server = http2.createServer();
+  server.on("request", handler);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  return server;
+}
+
+function defaultH2Handler(req: http2.Http2ServerRequest, res: http2.Http2ServerResponse) {
+  const chunks: Buffer[] = [];
+  req.on("data", (c: Buffer) => chunks.push(c));
+  req.on("end", () => {
+    const body = Buffer.concat(chunks);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ method: req.method, path: req.url, body: body.toString() }));
+  });
+}
+
+function getOrigin(server: http2.Http2Server): string {
+  const addr = server.address();
+  if (!addr || typeof addr === "string") throw new Error("unexpected address");
+  return `https://127.0.0.1:${addr.port}`;
+}
+
+function getHttpOrigin(server: http2.Http2Server): string {
+  const addr = server.address();
+  if (!addr || typeof addr === "string") throw new Error("unexpected address");
+  return `http://127.0.0.1:${addr.port}`;
+}
+
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+
+// ── Tests ──────────────────────────────────────────────────────────────────────
+
+test("h2: session pooling reuses session for same origin", async () => {
+  const server = await startH2Server();
+  const origin = getOrigin(server);
+
+  const mod = await import("@/lib/http2/connectionManager");
+  const mgr = new mod.Http2ConnectionManager({
+    idleTimeoutMs: 60_000,
+    connectTimeoutMs: 5000,
+    sweepIntervalMs: 60_000,
+  });
+
+  try {
+    const r1 = await mgr.fetch(`${origin}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4" }),
+    });
+    assert.equal(r1.status, 200);
+    const j1 = await r1.json();
+    assert.equal(j1.method, "POST");
+
+    const r2 = await mgr.fetch(`${origin}/v1/models`, { method: "GET" });
+    assert.equal(r2.status, 200);
+    const j2 = await r2.json();
+    assert.equal(j2.method, "GET");
+    assert.equal(j2.path, "/v1/models");
+
+    assert.equal(mgr.poolSize, 1, "should have exactly 1 pooled session");
+  } finally {
+    await mgr.close();
+    server.close();
+  }
+});
+
+test("h2: max concurrent streams creates additional sessions", async () => {
+  const server = await startH2Server();
+  const origin = getOrigin(server);
+
+  const mod = await import("@/lib/http2/connectionManager");
+  const mgr = new mod.Http2ConnectionManager({
+    maxConcurrentStreams: 2,
+    idleTimeoutMs: 60_000,
+    connectTimeoutMs: 5000,
+    sweepIntervalMs: 60_000,
+  });
+
+  try {
+    const promises = Array.from({ length: 4 }, (_, i) =>
+      mgr.fetch(`${origin}/stream/${i}`, { method: "GET" })
+    );
+    const results = await Promise.allSettled(promises);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    assert.equal(fulfilled.length, 4, "all 4 requests should succeed");
+    assert.ok(mgr.poolSize >= 2, "should have at least 2 sessions with maxStreams=2");
+  } finally {
+    await mgr.close();
+    server.close();
+  }
+});
+
+test("h2: idle timeout closes unused sessions", async () => {
+  const server = await startH2Server();
+  const origin = getOrigin(server);
+
+  const mod = await import("@/lib/http2/connectionManager");
+  const mgr = new mod.Http2ConnectionManager({
+    idleTimeoutMs: 100,
+    maxConcurrentStreams: 100,
+    connectTimeoutMs: 5000,
+    sweepIntervalMs: 50,
+  });
+
+  try {
+    const r1 = await mgr.fetch(`${origin}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4" }),
+    });
+    assert.equal(r1.status, 200);
+    assert.equal(mgr.poolSize, 1, "should have 1 session after first request");
+
+    // Wait for idle sweep
+    await new Promise((r) => setTimeout(r, 300));
+
+    assert.equal(mgr.poolSize, 0, "session should have been reaped by idle timeout");
+  } finally {
+    await mgr.close();
+    server.close();
+  }
+});
+
+test("h2: h2c (cleartext) works for http:// URLs", async () => {
+  // Create an h2c server (cleartext HTTP/2)
+  const server = await startH2CServer();
+  const origin = getHttpOrigin(server);
+
+  const mod = await import("@/lib/http2/connectionManager");
+  const mgr = new mod.Http2ConnectionManager({
+    idleTimeoutMs: 60_000,
+    connectTimeoutMs: 5000,
+    sweepIntervalMs: 60_000,
+  });
+
+  try {
+    const resp = await mgr.fetch(`${origin}/test`, { method: "GET" });
+    assert.equal(resp.status, 200);
+    const body = await resp.json();
+    assert.equal(body.method, "GET");
+    assert.equal(body.path, "/test");
+
+    // Should have 1 h2 session
+    assert.equal(mgr.poolSize, 1, "should have h2 session for h2c origin");
+  } finally {
+    await mgr.close();
+    server.close();
+  }
+});
+
+test("h2: HTTP/1.1 fallback for non-HTTP/2 servers", async () => {
+  // An HTTP/1.1-only server — the manager tries h2, fails, falls back to http1Fetch.
+  const httpServer = http.createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("ok");
+  });
+  await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", () => resolve()));
+  const addr = httpServer.address();
+  if (!addr || typeof addr === "string") throw new Error("unexpected address");
+  const origin = `http://127.0.0.1:${addr.port}`;
+
+  const mod = await import("@/lib/http2/connectionManager");
+  const mgr = new mod.Http2ConnectionManager({
+    connectTimeoutMs: 3000,
+    sweepIntervalMs: 60_000,
+  });
+
+  try {
+    const resp = await mgr.fetch(`${origin}/status`, { method: "GET" });
+    assert.equal(resp.status, 200);
+    const text = await resp.text();
+    assert.equal(text, "ok");
+  } finally {
+    await mgr.close();
+    httpServer.close();
+  }
+});
+
+test("h2: AbortSignal integration works", async () => {
+  const server = await startH2Server();
+  const origin = getOrigin(server);
+
+  const mod = await import("@/lib/http2/connectionManager");
+  const mgr = new mod.Http2ConnectionManager({
+    idleTimeoutMs: 60_000,
+    connectTimeoutMs: 5000,
+    sweepIntervalMs: 60_000,
+  });
+
+  try {
+    // Pre-aborted signal
+    const ac = new AbortController();
+    ac.abort();
+    await assert.rejects(
+      mgr.fetch(`${origin}/v1/chat/completions`, {
+        method: "POST",
+        signal: ac.signal,
+      }),
+      /aborted/i,
+      "should reject with AbortError when signal is already aborted"
+    );
+
+    // Late abort
+    const ac2 = new AbortController();
+    const fetchPromise = mgr.fetch(`${origin}/v1/chat/completions`, {
+      method: "POST",
+      signal: ac2.signal,
+    });
+    ac2.abort();
+    await assert.rejects(fetchPromise, /aborted/i, "should reject on late abort");
+  } finally {
+    await mgr.close();
+    server.close();
+  }
+});

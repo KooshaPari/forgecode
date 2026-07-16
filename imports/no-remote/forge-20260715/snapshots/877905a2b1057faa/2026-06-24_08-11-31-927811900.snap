@@ -1,0 +1,27 @@
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+*.pyc
+*.pyo
+*.pyd
+wrappers/zig/.zig-cache/
+worktrees/
+
+# VitePress
+docs/.vitepress/cache
+docs/.vitepress/dist
+node_modules
+
+# grade reports (build artifacts)
+.grade-reports/
+
+# VitePress build artifacts (build output)
+.vitepress-dist/
+
+# Setuptools / pip metadata (build artifacts)
+*.egg-info/
+
+# Runtime/utility scripts (not source)
+ps_run.json

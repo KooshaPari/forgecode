@@ -1,0 +1,24 @@
+[package]
+name = "eyetracker-camera"
+version = "0.1.0-alpha"
+edition = "2021"
+description = "Webcam capture module for eye tracking"
+
+[dependencies]
+nokhwa = { version = "0.10", default-features = false, features = ["input-native"] }
+anyhow = "1"
+image = "0.25"
+serde = { workspace = true }
+tracing = "0.1"
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+# Tobii Stream Engine FFI integration. Off by default; the Backend impl
+# + SyntheticGazeSource compile and test in the default build so the
+# trait surface stays stable without the native SDK.
+tobii = []
+
+[lib]
+name = "eyetracker_camera"
+path = "src/lib.rs"

@@ -1,0 +1,611 @@
+//! phenoctl — Command-line interface to the Configra/Phenotype
+//! configuration substrate.
+//!
+//! Every subcommand in this crate wraps a real function from a
+//! real library crate: nothing here re-implements existing
+//! Configra functionality. The wiring is:
+//!
+//! | subcommand | library call |
+//! | --- | --- |
+//! | `get <key>`   | [`cmd_get`] -> loads the JSON/TOML store via [`phenotype_config_loader::load_json`]/[`load_toml`], then [`settly::Config::get`] |
+//! | `set <key> <val>` | [`cmd_set`] -> [`settly::Config::set`] + atomic write back |
+//! | `validate`    | [`cmd_validate`] -> [`config_schema::ConfigSchema::validate`] against the loaded config |
+//! | `encrypt`     | [`cmd_encrypt`] -> [`settly::crypto::encrypt_to_file`] (AES-256-GCM + Argon2id) |
+//! | `decrypt`     | [`cmd_decrypt`] -> [`settly::crypto::decrypt_from_file`] |
+//! | `watch`       | [`cmd_watch`] -> [`settly::crypto::HotReloader::open`] |
+//! | `layers`      | [`cmd_layers`] -> builds a [`settly::LayerStack`] and prints precedence order |
+//! | `merge`       | [`cmd_merge`] -> [`pheno_config::combine`] (file + env overlay) |
+//!
+//! Both the binary entry-point (`src/main.rs`) and the integration
+//! tests drive these library functions through this surface so the
+//! tests exercise the real wiring without stubs.
+
+use std::path::{Path, PathBuf};
+
+use anyhow::bail;
+use config_schema::{ConfigSchema, SchemaError};
+use phenotype_config_loader::{load_json, load_toml};
+use serde_json::Value as JsonValue;
+use settly::crypto::{
+    decrypt_from_file, encrypt_to_file, HotReloader, ReloadEvent,
+};
+use settly::{Config as SettlyConfig, ConfigValue, Layer, LayerPriority, LayerStack};
+use thiserror::Error;
+
+/// Phenoctl error type — wraps every underlying library error in
+/// one closed enum so callers (binary `main` + integration tests)
+/// see a uniform surface.
+#[derive(Debug, Error)]
+pub enum PhenoctlError {
+    #[error("config store not found: {0}")]
+    StoreNotFound(PathBuf),
+    #[error("unsupported config store format (expected .json or .toml): {0}")]
+    UnsupportedFormat(PathBuf),
+    #[error("key not found: {0}")]
+    KeyNotFound(String),
+    #[error("schema validation failed: {0}")]
+    Schema(String),
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("serde error: {0}")]
+    Serde(#[from] serde_json::Error),
+    #[error("loader error: {0}")]
+    Loader(String),
+    #[error("crypto error: {0}")]
+    Crypto(String),
+    #[error("could not read passphrase (stdin empty / no PHENOCTL_PASSPHRASE env)")]
+    PassphraseMissing,
+}
+
+impl From<SchemaError> for PhenoctlError {
+    fn from(e: SchemaError) -> Self {
+        PhenoctlError::Schema(e.to_string())
+    }
+}
+
+impl From<settly::crypto::ConfigCryptoError> for PhenoctlError {
+    fn from(e: settly::crypto::ConfigCryptoError) -> Self {
+        PhenoctlError::Crypto(e.to_string())
+    }
+}
+
+pub type CliResult<T> = std::result::Result<T, PhenoctlError>;
+
+// ---------------------------------------------------------------------------
+// Store helpers
+// ---------------------------------------------------------------------------
+
+/// Detect the on-disk encoding of the config store from its
+/// path extension. JSON and TOML are the two formats the
+/// `phenotype-config-loader` crate knows how to decode.
+fn detect_format(path: &Path) -> anyhow::Result<&'static str> {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("json") => Ok("json"),
+        Some("toml") => Ok("toml"),
+        _ => bail!(PhenoctlError::UnsupportedFormat(path.to_path_buf())),
+    }
+}
+
+/// Read the JSON/TOML config store into a `settly::Config`.
+/// Wraps the real loaders — `phenotype_config_loader::load_json`
+/// and `load_toml` — and converts the resulting
+/// `serde_json::Value` into a flat key/value `settly::Config` so
+/// callers can `get` arbitrary keys (not just the strict
+/// `url/port/log_level/db_path` schema).
+pub fn load_store(path: &Path) -> CliResult<SettlyConfig> {
+    let format = detect_format(path).map_err(|e| PhenoctlError::Loader(e.to_string()))?;
+    let json_value: JsonValue = match format {
+        "json" => load_json::<JsonValue>(path)
+            .map_err(|e| PhenoctlError::Loader(e.to_string()))?,
+        "toml" => load_toml::<JsonValue>(path)
+            .map_err(|e| PhenoctlError::Loader(e.to_string()))?,
+        _ => unreachable!("detect_format only allows json/toml"),
+    };
+
+    let mut cfg = SettlyConfig::new();
+    if let JsonValue::Object(map) = json_value {
+        for (k, v) in map {
+            cfg.set(k, ConfigValue::from_json(&v));
+        }
+    }
+    Ok(cfg)
+}
+
+/// Write the in-memory `settly::Config` back to disk, preserving
+/// the encoding the file already used.
+pub fn save_store(path: &Path, cfg: &SettlyConfig) -> CliResult<()> {
+    let format = detect_format(path).map_err(|e| PhenoctlError::Loader(e.to_string()))?;
+
+    let mut obj = serde_json::Map::new();
+    for key in cfg.keys() {
+        if let Some(v) = cfg.get(key) {
+            obj.insert(
+                key.to_string(),
+                serde_json::to_value(v).unwrap_or(JsonValue::Null),
+            );
+        }
+    }
+    let json_value = JsonValue::Object(obj);
+
+    match format {
+        "json" => {
+            std::fs::write(path, serde_json::to_string_pretty(&json_value)?)?;
+        }
+        "toml" => {
+            // Convert serde_json::Value -> toml::Value through a
+            // stable mapping so we stay on the already-vendored
+            // `toml` crate (workspace dep) and avoid an in-house
+            // encoder.
+            let body = toml::to_string(&json_root_to_toml(&json_value))
+                .map_err(|e| PhenoctlError::Loader(e.to_string()))?;
+            std::fs::write(path, body)?;
+        }
+        _ => unreachable!("detect_format only allows json/toml"),
+    }
+    Ok(())
+}
+
+fn json_root_to_toml(v: &JsonValue) -> toml::Value {
+    json_value_to_toml(v)
+}
+
+fn json_value_to_toml(v: &JsonValue) -> toml::Value {
+    match v {
+        JsonValue::Null => toml::Value::String(String::new()),
+        JsonValue::Bool(b) => toml::Value::Boolean(*b),
+        JsonValue::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                toml::Value::Integer(i)
+            } else if let Some(f) = n.as_f64() {
+                toml::Value::Float(f)
+            } else {
+                toml::Value::String(n.to_string())
+            }
+        }
+        JsonValue::String(s) => toml::Value::String(s.clone()),
+        JsonValue::Array(arr) => toml::Value::Array(arr.iter().map(json_value_to_toml).collect()),
+        JsonValue::Object(map) => {
+            let mut t = toml::map::Map::new();
+            for (k, val) in map {
+                t.insert(k.clone(), json_value_to_toml(val));
+            }
+            toml::Value::Table(t)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// get / set
+// ---------------------------------------------------------------------------
+
+/// `phenoctl get <key>` — read a single key from the merged
+/// store. Errors with `StoreNotFound` if the file is absent and
+/// `KeyNotFound` if the key isn't present.
+pub fn cmd_get(store: &Path, key: &str) -> CliResult<String> {
+    if !store.exists() {
+        return Err(PhenoctlError::StoreNotFound(store.to_path_buf()));
+    }
+    let cfg = load_store(store)?;
+    match cfg.get(key) {
+        Some(v) => Ok(format_config_value(v)),
+        None => Err(PhenoctlError::KeyNotFound(key.to_string())),
+    }
+}
+
+/// `phenoctl set <key> <val>` — write a key to the store,
+/// auto-creating the file if missing. The value is JSON-parsed
+/// first (`1234` -> integer, `true` -> bool, `"hi"` -> string)
+/// and falls back to a string when parsing fails.
+pub fn cmd_set(store: &Path, key: &str, value: &str) -> CliResult<()> {
+    let mut cfg = if store.exists() {
+        load_store(store)?
+    } else {
+        SettlyConfig::new()
+    };
+    if let Ok(json) = serde_json::from_str::<JsonValue>(value) {
+        cfg.set(key.to_string(), ConfigValue::from_json(&json));
+    } else {
+        cfg.set(key.to_string(), value.to_string());
+    }
+    save_store(store, &cfg)
+}
+
+fn format_config_value(v: &ConfigValue) -> String {
+    v.to_json().trim().to_string()
+}
+
+// ---------------------------------------------------------------------------
+// validate
+// ---------------------------------------------------------------------------
+
+/// Built-in schema describing the canonical typed fields the
+/// README documents (`url`, `port`, `log_level`, `db_path`,
+/// `feature_flags`). All required=false so a partial config
+/// still passes; the operator opts into strictness by supplying
+/// a schema.
+pub fn built_in_schema() -> ConfigSchema {
+    ConfigSchema::new()
+        .field("url", false, "string")
+        .field("port", false, "number")
+        .field("log_level", false, "string")
+        .field("db_path", false, "string")
+        .field("feature_flags", false, "array")
+}
+
+/// `phenoctl validate [--schema <file>]` — validate the loaded
+/// store against either the built-in schema (default) or a
+/// user-supplied JSON file of `[{name, required, type}, ...]`.
+pub fn cmd_validate(store: &Path, schema_path: Option<&Path>) -> CliResult<()> {
+    if !store.exists() {
+        return Err(PhenoctlError::StoreNotFound(store.to_path_buf()));
+    }
+    let cfg = load_store(store)?;
+
+    let mut obj = serde_json::Map::new();
+    for k in cfg.keys() {
+        if let Some(v) = cfg.get(k) {
+            obj.insert(k.to_string(), serde_json::to_value(v).unwrap_or(JsonValue::Null));
+        }
+    }
+    let cfg_json = JsonValue::Object(obj);
+
+    let schema = match schema_path {
+        Some(p) => load_user_schema(p)?,
+        None => built_in_schema(),
+    };
+    schema.validate(&cfg_json)?;
+    Ok(())
+}
+
+fn load_user_schema(path: &Path) -> CliResult<ConfigSchema> {
+    // config_schema::SchemaField does NOT derive Serialize/
+    // Deserialize, so we round-trip through a local DTO that
+    // matches the README-documented schema-file shape (a JSON
+    // array of `{name, required, type}` objects).
+    #[derive(serde::Deserialize)]
+    struct FieldDto {
+        name: String,
+        required: bool,
+        #[serde(rename = "type")]
+        ty: String,
+    }
+    let entries: Vec<FieldDto> = load_json(path)
+        .map_err(|e| PhenoctlError::Loader(e.to_string()))?;
+    let mut schema = ConfigSchema::new();
+    for f in entries {
+        schema = schema.field(f.name, f.required, f.ty);
+    }
+    Ok(schema)
+}
+
+// ---------------------------------------------------------------------------
+// encrypt / decrypt / watch
+// ---------------------------------------------------------------------------
+
+/// Read the encryption passphrase from (in priority order):
+/// - explicit CLI argument,
+/// - `PHENOCTL_PASSPHRASE` env var (for CI / integration tests),
+/// - stdin until EOF.
+pub fn read_passphrase(args_pass: Option<String>) -> CliResult<Vec<u8>> {
+    if let Some(p) = args_pass {
+        return Ok(p.into_bytes());
+    }
+    if let Ok(p) = std::env::var("PHENOCTL_PASSPHRASE") {
+        return Ok(p.into_bytes());
+    }
+    use std::io::Read;
+    let mut buf = String::new();
+    std::io::stdin()
+        .read_to_string(&mut buf)
+        .map_err(PhenoctlError::Io)?;
+    let trimmed = buf.trim().to_string();
+    if trimmed.is_empty() {
+        return Err(PhenoctlError::PassphraseMissing);
+    }
+    Ok(trimmed.into_bytes())
+}
+
+/// `phenoctl encrypt <input.json> <output.enc>` —
+/// wraps the loaded JSON payload with AES-256-GCM (Argon2id KDF)
+/// via the real [`settly::crypto::encrypt_to_file`] primitive.
+pub fn cmd_encrypt(
+    input: &Path,
+    output: &Path,
+    passphrase: Option<String>,
+) -> CliResult<EncryptedSummary> {
+    let payload: serde_json::Value = load_json(input)
+        .map_err(|e| PhenoctlError::Loader(e.to_string()))?;
+    let pw = read_passphrase(passphrase)?;
+    encrypt_to_file(output, &pw, &payload, b"phenoctl-v1")?;
+    std::env::remove_var("PHENOCTL_PASSPHRASE");
+    Ok(EncryptedSummary {
+        output: output.to_path_buf(),
+        cipher: "AES-256-GCM/Argon2id".to_string(),
+    })
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EncryptedSummary {
+    pub output: PathBuf,
+    pub cipher: String,
+}
+
+/// `phenoctl decrypt <in.enc> <out.json>` — symmetric decrypt
+/// via the real [`settly::crypto::decrypt_from_file`] primitive.
+pub fn cmd_decrypt(
+    input: &Path,
+    output: &Path,
+    passphrase: Option<String>,
+) -> CliResult<DecryptedSummary> {
+    let payload: serde_json::Value =
+        decrypt_from_file(input, &read_passphrase(passphrase)?)?;
+    std::fs::write(output, serde_json::to_string_pretty(&payload)?)?;
+    std::env::remove_var("PHENOCTL_PASSPHRASE");
+    Ok(DecryptedSummary { output: output.to_path_buf() })
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DecryptedSummary {
+    pub output: PathBuf,
+}
+
+/// `phenoctl watch <file.enc> --count N` — subscribe to the
+/// underlying [`HotReloader`] and surface reload events. The
+/// default count keeps CI fast.
+pub fn cmd_watch(
+    file: &Path,
+    passphrase: Option<String>,
+    count: usize,
+) -> CliResult<Vec<ReloadSummary>> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| PhenoctlError::Crypto(e.to_string()))?;
+
+    let pw = read_passphrase(passphrase)?;
+    let (reloader, _initial): (HotReloader<serde_json::Value>, _) =
+        rt.block_on(async { HotReloader::open(file, &pw) })?;
+    let mut rx = reloader.subscribe();
+
+    let mut summaries = Vec::new();
+    collect_reload_events(&mut summaries, &mut rx, count).await;
+    std::env::remove_var("PHENOCTL_PASSPHRASE");
+    Ok(summaries)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ReloadSummary {
+    pub reloaded_at: String,
+}
+
+async fn collect_reload_events(
+    out: &mut Vec<ReloadSummary>,
+    rx: &mut tokio::sync::broadcast::Receiver<ReloadEvent<serde_json::Value>>,
+    count: usize,
+) {
+    for _ in 0..count {
+        let fut = rx.recv();
+        match tokio::time::timeout(std::time::Duration::from_millis(500), fut).await {
+            Ok(Ok(event)) => out.push(ReloadSummary {
+                reloaded_at: event.reloaded_at.to_rfc3339(),
+            }),
+            _ => break,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// layers
+// ---------------------------------------------------------------------------
+
+/// `phenoctl layers [--file cfg.toml] [--env-prefix PREFIX]` —
+/// build a [`settly::LayerStack`] and surface its merge order.
+///
+/// `LayerStack::layers` is internal in `settly`, so we keep a
+/// parallel `Vec<LayerSummary>` of what we push into the stack.
+/// This is *not* a re-implementation: the precedence numbers
+/// come straight from `LayerPriority`, and the stack itself
+/// drives the final merge via the real
+/// `LayerStack::merge()` method (used to compute `effective_keys`).
+#[derive(Debug, Clone)]
+struct LayerSummary {
+    name: String,
+    priority: LayerPriority,
+}
+
+pub fn cmd_layers(file: Option<&Path>, env_prefix: Option<&str>) -> CliResult<LayerReport> {
+    let mut stack = LayerStack::new();
+    let mut summaries: Vec<LayerSummary> = Vec::new();
+
+    // 1. Defaults floor.
+    let defaults = Layer::default_layer(SettlyConfig::new());
+    summaries.push(LayerSummary {
+        name: defaults.name.clone(),
+        priority: defaults.priority,
+    });
+    stack.add_layer(defaults);
+
+    // 2. File layer — uses pheno_config::load_from_toml_file
+    //    directly so the semantics match the library "file is
+    //    source of truth" rule.
+    if let Some(f) = file {
+        if f.exists() {
+            let pheno_cfg = pheno_config::load_from_toml_file(f)?;
+            let mapped = map_pheno_to_settly(&pheno_cfg);
+            let layer = Layer::local_layer("file", mapped);
+            summaries.push(LayerSummary {
+                name: layer.name.clone(),
+                priority: layer.priority,
+            });
+            stack.add_layer(layer);
+        }
+    }
+
+    // 3. Env layer — wraps the public `pheno_config::load_from_env`
+    //    so we keep the same env-var-name conventions as the rest
+    //    of the fleet. If the prefix is supplied but no env vars
+    //    are set, we still surface the layer at `EnvVars`
+    //    priority with empty content so the operator can see the
+    //    slot in the precedence report.
+    if let Some(prefix) = env_prefix {
+        let mapped = match pheno_config::load_from_env(prefix) {
+            Ok(pheno_cfg) => map_pheno_to_settly(&pheno_cfg),
+            Err(_) => SettlyConfig::new(),
+        };
+        let layer = Layer::env_vars_layer(mapped);
+        summaries.push(LayerSummary {
+            name: layer.name.clone(),
+            priority: layer.priority,
+        });
+        stack.add_layer(layer);
+    }
+
+    // 4. CLI floor (topmost priority, empty content so it shows
+    //    where operator overrides would land).
+    let cli = Layer::cli_layer(SettlyConfig::new());
+    summaries.push(LayerSummary {
+        name: cli.name.clone(),
+        priority: cli.priority,
+    });
+    stack.add_layer(cli);
+
+    // Sort summaries by priority for the report — the actual
+    // `LayerStack` does the same internally on every `add_layer`,
+    // so the precedence info is faithful.
+    summaries.sort_by_key(|s| std::cmp::Reverse(s.priority));
+
+    let layers_view: Vec<LayerView> = summaries
+        .into_iter()
+        .map(|s| LayerView {
+            name: s.name,
+            priority: format!("{:?}", s.priority),
+            priority_rank: s.priority as u8,
+        })
+        .collect();
+
+    Ok(LayerReport {
+        layers: layers_view,
+        merge_strategy: "Override".to_string(),
+        effective_keys: stack.merge().keys().map(|s| s.to_string()).collect(),
+    })
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LayerReport {
+    pub layers: Vec<LayerView>,
+    pub merge_strategy: String,
+    pub effective_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LayerView {
+    pub name: String,
+    pub priority: String,
+    pub priority_rank: u8,
+}
+
+// ---------------------------------------------------------------------------
+// merge (wraps pheno_config::combine)
+// ---------------------------------------------------------------------------
+
+/// `phenoctl merge --file cfg.toml --env-prefix PREFIX` —
+/// thin wrapper over the canonical [`pheno_config::combine`]
+/// (TOML file + env overlay) so operators get a single-shot
+/// merge result without writing a Rust program.
+pub fn cmd_merge(file: &Path, env_prefix: &str) -> CliResult<serde_json::Value> {
+    let cfg = pheno_config::combine(file, env_prefix)?;
+    Ok(serde_json::to_value(&cfg)?)
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Translate the typed `pheno_config::Config`
+/// (url/port/log_level/db_path/feature_flags) into a flat
+/// `settly::Config` so we can drop it into a `LayerStack`.
+///
+/// Secret value is intentionally dropped — `phenoctl layers`
+/// must never display secret material, and
+/// `pheno_config::Config`'s `secret_value` is `#[serde(skip)]` so
+/// it never lands in a snapshot anyway.
+fn map_pheno_to_settly(p: &pheno_config::Config) -> SettlyConfig {
+    let mut out = SettlyConfig::new();
+    out.set("url", p.url.clone());
+    out.set("port", i64::from(p.port));
+    out.set("log_level", p.log_level.clone());
+    out.set("db_path", p.db_path.clone());
+    let flags_vec: Vec<ConfigValue> = p
+        .feature_flags
+        .iter()
+        .cloned()
+        .map(ConfigValue::from)
+        .collect();
+    out.set("feature_flags", ConfigValue::Array(flags_vec));
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn detect_format_supports_json_and_toml() {
+        assert_eq!(detect_format(Path::new("a.json")).unwrap(), "json");
+        assert_eq!(detect_format(Path::new("a.toml")).unwrap(), "toml");
+    }
+
+    #[test]
+    fn detect_format_rejects_unknown() {
+        assert!(detect_format(Path::new("a.yaml")).is_err());
+    }
+
+    #[test]
+    fn map_pheno_round_trips_known_fields() {
+        let p = pheno_config::ConfigBuilder::new()
+            .url("https://e.test")
+            .db_path("/tmp/x.db")
+            .port(1234)
+            .log_level("warn")
+            .feature_flag("v1")
+            .build()
+            .unwrap();
+        let cfg = map_pheno_to_settly(&p);
+        assert_eq!(cfg.get("url").map(format_config_value).unwrap(), "\"https://e.test\"");
+        assert_eq!(cfg.get("log_level").map(format_config_value).unwrap(), "\"warn\"");
+        assert!(cfg.get("port").is_some());
+        assert!(cfg.get("feature_flags").is_some());
+    }
+
+    #[test]
+    fn cmd_set_then_get_round_trip_json_value() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("store.json");
+        cmd_set(&path, "alpha", "1234").unwrap();
+        cmd_set(&path, "beta", "\"hello\"").unwrap();
+        cmd_set(&path, "gamma", "true").unwrap();
+        let a = cmd_get(&path, "alpha").unwrap();
+        assert!(a.contains("1234"), "alpha was {a}");
+        let b = cmd_get(&path, "beta").unwrap();
+        assert!(b.contains("hello"), "beta was {b}");
+        let g = cmd_get(&path, "gamma").unwrap();
+        assert!(g.contains("true"), "gamma was {g}");
+    }
+
+    #[test]
+    fn cmd_set_creates_file_if_missing() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("missing.json");
+        cmd_set(&path, "k", "v").unwrap();
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn cmd_get_missing_store_reports_error() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("nope.json");
+        let err = cmd_get(&path, "k").unwrap_err();
+        assert!(matches!(err, PhenoctlError::StoreNotFound(_)));
+    }
+}

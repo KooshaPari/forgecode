@@ -1,0 +1,90 @@
+// Package parser provides NVMS configuration parsing for BytePort and other
+// phenotype-tooling consumers. It was extracted from BytePort's internal
+// nvms module as part of cross-repo consolidation (epic B).
+//
+// The NVMS (NanoVM Service) format is a YAML-based Infrastructure-as-Code
+// configuration for deploying services onto micro-VMs.
+package parser
+
+import (
+	"fmt"
+	"strings"
+
+	"gopkg.in/yaml.v2"
+)
+
+// NVMS represents the top-level nanoVM service configuration.
+type NVMS struct {
+	Name        string    `yaml:"NAME"`
+	Description string    `yaml:"DESCRIPTION"`
+	Services    []Service `yaml:"SERVICES"`
+}
+
+// Service represents a single deployable service in an NVMS config.
+type Service struct {
+	Name      string            `yaml:"NAME"`
+	Path      string            `yaml:"PATH"`
+	Port      int               `yaml:"PORT"`
+	Build     []string          `yaml:"BUILD,omitempty"`
+	Env       map[string]string `yaml:"ENV,omitempty"`
+	BuildPack *BuildPack        `yaml:"BUILDPACK,omitempty"`
+	Runtime   string            `yaml:"RUNTIME,omitempty"`
+}
+
+// BuildPack describes how to detect and build a service from source.
+type BuildPack struct {
+	Name            string            `yaml:"NAME"`
+	DetectFiles     []string          `yaml:"DETECT_FILES,omitempty"`
+	Packages        []string          `yaml:"PACKAGES"`
+	PreBuild        []string          `yaml:"PRE_BUILD"`
+	Build           []string          `yaml:"BUILD"`
+	Start           string            `yaml:"START"`
+	RuntimeVersions map[string]string `yaml:"RUNTIME_VERSIONS,omitempty"`
+	EnvVars         map[string]string `yaml:"ENV_VARS"`
+}
+
+// ParseNVMSConfig parses a raw YAML string into an *NVMS configuration,
+// performing basic structural validation.
+func ParseNVMSConfig(yamlContent string) (*NVMS, error) {
+	fmt.Printf("Parsing YAML content: %s\n", yamlContent)
+
+	config := &NVMS{
+		Services: []Service{},
+	}
+
+	if strings.TrimSpace(yamlContent) == "" {
+		return nil, fmt.Errorf("empty YAML content")
+	}
+
+	if err := yaml.Unmarshal([]byte(yamlContent), config); err != nil {
+		return nil, fmt.Errorf("YAML parsing error: %w", err)
+	}
+
+	if config.Name == "" {
+		return nil, fmt.Errorf("missing required field: NAME")
+	}
+	if len(config.Services) == 0 {
+		return nil, fmt.Errorf("no services defined in YAML")
+	}
+
+	found := false
+	for _, svc := range config.Services {
+		if svc.Path == "" {
+			return nil, fmt.Errorf("service %q missing PATH", svc.Name)
+		}
+		if svc.Port == 0 {
+			return nil, fmt.Errorf("service %q missing PORT", svc.Name)
+		}
+		if svc.Name == "main" {
+			if found {
+				return nil, fmt.Errorf("service main already defined")
+			}
+			found = true
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("service main not defined")
+	}
+
+	return config, nil
+}

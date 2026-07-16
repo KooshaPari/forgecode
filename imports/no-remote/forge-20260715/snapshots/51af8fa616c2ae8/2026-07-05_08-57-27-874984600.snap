@@ -1,0 +1,14 @@
+model = "MiniMax-M3"
+model_context_window = 1000000
+
+[model_providers.omniroute]
+name = "OmniRoute"
+base_url = "http://100.96.135.160:20128/v1"
+experimental_bearer_token = "sk-cp-gPIgSPD1rxNMDQqvb4nYNj0HE4HfElst4cbyJQby9eMhod_1FU5OVTh1KisjFDPoPSngE-R_WwHAhA4ehgzqoIKhaXfipS-1CmEjUqCTPk2brR2Fq6PH0OA"
+wire_api = "responses"
+
+[model_providers.minimax]
+name = "MiniMax"
+base_url = "https://api.minimax.io/v1"
+experimental_bearer_token = "sk-cp-gPIgSPD1rxNMDQqvb4nYNj0HE4HfElst4cbyJQby9eMhod_1FU5OVTh1KisjFDPoPSngE-R_WwHAhA4ehgzqoIKhaXfipS-1CmEjUqCTPk2brR2Fq6PH0OA"
+wire_api = "responses"

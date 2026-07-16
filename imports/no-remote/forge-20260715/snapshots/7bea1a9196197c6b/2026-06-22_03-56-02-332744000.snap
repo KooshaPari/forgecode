@@ -1,0 +1,367 @@
+# =============================================================================
+# TraceRTM Native Development Environment Configuration
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Database Configuration
+# -----------------------------------------------------------------------------
+# SECURITY: In production, store credentials in Vault (set USE_VAULT=true)
+DATABASE_URL=postgresql+asyncpg://tracertm:PLACEHOLDER_PASSWORD@localhost:5432/tracertm
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=tracertm
+DB_PASSWORD=PLACEHOLDER_PASSWORD
+DB_NAME=tracertm
+
+# -----------------------------------------------------------------------------
+# Neo4j Graph Database
+# -----------------------------------------------------------------------------
+# SECURITY: In production, store credentials in Vault (set USE_VAULT=true)
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=PLACEHOLDER_PASSWORD
+NEO4J_AUTH=neo4j/PLACEHOLDER_PASSWORD
+
+# -----------------------------------------------------------------------------
+# Dragonfly Redis-Compatible Cache
+# -----------------------------------------------------------------------------
+REDIS_URL=redis://localhost:6379
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_COMPAT_PROVIDER=dragonfly
+
+# -----------------------------------------------------------------------------
+# NATS Message Broker
+# -----------------------------------------------------------------------------
+NATS_URL=nats://localhost:4222
+NATS_HOST=localhost
+NATS_PORT=4222
+
+# -----------------------------------------------------------------------------
+# Temporal Workflow Engine
+# -----------------------------------------------------------------------------
+TEMPORAL_HOST=localhost:7233
+TEMPORAL_NAMESPACE=default
+
+# -----------------------------------------------------------------------------
+# Gateway & CORS (single entrypoint for external clients)
+# -----------------------------------------------------------------------------
+# All external clients (frontend, MCP, CLI) must use the gateway URL. No direct backend.
+GATEWAY_PUBLIC_URL=http://localhost:4000
+# Comma-separated allowed origins (gateway + frontend only; no wildcards)
+# Go backend: CORS_ALLOWED_ORIGINS
+# Python backend: CORS_ORIGINS
+# Production: set to your real gateway + frontend origins only (no *)
+CORS_ALLOWED_ORIGINS=http://localhost:4000,http://127.0.0.1:4000,http://localhost:5180,http://127.0.0.1:5180,http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000
+CORS_ORIGINS=http://localhost:4000,http://127.0.0.1:4000,http://localhost:5180,http://127.0.0.1:5180,http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000
+
+# -----------------------------------------------------------------------------
+# Authentication (Optional - WorkOS AuthKit)
+# -----------------------------------------------------------------------------
+# Get these from: https://dashboard.workos.com/
+WORKOS_API_KEY=
+WORKOS_CLIENT_ID=
+WORKOS_REDIRECT_URI=http://localhost:4000/auth/callback
+WORKOS_AUTHKIT_DOMAIN=https://your-tenant.authkit.app
+# AuthKit JWT verification (generate: openssl rand -base64 64)
+AUTHKIT_JWT_SECRET=
+# CSRF protection (generate: openssl rand -hex 32)
+CSRF_SECRET=
+
+# -----------------------------------------------------------------------------
+# MCP Auth (WorkOS AuthKit)
+# -----------------------------------------------------------------------------
+TRACERTM_MCP_AUTH_MODE=oauth
+TRACERTM_MCP_AUTHKIT_DOMAIN=https://your-tenant.authkit.app
+# Use gateway so MCP goes through single entrypoint (Caddy :4000)
+TRACERTM_MCP_BASE_URL=http://localhost:4000/api/v1/mcp
+TRACERTM_MCP_REQUIRED_SCOPES=
+
+# -----------------------------------------------------------------------------
+# MCP Providers / Transforms / Monitoring (required)
+# -----------------------------------------------------------------------------
+TRACERTM_MCP_FILESYSTEM_ROOT=.
+TRACERTM_MCP_FILESYSTEM_RELOAD=true
+TRACERTM_MCP_SKILLS_ROOTS=.codex/skills,~/.codex/skills
+TRACERTM_MCP_SKILLS_PROVIDER=directory
+TRACERTM_MCP_SKILLS_RELOAD=true
+TRACERTM_MCP_OPENAPI_SPEC=frontend/apps/web/public/specs/openapi.json
+TRACERTM_MCP_PROXY_TARGETS=
+TRACERTM_MCP_NAMESPACE=tracertm
+TRACERTM_MCP_TOOL_TRANSFORMS={}
+TRACERTM_MCP_VERSION_GTE=0.0.0
+TRACERTM_MCP_VERSION_LT=9999.0.0
+TRACERTM_MCP_SESSION_STATE_REDIS=redis://localhost:6379/0
+TRACERTM_MCP_STRUCTURED_LOGGING=true
+TRACERTM_MCP_LOG_LEVEL=INFO
+TRACERTM_MCP_JSON_LOGS=true
+TRACERTM_MCP_LOG_FILE=
+TRACERTM_MCP_TELEMETRY_ENABLED=true
+TRACERTM_MCP_METRICS_ENABLED=true
+TRACERTM_MCP_METRICS_HOST=0.0.0.0
+TRACERTM_MCP_METRICS_PORT=9090
+TRACERTM_MCP_TRACK_PAYLOAD_SIZE=true
+TRACERTM_MCP_PERF_MONITORING=true
+TRACERTM_MCP_SLOW_THRESHOLD=5.0
+TRACERTM_MCP_VERY_SLOW_THRESHOLD=30.0
+TRACERTM_MCP_ENHANCED_ERRORS=true
+TRACERTM_MCP_INCLUDE_STACK_TRACES=false
+TRACERTM_MCP_RATE_LIMIT_ENABLED=true
+TRACERTM_MCP_RATE_LIMIT_PER_MIN=60
+TRACERTM_MCP_RATE_LIMIT_PER_HOUR=1000
+
+# -----------------------------------------------------------------------------
+# Secrets Management (HashiCorp Vault)
+# -----------------------------------------------------------------------------
+# Set USE_VAULT=true to load secrets from Vault instead of environment variables
+# Vault stores: JWT_SECRET, database credentials, API keys, and other sensitive data
+USE_VAULT=false
+VAULT_ADDR=http://127.0.0.1:8200
+VAULT_TOKEN=dev-root-token
+
+# After Vault setup, run: ./scripts/vault-setup-secrets.sh
+# This migrates secrets from .env to Vault for secure storage
+
+# -----------------------------------------------------------------------------
+# JWT Secret (Service-to-Service)
+# -----------------------------------------------------------------------------
+# Generate with: openssl rand -hex 32
+# NOTE: This secret is shared between Go and Python backends for service tokens (HS256)
+# SECURITY: In production, store in Vault (set USE_VAULT=true)
+JWT_SECRET=PLACEHOLDER_GENERATE_WITH_OPENSSL_RAND
+JWT_EXPIRY=24h
+
+# -----------------------------------------------------------------------------
+# GitHub App Integration (Optional)
+# -----------------------------------------------------------------------------
+# Get these from: https://github.com/settings/apps
+GITHUB_APP_ID=YOUR_APP_ID
+GITHUB_APP_CLIENT_ID=Iv_XXXXXXXXXX
+GITHUB_APP_CLIENT_SECRET=YOUR_CLIENT_SECRET
+GITHUB_WEBHOOK_SECRET=YOUR_WEBHOOK_SECRET
+GITHUB_PRIVATE_KEY_PATH=/path/to/your/github-app-private-key.pem
+
+# -----------------------------------------------------------------------------
+# AgilePlus Integration (Optional)
+# -----------------------------------------------------------------------------
+AGILEPLUS_URL=http://localhost:3000
+AGILEPLUS_API_KEY=YOUR_AGILEPLUS_API_KEY
+
+# -----------------------------------------------------------------------------
+# Embeddings Provider (VoyageAI Recommended)
+# -----------------------------------------------------------------------------
+# Provider Selection: "voyage", "openrouter", or "local"
+EMBEDDING_PROVIDER=voyage
+
+# VoyageAI Configuration (recommended for best quality/cost balance)
+# Get your API key from: https://www.voyageai.com/
+VOYAGE_API_KEY=pa_XXXXXXXXXX
+VOYAGE_MODEL=voyage-3.5
+VOYAGE_DIMENSIONS=1024
+
+# OpenRouter Configuration (alternative provider)
+# Get your API key from: https://openrouter.ai/
+# OPENROUTER_API_KEY=sk-or-v1-XXXXXXXXXX
+# OPENROUTER_MODEL=openai/text-embedding-3-small
+
+# Local Embeddings Configuration (no API key needed)
+# EMBEDDING_MODEL=nomic-embed-text-v1.5
+# EMBEDDING_DIMENSIONS=768
+# SENTENCE_TRANSFORMER_MODEL=all-MiniLM-L6-v2
+# EMBEDDING_CACHE_DIR=/path/to/cache/embeddings
+
+# Reranking Configuration (VoyageAI)
+RERANK_ENABLED=true
+RERANK_MODEL=rerank-2.5
+
+# Performance Settings
+EMBEDDING_RATE_LIMIT=300
+EMBEDDING_TIMEOUT=60
+EMBEDDING_MAX_RETRIES=3
+EMBEDDING_BATCH_SIZE=128
+
+# Background Indexer Settings
+INDEXER_ENABLED=true
+INDEXER_WORKERS=3
+INDEXER_BATCH_SIZE=50
+INDEXER_POLL_INTERVAL=30
+
+# -----------------------------------------------------------------------------
+# AI Services (Optional)
+# -----------------------------------------------------------------------------
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+
+# -----------------------------------------------------------------------------
+# CLIProxy - OAuth-based AI Provider Routing (Optional)
+# -----------------------------------------------------------------------------
+# CLIProxy provides OAuth-based authentication and unified API routing for multiple AI providers
+# Enables "Sign in with Claude" and "Sign in with Codex/OpenAI" flows
+
+# CLIProxy Server Configuration
+CLIPROXY_HOST=127.0.0.1
+CLIPROXY_PORT=8765
+CLIPROXY_DEFAULT_PROVIDER=claude
+
+# Claude OAuth Configuration (for CLIProxy)
+# Get these from: https://console.anthropic.com/ (OAuth Apps section)
+# CLAUDE_OAUTH_CLIENT_ID=your_claude_client_id
+# CLAUDE_OAUTH_CLIENT_SECRET=your_claude_client_secret
+# CLAUDE_OAUTH_REDIRECT_URI=http://localhost:8765/oauth/callback
+# CLAUDE_OAUTH_BASE_URL=https://api.anthropic.com
+
+# Codex OAuth Configuration (for CLIProxy)
+# Get these from: OpenAI OAuth settings
+# CODEX_OAUTH_CLIENT_ID=your_codex_client_id
+# CODEX_OAUTH_CLIENT_SECRET=your_codex_client_secret
+# CODEX_OAUTH_REDIRECT_URI=http://localhost:8765/oauth/callback
+# CODEX_OAUTH_BASE_URL=https://api.openai.com
+
+# OpenAI OAuth Configuration (for CLIProxy)
+# OPENAI_OAUTH_CLIENT_ID=your_openai_client_id
+# OPENAI_OAUTH_CLIENT_SECRET=your_openai_client_secret
+# OPENAI_OAUTH_REDIRECT_URI=http://localhost:8765/oauth/callback
+# OPENAI_OAUTH_BASE_URL=https://api.openai.com
+
+# -----------------------------------------------------------------------------
+# Workflow Orchestration (Temporal)
+# -----------------------------------------------------------------------------
+# Temporal server connection (local dev server or Temporal Cloud)
+# Install locally: brew install temporal
+# Start server: temporal server start-dev
+TEMPORAL_HOST=localhost:7233
+TEMPORAL_NAMESPACE=default
+TEMPORAL_TASK_QUEUE=tracertm-tasks
+TEMPORAL_UI_URL=http://localhost:8233
+
+# Timeout for workflow operations (seconds)
+TEMPORAL_TIMEOUT=20
+TEMPORAL_SCHEDULE_TIMEZONE=UTC
+TEMPORAL_SCHEDULE_GRAPH_SNAPSHOT_CRON=0 2 * * *
+TEMPORAL_SCHEDULE_INTEGRATION_RETRY_INTERVAL_SECONDS=900
+TEMPORAL_SCHEDULE_INTEGRATION_RETRY_LIMIT=50
+
+# For Temporal Cloud (optional):
+# TEMPORAL_HOST=your-namespace.tmprl.cloud:7233
+# TEMPORAL_NAMESPACE=your-namespace
+# TEMPORAL_TLS_CERT=/path/to/client.pem
+# TEMPORAL_TLS_KEY=/path/to/client.key
+
+# -----------------------------------------------------------------------------
+# Object Storage (S3-compatible, e.g. MinIO for local dev)
+# -----------------------------------------------------------------------------
+# Local MinIO: brew install minio && brew services start minio, then:
+#   ./scripts/start-services.sh minio   # start MinIO and create bucket
+# SECURITY: In production, store credentials in Vault (set USE_VAULT=true)
+S3_ENDPOINT=http://127.0.0.1:9000
+S3_ACCESS_KEY_ID=PLACEHOLDER_ACCESS_KEY
+S3_SECRET_ACCESS_KEY=PLACEHOLDER_SECRET_KEY
+S3_BUCKET=tracertm
+S3_REGION=us-east-1
+
+# -----------------------------------------------------------------------------
+# Application Configuration
+# -----------------------------------------------------------------------------
+LOG_LEVEL=INFO
+GO_ENV=development
+
+# -----------------------------------------------------------------------------
+# Observability - Shared Phenotype Collector
+# -----------------------------------------------------------------------------
+TRACING_ENABLED=true
+PHENO_OBSERVABILITY_OTLP_GRPC_ENDPOINT=127.0.0.1:4317
+PHENO_OBSERVABILITY_OTLP_HTTP_ENDPOINT=http://127.0.0.1:4318
+PHENO_OBSERVABILITY_GRAFANA_URL=http://127.0.0.1:3000
+PHENO_OBSERVABILITY_TEMPO_URL=http://127.0.0.1:3200
+OTLP_ENDPOINT=127.0.0.1:4317
+TRACING_ENVIRONMENT=development
+GIN_MODE=debug
+PYTHON_ENV=development
+
+# API Ports
+GO_BACKEND_PORT=8080
+PYTHON_BACKEND_PORT=8000
+PYTHON_GRPC_PORT=9092
+GATEWAY_PORT=4000
+
+# Backend URLs
+GO_BACKEND_URL=http://localhost:8080
+PYTHON_BACKEND_URL=http://localhost:8000
+PYTHON_BACKEND_GRPC_ADDR=127.0.0.1:9092
+
+# -----------------------------------------------------------------------------
+# Monitoring Configuration
+# -----------------------------------------------------------------------------
+PROMETHEUS_PORT=9090
+GRAFANA_PORT=3000
+# Generate strong credentials: python3 -c "import secrets; print(secrets.token_urlsafe(24))"
+GRAFANA_ADMIN_USER=
+GRAFANA_ADMIN_PASSWORD=
+
+# Exporter Ports
+POSTGRES_EXPORTER_PORT=9187
+REDIS_EXPORTER_PORT=9121
+NODE_EXPORTER_PORT=9100
+
+# -----------------------------------------------------------------------------
+# Sentry Error Tracking (Optional)
+# -----------------------------------------------------------------------------
+# Backend (Go) Configuration
+# Get these from: https://sentry.io/settings/projects/
+# Create a new project in Sentry, then copy the DSN from Project Settings
+# SENTRY_DSN=https://xxxxx@xxxxx.ingest.sentry.io/xxxxx
+# SENTRY_ENVIRONMENT=development
+# SENTRY_RELEASE=1.0.0
+# SENTRY_TRACES_SAMPLE_RATE=0.1
+# SENTRY_DEBUG=false
+
+# -----------------------------------------------------------------------------
+# CORS Configuration
+# -----------------------------------------------------------------------------
+# Comma-separated list of allowed origins (no wildcards in production)
+CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+
+# -----------------------------------------------------------------------------
+# Feature Flags
+# -----------------------------------------------------------------------------
+ENABLE_WEBSOCKET=true
+ENABLE_EVENTS=true
+ENABLE_SEARCH=true
+ENABLE_VECTOR_SEARCH=true
+ENABLE_NATS=true
+ENABLE_REDIS_CACHE=true
+
+# -----------------------------------------------------------------------------
+# TraceRTM CLI Configuration (Optional)
+# -----------------------------------------------------------------------------
+# TRACERTM_CURRENT_PROJECT_ID=project-123
+# TRACERTM_CURRENT_PROJECT_NAME=My Project
+# TRACERTM_DEFAULT_VIEW=FEATURE
+# TRACERTM_OUTPUT_FORMAT=json
+# TRACERTM_MAX_AGENTS=1000
+# TRACERTM_CACHE_TTL=300
+# TRACERTM_BATCH_SIZE=100
+# TRACERTM_ENABLE_CACHE=true
+# TRACERTM_ENABLE_ASYNC=true
+# TRACERTM_ENABLE_VALIDATION=true
+
+# -----------------------------------------------------------------------------
+# Observability - Distributed Tracing & APM
+# -----------------------------------------------------------------------------
+# Enable/disable distributed tracing (OpenTelemetry)
+TRACING_ENABLED=true
+
+# Local OTLP endpoint for the Alloy-backed shared collector path.
+OTLP_ENDPOINT=127.0.0.1:4319
+
+# Environment name for tracing (development, staging, production)
+TRACING_ENVIRONMENT=development
+
+# -----------------------------------------------------------------------------
+# Development Tools
+# -----------------------------------------------------------------------------
+# Enable hot reload for backends (default: true in dev)
+ENABLE_HOT_RELOAD=true
+
+# Process Compose log level (debug, info, warn, error)
+PROCESS_COMPOSE_LOG_LEVEL=info

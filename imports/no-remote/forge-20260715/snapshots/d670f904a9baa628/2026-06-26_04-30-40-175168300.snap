@@ -1,0 +1,18 @@
+@echo off
+setlocal
+set "CARGO_HOME=E:\Dev\.cargo"
+set "CARGO_TARGET_DIR=E:\civis-target"
+cd /d "C:\Users\koosh\.claude\lanes\substrate-feat-cloud-dispatch"
+
+:: Kill competing cargo first
+taskkill /F /IM cargo.exe 2>nul
+taskkill /F /IM rustc.exe 2>nul
+:: Clean lock files
+del "E:\Dev\.cargo\.package-cache" 2>nul
+del "E:\Dev\.cargo\.package-cache-mutate" 2>nul
+:: Small delay to let locks settle
+ping -n 3 127.0.0.1 >nul 2>&1
+
+cargo clippy --all-targets --all-features -- -D warnings > cargo_clippy_output2.txt 2>&1
+echo EXIT_CODE=%ERRORLEVEL% >> cargo_clippy_output2.txt
+echo FINISHED >> cargo_clippy_output2.txt

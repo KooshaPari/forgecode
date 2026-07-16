@@ -1,0 +1,93 @@
+/**
+ * proxy-span.test.ts — Unit tests for src/lib/observability/proxySpan.ts
+ *
+ * Covers:
+ *  - extractRequestContext reads method / path from a Request
+ *  - extractRequestContext handles traceparent and user-agent headers
+ *  - withProxySpan on success sets http.status_code=200 and OK status
+ *  - withProxySpan on error sets ERROR status + http.status_code=500 + adds exception event
+ *  - withProxySpan with a null/undefined request uses INTERNAL method
+ */
+
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { extractRequestContext, withProxySpan, withProxySpanSync } from "@/lib/observability/proxySpan";
+import { shutdownTelemetry } from "@/lib/observability/otel";
+
+test.beforeEach(() => {
+  shutdownTelemetry();
+});
+
+test("extractRequestContext reads method + path from a Request", () => {
+  const req = new Request("http://localhost/api/v1/health?x=1", {
+    method: "post",
+    headers: { "user-agent": "ua/1.0", traceparent: "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01" },
+  });
+  const ctx = extractRequestContext(req);
+  assert.equal(ctx.method, "POST");
+  assert.equal(ctx.path, "/api/v1/health");
+  assert.equal(ctx.userAgent, "ua/1.0");
+  assert.equal(ctx.traceparent, "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01");
+});
+
+test("extractRequestContext gracefully handles a missing URL / method", () => {
+  // Request with a relative-ish URL won't parse, but extract should not throw.
+  const req = new Request("http://localhost/", { method: "get" });
+  const ctx = extractRequestContext(req);
+  assert.equal(ctx.method, "GET");
+  assert.equal(ctx.path, "/");
+});
+
+test("withProxySpan on success sets http.status_code=200 and OK status", async () => {
+  const req = new Request("http://localhost/api/health", { method: "GET" });
+  let capturedStatus: unknown = null;
+  await withProxySpan("GET /api/health", req, async (span) => {
+    // Wait briefly so the span has measurable duration.
+    await new Promise((r) => setTimeout(r, 5));
+    capturedStatus = span.getStatus();
+    return "ok";
+  });
+  assert.equal((capturedStatus as { status: string }).status, "OK");
+});
+
+test("withProxySpan on error sets ERROR status + http.status_code=500 + adds exception event", async () => {
+  const req = new Request("http://localhost/api/health", { method: "GET" });
+  let captured: { status: unknown; events: { name: string }[] } | null = null;
+  await assert.rejects(async () => {
+    await withProxySpan("GET /api/health", req, async (span) => {
+      try {
+        throw new Error("kaboom");
+      } finally {
+        captured = {
+          status: span.getStatus(),
+          events: span.getEvents(),
+        };
+      }
+    });
+  }, /kaboom/);
+
+  assert.ok(captured);
+  assert.equal((captured!.status as { status: string }).status, "ERROR");
+  const exceptionEvent = captured!.events.find((e) => e.name === "exception");
+  assert.ok(exceptionEvent, "exception event should be recorded");
+});
+
+test("withProxySpan with null request uses INTERNAL method (no headers)", async () => {
+  let captured: { method: unknown; status: unknown } | null = null;
+  await withProxySpan("internal", null, async (span) => {
+    captured = {
+      method: span.getAttributes()["http.method"],
+      status: span.getStatus(),
+    };
+    return 1;
+  });
+  assert.equal(captured!.method, "INTERNAL");
+  assert.equal((captured!.status as { status: string }).status, "OK");
+});
+
+test("withProxySpanSync returns the function result and ends the span", () => {
+  const req = new Request("http://localhost/sync", { method: "GET" });
+  const result = withProxySpanSync("sync.op", req, () => 99);
+  assert.equal(result, 99);
+});

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://github.com/googleapis/release-please/blob/main/schemas/config.json",
+  "release-type": "rust",
+  "include-component-in-tag": false,
+  "group-pull-request-title-pattern": "chore(release): {{group}} v{{version}}",
+  "pull-request-header-pattern": "^chore\\(release\\):",
+  "pull-request-footer-regex": "",
+  "labels": ["autorelease: pending"],
+  "draft": false,
+  "release-search-depth": 100,
+  "bootstrap-sha": "d6b47f4f9b1c2e3f4a5b6c7d8e9f0a1b2c3d4e5f",
+  "last-release-sha": "350491a0",
+  "plugins": [
+    {
+      "type": "cargo-workspace",
+      "manifestPath": "Cargo.toml",
+      "exclude-paths": ["crates/ci-only/**"]
+    }
+  ],
+  "packages": {
+    "core-stream": {
+      "package-name": "phenotype-tooling-core",
+      "release-type": "rust",
+      "changelog-path": "CHANGELOG-core.md",
+      "bump-minor-pre-major": false,
+      "bump-patch-for-minor-pre-major": false
+    },
+    "cli-stream": {
+      "package-name": "phenotype-tooling-cli",
+      "release-type": "rust",
+      "changelog-path": "CHANGELOG-cli.md",
+      "bump-minor-pre-major": false,
+      "bump-patch-for-minor-pre-major": false
+    },
+    "ops-stream": {
+      "package-name": "phenotype-tooling-ops",
+      "release-type": "rust",
+      "changelog-path": "CHANGELOG-ops.md",
+      "bump-minor-pre-major": false,
+      "bump-patch-for-minor-pre-major": false
+    }
+  }
+}

@@ -1,0 +1,34 @@
+[package]
+name = "pheno-compose-driver"
+version = "0.1.0"
+edition = "2021"
+description = "PhenoCompose NVMS Driver - Rust interface to NVMS 3-tier isolation"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KooshaPari/PhenoCompose"
+documentation = "https://docs.rs/pheno-compose-driver"
+keywords = ["phenotype", "pheno-compose"]
+categories = ["development-tools"]
+authors = ["kooshapari"]
+
+[dependencies]
+nvms-ffi = { path = "../bindings/rust-ffi", optional = true }
+pheno-config = { path = "../crates/pheno-config" }
+
+[features]
+[features]
+default = ["nvms"]
+nvms = ["nvms-ffi"]  # Enable NVMS backend
+mock = []            # Use mock backend for testing
+
+# WASM cross-compilation target.  Disables the native FFI backend
+# and enables the WASM-compatible code path.  Build with:
+#   cargo build -p pheno-compose-driver --target wasm32-wasi --no-default-features --features wasm
+wasm = []
+
+[lib]
+name = "pheno_compose_driver"
+crate-type = ["lib"]
+
+# NOTE: staticlib / cdylib are added by build.rs for native targets
+# only (when the `wasm` feature is NOT active).  On wasm32-wasi those
+# crate-types are invalid.

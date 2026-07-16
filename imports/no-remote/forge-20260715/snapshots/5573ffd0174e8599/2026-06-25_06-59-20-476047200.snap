@@ -1,0 +1,257 @@
+/**
+ * Tests for DAG live status types, store, and emitter.
+ *
+ * F26 — DAG renderer: live status (consumes from F9 events)
+ * Uses Bun's built-in test runner (bun test).
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import {
+  DagStore,
+  DagStatusEmitter,
+  DEFAULT_POLL_MS,
+} from "../src/lib/dag/index.ts";
+import type {
+  DagData,
+  DagNode,
+  DagNodeStatus,
+  DagStatusEvent,
+} from "../src/lib/dag/types.ts";
+import { STATUS_BADGE } from "../src/lib/dag/types.ts";
+
+// ── Fixtures ───────────────────────────────────────────────────────
+
+const SAMPLE_NODES: DagNode[] = [
+  { id: "f01", label: "Node A", status: "pending",  lastUpdated: null },
+  { id: "f02", label: "Node B", status: "completed", lastUpdated: "2026-06-24T10:00:00.000Z" },
+  { id: "f03", label: "Node C", status: "in-progress", lastUpdated: "2026-06-24T12:00:00.000Z" },
+];
+
+const SAMPLE_DATA: DagData = {
+  title: "Test DAG",
+  description: "Unit test fixture",
+  nodes: SAMPLE_NODES,
+  edges: [
+    { from: "f01", to: "f02" },
+    { from: "f02", to: "f03" },
+  ],
+};
+
+// ── Tests: Types & Constants ─────────────────────────────────────────
+
+describe("STATUS_BADGE", () => {
+  it("has an entry for every status value", () => {
+    const statuses: DagNodeStatus[] = [
+      "pending",
+      "in-progress",
+      "completed",
+      "failed",
+      "blocked",
+    ];
+    for (const s of statuses) {
+      expect(STATUS_BADGE[s]).toBeDefined();
+      expect(STATUS_BADGE[s].label).toBeTypeOf("string");
+      expect(STATUS_BADGE[s].color).toMatch(/^#[0-9a-fA-F]{6}$/);
+      expect(STATUS_BADGE[s].bg).toMatch(/^rgba\(/);
+    }
+  });
+});
+
+// ── Tests: DagStore ─────────────────────────────────────────────────
+
+describe("DagStore", () => {
+  let store: DagStore;
+
+  beforeEach(() => {
+    store = new DagStore(SAMPLE_DATA);
+  });
+
+  afterEach(() => {
+    store.destroy();
+  });
+
+  it("hydrates nodes with lastUpdated on construction", () => {
+    const state = store.state;
+    expect(state.data.nodes[0].lastUpdated).toBeTypeOf("string"); // hydrated
+    expect(state.data.nodes[1].lastUpdated).toBe("2026-06-24T10:00:00.000Z"); // kept
+  });
+
+  it("starts with live view mode and polling off", () => {
+    const state = store.state;
+    expect(state.viewMode).toBe("live");
+    expect(state.isPolling).toBe(false);
+  });
+
+  it("updateNodeStatus changes a single node", () => {
+    store.updateNodeStatus("f01", "completed");
+    const node = store.state.data.nodes.find((n) => n.id === "f01");
+    expect(node).toBeDefined();
+    expect(node!.status).toBe("completed");
+    expect(node!.lastUpdated).toBeTypeOf("string");
+  });
+
+  it("updateNodeStatus notifies listeners", () => {
+    const fn = vi.fn(() => {});
+    store.onUpdate(fn);
+    store.updateNodeStatus("f01", "failed");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("batchUpdate updates multiple nodes", () => {
+    store.batchUpdate([
+      { nodeId: "f01", status: "in-progress" },
+      { nodeId: "f02", status: "failed" },
+    ]);
+    const n1 = store.state.data.nodes.find((n) => n.id === "f01");
+    const n2 = store.state.data.nodes.find((n) => n.id === "f02");
+    expect(n1!.status).toBe("in-progress");
+    expect(n2!.status).toBe("failed");
+  });
+
+  it("resetAll sets all nodes to pending", () => {
+    store.resetAll();
+    for (const n of store.state.data.nodes) {
+      expect(n.status).toBe("pending");
+    }
+  });
+
+  it("setViewMode switches to static and back", () => {
+    store.setViewMode("static");
+    expect(store.state.viewMode).toBe("static");
+    store.setViewMode("live");
+    expect(store.state.viewMode).toBe("live");
+  });
+
+  it("startPolling and stopPolling toggle isPolling flag", () => {
+    store.startPolling();
+    expect(store.state.isPolling).toBe(true);
+    store.stopPolling();
+    expect(store.state.isPolling).toBe(false);
+  });
+
+  it("pollNow updates lastPollAt", () => {
+    const before = store.state.lastPollAt;
+    store.pollNow();
+    expect(store.state.lastPollAt).not.toBe(before);
+  });
+
+  it("DEFAULT_POLL_MS is 30000", () => {
+    expect(DEFAULT_POLL_MS).toBe(30000);
+  });
+});
+
+// ── Tests: DagStatusEmitter ─────────────────────────────────────────
+
+describe("DagStatusEmitter", () => {
+  let emitter: DagStatusEmitter;
+
+  beforeEach(() => {
+    emitter = new DagStatusEmitter(["f01", "f02", "f03"]);
+  });
+
+  afterEach(() => {
+    emitter.stop();
+  });
+
+  it("starts and stops", () => {
+    expect(emitter.running).toBe(false);
+    emitter.start(1000);
+    expect(emitter.running).toBe(true);
+    emitter.stop();
+    expect(emitter.running).toBe(false);
+  });
+
+  it("emits status-change events when started", () => {
+    const events: DagStatusEvent[] = [];
+    emitter.onEvent((e) => events.push(e));
+    emitter.start(50);
+
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        emitter.stop();
+        expect(events.length).toBeGreaterThanOrEqual(1);
+        expect(events[0].type).toBe("status-change");
+        expect(events[0].payload).not.toBeNull();
+        expect(events[0].payload!.nodeId).toBe("f01");
+        expect(events[0].payload!.newStatus).toMatch(
+          /^(in-progress|completed|failed|blocked)$/,
+        );
+        expect(events[0].payload!.timestamp).toBeTypeOf("string");
+        resolve();
+      }, 100);
+    });
+  });
+
+  it("cycles through node IDs", () => {
+    const events: DagStatusEvent[] = [];
+    emitter.onEvent((e) => events.push(e));
+    emitter.start(30);
+
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        emitter.stop();
+        expect(events.length).toBeGreaterThanOrEqual(3);
+        expect(events[0].payload!.nodeId).toBe("f01");
+        expect(events[1].payload!.nodeId).toBe("f02");
+        expect(events[2].payload!.nodeId).toBe("f03");
+        resolve();
+      }, 150);
+    });
+  });
+
+  it("reset emits a reset event", () => {
+    const events: DagStatusEvent[] = [];
+    emitter.onEvent((e) => events.push(e));
+    emitter.reset();
+    expect(events.length).toBe(1);
+    expect(events[0].type).toBe("reset");
+    expect(events[0].payload).toBeNull();
+  });
+
+  it("manual emit fires listeners", () => {
+    const fn = vi.fn(() => {});
+    emitter.onEvent(fn);
+    emitter.emit({
+      type: "status-change",
+      payload: {
+        nodeId: "f01",
+        newStatus: "completed",
+        timestamp: new Date().toISOString(),
+      },
+    });
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("onEvent returns an unsubscribe function", () => {
+    const fn = vi.fn(() => {});
+    const unsub = emitter.onEvent(fn);
+    unsub();
+    emitter.emit({ type: "heartbeat", payload: null });
+    expect(fn).not.toHaveBeenCalled();
+  });
+});
+
+// ── Tests: Data schema validity ─────────────────────────────────
+
+describe("dag-data.json schema", () => {
+  it("matches the DagData interface shape", () => {
+    const data: DagData = {
+      title: "Schema validation",
+      description: "Check shape",
+      nodes: [
+        { id: "x1", label: "X1", status: "pending", lastUpdated: null },
+      ],
+      edges: [],
+    };
+    expect(data.title).toBeTypeOf("string");
+    expect(data.description).toBeTypeOf("string");
+    expect(Array.isArray(data.nodes)).toBe(true);
+    expect(Array.isArray(data.edges)).toBe(true);
+    if (data.nodes.length > 0) {
+      expect(data.nodes[0].id).toBeTypeOf("string");
+      expect(data.nodes[0].status).toMatch(
+        /^(pending|in-progress|completed|failed|blocked)$/,
+      );
+    }
+  });
+});

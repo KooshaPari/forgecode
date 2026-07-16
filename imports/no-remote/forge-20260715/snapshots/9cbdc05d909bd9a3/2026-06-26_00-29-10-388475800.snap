@@ -1,0 +1,18 @@
+import { captureHeapSnapshot } from "../../scripts/sre/capture-heap-snapshot.mjs";
+import { readFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const dir = path.join(os.tmpdir(), "heap-debug-" + Date.now());
+const meta = captureHeapSnapshot(dir, "test");
+const content = readFileSync(meta.path, "utf8");
+console.log("first 128 bytes:");
+console.log(content.substring(0, 128));
+console.log("---");
+console.log("contains snapshot:", content.substring(0, 128).includes('"snapshot"'));
+console.log("contains meta_data:", content.substring(0, 128).includes('"meta_data"'));
+console.log("contains trace_function_info_flags:", content.substring(0, 128).includes('"trace_function_info_flags"'));
+console.log("---");
+console.log("FULL contains meta_data:", content.includes('"meta_data"'));
+console.log("FULL contains trace_function_info_flags:", content.includes('"trace_function_info_flags"'));
+console.log("FULL contains node_types:", content.includes('"node_types"'));

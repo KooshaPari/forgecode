@@ -1,0 +1,215 @@
+@echo off
+REM ============================================================================
+REM  omniroute-dev.cmd - dev wrapper for the user's OmniRoute fork
+REM  Repo source:    C:\Users\koosh\OmniRoute-fresh   (PR development)
+REM  Live runtime:   bun-global omniroute              (3.8.37 deployed)
+REM  Isolated dev DB: C:\Users\koosh\omniroute-dev-data (kept separate)
+REM ============================================================================
+
+setlocal EnableExtensions EnableDelayedExpansion
+
+set "OMNIROUTE_REPO=C:\Users\koosh\OmniRoute-fresh"
+set "OMNIROUTE_DEV_DATA=C:\Users\koosh\omniroute-dev-data"
+set "OMNIROUTE_DEV_LOGS=C:\Users\koosh\omniroute-dev-data\logs"
+set "OMNIROUTE_DEPLOY=C:\Users\koosh\omniroute-deploy"
+set "OMNIROUTE_DEPLOYED=C:\Users\koosh\.bun\install\global\node_modules\omniroute"
+set "OMNIROUTE_BUN=C:\Users\koosh\AppData\Roaming\npm\bun.cmd"
+
+REM Per-user triage overrides (applied on top of any host .env)
+set "OMNIROUTE_PROMPT_CACHE_KEY_FINGERPRINT=1"
+set "RATE_LIMIT_MAX_WAIT_MS=10000"
+set "OMNIROUTE_DISABLE_LIVE_WS_BRIDGE_WARN=true"
+
+if not exist "%OMNIROUTE_DEV_DATA%"  mkdir "%OMNIROUTE_DEV_DATA%"
+if not exist "%OMNIROUTE_DEV_LOGS%"  mkdir "%OMNIROUTE_DEV_LOGS%"
+
+REM Load host env if present (OMNIROUTE_* keys, ENCRYPTION_KEY, API_KEYs)
+if exist "C:\Users\koosh\.omniroute\.env" (
+  for /f "usebackq tokens=1,* delims==" %%A in ("C:\Users\koosh\.omniroute\.env") do (
+    if not "%%A"=="" if not "%%A:~0,1"=="#" set "%%A=%%B"
+  )
+)
+
+REM Find node.exe
+where node >nul 2>nul
+if errorlevel 1 (
+  if exist "C:\Program Files\nodejs\node.exe" (
+    set "NODE_EXE=C:\Program Files\nodejs\node.exe"
+  ) else (
+    echo [omniroute-dev] FATAL: node.exe not found
+    exit /b 1
+  )
+) else (
+  for /f "delims=" %%N in ('where node') do set "NODE_EXE=%%N"
+)
+
+REM ----- dispatch subcommands -------------------------------------------------
+if "%~1"=="" goto :help
+if /i "%~1"=="help"        goto :help
+if /i "%~1"=="--help"      goto :help
+if /i "%~1"=="-h"          goto :help
+
+if /i "%~1"=="where"       goto :where
+if /i "%~1"=="status"      goto :status
+if /i "%~1"=="repo"        goto :repo
+if /i "%~1"=="patch-list"  goto :patch_list
+
+if /i "%~1"=="sync"        goto :sync_to_deployed
+if /i "%~1"=="diff"        goto :diff_fork_vs_deployed
+
+if /i "%~1"=="action-checklist" goto :action_checklist
+if /i "%~1"=="checklist"      goto :action_checklist
+
+if /i "%~1"=="build"       goto :build_fork
+if /i "%~1"=="pr"          goto :pr_help
+if /i "%~1"=="pr-push"     goto :pr_push
+if /i "%~1"=="pr-body"     goto :pr_body
+
+if /i "%~1"=="doctor"      goto :delegate_deployed
+if /i "%~1"=="redis"       goto :delegate_deployed
+if /i "%~1"=="serve"       goto :delegate_deployed
+if /i "%~1"=="stop"        goto :delegate_deployed
+if /i "%~1"=="start"       goto :delegate_deployed
+if /i "%~1"=="cloud"       goto :delegate_deployed
+if /i "%~1"=="tunnel"      goto :delegate_deployed
+if /i "%~1"=="connect"     goto :delegate_deployed
+if /i "%~1"=="setup-aider" goto :delegate_deployed
+if /i "%~1"=="setup-goose" goto :delegate_deployed
+if /i "%~1"=="setup-gemini" goto :delegate_deployed
+
+REM default: delegate everything else to the deployed `omniroute` CLI
+call :delegate_deployed
+endlocal & exit /b %errorlevel%
+
+:help
+echo.
+echo  omniroute-dev - dev wrapper for C:\Users\koosh\OmniRoute-fresh
+echo.
+echo  Routing:
+echo    ^<sub-cmd^>         routes to the deployed `omniroute` (server, redis, doctor, ...)
+echo    omniroute-dev where    shows source/binary paths and version
+echo    omniroute-dev status   health snapshot (ports, DB size, combo count, call-log count)
+echo    omniroute-dev repo     open repo in a new terminal
+echo    omniroute-dev diff     show unstaged changes in the fork
+echo    omniroute-dev sync     copy patched files from fork into the deployed bun-global pkg
+echo    omniroute-dev build    build the fork's CLI bundle (bun install + build)
+echo    omniroute-dev patch-list list the .ts files we are patching
+echo    omniroute-dev pr       print PR-push instructions
+echo    omniroute-dev pr-body  print PR body markdown
+echo    omniroute-dev pr-push  run the gh pr create workflow (interactive)
+echo.
+echo  Everything else (`serve`, `redis up`, `doctor`, `cloud`, `tunnel`,
+echo  `setup-aider`, ...) is delegated to the installed `omniroute` binary.
+echo.
+endlocal & exit /b 0
+
+:where
+echo Source repo:  %OMNIROUTE_REPO%
+echo Dev data dir: %OMNIROUTE_DEV_DATA%
+echo Deploy dir:   %OMNIROUTE_DEPLOY%
+echo Deployed pkg: %OMNIROUTE_DEPLOYED%
+call "C:\Users\koosh\.bun\bin\omniroute.exe" --version 2>nul
+endlocal & exit /b 0
+
+:status
+powershell -NoProfile -Command "$ErrorActionPreference='SilentlyContinue'; $ports = Get-NetTCPConnection -State Listen | Where-Object {$_.LocalPort -lt 30000 -and $_.LocalPort -gt 1000} | Sort-Object LocalPort; Write-Host '--- Listening ports ---'; $ports | Format-Table LocalAddress, LocalPort, OwningProcess -AutoSize | Out-String | Write-Host; $db='C:\Users\koosh\AppData\Roaming\omniroute\storage.sqlite'; if (Test-Path $db) { Write-Host \"--- DB: $db --- $([math]::Round((Get-Item $db).Length/1MB,1)) MB\" } else { Write-Host \"DB not found at $db\" }; Write-Host '--- Combos ---'; & 'C:\Users\koosh\platform-tools\sqlite3.exe' 'C:\Users\koosh\AppData\Roaming\omniroute\storage.sqlite' \"SELECT name, length(data) AS bytes FROM combos ORDER BY name;\""
+endlocal & exit /b %errorlevel%
+
+:repo
+start "" cmd /c "cd /d %OMNIROUTE_REPO% && git status && cmd /k"
+endlocal & exit /b 0
+
+:diff_fork_vs_deployed
+"C:\Program Files\Git\cmd\git.exe" -C "%OMNIROUTE_REPO%" status --short
+"C:\Program Files\Git\cmd\git.exe" -C "%OMNIROUTE_REPO%" diff --stat
+endlocal & exit /b %errorlevel%
+
+:patch_list
+::patch_list
+echo Patched files (fork --^> deployed pkg hot-fix):
+echo   open-sse/utils/proxyFetch.ts
+echo   src/lib/providers/requestDefaults.ts
+echo   src/lib/resilience/settings.ts (env-var override only)
+echo   open-sse/executors/codex.ts (codex local_shell drop, PR #5250)
+endlocal & exit /b 0
+
+::sync_to_deployed
+set "FILES=src\lib\usage\callLogs.ts open-sse\utils\proxyFetch.ts src\lib\providers\requestDefaults.ts open-sse\executors\codex.ts"
+for %%F in (%FILES%) do (
+  if exist "%OMNIROUTE_REPO%\%%F" (
+    copy /Y "%OMNIROUTE_REPO%\%%F" "%OMNIROUTE_DEPLOYED%\%%F" >nul && echo synced %%F
+  ) else (
+    echo MISSING %OMNIROUTE_REPO%\%%F
+  )
+)
+endlocal & exit /b 0
+echo Running bun install in fork...
+call "%OMNIROUTE_BUN%" install --no-audit --no-fund --silent
+endlocal & exit /b %errorlevel%
+
+:delegate_deployed
+"%OMNIROUTE_BUN%" run "%OMNIROUTE_DEPLOYED%\bin\omniroute.mjs" %*
+endlocal & exit /b %errorlevel%
+
+:pr_help
+type "C:\Users\koosh\AppData\Local\Temp\pr_push_steps.md" 2>nul
+endlocal & exit /b 0
+
+:pr_body
+type "C:\Users\koosh\AppData\Local\Temp\pr_body.md" 2>nul
+endlocal & exit /b 0
+
+:pr_push
+echo PR push flow ^(run manually after reviewing pr_body.md^):
+echo   cd /d %OMNIROUTE_REPO%
+echo   git checkout -b koosha/upstream-calllog-sql-bind-chunk
+echo   git push koosha HEAD:koosha/upstream-calllog-sql-bind-chunk
+echo   gh pr create --repo diegosouzapw/OmniRoute --base main --head koosha:koosha/upstream-calllog-sql-bind-chunk --body-file "C:\Users\koosh\AppData\Local\Temp\pr_body.md"
+endlocal & exit /b 0
+
+::action_checklist
+::action_checklist
+::##############################################################################
+:: Subcommand: action-checklist
+::##############################################################################
+:action_checklist
+echo ============================================================================
+echo   omniroute-dev action-checklist   (one-shot verification + next steps)
+echo ============================================================================
+echo [1/8] Listening ports + DB size:
+echo [2/8] .env overrides in place ^(RATE_LIMIT_MAX_WAIT_MS, OMNIROUTE_PROMPT_CACHE_KEY_FINGERPRINT, OMNIROUTE_DISABLE_LIVE_WS_BRIDGE_WARN, REDIS_URL^):
+powershell -NoProfile -Command "foreach ($f in 'C:\Users\koosh\.omniroute\.env','C:\Users\koosh\omniroute-deploy\.env') { if (Test-Path $f) { Write-Host \"--- $f ---\"; Select-String -Path $f -Pattern '^(RATE_LIMIT_MAX_WAIT_MS|REDIS_URL|OMNIROUTE_PROMPT_CACHE_KEY_FINGERPRINT|OMNIROUTE_DISABLE_LIVE_WS_BRIDGE_WARN|OMNIROUTE_REDIS_URL)' | ForEach-Object { Write-Host $_.Line } } }"
+echo.
+echo [3/8] Redis ping:
+call "C:\Users\koosh\AppData\Roaming\npm\redis-cli.cmd" PING 2>nul
+echo.
+echo [4/8] Active combos + provider status:
+powershell -NoProfile -Command "$ErrorActionPreference='SilentlyContinue'; & 'C:\Users\koosh\platform-tools\sqlite3.exe' -header -column 'C:\Users\koosh\AppData\Roaming\omniroute\storage.sqlite' \"SELECT name, json_extract(data,'\$.isActive') AS active, length(data) AS bytes FROM combos ORDER BY name;\" 2>&1; Write-Host '--- Deactivated providers (last_error) ---'; & 'C:\Users\koosh\platform-tools\sqlite3.exe' -header -column 'C:\Users\koosh\AppData\Roaming\omniroute\storage.sqlite' \"SELECT name, provider, is_active, substr(last_error,1,80) AS last_err FROM provider_connections WHERE is_active=0 AND last_error IS NOT NULL;\" 2>&1"
+echo.
+echo [5/8] Call-log volume (last 24h):
+powershell -NoProfile -Command "$ErrorActionPreference='SilentlyContinue'; & 'C:\Users\koosh\platform-tools\sqlite3.exe' 'C:\Users\koosh\AppData\Roaming\omniroute\storage.sqlite' \"SELECT combo_name||'/'||provider||'/'||model AS target, status, count(*) AS rows, datetime(MIN(timestamp),'unixepoch') AS first, datetime(MAX(timestamp),'unixepoch') AS last FROM call_logs WHERE timestamp > strftime('%s','now','-1 day') GROUP BY combo_name, provider, model, status ORDER BY rows DESC LIMIT 10;\" 2>&1"
+echo.
+echo [6/8] Hyper-slow / rate-limit events in last 24h:
+powershell -NoProfile -Command "$ErrorActionPreference='SilentlyContinue'; & 'C:\Users\koosh\platform-tools\sqlite3.exe' -header -column 'C:\Users\koosh\AppData\Roaming\omniroute\storage.sqlite' \"SELECT count(*) AS slow_events FROM call_logs WHERE timestamp > strftime('%s','now','-1 day') AND (error_summary LIKE '%maxWaitMs%' OR error_summary LIKE '%Semaphore%' OR error_summary LIKE '%queue budget%');\" 2>&1"
+echo.
+echo [7/8] Forks + upstream PR status:
+powershell -NoProfile -Command "foreach ($branch in 'main','koosha/prompt-cache-key-fingerprint') { Write-Host \"--- branch: $branch ---\"; & 'C:\Program Files\Git\cmd\git.exe' -C 'C:\Users\koosh\OmniRoute-fresh' log $branch --oneline -3 2>$null }"
+echo.
+echo [8/8] External actions you still need to do:
+echo   [ ] Restart Docker Desktop (CLI socket hung from earlier failed docker runs)
+echo         -> right-click whale icon ^> Restart
+echo         -> or in PowerShell (admin): Restart-Service com.docker.service
+echo         -> then: docker compose -f C:\Users\koosh\omniroute-deploy\docker-compose.yml up -d
+echo   [ ] Push upstream PR:
+echo         cd C:\Users\koosh\OmniRoute-fresh
+echo         git push koosha koosha/prompt-cache-key-fingerprint
+echo         gh pr create --repo diegosouzapw/OmniRoute --base main --head koosha:koosha/prompt-cache-key-fingerprint --title "fix(providers): synthesize prompt_cache_key for Anthropic-compatible models" --body-file C:\Users\koosh\AppData\Local\Temp\pck_commit_msg.txt
+echo   [ ] Fix your IDE/CLI model strings -- the kiro/*, opencode-zen/claude-opus-*, opencode-zen/gpt-5.*, opencode-zen/gemini-* etc. are NOT in any combo AND do not exist on the providers' APIs. They come from your client (Forge/Codex/Cline) sending them directly. Either remove them OR add them to the right combo via the dashboard.
+echo   [ ] Reauth Cline in the dashboard (token endpoint returns 400 for kooshapari@gmail.com)
+echo   [ ] Top up opencode-zen credits at https://opencode.ai/workspace/wrk_01K8Q06HRWG then: UPDATE provider_connections SET is_active=1 WHERE id='63776b26-e465-44f2-a6d3-87bbc887955e';
+echo   [ ] Start opencode-go local proxy on 127.0.0.1:8317 (last-fallback step in Main combo)
+echo.
+echo ============================================================================
+echo  Tip: run `omniroute-dev checklist` again after each restart to confirm.
+echo ============================================================================
+endlocal & exit /b 0

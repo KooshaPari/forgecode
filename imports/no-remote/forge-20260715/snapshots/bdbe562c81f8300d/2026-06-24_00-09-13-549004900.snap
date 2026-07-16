@@ -1,0 +1,52 @@
+# AGENTS.md — phenotype-infra
+
+## Project Overview
+- **Name**: phenotype-infra
+- **Description**: Compute/Infra Consolidation Monorepo — absorbs nanovms (Go 3-tier isolation), PhenoCompose (Rust FFI + driver), and BytePort (Svelte tooling)
+- **Location**: `C:\Users\koosh\phenotype-infra`
+- **Language Stack**: Go 1.23+, Rust (edition 2021), TypeScript/Svelte
+- **Status**: Active consolidation target (L1-Alpha)
+
+## Repository Structure
+- `crates/nanovms-core/` — Go source for 3-tier isolation (WASM/gVisor/Firecracker)
+- `crates/nvms-ffi/` — Rust FFI bindings to NVMS Go Core
+- `crates/pheno-compose/` — High-level Rust driver wrapping nvms-ffi
+- `tools/byteport/` — Svelte-based infra tooling UI
+- `docs/adr/` — Architecture Decision Records
+- `docs/specs/` — Specifications
+- `docs/governance/` — Governance documents
+- `docs/audit/` — Audit scorecards
+- `.github/workflows/` — CI/CD pipelines
+
+## Quality Checks
+
+From the repository root:
+```bash
+# Go
+go vet ./crates/nanovms-core/...
+go test ./crates/nanovms-core/...
+
+# Rust
+cargo check --workspace
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+cargo fmt -- --check
+
+# Pre-commit
+pre-commit run --all-files
+```
+
+## CI / Workflow Guidance
+- Keep workflow action references pinned
+- Prefer Linux runners unless a workflow has a hard macOS requirement
+- Go vet + cargo check run on every PR
+- Full audit scorecard regenerated weekly
+
+## Related Documents
+- `README.md` — project overview and quick start
+- `CLAUDE.md` — Claude-specific repository guidance
+- Plan: `~/plans/2026-06-23-master-compute-infra-observability-dag-v1.md`
+
+---
+
+For broader policy, see the canonical sources referenced by the parent Claude files.

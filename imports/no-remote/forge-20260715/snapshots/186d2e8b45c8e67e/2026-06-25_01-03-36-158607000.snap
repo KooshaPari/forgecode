@@ -1,0 +1,6 @@
+$content = Get-Content -Path 'C:\Users\koosh\_wsm3d_audit\WSM3D_BACKUP_README.md' -Raw
+$bytes = [System.Text.Encoding]::UTF8.GetBytes($content)
+$base64 = [Convert]::ToBase64String($bytes)
+$body = '{"message":"backup: replace auto-generated README with recovery context","content":"' + $base64 + '","sha":"' + $sha + '"}'
+$body | Out-File -FilePath 'C:\Users\koosh\_wsm3d_audit\readme_payload.json' -Encoding ASCII -NoNewline
+Write-Host ('Payload size: ' + (Get-Item 'C:\Users\koosh\_wsm3d_audit\readme_payload.json').Length + ' bytes')

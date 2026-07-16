@@ -1,0 +1,156 @@
+{
+  "models": [
+    {
+      "slug": "Main",
+      "display_name": "Main (OmniRoute combo)",
+      "description": "OmniRoute Main combo: routes fill-first across MiniMax, Codex, Opencode-go/deepseek-v4-flash, and Free Combo. The model name \"Main\" is a literal alias OmniRoute resolves to the registered combo.",
+      "context_window": 512000,
+      "max_context_window": 512000,
+      "auto_compact_token_limit": null,
+      "reasoning_summary_format": "experimental",
+      "default_reasoning_summary": "none",
+      "supports_reasoning_summaries": false,
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "minimal_client_version": "0.0.0",
+      "supported_in_api": true,
+      "availability_nux": null,
+      "upgrade": null,
+      "priority": 10,
+      "base_instructions": "You are a coding assistant running in Codex CLI.\r\n\r\nYou will be given a task and must produce high-quality, runnable code with minimal commentary.\r\nPrefer the smallest change that solves the problem. Do not invent file paths, command output, or\r\nURLs. When a tool is available, use it rather than describing what you would do. Format your final\r\nanswer using markdown; use fenced code blocks for code and the appropriate language tag.\r\n\r\nWhen the user asks a question, answer it directly. When the user asks for a change, make the\r\nchange. When the user asks for a plan, give a plan, not code. Keep your reasoning internal unless\r\nasked to share it."
+    },
+    {
+      "slug": "minimax-m3",
+      "display_name": "minimax M3",
+      "description": "minimax-M3 via direct minimax upstream provider. Use the minimax model_provider for direct routing, or Main for combo routing.",
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "auto_compact_token_limit": null,
+      "reasoning_summary_format": "experimental",
+      "default_reasoning_summary": "none",
+      "supports_reasoning_summaries": false,
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "minimal_client_version": "0.0.0",
+      "supported_in_api": true,
+      "availability_nux": null,
+      "upgrade": null,
+      "priority": 20,
+      "base_instructions": "You are a coding assistant running in Codex CLI.\r\n\r\nYou will be given a task and must produce high-quality, runnable code with minimal commentary.\r\nPrefer the smallest change that solves the problem. Do not invent file paths, command output, or\r\nURLs. When a tool is available, use it rather than describing what you would do. Format your final\r\nanswer using markdown; use fenced code blocks for code and the appropriate language tag.\r\n\r\nWhen the user asks a question, answer it directly. When the user asks for a change, make the\r\nchange. When the user asks for a plan, give a plan, not code. Keep your reasoning internal unless\r\nasked to share it."
+    },
+    {
+      "slug": "gpt-5-codex",
+      "display_name": "GPT-5 Codex",
+      "description": "OpenAI gpt-5-codex. Used as a fallback alias when Codex 0.142.5 needs a recognized model name for metadata lookup.",
+      "context_window": 272000,
+      "max_context_window": 272000,
+      "auto_compact_token_limit": null,
+      "reasoning_summary_format": "experimental",
+      "default_reasoning_summary": "none",
+      "supports_reasoning_summaries": false,
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "minimal_client_version": "0.0.0",
+      "supported_in_api": true,
+      "availability_nux": null,
+      "upgrade": null,
+      "priority": 30,
+      "base_instructions": "You are a coding assistant running in Codex CLI.\r\n\r\nYou will be given a task and must produce high-quality, runnable code with minimal commentary.\r\nPrefer the smallest change that solves the problem. Do not invent file paths, command output, or\r\nURLs. When a tool is available, use it rather than describing what you would do. Format your final\r\nanswer using markdown; use fenced code blocks for code and the appropriate language tag.\r\n\r\nWhen the user asks a question, answer it directly. When the user asks for a change, make the\r\nchange. When the user asks for a plan, give a plan, not code. Keep your reasoning internal unless\r\nasked to share it."
+    },
+    {
+      "slug": "gpt-4o",
+      "display_name": "GPT-4o",
+      "description": "OpenAI gpt-4o. Recognized by Codex 0.142.5 bundled metadata.",
+      "context_window": 128000,
+      "max_context_window": 128000,
+      "auto_compact_token_limit": null,
+      "reasoning_summary_format": "experimental",
+      "default_reasoning_summary": "none",
+      "supports_reasoning_summaries": false,
+      "default_reasoning_level": "medium",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balances speed and reasoning depth for everyday tasks"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex problems"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Extra high reasoning depth for complex problems"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "minimal_client_version": "0.0.0",
+      "supported_in_api": true,
+      "availability_nux": null,
+      "upgrade": null,
+      "priority": 40,
+      "base_instructions": "You are a coding assistant running in Codex CLI.\r\n\r\nYou will be given a task and must produce high-quality, runnable code with minimal commentary.\r\nPrefer the smallest change that solves the problem. Do not invent file paths, command output, or\r\nURLs. When a tool is available, use it rather than describing what you would do. Format your final\r\nanswer using markdown; use fenced code blocks for code and the appropriate language tag.\r\n\r\nWhen the user asks a question, answer it directly. When the user asks for a change, make the\r\nchange. When the user asks for a plan, give a plan, not code. Keep your reasoning internal unless\r\nasked to share it."
+    }
+  ]
+}

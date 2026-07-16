@@ -1,0 +1,3 @@
+model = "minimax-m3"
+model_reasoning_effort = "medium"
+model_provider = "minimax"

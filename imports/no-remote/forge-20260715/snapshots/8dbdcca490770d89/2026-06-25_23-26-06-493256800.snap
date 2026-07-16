@@ -1,0 +1,29 @@
+import subprocess, sys
+TOKEN = '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'
+results = []
+
+def push(repo, branch):
+    safe = repo.replace('&','%26').replace(' ','%20')
+    url = f'https://KooshaPari:{TOKEN}@github.com/KooshaPari/{safe}.git'
+    r = subprocess.run(['git', '-C', f'C:\\Users\\koosh\\{repo}', 'push', url, f'HEAD:{branch}'],
+                       capture_output=True, text=True, timeout=120)
+    out = (r.stderr or r.stdout).strip().replace(TOKEN, '***').split('\n')[-1]
+    return f"{repo:40s} -> {branch:50s} {out[:80]}"
+
+for repo, branch in [
+    ('agileplus', 'wip/preserve-agileplus-brand-rename-20260605'),
+    ('phenotype-infra', 'master'),
+    ('phenotype-infra-ci-fix', 'master'),
+    ('BytePort', 'main'),
+    ('nanovms', 'main'),
+    ('PhenoCompose', 'main'),
+    ('PhenoObservability', 'fix/repoint-phenotype-error-core-phenoShared'),
+    ('phenotype-registry-pr172-check', 'feat/p6-thegent-closure-2026-06-21'),
+    ('HexaKit', 'main'),
+]:
+    try:
+        results.append(push(repo, branch))
+    except Exception as e:
+        results.append(f"{repo:40s} ERROR: {e}")
+
+print('\n'.join(results))

@@ -1,0 +1,84 @@
+# Find dirty git repos and report top 3 most-changed files per repo
+$ErrorActionPreference = 'SilentlyContinue'
+$home = 'C:\Users\koosh'
+
+# Candidate directories (filter out non-repo system folders)
+$exclude = @('anaconda3', 'AppData', 'Application Data', 'Contacts', 'Cookies',
+             'Desktop', 'Documents', 'Downloads', 'Favorites', 'iCloudPhotos',
+             'IdeaProjects', 'Library', 'Links', 'Local Settings', 'Music',
+             'My Documents', 'NetHood', 'node_modules', 'npm-cache', 'OneDrive',
+             'Pictures', 'PrintHood', 'Recent', 'Saved Games', 'Searches',
+             'SendTo', 'Start Menu', 'Templates', 'Videos', 'scoop',
+             'spicetify-cli', 'Creative Cloud Files*', 'unity*')
+
+$entries = Get-ChildItem -Path $home -Directory -Force |
+    Where-Object { $exclude -notcontains $_.Name -and $_.Name -notmatch '^_' } |
+    Sort-Object Name
+
+$dirty = @()
+foreach ($d in $entries) {
+    $gitDir = Join-Path $d.FullName '.git'
+    if (Test-Path $gitDir) {
+        Push-Location $d.FullName
+        $status = git status --porcelain 2>$null
+        if ($status) {
+            $dirty += [PSCustomObject]@{
+                Name = $d.Name
+                Path = $d.FullName
+                Files = $status.Count
+            }
+        }
+        Pop-Location
+    }
+}
+
+if ($dirty.Count -eq 0) {
+    Write-Host 'No dirty repos found.'
+    exit 0
+}
+
+Write-Host "Found $($dirty.Count) dirty repo(s):`n"
+
+$report = @()
+foreach ($r in ($dirty | Sort-Object Files -Descending)) {
+    Push-Location $r.Path
+    $stat = git diff --stat 2>$null
+    if (-not $stat) {
+        Pop-Location
+        continue
+    }
+    # Parse top entries by insertion count
+    $entries = $stat -split "`n" | Where-Object { $_ -match '\|' -and $_ -notmatch 'files? changed' } |
+        ForEach-Object {
+            if ($_ -match '^\s*(.+?)\s*\|\s*(\d+)\s*([+-]+)') {
+                $adds = ($matches[3] -replace '-','').Length
+                $dels = ($matches[3] -replace '\+','').Length
+                [PSCustomObject]@{
+                    File = $matches[1].Trim()
+                    Total = [int]$matches[2]
+                    Adds = $adds
+                    Dels = $dels
+                }
+            }
+        } | Sort-Object Total -Descending | Select-Object -First 3
+
+    $report += [PSCustomObject]@{
+        Repo = $r.Name
+        DirtyFiles = $r.Files
+        Top = $entries
+    }
+    Pop-Location
+}
+
+# Output formatted result
+foreach ($r in $report) {
+    Write-Host "## $($r.Repo) ($($r.DirtyFiles) dirty files)"
+    foreach ($f in $r.Top) {
+        Write-Host ("   - {0,-60} +{1} -{2}  (total {3})" -f $f.File, $f.Adds, $f.Dels, $f.Total)
+    }
+    Write-Host ""
+}
+
+# Also persist to JSON for downstream use
+$report | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 "$env:TEMP\dirty_repos.json"
+Write-Host "Saved JSON: $env:TEMP\dirty_repos.json"

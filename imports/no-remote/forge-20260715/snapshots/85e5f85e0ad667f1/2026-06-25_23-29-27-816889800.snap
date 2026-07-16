@@ -1,0 +1,228 @@
+/**
+ * TDD for PR-012 — `src/lib/observability/budget.ts` (15 unit tests).
+ *
+ * Covers:
+ *   - constructor validation (id, target)
+ *   - totalBudgetMinutes() = (1 - target) × window_days × 24 × 60
+ *   - recordMeasurement() advances consumed_minutes
+ *   - burnRate() over 1h / 6h / 24h / 72h
+ *   - isExhausted(), status(), remaining()
+ *   - rollover() resets the window
+ *   - snapshot round-trip via ErrorBudget.fromSnapshot()
+ *   - replay idempotency (recording an older measurement must not double-count)
+ *
+ * Run from the repo root:
+ *   node --import tsx --test tests/unit/observability/budget.test.ts
+ */
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  DEFAULT_WINDOW_DAYS,
+  ErrorBudget,
+  defaultSloDefinition,
+  type BurnRateWindow,
+  type ErrorRateSamples,
+} from "../../../src/lib/observability/budget.ts";
+
+const SAMPLE_SLO = defaultSloDefinition("chat-completion-availability", 0.999);
+// 28-day window × 24h × 60min × (1 - 0.999) = 28 × 24 × 60 × 0.001 = 40.32 min.
+
+const ONE_HOUR_MS = 60 * 60 * 1000;
+const WINDOW_START = 1_700_000_000_000;
+const CLOCK = () => WINDOW_START + 12 * ONE_HOUR_MS; // halfway through the budget
+
+function freshBudget(windowDays = 28): ErrorBudget {
+  return new ErrorBudget(
+    { id: SAMPLE_SLO.id, target: SAMPLE_SLO.target },
+    { windowDays, windowStart: WINDOW_START, now: CLOCK }
+  );
+}
+
+function samplesWithConstantErrorRate(
+  errorRate: number,
+  startMs: number,
+  count: number,
+  sampleHours = 1,
+): ErrorRateSamples {
+  const samples = Array.from({ length: count }, (_, i) => {
+    const s = startMs + i * sampleHours * 60 * 60 * 1000;
+    return {
+      start_ms: s,
+      end_ms: s + sampleHours * 60 * 60 * 1000,
+      error_rate: errorRate,
+    };
+  });
+  return { samples, sample_hours: sampleHours };
+}
+
+describe("budget: constructor + validation", () => {
+  it("computes totalBudgetMinutes as (1 - target) × window × 24 × 60", () => {
+    const budget = freshBudget();
+    // 0.001 × 28 × 24 × 60 = 40.32
+    assert.equal(budget.totalBudgetMinutes(), 40.32);
+    assert.equal(budget.window_days, DEFAULT_WINDOW_DAYS);
+  });
+
+  it("rejects an empty id", () => {
+    assert.throws(
+      () => new ErrorBudget({ id: "", target: 0.999 }, { windowStart: WINDOW_START }),
+      /definition\.id is required/,
+    );
+  });
+
+  it("rejects an out-of-range target", () => {
+    assert.throws(
+      () => new ErrorBudget({ id: "x", target: 1.5 }, { windowStart: WINDOW_START }),
+      /target must be in \(0, 1\]/,
+    );
+    assert.throws(
+      () => new ErrorBudget({ id: "x", target: 0 }, { windowStart: WINDOW_START }),
+      /target must be in \(0, 1\]/,
+    );
+  });
+
+  it("starts with consumed=0, remaining=total, status=healthy", () => {
+    const b = freshBudget();
+    assert.equal(b.consumedMinutes(), 0);
+    assert.equal(b.remaining(), 40.32);
+    assert.equal(b.isExhausted(), false);
+    assert.equal(b.status(), "healthy");
+  });
+});
+
+describe("budget: recordMeasurement", () => {
+  it("advances consumed_minutes proportional to (1 - sli) × gap", () => {
+    const b = freshBudget();
+    const measuredAt = WINDOW_START + 60 * 60 * 1000; // +1h
+    b.recordMeasurement({
+      slo_id: SAMPLE_SLO.id,
+      value: 0.99, // 1% error
+      measured_at: measuredAt,
+    });
+    // 1% × 60 minutes = 0.6 minutes consumed.
+    assert.equal(b.consumedMinutes(), 0.6);
+    assert.equal(b.remaining(), 40.32 - 0.6);
+    assert.equal(b.status(), "healthy");
+  });
+
+  it("escalates status to at_risk past 75% of budget", () => {
+    const b = freshBudget();
+    // 75% of 40.32 = 30.24; burn that many minutes by setting sli=0.5
+    // over 60.48 minutes (50% error × 60.48 min = 30.24).
+    const measuredAt = WINDOW_START + 60.48 * 60 * 1000;
+    b.recordMeasurement({
+      slo_id: SAMPLE_SLO.id,
+      value: 0.5,
+      measured_at: measuredAt,
+    });
+    assert.equal(b.consumedMinutes(), 30.24);
+    assert.equal(b.status(), "at_risk");
+  });
+
+  it("flips to exhausted once consumed >= total", () => {
+    const b = freshBudget();
+    // Burn the whole 40.32 min: 100% error × 40.32 min.
+    const measuredAt = WINDOW_START + 40.32 * 60 * 1000;
+    b.recordMeasurement({
+      slo_id: SAMPLE_SLO.id,
+      value: 0,
+      measured_at: measuredAt,
+    });
+    assert.equal(b.isExhausted(), true);
+    assert.equal(b.status(), "exhausted");
+    assert.equal(b.remaining(), 0);
+  });
+
+  it("rejects a slo_id mismatch", () => {
+    const b = freshBudget();
+    assert.throws(
+      () =>
+        b.recordMeasurement({
+          slo_id: "something-else",
+          value: 0.99,
+          measured_at: WINDOW_START + 1000,
+        }),
+      /slo_id mismatch/,
+    );
+  });
+});
+
+describe("budget: burnRate", () => {
+  it("returns 1.0 when the trailing window has the same error rate as (1 - target)", () => {
+    const b = freshBudget();
+    // 1% error over 1h, target 99.9% (allowed error 0.1%) → burn rate 10×.
+    const samples = samplesWithConstantErrorRate(
+      0.01,
+      CLOCK() - 60 * 60 * 1000,
+      1,
+    );
+    const rate = b.burnRate("1h", samples);
+    assert.equal(rate, 10);
+  });
+
+  it("returns 0 for an empty window (no samples)", () => {
+    const b = freshBudget();
+    const rate = b.burnRate("1h", { samples: [], sample_hours: 1 });
+    assert.equal(rate, 0);
+  });
+
+  it("computes the 1h burn rate", () => {
+  it("computes the 72h burn rate", () => {
+    const b = freshBudget();
+    const ref = CLOCK();
+    const samples = samplesWithConstantErrorRate(
+      0.2,
+      ref - 72 * 60 * 60 * 1000,
+      72,
+    );
+    const rate = b.burnRate("72h", samples);
+    // 20% / 0.1% = 200× burn
+    assert.equal(rate, 200);
+  });
+});
+describe("budget: rollover + snapshot", () => {
+  it("rolls the window forward and resets consumed_minutes", () => {
+    const b = freshBudget();
+    b.recordMeasurement({
+      slo_id: SAMPLE_SLO.id,
+      value: 0.5,
+      measured_at: WINDOW_START + 60 * 60 * 1000,
+    });
+    assert.ok(b.consumedMinutes() > 0);
+    const out = b.rollover();
+    assert.equal(out.previous_window_end_ms, WINDOW_START + 28 * 24 * 60 * 60 * 1000);
+    assert.equal(out.new_window_start_ms, WINDOW_START + 28 * 24 * 60 * 60 * 1000);
+    assert.equal(b.consumedMinutes(), 0);
+    assert.equal(b.status(), "healthy");
+  });
+
+  it("snapshot round-trips through fromSnapshot", () => {
+    const original = freshBudget();
+    original.recordBurnRates(
+      samplesWithConstantErrorRate(0.005, CLOCK() - 24 * 60 * 60 * 1000, 24),
+    );
+    const snap = original.snapshot();
+    const recovered = ErrorBudget.fromSnapshot(snap);
+    const recoveredSnap = recovered.snapshot();
+    // The SLO id and consumed minutes are preserved exactly.
+    assert.equal(recoveredSnap.slo_id, snap.slo_id);
+    assert.equal(recoveredSnap.consumed_minutes, snap.consumed_minutes);
+    assert.equal(recoveredSnap.window_start_ms, snap.window_start_ms);
+    assert.equal(recoveredSnap.window_end_ms, snap.window_end_ms);
+  });
+});
+
+describe("budget: replay idempotency", () => {
+  it("does not double-count when re-recording an older measurement", () => {
+    const b = freshBudget();
+    const t1 = WINDOW_START + 60 * 60 * 1000;
+    const t0 = WINDOW_START;
+    b.recordMeasurement({ slo_id: SAMPLE_SLO.id, value: 0.5, measured_at: t1 });
+    const after = b.consumedMinutes();
+    // Replay an earlier measurement (older than _measured_at) — should NOT
+    // increase consumed because gap = max(0, t0 - t1) = 0.
+    b.recordMeasurement({ slo_id: SAMPLE_SLO.id, value: 0.5, measured_at: t0 });
+    assert.equal(b.consumedMinutes(), after);
+  });
+});

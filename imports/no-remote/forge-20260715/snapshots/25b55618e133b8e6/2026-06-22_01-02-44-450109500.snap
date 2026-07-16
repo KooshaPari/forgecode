@@ -1,0 +1,32 @@
+"""Remove PhenoProc phantom entry from active_repos.txt (tab-separated single line)."""
+import sys
+from pathlib import Path
+
+p = Path(r"C:\Users\koosh\active_repos.txt")
+content = p.read_text(encoding="utf-8")
+
+# Try various separators: tabs (primary), pipe, comma
+separators = ["\t", " | ", ", ", "  ", " "]
+original_len = len(content)
+removed = None
+
+for sep in separators:
+    if sep in content:
+        # Split on separator, find entry containing 'PhenoProc' as exact token
+        tokens = content.split(sep)
+        new_tokens = [t for t in tokens if t.strip() != "PhenoProc"]
+        if len(new_tokens) < len(tokens):
+            new_content = sep.join(new_tokens)
+            p.write_text(new_content, encoding="utf-8")
+            removed = (sep, len(tokens), len(new_tokens), original_len, len(new_content))
+            break
+
+if removed:
+    sep, before, after, old_len, new_len = removed
+    print(f"REMOVED PhenoProc using separator={repr(sep)}")
+    print(f"tokens: {before} -> {after}")
+    print(f"bytes:  {old_len} -> {new_len}")
+else:
+    print("ERROR: PhenoProc not found with any separator")
+    # Dump first 500 chars for diagnosis
+    print(repr(content[:500]))

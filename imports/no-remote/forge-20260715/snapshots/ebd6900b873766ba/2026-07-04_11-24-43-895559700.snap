@@ -1,0 +1,3 @@
+cargo check --bins --tests --locked > C:\Users\koosh\_benchora_check.log 2>&1
+"exit=$LASTEXITCODE"
+Get-Content C:\Users\koosh\_benchora_check.log -Tail 30

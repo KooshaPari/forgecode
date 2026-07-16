@@ -1,0 +1,483 @@
+/**
+ * DAG Renderer — Vanilla JS interactive directed acyclic graph renderer.
+ *
+ * Draws an SVG graph from a JSON dag-data definition with:
+ *  - Automatic layered layout (longest-path layering)
+ *  - Drag-to-pan and wheel-to-zoom
+ *  - Click-to-select nodes
+ *  - Status-based colour coding
+ */
+
+(function () {
+  "use strict";
+
+  // ── constants ──────────────────────────────────────────────────────────────
+  const NODE_W = 180;
+  const NODE_H = 48;
+  const LAYER_GAP = 100;
+  const NODE_GAP = 24;
+  const PAD = 60;
+  const ARROW_SIZE = 8;
+
+  const STATUS_COLORS = {
+    completed: { fill: "#16a34a", stroke: "#15803d", text: "#fff", bg: "#052e16" },
+    "in-progress": { fill: "#2563eb", stroke: "#1d4ed8", text: "#fff", bg: "#172554" },
+    pending: { fill: "#6b7280", stroke: "#4b5563", text: "#fff", bg: "#1f2937" },
+    failed: { fill: "#dc2626", stroke: "#b91c1c", text: "#fff", bg: "#450a0a" },
+    blocked: { fill: "#d97706", stroke: "#b45309", text: "#fff", bg: "#451a03" },
+  };
+  const DEFAULT_STATUS = "pending";
+
+  // ── state ───────────────────────────────────────────────────────────────────
+  let svg, gMain, gEdges, gNodes;
+  let panX = 0, panY = 0;
+  let scale = 1;
+  let isPanning = false;
+  let panStart = { x: 0, y: 0 };
+  let selectedId = null;
+  let nodeRects = new Map(); // id -> {cx, cy, x, y, w, h}
+
+  // ── dag helpers ─────────────────────────────────────────────────────────────
+
+  function topoSort(nodes, edges) {
+    const inDeg = new Map();
+    const adj = new Map();
+    const idSet = new Set(nodes.map((n) => n.id));
+
+    for (const id of idSet) {
+      inDeg.set(id, 0);
+      adj.set(id, []);
+    }
+    for (const e of edges) {
+      if (!idSet.has(e.from) || !idSet.has(e.to)) continue;
+      adj.get(e.from).push(e.to);
+      inDeg.set(e.to, (inDeg.get(e.to) || 0) + 1);
+    }
+
+    const queue = [];
+    for (const [id, deg] of inDeg) {
+      if (deg === 0) queue.push(id);
+    }
+
+    const order = [];
+    while (queue.length) {
+      const id = queue.shift();
+      order.push(id);
+      for (const n of adj.get(id) || []) {
+        const d = inDeg.get(n) - 1;
+        inDeg.set(n, d);
+        if (d === 0) queue.push(n);
+      }
+    }
+    return order;
+  }
+
+  function assignLayers(nodes, edges) {
+    const order = topoSort(nodes, edges);
+    const layer = new Map();
+    const adj = new Map();
+    const idSet = new Set(nodes.map((n) => n.id));
+
+    for (const id of idSet) layer.set(id, 0);
+    for (const e of edges) {
+      if (!idSet.has(e.from) || !idSet.has(e.to)) continue;
+      if (!adj.has(e.from)) adj.set(e.from, []);
+      adj.get(e.from).push(e.to);
+    }
+
+    // longest-path layering
+    for (const id of order) {
+      const l = layer.get(id) || 0;
+      for (const n of adj.get(id) || []) {
+        layer.set(n, Math.max(layer.get(n) || 0, l + 1));
+      }
+    }
+
+    // group nodes by layer
+    const byLayer = new Map();
+    for (const n of nodes) {
+      const l = layer.get(n.id) || 0;
+      if (!byLayer.has(l)) byLayer.set(l, []);
+      byLayer.get(l).push(n);
+    }
+    return { byLayer, layer };
+  }
+
+  function computePositions(nodes, edges) {
+    const { byLayer, layer } = assignLayers(nodes, edges);
+    const positions = new Map();
+    const sortedLayers = [...byLayer.keys()].sort((a, b) => a - b);
+
+    let maxW = 0;
+    for (const [l, ns] of byLayer) {
+      const totalW = ns.length * NODE_W + (ns.length - 1) * NODE_GAP;
+      if (totalW > maxW) maxW = totalW;
+    }
+
+    for (const l of sortedLayers) {
+      const ns = byLayer.get(l);
+      const totalW = ns.length * NODE_W + (ns.length - 1) * NODE_GAP;
+      const startX = (maxW - totalW) / 2;
+
+      ns.forEach((n, i) => {
+        const x = startX + i * (NODE_W + NODE_GAP);
+        const y = l * (NODE_H + LAYER_GAP);
+        positions.set(n.id, { x: PAD + x, y: PAD + y, cx: PAD + x + NODE_W / 2, cy: PAD + y + NODE_H / 2 });
+      });
+    }
+    return positions;
+  }
+
+  function routeEdge(x1, y1, x2, y2) {
+    const xOff = Math.abs(x2 - x1) / 2;
+    const cp1x = x1;
+    const cp1y = y1 + LAYER_GAP / 2;
+    const cp2x = x2;
+    const cp2y = y2 - LAYER_GAP / 2;
+    return `M ${x1} ${y1} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${x2} ${y2}`;
+  }
+
+  // ── render ──────────────────────────────────────────────────────────────────
+
+  function render(dagData, container) {
+    // create SVG
+    svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", "100%");
+    svg.setAttribute("height", "100%");
+    svg.style.display = "block";
+    svg.style.cursor = "grab";
+    container.innerHTML = "";
+    container.appendChild(svg);
+
+    // defs
+    const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+    const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+    marker.setAttribute("id", "dag-arrow");
+    marker.setAttribute("viewBox", "0 0 10 10");
+    marker.setAttribute("refX", "10");
+    marker.setAttribute("refY", "5");
+    marker.setAttribute("markerWidth", ARROW_SIZE);
+    marker.setAttribute("markerHeight", ARROW_SIZE);
+    marker.setAttribute("orient", "auto-start-reverse");
+    const arrowPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    arrowPath.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+    arrowPath.setAttribute("fill", "#4b5563");
+    marker.appendChild(arrowPath);
+    defs.appendChild(marker);
+    svg.appendChild(defs);
+
+    // main group (pan/zoom target)
+    gMain = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    gEdges = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    gNodes = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    gMain.appendChild(gEdges);
+    gMain.appendChild(gNodes);
+    svg.appendChild(gMain);
+
+    // compute layout
+    const pos = computePositions(dagData.nodes, dagData.edges);
+    nodeRects = pos;
+
+    // draw edges
+    for (const e of dagData.edges) {
+      const from = pos.get(e.from);
+      const to = pos.get(e.to);
+      if (!from || !to) continue;
+
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      const d = routeEdge(from.cx, from.y + NODE_H, to.cx, to.y);
+      path.setAttribute("d", d);
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", "#4b5563");
+      path.setAttribute("stroke-width", "2");
+      path.setAttribute("marker-end", "url(#dag-arrow)");
+      path.setAttribute("data-from", e.from);
+      path.setAttribute("data-to", e.to);
+      gEdges.appendChild(path);
+    }
+
+    // draw nodes
+    for (const n of dagData.nodes) {
+      const p = pos.get(n.id);
+      if (!p) continue;
+      const st = STATUS_COLORS[n.status] || STATUS_COLORS[DEFAULT_STATUS];
+
+      const grp = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      grp.setAttribute("data-id", n.id);
+      grp.style.cursor = "pointer";
+
+      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("x", p.x);
+      rect.setAttribute("y", p.y);
+      rect.setAttribute("width", NODE_W);
+      rect.setAttribute("height", NODE_H);
+      rect.setAttribute("rx", "6");
+      rect.setAttribute("fill", st.bg);
+      rect.setAttribute("stroke", st.stroke);
+      rect.setAttribute("stroke-width", "2");
+      rect.classList.add("dag-node-rect");
+      grp.appendChild(rect);
+
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.setAttribute("x", p.cx);
+      text.setAttribute("y", p.cy + 1);
+      text.setAttribute("text-anchor", "middle");
+      text.setAttribute("dominant-baseline", "middle");
+      text.setAttribute("fill", st.text);
+      text.setAttribute("font-size", "12");
+      text.setAttribute("font-family", "ui-monospace, SFMono-Regular, monospace");
+      text.textContent = n.label;
+      grp.appendChild(text);
+
+      // status badge
+      const badge = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      badge.setAttribute("cx", p.x + 12);
+      badge.setAttribute("cy", p.y + NODE_H / 2);
+      badge.setAttribute("r", "5");
+      badge.setAttribute("fill", st.fill);
+      badge.classList.add("dag-status-badge");
+      grp.appendChild(badge);
+
+      // last-updated timestamp (hidden by default; shown in live mode)
+      const tsText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      tsText.setAttribute("x", p.cx);
+      tsText.setAttribute("y", p.y + NODE_H + 14);
+      tsText.setAttribute("text-anchor", "middle");
+      tsText.setAttribute("fill", "#6b7280");
+      tsText.setAttribute("font-size", "9");
+      tsText.setAttribute("font-family", "ui-monospace, SFMono-Regular, monospace");
+      tsText.textContent = "";
+      tsText.classList.add("dag-node-timestamp");
+      tsText.style.display = "none";
+      grp.appendChild(tsText);
+
+      grp.addEventListener("click", () => selectNode(n.id, dagData));
+      gNodes.appendChild(grp);
+    }
+
+    applyTransform();
+
+    // ── pan handlers ──
+    svg.addEventListener("mousedown", (ev) => {
+      if (ev.target !== svg && ev.target.tagName !== "svg") return;
+      isPanning = true;
+      panStart = { x: ev.clientX - panX, y: ev.clientY - panY };
+      svg.style.cursor = "grabbing";
+    });
+
+    window.addEventListener("mousemove", (ev) => {
+      if (!isPanning) return;
+      panX = ev.clientX - panStart.x;
+      panY = ev.clientY - panStart.y;
+      applyTransform();
+    });
+
+    window.addEventListener("mouseup", () => {
+      if (isPanning) {
+        isPanning = false;
+        svg.style.cursor = "grab";
+      }
+    });
+
+    // ── zoom handlers ──
+    svg.addEventListener("wheel", (ev) => {
+      ev.preventDefault();
+      const delta = ev.deltaY > 0 ? 0.92 : 1.08;
+      scale = Math.max(0.2, Math.min(5, scale * delta));
+      applyTransform();
+    }, { passive: false });
+
+    // tap info
+    updateInfo(null, dagData);
+  }
+
+  function applyTransform() {
+    gMain.setAttribute("transform", `translate(${panX},${panY}) scale(${scale})`);
+  }
+
+  function selectNode(id, dagData) {
+    selectedId = id;
+    const allRects = gNodes.querySelectorAll(".dag-node-rect");
+    allRects.forEach((r) => {
+      const g = r.closest("g") || r.parentElement;
+      const nid = g.getAttribute("data-id");
+      const n = dagData.nodes.find((x) => x.id === nid);
+      const st = STATUS_COLORS[n?.status] || STATUS_COLORS[DEFAULT_STATUS];
+      if (nid === id) {
+        r.setAttribute("stroke", "#fbbf24");
+        r.setAttribute("stroke-width", "3");
+      } else {
+        r.setAttribute("stroke", st.stroke);
+        r.setAttribute("stroke-width", "2");
+      }
+    });
+    updateInfo(id, dagData);
+  }
+
+  function updateInfo(selectedId, dagData) {
+    const info = document.getElementById("dag-info");
+    if (!info) return;
+    if (!selectedId) {
+      info.innerHTML = `<span class="text-[var(--muted)] text-sm">Click a node to see details</span>`;
+      return;
+    }
+    const n = dagData.nodes.find((x) => x.id === selectedId);
+    if (!n) return;
+    const deps = dagData.edges.filter((e) => e.to === n.id).map((e) => {
+      const src = dagData.nodes.find((x) => x.id === e.from);
+      return src ? src.label : e.from;
+    });
+    const dependents = dagData.edges.filter((e) => e.from === n.id).map((e) => {
+      const tgt = dagData.nodes.find((x) => x.id === e.to);
+      return tgt ? tgt.label : e.to;
+    });
+    info.innerHTML = `
+    // Get last-updated timestamp from window.DagStatus if available
+    let tsHtml = "";
+    if (window.DagStatus) {
+      const meta = window.DagStatus.getNodeMeta();
+      const nodeMeta = meta[id];
+      if (nodeMeta && nodeMeta.lastUpdated) {
+        tsHtml = `<p class="text-xs text-[var(--muted)] mt-1">Last updated: ${window.DagStatus.formatRelativeTime(nodeMeta.lastUpdated)}</p>`;
+      }
+    }
+
+    const updatedInfo = `
+      <div class="flex items-center gap-2 mb-1">
+        <span class="font-bold text-sm">${n.label}</span>
+        <span class="mono text-xs px-2 py-0.5 rounded" style="background:${(STATUS_COLORS[n.status] || STATUS_COLORS[DEFAULT_STATUS]).fill};color:#fff">${n.status}</span>
+      </div>
+      ${deps.length ? `<p class="text-xs text-[var(--muted)] mt-1">Depends on: ${deps.join(", ")}</p>` : `<p class="text-xs text-[var(--muted)] mt-1">No dependencies (root node)</p>`}
+      ${dependents.length ? `<p class="text-xs text-[var(--muted)] mt-1">Required by: ${dependents.join(", ")}</p>` : `<p class="text-xs text-[var(--muted)] mt-1">No dependents (leaf node)</p>`}
+      ${tsHtml}
+    `;
+
+  /**
+   * Update a single node's status in the rendered SVG.
+   * Does NOT re-layout; only updates colours, badge, and label.
+   * @param {string} id
+   * @param {string} newStatus
+   * @param {object} dagData  The source data (mutated in place)
+   */
+  function updateNodeStatus(id, newStatus, dagData) {
+    const n = dagData.nodes.find((x) => x.id === id);
+    if (!n) return;
+    n.status = newStatus;
+
+    const nodeEl = gNodes.querySelector(`g[data-id="${id}"]`);
+    if (!nodeEl) return;
+
+    const st = STATUS_COLORS[newStatus] || STATUS_COLORS[DEFAULT_STATUS];
+    const rect = nodeEl.querySelector(".dag-node-rect");
+    const badge = nodeEl.querySelector(".dag-status-badge");
+
+    if (rect) {
+      rect.setAttribute("fill", st.bg);
+      rect.setAttribute("stroke", st.stroke);
+    }
+    if (badge) {
+      badge.setAttribute("fill", st.fill);
+    }
+
+    // Re-highlight selection if this node is selected
+    if (selectedId === id) {
+      if (rect) {
+        rect.setAttribute("stroke", "#fbbf24");
+        rect.setAttribute("stroke-width", "3");
+      }
+    }
+
+    updateInfo(selectedId, dagData);
+  }
+
+  /**
+   * Update the "last updated" timestamp text element for a node.
+   * @param {string} id
+   * @param {string} formattedTime  Human-readable timestamp string
+   */
+  function updateNodeTimestamp(id, formattedTime) {
+    const nodeEl = gNodes.querySelector(`g[data-id="${id}"]`);
+    if (!nodeEl) return;
+    const tsEl = nodeEl.querySelector(".dag-node-timestamp");
+    if (tsEl) {
+      tsEl.textContent = formattedTime;
+    }
+  }
+
+  function getStatusSummary(dagData) {
+    const counts = { completed: 0, "in-progress": 0, pending: 0, failed: 0, blocked: 0 };
+    for (const n of dagData.nodes) {
+      counts[n.status] = (counts[n.status] || 0) + 1;
+    }
+    return counts;
+  }
+
+  // ── filter helpers ──────────────────────────────────────────────────────────
+
+  function getFilterOptions(dagData) {
+    const repoSet = new Set();
+    const epicSet = new Set();
+    for (const n of dagData.nodes) {
+      if (n.repo) repoSet.add(n.repo);
+      if (n.epic) epicSet.add(n.epic);
+    }
+    return {
+      repos: [...repoSet].sort(),
+      epics: [...epicSet].sort(),
+    };
+  }
+
+  function filterNodes(dagData, filters) {
+    let visibleIds = new Set(dagData.nodes.map((n) => n.id));
+
+    if (filters.repo) {
+      const matching = new Set(
+        dagData.nodes.filter((n) => n.repo === filters.repo).map((n) => n.id)
+      );
+      visibleIds = new Set([...visibleIds].filter((id) => matching.has(id)));
+    }
+    if (filters.epic) {
+      const matching = new Set(
+        dagData.nodes.filter((n) => n.epic === filters.epic).map((n) => n.id)
+      );
+      visibleIds = new Set([...visibleIds].filter((id) => matching.has(id)));
+    }
+
+    const nodes = dagData.nodes.filter((n) => visibleIds.has(n.id));
+    const visibleSet = new Set(nodes.map((n) => n.id));
+    const edges = dagData.edges.filter(
+      (e) => visibleSet.has(e.from) && visibleSet.has(e.to)
+    );
+
+    const highlightedIds = filters.search
+      ? new Set(
+          dagData.nodes
+            .filter((n) =>
+              n.label.toLowerCase().includes(filters.search.toLowerCase())
+            )
+            .map((n) => n.id)
+        )
+      : new Set();
+
+    return { nodes, edges, visibleIds, highlightedIds };
+  }
+
+  function countActiveFilters(filters) {
+    let count = 0;
+    if (filters.repo) count++;
+    if (filters.epic) count++;
+    if (filters.search && filters.search.trim()) count++;
+    return count;
+  }
+
+  // ── public api ──────────────────────────────────────────────────────────────
+  window.DagRenderer = {
+    render,
+    updateNodeStatus,
+    updateNodeTimestamp,
+    getStatusSummary,
+    getFilterOptions,
+    filterNodes,
+    countActiveFilters,
+  };
+})();

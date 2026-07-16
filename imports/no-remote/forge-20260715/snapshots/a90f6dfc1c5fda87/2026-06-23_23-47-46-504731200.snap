@@ -1,0 +1,12 @@
+import subprocess, re
+out = subprocess.check_output(['cargo','test','--workspace'], cwd=r'C:\Users\koosh\substrate', stderr=subprocess.STDOUT).decode('utf-8', errors='replace')
+lines = [l for l in out.splitlines() if 'test result:' in l]
+total_pass = 0
+total_fail = 0
+crates = []
+for l in lines:
+    m = re.search(r'(\d+) passed', l)
+    f = re.search(r'(\d+) failed', l)
+    if m: total_pass += int(m.group(1))
+    if f: total_fail += int(f.group(1))
+print(f"workspace: {total_pass} passed, {total_fail} failed, {len(lines)} test-binary runs")

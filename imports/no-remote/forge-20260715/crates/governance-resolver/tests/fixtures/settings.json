@@ -1,0 +1,4 @@
+{
+    "governance_version": 1,
+    "env": {"FOO": "bar"}
+}

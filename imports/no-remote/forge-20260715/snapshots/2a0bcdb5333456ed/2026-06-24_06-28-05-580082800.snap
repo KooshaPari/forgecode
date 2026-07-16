@@ -1,0 +1,96 @@
+/// Rust FFI bindings for KodeVibeGo Go core.
+///
+/// This is the bridge layer for Go→Rust interop within phenotype-infra.
+/// Phase 1: FFI crate skeleton + C ABI boundary types.
+/// Phase 2: Compile Go core as C archive, link via cc crate.
+/// Phase 3: Pure Rust equivalent of Go analysis engine.
+
+pub mod ffi {
+    use std::ffi::{CStr, CString};
+    use std::os::raw::c_char;
+
+    /// Invoke a Go analysis function via C ABI.
+    /// Returns JSON-formatted analysis result.
+    pub unsafe fn analyze(source: &str) -> Result<String, String> {
+        let c_source = CString::new(source).map_err(|e| format!("CString error: {}", e))?;
+        let c_result = go_analyze(c_source.as_ptr());
+        if c_result.is_null() {
+            return Err("go_analyze returned null".into());
+        }
+        let result = CStr::from_ptr(c_result)
+            .to_str()
+            .map_err(|e| format!("UTF-8 error: {}", e))?
+            .to_owned();
+        // Free the Go-allocated string
+        go_free_string(c_result);
+        Ok(result)
+    }
+
+    extern "C" {
+        fn go_analyze(source: *const c_char) -> *mut c_char;
+        fn go_free_string(s: *mut c_char);
+    }
+}
+
+/// Go analysis types — mirrors KodeVibeGo's internal module.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct AnalysisResult {
+    pub issues: Vec<Issue>,
+    pub stats: AnalysisStats,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct Issue {
+    pub severity: String,
+    pub file: String,
+    pub line: u32,
+    pub message: String,
+    pub rule_id: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct AnalysisStats {
+    pub files_analyzed: u32,
+    pub total_issues: u32,
+    pub duration_ms: u64,
+}
+
+impl AnalysisResult {
+    pub fn empty() -> Self {
+        Self {
+            issues: vec![],
+            stats: AnalysisStats {
+                files_analyzed: 0,
+                total_issues: 0,
+                duration_ms: 0,
+            },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_analysis_result_serde() {
+        let result = AnalysisResult {
+            issues: vec![Issue {
+                severity: "error".into(),
+                file: "src/main.go".into(),
+                line: 42,
+                message: "unused variable".into(),
+                rule_id: Some("no-unused".into()),
+            }],
+            stats: AnalysisStats {
+                files_analyzed: 1,
+                total_issues: 1,
+                duration_ms: 12,
+            },
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: AnalysisResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.issues.len(), 1);
+        assert_eq!(back.stats.files_analyzed, 1);
+    }
+}

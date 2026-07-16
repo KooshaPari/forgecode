@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Strong noise filter on nippon search output - v2."""
+import os
+import sys
+from collections import defaultdict
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+# Self-tooling noise: skip files that are our own outputs.
+def is_self_tooling(path):
+    pl = path.lower()
+    if "\\.codex\\logs_" in pl and ".sqlite" in pl:
+        return True
+    if "\\.codex\\sessions\\" in pl:
+        return True
+    if "\\.codex\\cache\\" in pl and ".sqlite" in pl:
+        return True
+    return False
+
+# A line that *contains* a self-tooling nested path is also noise - it's an echo.
+def is_self_referential_line(content):
+    cl = content.lower()
+    return ("_nippon_search.out:" in cl or
+            "_nippon_filter.out:" in cl or
+            "_nippon_summarize.out:" in cl or
+            "_nippon_toplevel.txt:" in cl)
+
+with open(r"C:\Users\koosh\_nippon_search.out", "r", encoding="utf-8", errors="replace") as f:
+    raw_lines = f.read().splitlines()
+
+file_hits = defaultdict(list)
+total_lines = 0
+self_path = 0
+self_ref = 0
+for ln in raw_lines:
+    if not ln or ln.startswith("#"):
+        continue
+    parts = ln.rsplit(":", 2)
+    if len(parts) != 3:
+        continue
+    path, lineno_s, content = parts
+    try:
+        lineno = int(lineno_s)
+    except ValueError:
+        continue
+    total_lines += 1
+    if is_self_tooling(path):
+        self_path += 1
+        continue
+    if is_self_referential_line(content):
+        self_ref += 1
+        continue
+    file_hits[path].append((lineno, content))
+
+print(f"# Raw hits: {total_lines}")
+print(f"# Self-tooling path filtered: {self_path}")
+print(f"# Self-referential line filtered: {self_ref}")
+print(f"# Real hits: {sum(len(v) for v in file_hits.values())} across {len(file_hits)} files")
+print()
+print("# === Unique files (real hits only), sorted by hit count desc ===")
+for path in sorted(file_hits.keys(), key=lambda p: (-len(file_hits[p]), p.lower())):
+    cnt = len(file_hits[path])
+    lines = file_hits[path]
+    if cnt == 1:
+        print(f"  [{cnt}] {path}:{lines[0][0]}: {lines[0][1][:300]}")
+    else:
+        ls = ','.join(str(x[0]) for x in lines[:10])
+        print(f"  [{cnt}] {path}  lines=[{ls}{' ...' if cnt>10 else ''}]")

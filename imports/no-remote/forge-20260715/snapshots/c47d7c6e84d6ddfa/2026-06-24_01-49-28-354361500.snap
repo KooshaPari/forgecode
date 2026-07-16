@@ -1,0 +1,29 @@
+## Root cause
+
+The account's hosted-runner pool rejects jobs pinned to `ubuntu-24.04` at dispatch time. Affected jobs fail in ~2 seconds with an **empty log and zero steps executed**, which masks the real cause in the GitHub Actions UI.
+
+Green sibling repos in the same account / pool use `ubuntu-latest` (the floating alias), which dispatches successfully. The fix is a mechanical swap.
+
+## Change
+
+Exact string replacement in two workflow files:
+
+- `.github/workflows/sbom.yml` (line 23)
+- `.github/workflows/trufflehog.yml` (line 18)
+
+```diff
+-    runs-on: ubuntu-24.04
++    runs-on: ubuntu-latest
+```
+
+No other lines touched, no files deleted, no dependency changes.
+
+## Verification
+
+- `grep -r "ubuntu-24.04" .github/workflows/` returns nothing.
+- Both modified YAML files parse cleanly via `python -c "import yaml; yaml.safe_load(open('<file>'))"`.
+- Diff against `main` is `2 files changed, 2 insertions(+), 2 deletions(-)` — exactly the runner-line swap.
+
+## Risk
+
+Low. `ubuntu-latest` is the floating alias GitHub recommends and is what the green sibling repos use; it currently resolves to an Ubuntu LTS image that is a drop-in for everything these two workflows do (checkout, Rust toolchain + cargo-cyclonedx for SBOM; checkout + TruffleHog OSS for secrets scanning).

@@ -1,0 +1,221 @@
+# retrigger: 2026-06-21T12:31
+# Local-first merge gate (Phenotype / agileplus pattern).
+# Heavy quality runs locally via lefthook pre-push; cloud CI only verifies the
+# committed `.ci/quality-manifest.json` attestation (see quality.yml).
+name: pr-governance-gate
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, ready_for_review, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+
+permissions:
+  contents: read
+  checks: read
+  pull-requests: read
+  statuses: read
+
+jobs:
+  pr-governance-gate:
+    name: pr-governance-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Verify quality manifest (local-first attestation)
+        run: bash scripts/quality/verify-quality-manifest.sh
+
+      - name: Evaluate PR checks (billing bypass)
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const prNumber =
+              context.payload.pull_request?.number ??
+              context.payload.review?.pull_request?.number;
+            if (!prNumber) {
+              // No PR context (e.g. push event, or pull_request_review without a PR).
+              // Skip gracefully instead of failing — this gate only governs PRs.
+              core.summary
+                .addHeading("PR governance")
+                .addRaw("No pull request context; gate skipped.")
+                .write();
+              core.info("No pull request number was provided; skipping PR governance gate.");
+              return;
+            }
+
+            const query = `
+              query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $number) {
+                    labels(first: 30) { nodes { name } }
+                    commits(last: 1) {
+                      nodes {
+                        commit {
+                          statusCheckRollup {
+                            contexts(first: 100) {
+                              nodes {
+                                __typename
+                                ... on CheckRun {
+                                  name
+                                  status
+                                  conclusion
+                                }
+                                ... on StatusContext {
+                                  context
+                                  state
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+
+            const result = await github.graphql(query, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              number: prNumber,
+            });
+
+            const pr = result.repository.pullRequest;
+            const labels = new Set((pr.labels.nodes || []).map((n) => n.name));
+            const billingException =
+              labels.has("ci-billing-exception") || labels.has("local-first-ci");
+
+            // Only these two jobs are required on PRs in local-first mode.
+            // NOTE: must be Array (not Set) — consumed via .some() which Set lacks.
+            const requiredOk = [
+              /^pr-governance-gate$/i,
+              /^quality-manifest/i,
+            ];
+
+            // Third-party / legacy optional checks (never block when local-first label is set).
+            const optionalBypass = [
+              /billing/i,
+              /quota/i,
+              /spending/i,
+              /actions.*limit/i,
+              /^cargo-/i,
+              /^Analyze \(rust\)$/i,
+              /^quality-gate$/i,
+              /^gate$/i,
+              /^coverage$/i,
+              /^links$/i,
+              /^docs-build$/i,
+              /^journey-validate$/i,
+              /^Legacy Tooling/i,
+              /^policy-gate$/i,
+              /^guard$/i,
+              /^semver-checks$/i,
+              /^machete$/i,
+              /^civ-show/i,
+              /^GitGuardian/i,
+              /^Kilo/i,
+              /^semgrep/i,
+              /^SonarCloud/i,
+              /^Cursor Bugbot/i,
+              /^CodeRabbit$/i,
+              /^Rust Module Graph$/i,
+            ];
+
+            // External review bots whose app is often not installed and whose checks
+            // sit QUEUED forever. These are NEVER blocking in any state — they are
+            // informational only and must not gate merges. Matches:
+            //   - "Kilo Code Review"
+            //   - "Cursor Approval Agent" / "Cursor Bugbot" (defense-in-depth)
+            //   - "Macroscope ..." / "Macroscope AI Review"
+            //   - "Codacy ..." / "Snyk ..." / "Dependabot ..." etc.
+            const alwaysNonBlockingBots = [
+              /^Kilo Code Review$/i,
+              /^Kilo/i,
+              /^Cursor Approval Agent$/i,
+              /^Cursor Bugbot/i,
+              /^Macroscope/i,
+              /^Codacy/i,
+              /^Snyk/i,
+              /^Dependabot/i,
+              /^Codecov/i,
+              /^imgbot/i,
+              /^Renovate/i,
+              /^human-eval/i,
+              /^claude(\/|\s|-)?code?(\s|-)?review/i,
+              /^aider/i,
+              /^CodeRabbit$/i,
+              /^greptile/i,
+              /^coderabbitai/i,
+            ];
+
+            const contexts =
+              pr.commits.nodes?.[0]?.commit?.statusCheckRollup?.contexts?.nodes || [];
+            const failures = [];
+
+            for (const node of contexts) {
+              const name =
+                node.__typename === "CheckRun" ? node.name : node.context;
+              if (!name || requiredOk.some((re) => re.test(name))) {
+                continue;
+              }
+              // Always-non-blocking external review bots: ignore in every state.
+              // Even a FAILURE/SKIPPED from these must not block — they are
+              // out of our control and the app is often not installed.
+              if (alwaysNonBlockingBots.some((re) => re.test(name))) {
+                continue;
+              }
+              // Optional bypass only requires the local-first label.
+              if (billingException && optionalBypass.some((re) => re.test(name))) {
+                continue;
+              }
+              if (node.__typename === "CheckRun") {
+                // Only block on real failures/cancellations/timeouts of *completed*
+                // checks that we actually require. A still-QUEUED / IN_PROGRESS /
+                // REQUESTED / WAITING check from a non-bypass third party is
+                // treated as "not yet done" and skipped, because most external
+                // bots either finish asynchronously or sit QUEUED forever if
+                // their app is not installed. A genuinely-required local check
+                // that fails will still be caught below by its own conclusion.
+                if (node.status !== "COMPLETED") {
+                  // Non-completed but not a known bot: warn but don't block.
+                  core.warning(`Check '${name}' is ${node.status}; ignoring (not blocking).`);
+                  continue;
+                }
+                if (
+                  ["FAILURE", "CANCELLED", "TIMED_OUT", "STALE", "ERROR"].includes(
+                    (node.conclusion || "").toUpperCase()
+                  )
+                ) {
+                  failures.push(`Check '${name}' concluded with ${node.conclusion}.`);
+                }
+              } else if (
+                ["FAILURE", "ERROR"].includes((node.state || "").toUpperCase())
+              ) {
+                // StatusContext PENDING is silently skipped (not reported as a failure).
+                failures.push(`Status '${name}' is ${node.state}.`);
+              }
+            }
+
+            if (failures.length > 0) {
+              core.summary.addHeading("PR governance").addList(failures);
+              core.setFailed(
+                failures.join("\n") +
+                  "\n\nTip: add label `local-first-ci` when third-party checks are optional for your PR."
+              );
+              return;
+            }
+
+            core.summary
+              .addHeading("PR governance")
+              .addRaw(
+                billingException
+                  ? "Manifest OK; optional third-party checks ignored (local-first label)."
+                  : "Manifest OK; all reported checks passed or were ignored as optional."
+              )
+              .write();

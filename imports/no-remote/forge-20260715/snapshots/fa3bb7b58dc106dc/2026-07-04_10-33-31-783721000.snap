@@ -1,0 +1,217 @@
+# Spec 005 — Engine binary install for `pheno-serve-dev` profiles
+
+## Scope
+
+Bring each `pheno-serve-dev` profile from **`proxy-active, engine-down`** to
+**`proxy-active, engine-up`**. This is the missing layer between the proxy
+we just stood up (ADR 0006) and any real local-model-driven completion.
+
+## Profile → engine map (per `config/pheno_serve.yaml`)
+
+| Profile | Engine | Binary | Port | Status (2026-07-04) |
+|---|---|---|---|---|
+| `local/qwen35-08b` | llama_cpp | `llama-server.exe` | 127.0.0.1:8080 | **engine-down** (TCP reachable, no listener) |
+| `local/lfm25-8b-a1b` | sglang | `sglang` | 127.0.0.1:30001 | engine-down |
+| `local/ornith-8b` | sglang | `sglang` | 127.0.0.1:30002 | engine-down |
+| `local/qwen35-08b-vllm` | vllm | `vllm` (py3.13) | 127.0.0.1:8001 | engine-down |
+| `local/lfm25-8b-a1b-trt` | tensorrt_llm | `trtllm-serve` | 127.0.0.1:8002 | engine-down |
+| `mac/mlx-small` | mlx | `mlx_lm.server` | M1 Pro remote | not deployed (no M1 Pro in session) |
+
+## Install path 1 — `llama-server.exe` (priority 1, smallest scope)
+
+Needed for: `local/qwen35-08b` (the round-5 local-model driven item).
+
+### Option A — winget (preferred)
+
+```powershell
+winget install llama.cpp
+```
+
+This installs `llama.cpp` (latest release, ~50 MB) which provides
+`llama-server.exe` on `PATH`. Requires Visual Studio 2022 runtime (already
+present on a 3090 Ti dev machine).
+
+### Option B — conda (preferred if py3.13 has `conda`)
+
+```powershell
+conda install -c conda-forge llama-cpp-python
+```
+
+This installs `llama-cpp-python` (Python bindings). **Does not give you the
+`llama-server.exe` binary.** Use this only if you want to embed the engine
+in-process, not as a proxy upstream.
+
+### Option C — scoop
+
+```powershell
+scoop bucket add extras
+scoop install llama.cpp
+```
+
+### Option D — manual release download
+
+```
+https://github.com/ggerganov/llama.cpp/releases/latest
+# Download llama-XXXX-bin-win-vulkan-x64.zip
+# Extract to C:\tools\llama.cpp
+# Add to PATH
+```
+
+### Verify
+
+```powershell
+where llama-server
+llama-server --version
+```
+
+## Install path 2 — `sglang` for `local/lfm25-8b-a1b` + `local/ornith-8b`
+
+Needed for: the other two locked self-hosted picks.
+
+Already installed in py3.13 (`sglang 0.5.2`). The CLI entry-point is the
+Python module:
+
+```powershell
+python -m sglang.launch_server --help
+```
+
+If py3.13 has it on PATH (likely not — Python module CLIs need
+`python -m`), add a thin wrapper script:
+
+```powershell
+# C:\Python313\Scripts\sglang.ps1
+& 'C:\Python313\python.exe' '-m' 'sglang.launch_server' @args
+```
+
+Or just call it directly from the launch scripts (which is what
+`pheno/model_manager.py` already does for the ik_llama path).
+
+### Launch recipe for `local/lfm25-8b-a1b`
+
+```powershell
+$env:PYTHONPATH='C:\Users\koosh\pheno-harness'
+C:\Python313\python.exe -m sglang.launch_server `
+    --model-path LiquidAI/LFM2.5-8B-A1B `
+    --host 127.0.0.1 --port 30001 `
+    --tp 1 --mem-fraction-static 0.85 `
+    --enable-prefix-caching `
+    --enable-mixed-chunk
+```
+
+### Launch recipe for `local/ornith-8b` (with MTP spec-dec on top)
+
+```powershell
+$env:PYTHONPATH='C:\Users\koosh\pheno-harness'
+C:\Python313\python.exe -m sglang.launch_server `
+    --model-path deepreinforce-ai/Ornith-1.0-9B `
+    --host 127.0.0.1 --port 30002 `
+    --speculative-algorithm mtp `
+    --speculative-draft-model-path protoLabsAI/Ornith-1.0-9B-MTP-GGUF `
+    --tp 1 --mem-fraction-static 0.85
+```
+
+(Note: MTP spec-dec support landed in SGLang late 2025. Confirm against
+your installed version with `sglang.launch_server --help | grep -i spec`.)
+
+## Install path 3 — `vllm` (already in py3.13)
+
+Already installed (`vllm 0.20.0`). Launch recipe for `local/qwen35-08b-vllm`:
+
+```powershell
+$env:PYTHONPATH='C:\Users\koosh\pheno-harness'
+C:\Python313\python.exe -m vllm.entrypoints.openai.api_server `
+    --model Qwen/Qwen3.5-0.8B `
+    --host 127.0.0.1 --port 8001 `
+    --gpu-memory-utilization 0.85 `
+    --enable-prefix-caching
+```
+
+## Install path 4 — `trtllm-serve` (TensorRT-LLM)
+
+**NOT RECOMMENDED FOR FIRST RUN.** Per `docs/specs/003-model-engine-matrix.md`,
+TRT-LLM is `not_recommended_primary` on 3090 Ti due to compile overhead. The
+profile stays `planned` until LFM2.5-8B is genuinely the bottleneck.
+
+If you do want it:
+
+```powershell
+pip install tensorrt-llm  # not on PyPI; see NVIDIA NGC containers
+# Or use the NGC container:
+docker run --gpus all -p 8002:8002 nvcr.io/nvidia/tensorrt-llm/release:latest
+```
+
+This requires Docker + nvidia-container-toolkit + a 12 GB+ Docker image
+download. **Skip until needed.**
+
+## Install path 5 — MLX worker (`mac/mlx-small`)
+
+M1 Pro is not present in this session. The profile is `planned_remote_worker`
+— it'll be brought up when the M1 Pro joins the swarm. Pre-reqs:
+
+```bash
+# On M1 Pro
+pip install mlx-lm
+mlx_lm.server --model mlx-community/Qwen3.5-0.8B-4bit --host 0.0.0.0 --port 8080
+```
+
+Then point `config/pheno_serve.yaml`'s `mac/mlx-small` `base_url` at the
+M1 Pro's reachable address.
+
+## Weight downloads (only after engine binary is on PATH)
+
+| Profile | Weight | HF id | Size (BF16/GGUF) |
+|---|---|---|---|
+| `local/qwen35-08b` | GGUF Q4_K_M | `Qwen/Qwen3.5-0.8B-GGUF` | ~700 MB |
+| `local/lfm25-8b-a1b` | BF16 | `LiquidAI/LFM2.5-8B-A1B` | ~17 GB |
+| `local/ornith-8b` | BF16 | `deepreinforce-ai/Ornith-1.0-9B` | ~19 GB |
+| `local/qwen35-08b-vllm` | BF16 | `Qwen/Qwen3.5-0.8B` | ~1.7 GB |
+
+All weights land in `D:\koosh\pheno-harness\state\model_cache\`. D: has 528 GB
+free (per round-1 env probe). Use HF cache if available — `huggingface-cli`
+will auto-resolve.
+
+```powershell
+# Set token (round-4 PowerShell wrapper style, never on disk)
+$env:HF_TOKEN = 'hf_xxx'
+
+# Qwen3.5-0.8B GGUF
+huggingface-cli download Qwen/Qwen3.5-0.8B-GGUF `
+    qwen3.5-0.8b-instruct-q4_k_m.gguf `
+    --local-dir D:\koosh\pheno-harness\state\model_cache\qwen35-08b
+```
+
+## Smoke-after-install procedure
+
+```powershell
+# 1. Engine running on 8080 (after install + weight download)
+llama-server --version
+llama-server -m D:\koosh\pheno-harness\state\model_cache\qwen35-08b\qwen3.5-0.8b-instruct-q4_k_m.gguf `
+    --host 127.0.0.1 --port 8080 -c 8192
+
+# 2. pheno-serve-dev still running (from ADR 0006)
+curl http://127.0.0.1:21080/healthz
+
+# 3. Run smoke WITHOUT --skip-completion
+$env:PYTHONPATH='C:\Users\koosh\pheno-harness'
+C:\Python313\python.exe -u scripts\smoke_pheno_serve.py
+
+# 4. Capture TTFT + ITL + decode_tok_s
+# (script writes to bench/results/<date>/pheno_serve_real_smoke.json)
+```
+
+## What this spec deliberately does NOT cover
+
+- TRT-LLM RTX 3090 Ti compile experiments (deferred to later stage).
+- MLX worker on M1 Pro (waiting on hardware availability).
+- Cloud-side engine fallbacks (OpenRouter / Anthropic / Bedrock) — those go
+  through `forge-dev → omniroute-dev`, not `pheno-serve-dev`.
+- Custom CUDA kernels — deferred until Qwen3.5-0.8B is on a profile and we
+  have first measurements.
+- BitNet b1.58 — explicitly excluded per user instruction 2026-07-04.
+
+## Gating
+
+This spec is **read-only until user signs off** on:
+1. The `winget install llama.cpp` install (Option A preferred).
+2. The 700 MB `Qwen3.5-0.8B-GGUF` download.
+3. Any other engine install from paths 2–5 (each is its own sign-off).

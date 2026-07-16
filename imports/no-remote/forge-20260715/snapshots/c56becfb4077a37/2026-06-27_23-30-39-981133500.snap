@@ -1,0 +1,93 @@
+# Substrate branch audit
+
+> Generated: 2026-06-27 from `E:\w26-substrate` (`origin = KooshaPari/substrate`)
+> Purpose: read-only inventory of all branches and history of named pause-points. **No branches created, no commits made, no force-pushes.**
+
+## Repo context
+
+- Fork: `KooshaPari/substrate`
+- Default branch: `main`
+- `main` HEAD: `7f0fd58 feat(substrate): tiered model dispatch (heavy/main/worker) with auto-reroute-up on failure (#57)`
+- Local `Cargo.toml`: Rust workspace with `crates/` and `driver-mcp/`
+
+## All remote branches (38 total)
+
+### Merged into `main` (already shipped)
+
+| Branch | Status |
+| ------ | ------ |
+| chore/ci | merged |
+| **chore/clippy-polish** | **merged — HEAD = 1a60527 is ancestor of main** |
+| docs/readme-polish | merged |
+| feat/cli-cloud-codex | merged |
+| feat/cloud-codex | merged |
+| feat/cloud-codex-apex | merged |
+| feat/consolidate-all-phases | merged |
+| feat/dispatch-planner | merged |
+| feat/driver-http | merged |
+| feat/orchestration-superset | merged |
+| feat/phase0-spine | merged |
+| feat/phase1-real-forge | merged |
+| feat/phase2-mailbox | merged |
+| feat/phase3-supervisor | merged |
+| feat/phase5-seam | merged |
+| feat/sdk-http | merged |
+| feat/sdk-mcp | merged |
+| feat/sdk-rust | merged |
+| fix/ci-release-binary | merged |
+| fix/ci-test-hang | merged |
+| fix/ci-test-hang-apex | merged |
+| fix/engine-forge-cross-platform | merged |
+| fix/engine-forge-real-dump | merged |
+| fix/engine-forge-timeout | merged |
+| fix/feat-cloud-dispatch | merged |
+| fix/otel-apex | merged |
+
+### Unmerged (live work, may need realign)
+
+| Branch | Notes |
+| ------ | ----- |
+| cursor/identified-system-bugs-44a2 | audit cutoff |
+| cursor/integration-and-tracing-issues-1d3d | audit cutoff |
+| feat/event-sourcing | audit cutoff |
+| feat/phase4-waves | audit cutoff |
+| feat/process-superset | audit cutoff |
+| feat/provider-adapters | audit cutoff |
+| feat/routing-superset | audit cutoff |
+| feat/skills-memory | audit cutoff |
+| feat/tiered-dispatch-2026-06-26 | already merged |
+| fix/kilo-branch-cur | merged |
+
+> Note: Rows marked "audit cutoff" reflect the audit cutoff; run `git log origin/main..origin/<branch> --oneline` for exact diff.
+
+## Named pause-points from prior chat — verbatim audit
+
+### Thread A — `chore/clippy-polish`
+
+- Action done: `git fetch origin chore/clippy-polish`
+- Result: `origin/chore/clippy-polish` HEAD = `1a60527 fix: resolve clippy warnings, test flakiness, and doc-test runtime issues`
+- `git merge-base origin/main origin/chore/clippy-polish` = `1a60527` (the same SHA)
+- **Conclusion: This branch is already a direct ancestor of `main`. The clippy work has been merged. There is no diff to push.**
+- **PR #1 cannot be opened. It would be empty.**
+
+### Thread B — `fix/runtime-process-timeout-test`
+
+- Searched: `git log --all --grep="runtime-process|timeout-test|UnregisterWaitEx"` → **0 matches**
+- Searched: `git log --all --grep="try_wait|start_kill"` → **0 matches**
+- Searched: branch list for `runtime-process-timeout` substring → **no branch**
+- **Conclusion: This fix has no trace in any git object reachable from this fork. It is not in any branch, ref, reflog, or dangling commit.**
+- **PR #2 cannot be resumed — there is no prior code. Option B (write fix from scratch against current `main`) is the only way to produce a PR, but that is net-new engineering, not a resume.**
+
+## Recommendation
+
+Three options for substrate work going forward:
+
+| Pick | Description |
+| ---- | ----------- |
+| **A — Defer** | Skip substrate entirely this session. Revisit later with fresh context. |
+| **B — Write from scratch** | Write `fix/runtime-process-timeout-test` against current `main`. Risk: bug specifics unknown; will require root-cause analysis + CI passes before PR. |
+| **C — Audit-only** | Leave substrate as-is. Useful when fork already reflects the work. (Recommended as a default.) |
+
+## Status
+
+🛑 **No actions taken.** This markdown is informational only.

@@ -1,0 +1,35 @@
+[package]
+name = "civ-voxel"
+description = "Adaptive voxel substrate: sparse octree + dense leaf chunks; deterministic mesh-dirty queue"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+glam = "0.30.10"
+serde = { version = "1.0", features = ["derive"] }
+tracing = "0.1"
+# Compact, deterministic binary serialisation for the disk-backed dirty-chunk cache.
+bincode-next = { version = "3.1.1", features = ["serde"] }
+
+# Adaptive voxel kernel shared across Phenotype-org game clients.
+# Resolved from the local sibling worktree at `.worktrees/phenotype-voxel`
+# (the public GitHub repo at KooshaPari/phenotype-voxel returns 404 for
+# the previously-pinned rev; the local clone is the canonical source of
+# truth for the kernel and is kept in sync via worktree management).
+phenotype-voxel = { package = "phenotype-voxel", path = "../../.worktrees/phenotype-voxel" }
+
+[dev-dependencies]
+criterion = { version = "=0.5.1", features = ["html_reports"] }
+proptest = "1.11"
+# Used by the PBR substrate unit tests to round-trip attestation manifests.
+serde_json = "1"
+# Used by the PBR / HUD substrate unit tests to round-trip plans and
+# panel state through RON (the laws + civ-traffic crates already standardise
+# on RON for replay/save formats).
+ron = "0.8"
+
+[[bench]]
+name = "ca_dirty_chunk"
+harness = false

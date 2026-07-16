@@ -1,0 +1,19 @@
+$ErrorActionPreference = 'SilentlyContinue'
+$path = 'C:\Users\koosh\_wsm3d_audit\ws3d_errors.txt'
+if (-not (Test-Path $path)) { Write-Host 'NO FILE'; exit 1 }
+
+$lines = Get-Content $path | Where-Object { $_ -match 'error CS\d+:' }
+Write-Host ('TOTAL_ERRORS: ' + $lines.Count)
+Write-Host ''
+Write-Host '=== BY FILE ==='
+$lines | ForEach-Object {
+    if ($_ -match '^(E:[^(]+?)\((\d+),\d+:') {
+        $_.Substring(0, $_.IndexOf('(')) | Split-Path -Leaf
+    }
+} | Group-Object | Sort-Object Count -Descending | Format-Table Count, Name -AutoSize
+
+Write-Host ''
+Write-Host '=== BY ERROR CODE ==='
+$lines | ForEach-Object {
+    if ($_ -match 'error (CS\d+):') { $matches[1] }
+} | Group-Object | Sort-Object Count -Descending | Format-Table Count, Name -AutoSize

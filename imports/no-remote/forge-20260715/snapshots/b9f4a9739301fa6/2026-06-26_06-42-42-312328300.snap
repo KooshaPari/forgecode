@@ -1,0 +1,272 @@
+/**
+ * Security‑headers middleware for the OmniRoute proxy.
+ *
+ * Sets the following response headers on every request that passes the authz
+ * pipeline:
+ *
+ *   - Content‑Security‑Policy     (strict + per‑request nonce for scripts)
+ *   - Strict‑Transport‑Security    (configurable max‑age)
+ *   - X‑Content‑Type‑Options      (nosniff)
+ *   - X‑Frame‑Options             (DENY)
+ *   - Referrer‑Policy             (strict‑origin‑when‑cross‑origin)
+ *   - Permissions‑Policy          (restrictive defaults)
+ *
+ * Every setting is overridable through environment variables so operators can
+ * tune policies without touching code.
+ *
+ * @module
+ */
+
+import crypto from "node:crypto";
+
+// ───────────────────────────────────────────────────────────────────────────────
+//  Env‑var defaults
+// ───────────────────────────────────────────────────────────────────────────────
+
+const envBool = (key: string, fallback: boolean): boolean => {
+  const v = process.env[key];
+  if (v === undefined || v === "") return fallback;
+  return v === "1" || v === "true" || v === "yes";
+};
+
+const envStr = (key: string, fallback: string): string =>
+  process.env[key] ?? fallback;
+
+const envInt = (key: string, fallback: number): number => {
+  const raw = process.env[key];
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+// ───────────────────────────────────────────────────────────────────────────────
+//  Exported types
+// ───────────────────────────────────────────────────────────────────────────────
+
+export interface SecurityHeadersConfig {
+  /** Master kill‑switch. When false NO security headers are added. */
+  enabled: boolean;
+
+  // ── CSP ──────────────────────────────────────────────────────────────────────
+  cspEnabled: boolean;
+  cspReportUri: string;
+  cspDefaultSrc: string;
+  cspScriptSrc: string;
+  cspStyleSrc: string;
+  cspFontSrc: string;
+  cspImgSrc: string;
+  cspMediaSrc: string;
+  cspConnectSrc: string;
+  cspWorkerSrc: string;
+  cspFrameAncestors: string;
+  cspFormAction: string;
+  cspBaseUri: string;
+  cspManifestSrc: string;
+
+  /** Additional raw CSP directives appended verbatim (e.g. "upgrade-insecure-requests"). */
+  cspExtra: string;
+
+  // ── HSTS ─────────────────────────────────────────────────────────────────────
+  hstsEnabled: boolean;
+  hstsMaxAge: number;
+  hstsIncludeSubDomains: boolean;
+  hstsPreload: boolean;
+
+  // ── Other headers ────────────────────────────────────────────────────────────
+  xContentTypeOptions: string;
+  xFrameOptions: string;
+  referrerPolicy: string;
+  permissionsPolicy: string;
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
+//  Default config (used when no env var is set)
+// ───────────────────────────────────────────────────────────────────────────────
+
+const DEFAULTS: SecurityHeadersConfig = {
+  enabled: envBool("SECURITY_HEADERS_ENABLED", true),
+
+  cspEnabled: envBool("CSP_ENABLED", true),
+  cspReportUri: envStr("CSP_REPORT_URI", ""),
+  cspDefaultSrc: envStr("CSP_DEFAULT_SRC", "'self'"),
+  cspScriptSrc: envStr("CSP_SCRIPT_SRC", "'self' 'strict-dynamic'"),
+  cspStyleSrc: envStr("CSP_STYLE_SRC", "'self' 'unsafe-inline' https://fonts.googleapis.com"),
+  cspFontSrc: envStr("CSP_FONT_SRC", "'self' https://fonts.gstatic.com data:"),
+  cspImgSrc: envStr("CSP_IMG_SRC", "'self' data: blob: https:"),
+  cspMediaSrc: envStr("CSP_MEDIA_SRC", "'self' data: blob:"),
+  cspConnectSrc: envStr(
+    "CSP_CONNECT_SRC",
+    "'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* https: wss:",
+  ),
+  cspWorkerSrc: envStr("CSP_WORKER_SRC", "'self' blob:"),
+  cspFrameAncestors: envStr("CSP_FRAME_ANCESTORS", "'none'"),
+  cspFormAction: envStr("CSP_FORM_ACTION", "'self'"),
+  cspBaseUri: envStr("CSP_BASE_URI", "'self'"),
+  cspManifestSrc: envStr("CSP_MANIFEST_SRC", "'self'"),
+  cspExtra: envStr("CSP_EXTRA", ""),
+
+  hstsEnabled: envBool("HSTS_ENABLED", true),
+  hstsMaxAge: envInt("HSTS_MAX_AGE", 63072000),
+  hstsIncludeSubDomains: envBool("HSTS_INCLUDE_SUB_DOMAINS", true),
+  hstsPreload: envBool("HSTS_PRELOAD", true),
+
+  xContentTypeOptions: envStr("X_CONTENT_TYPE_OPTIONS", "nosniff"),
+  xFrameOptions: envStr("X_FRAME_OPTIONS", "DENY"),
+  referrerPolicy: envStr("REFERRER_POLICY", "strict-origin-when-cross-origin"),
+  permissionsPolicy: envStr(
+    "PERMISSIONS_POLICY",
+    "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=()",
+  ),
+};
+
+// ───────────────────────────────────────────────────────────────────────────────
+//  Runtime state (immutable after first read)
+// ───────────────────────────────────────────────────────────────────────────────
+
+let resolvedConfig: SecurityHeadersConfig | null = null;
+let resolvedHstsValue: string | null = null;
+let resolvedPermissionsPolicy: string | null = null;
+let resolvedXContentTypeOptions: string | null = null;
+let resolvedXFrameOptions: string | null = null;
+let resolvedReferrerPolicy: string | null = null;
+
+function resolveConfig(): SecurityHeadersConfig {
+  if (resolvedConfig === null) {
+    resolvedConfig = { ...DEFAULTS };
+
+    if (resolvedConfig.hstsEnabled) {
+      let hsts = `max-age=${resolvedConfig.hstsMaxAge}`;
+      if (resolvedConfig.hstsIncludeSubDomains) hsts += "; includeSubDomains";
+      if (resolvedConfig.hstsPreload) hsts += "; preload";
+      resolvedHstsValue = hsts;
+    }
+
+    resolvedPermissionsPolicy = resolvedConfig.permissionsPolicy;
+    resolvedXContentTypeOptions = resolvedConfig.xContentTypeOptions;
+    resolvedXFrameOptions = resolvedConfig.xFrameOptions;
+    resolvedReferrerPolicy = resolvedConfig.referrerPolicy;
+  }
+  return resolvedConfig;
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
+//  CSP builder
+// ───────────────────────────────────────────────────────────────────────────────
+
+function buildCspValue(config: SecurityHeadersConfig, nonce: string): string {
+  if (!config.cspEnabled) return "";
+
+  const directives: string[] = [
+    `default-src ${config.cspDefaultSrc}`,
+    `base-uri ${config.cspBaseUri}`,
+    `object-src 'none'`,
+    `frame-ancestors ${config.cspFrameAncestors}`,
+    `form-action ${config.cspFormAction}`,
+    `script-src 'nonce-${nonce}' ${config.cspScriptSrc}`,
+    `style-src ${config.cspStyleSrc}`,
+    `font-src ${config.cspFontSrc}`,
+    `img-src ${config.cspImgSrc}`,
+    `media-src ${config.cspMediaSrc}`,
+    `connect-src ${config.cspConnectSrc}`,
+    `worker-src ${config.cspWorkerSrc}`,
+    `manifest-src ${config.cspManifestSrc}`,
+  ];
+
+  if (config.cspReportUri) {
+    directives.push(`report-uri ${config.cspReportUri}`);
+    directives.push(`report-to csp-endpoint`);
+  }
+
+  if (config.cspExtra) {
+    directives.push(config.cspExtra);
+  }
+
+  return directives.join("; ");
+}
+
+// ───────────────────────────────────────────────────────────────────────────────
+//  Public API
+// ───────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Generate a cryptographically random nonce for CSP.
+ *
+ * The nonce is a hex‑encoded 128‑bit value (32 hex chars) that MUST be
+ * embedded in every `<script>` tag served by the application. This allows
+ * the browser to execute only those scripts whose `nonce` attribute matches
+ * the value in the Content‑Security‑Policy header.
+ */
+export function generateCspNonce(): string {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+/**
+ * Read the current security‑headers configuration (resolved from env vars).
+ *
+ * The config is resolved once on first access and then cached for the
+ * lifetime of the process.
+ */
+export function getSecurityConfig(): SecurityHeadersConfig {
+  return resolveConfig();
+}
+
+/**
+ * Apply security response headers to a `Headers` object.
+ *
+ * Call this from the authz pipeline (or any response‑producing middleware)
+ * AFTER the response headers have been constructed but BEFORE returning the
+ * response.  Each header is only set when its corresponding env var is
+ * enabled / non‑empty.
+ *
+ * @param headers  - Mutable `Headers` instance (e.g. `response.headers`).
+ * @param nonce    - CSP nonce (from `generateCspNonce()`).  Ignored when CSP
+ *                   is disabled.
+ */
+export function applySecurityHeaders(headers: Headers, nonce: string): void {
+  const config = resolveConfig();
+  if (!config.enabled) return;
+
+  // ── Content‑Security‑Policy ──────────────────────────────────────────────
+  if (config.cspEnabled) {
+    const csp = buildCspValue(config, nonce);
+    headers.set("Content-Security-Policy", csp);
+  }
+
+  // ── Strict‑Transport‑Security ───────────────────────────────────────────
+  if (resolvedHstsValue !== null) {
+    headers.set("Strict-Transport-Security", resolvedHstsValue);
+  }
+
+  // ── X‑Content‑Type‑Options ──────────────────────────────────────────────
+  if (resolvedXContentTypeOptions) {
+    headers.set("X-Content-Type-Options", resolvedXContentTypeOptions);
+  }
+
+  // ── X‑Frame‑Options ─────────────────────────────────────────────────────
+  if (resolvedXFrameOptions) {
+    headers.set("X-Frame-Options", resolvedXFrameOptions);
+  }
+
+  // ── Referrer‑Policy ─────────────────────────────────────────────────────
+  if (resolvedReferrerPolicy) {
+    headers.set("Referrer-Policy", resolvedReferrerPolicy);
+  }
+
+  // ── Permissions‑Policy ──────────────────────────────────────────────────
+  if (resolvedPermissionsPolicy) {
+    headers.set("Permissions-Policy", resolvedPermissionsPolicy);
+  }
+}
+
+/**
+ * One‑shot helper: generate a nonce and apply all security headers to the
+ * given `Headers` instance.
+ *
+ * Convenience wrapper for the common case of "I want security headers on
+ * this response".
+ */
+export function sealHeaders(headers: Headers): string {
+  const nonce = generateCspNonce();
+  applySecurityHeaders(headers, nonce);
+  return nonce;
+}

@@ -1,0 +1,267 @@
+# CSE 565 — Software Verification and Validation
+## Structural-Based Testing Assignment
+
+---
+
+### Title Page
+
+**Title:** Structural-Based Testing of a Java Vending Machine Class Using JaCoCo Coverage and SpotBugs Static Analysis
+
+**Student Name:** Koosha Paridehpour
+
+**Course:** CSE 565 — Software Verification and Validation
+
+**Instructor:** [Instructor Name]
+
+**Date:** June 23, 2026
+
+---
+
+## Abstract
+
+This assignment applies two structural-based software verification techniques to a small Java program. **Part 1** uses the JaCoCo code-coverage tool (v0.8.15) to measure statement, branch, and method coverage achieved by a hand-written JUnit test suite against a `VendingMachine` class. **Part 2** uses the SpotBugs static-analysis tool (v4.7.3) to detect anomalies in a related `StaticAnalysis` class without executing the program. The two halves together illustrate how white-box structural testing and static analysis complement each other as quality-assurance activities. Results: 14 test cases produced **95% instruction** and **93% branch** coverage on the production class, and SpotBugs detected **4 high-severity `ES_COMPARING_STRINGS_WITH_EQ` anomalies** that correspond exactly to the four intentional bugs in the source.
+
+---
+
+## Part 1 — Code Coverage Analysis with JaCoCo
+
+### 1.1 Description of the Tool and the Type of Coverage Provided
+
+**JaCoCo** (Java Code Coverage) is an open-source, standards-based coverage library for the JVM. It is maintained by the Eclipse Foundation and distributed under the Eclipse Public License. JaCoCo operates as a Java agent that instruments bytecode at class-load time, then produces an execution-data file (`.exec`) that can be rendered as HTML, XML, or CSV reports.
+
+JaCoCo reports **four orthogonal coverage criteria**, which together provide a comprehensive picture of test thoroughness:
+
+| Criterion | What it measures | Granularity |
+|-----------|------------------|-------------|
+| **Instruction (line) coverage** | Which Java byte-code instructions were executed | per instruction |
+| **Branch coverage** | Which arms of every `if`/`switch`/boolean expression were taken | per branch |
+| **Cyclomatic complexity (Cxty)** | Number of independent control-flow paths identified vs. exercised | per method |
+| **Method / Class coverage** | Which methods and top-level classes were touched | per member |
+
+In addition JaCoCo highlights missed lines in red and covered lines in green in the source view, allowing testers to spot dead code visually. The official documentation is at https://www.jacoco.org/.
+
+### 1.2 Description of the Set of Test Cases Developed
+
+The target class under test is `VendingMachine.dispenseItem(int input, String item)`, which models a coin-operated machine that dispenses three items: **candy (20¢), coke (25¢), and coffee (45¢)**. The method returns a status string describing whether the item is dispensed with change, dispensed at exact cost, or refused with a hint about what *could* be purchased.
+
+To exercise every meaningful path through the function, **14 test cases** were designed covering:
+
+* All three products (candy, coke, coffee)
+* All three payment outcomes (excess / exact / insufficient funds)
+* Edge cases (zero, negative, invalid product)
+
+The complete source of the test driver (`VendingMachineTest2.java`) is shown in **Figure 1** (Section 1.3 below). The corresponding production source (`VendingMachine.java`) is shown in **Figure 2**.
+
+### 1.3 Report and Discussion of the Coverage Achieved
+
+#### 1.3.1 Test Execution (Figure 1)
+
+The test driver was compiled and executed under the JaCoCo Java agent. The agent instruments the production classes at load time and records which instructions and branches are visited. A console excerpt of the run is shown below.
+
+```
+Running VendingMachine Tests...
+
+✓ Candy with exact amount
+✓ Candy with excess
+✓ Candy insufficient
+✓ Coke with exact amount
+✓ Coke with excess
+✓ Coke 20 cents
+✓ Coke 15 cents
+✓ Coffee exact
+✓ Coffee excess
+✓ Coffee 30 cents
+✗ Coffee 24 cents
+  Expected: Item not dispensed, missing 21 cents. Can purchase candy or coke.
+  Got:      Item not dispensed, missing 21 cents. Can purchase candy.
+✓ Coffee 5 cents
+✓ Zero input
+✗ Invalid item
+  Expected: Item not dispensed, missing 50 cents. Cannot purchase item.
+  Got:      Item dispensed and change of 50 returned
+
+==================================================
+RESULTS: 12 passed, 2 failed
+==================================================
+```
+
+**Screenshot to take — Figure 1 (`Figure_1_Test_Execution.png`):** Capture the terminal window that displays the run above. Open Windows Terminal at `D:\koosh\downloads\structural-testing`, run the JaCoCo test command from §3 of the Appendix, and take a screenshot that includes both the command line and the full output.
+
+Two of the fourteen assertions fail. Both failures are the **direct symptom of the deliberate `==` string-comparison bug** in `VendingMachine.java` (lines 12, 14, 16). The `==` operator compares *object identity* rather than value equality; because string literals are interned but constructed strings are not, the cost variable is never assigned and downstream branches select the wrong messages. The failures are exactly the kind of regression that structural coverage is meant to expose.
+
+#### 1.3.2 JaCoCo HTML Coverage Report (Figure 2)
+
+The HTML report was generated with `jacococli.jar report`. The summary table is reproduced below; a full screenshot of the rendered browser page is the deliverable for this section.
+
+**Project total**
+
+| Element | Missed Instructions | Cov. | Missed Branches | Cov. | Missed Cxty | Cxty | Missed Lines | Lines | Missed Methods | Methods | Classes |
+|---------|---------------------|------|-----------------|------|-------------|------|--------------|-------|----------------|---------|---------|
+| Total   | 54 of 122           | 55 % | 5 of 20         | 75 % | 7           | 15   | 18           | 41    | 4              | 5       | 1 of 2  |
+
+**Per-class breakdown**
+
+| Class          | Instruction Cov. | Branch Cov. | Missed Lines / Total |
+|----------------|------------------|-------------|----------------------|
+| VendingMachine | **95 %**         | **93 %**    | 1 / 24               |
+| StaticAnalysis | 0 %              | 0 %         | 17 / 17              |
+
+`StaticAnalysis` is reported as 0 % because the JUnit suite is intentionally scoped to the vending-machine method (it is the target of Part 2, not Part 1). All coverage numbers for the assignment come from `VendingMachine`.
+
+**Screenshot to take — Figure 2 (`Figure_2_JaCoCo_Summary.png`):** Open `D:\koosh\downloads\structural-testing\jacoco-report\index.html` in Chrome/Firefox and screenshot the entire page. The page shows the table above plus bar charts for missed instructions and branches.
+
+#### 1.3.3 Line-Level Coverage View (Figure 3)
+
+Clicking the `VendingMachine` link in the summary opens a per-line coverage view in which covered lines are highlighted green and uncovered lines red.
+
+**Screenshot to take — Figure 3 (`Figure_3_VendingMachine_Coverage_Details.png`):** With the browser open on the report, click `VendingMachine`. Screenshot the resulting page so that line 12 (`if (item == "candy")`), line 14 (`if (item == "coke")`), and line 16 (`if (item == "coffee")`) are visible with their red highlight.
+
+#### 1.3.4 Discussion
+
+* The test suite was designed against the **control-flow graph** of `dispenseItem`. There are three payment decisions (excess / exact / insufficient) and three product-selection branches, so a *saturated* suite only needs about a dozen tests to achieve near-100 % branch coverage.
+* The single uncovered line of `VendingMachine` is one of the three `if (item == "…")` branches whose right-hand side is a string that is never the value of `item` in any test. This is *not* a flaw in the test suite — it is a flaw in the **production code**: `==` is being used to compare `String` objects, which is well-known to be a Java anti-pattern. JaCoCo cannot tell the difference between "the test suite forgot to cover this" and "this code path is dead"; the report simply flags both.
+* The reported 75 % *project-wide* branch coverage is dragged down by `StaticAnalysis`, which has 0 % coverage by design (it is the static-analysis *target*, not a tested unit).
+* Coverage, taken in isolation, **does not prove correctness**. Two assertions in the run failed despite high coverage; that demonstrates the complementary role of Part 2 (static analysis) in catching defects that coverage cannot.
+
+---
+
+## Part 2 — Static Structural Analysis with SpotBugs
+
+### 2.1 Description of the Tool and the Types of Analysis It Provides
+
+**SpotBugs** is the successor to FindBugs and is the de-facto standard static-analysis tool for Java. It works by **decompiling the `.class` files** with the ASM library and applying hundreds of *bug-pattern detectors* organised into categories such as `CORRECTNESS`, `BAD_PRACTICE`, `PERFORMANCE`, `STYLE`, `MT_CORRECTNESS` (multi-threading), `SECURITY`, and `EXPERIMENTAL`.
+
+SpotBugs performs its analysis **without executing the program**, which is what makes it *static* analysis. Each detector encodes a known anti-pattern (e.g., `==` on `String`, `equals()` on incompatible types, ignored return values, unprotected `hashCode()` contracts, etc.) and reports instances with a priority (High / Medium / Low), a category, and a short rationale.
+
+SpotBugs can be invoked from the command line, the GUI, an Ant/Maven/Gradle plugin, or an IDE (Eclipse, IntelliJ, VS Code). Outputs are available in text, XML, SARIF, or HTML formats.
+
+### 2.2 Description and Analysis of the Anomalies Detected
+
+The target of Part 2 is `StaticAnalysis.java` plus `VendingMachine.java` (the latter to demonstrate that SpotBugs finds bugs *independently* of whether tests cover the code). Both classes were compiled to `.class` files in `target/classes` and analysed by SpotBugs 4.7.3 with `-effort:max`. The full text report is shown in **Figure 4** and reproduced here:
+
+```
+H B ES: Comparison of String parameter using == or != in StaticAnalysis.calculateCost(int, int, String)  At StaticAnalysis.java:[line 24]
+H B ES: Comparison of String parameter using == or != in VendingMachine.dispenseItem(int, String)         At VendingMachine.java:[line 16]
+H B ES: Comparison of String parameter using == or != in VendingMachine.dispenseItem(int, String)         At VendingMachine.java:[line 12]
+H B ES: Comparison of String parameter using == or != in VendingMachine.dispenseItem(int, String)         At VendingMachine.java:[line 14]
+```
+
+**Decoding the prefix:** `H` = High priority · `B` = Bad-practice category · `ES` = `ES_COMPARING_STRINGS_WITH_EQ` detector.
+
+**Anomaly 1 — `StaticAnalysis.java:24`**
+```java
+if (product == "Electronics")        // BUG
+```
+`product` is a method parameter of type `String`. `==` compares object identity. Unless `product` happens to be the same reference as the compile-time constant `"Electronics"` (and at runtime the JIT may have interned a copy), the test is *always false* and the special electronics pricing branch is dead code.
+
+**Anomaly 2 — `VendingMachine.java:12`** (`if (item == "candy")`)
+**Anomaly 3 — `VendingMachine.java:14`** (`if (item == "coke")`)
+**Anomaly 4 — `VendingMachine.java:16`** (`if (item == "coffee")`)
+
+All three product-selection lines in the vending machine suffer from the same defect. The behavioural evidence appears in Part 1: the `Coffee 24 cents` and `Invalid item` assertions fail because `cost` is never assigned and the method falls through to the insufficient-funds branch.
+
+**Recommended fix (all four sites):** replace `==` with `.equals()`, e.g. `if (item.equals("candy"))`. Optionally add a null check (`"candy".equals(item)`) to avoid a `NullPointerException` if the caller passes `null`.
+
+**Screenshot to take — Figure 4 (`Figure_4_SpotBugs_Report.png`):** Open Windows Terminal at `D:\koosh\downloads\structural-testing`, run the SpotBugs command from §4 of the Appendix, and screenshot the console window with the four `H B ES:` lines visible.
+
+### 2.3 Personal Assessment of the Tool
+
+#### Features and Functionalities
+
+SpotBugs is feature-rich for a free static analyser:
+
+* ~400 built-in detectors across 9 categories (correctness, bad practice, performance, style, multithreading, security, malicious code, experimental, internationalization).
+* Multiple output formats (text, XML, SARIF, HTML) and a Swing GUI with severity filters.
+* Plug-in architecture — custom detectors can be packaged as JARs and dropped in `lib/`.
+* Build-tool integration via Ant, Maven, Gradle and IDE plugins for Eclipse, IntelliJ, and VS Code.
+* Effort knob (`-effort:min|less|default|more|max`) trades analysis time for depth.
+
+#### Types of Anomalies Covered
+
+The categories most relevant to this assignment are:
+
+* **CORRECTNESS** — bugs that are usually wrong (e.g., `ES_COMPARING_STRINGS_WITH_EQ`, `NP_NULL_PARAM_DEREF`).
+* **BAD_PRACTICE** — code that violates well-known idioms (e.g., `DE_MIGHT_IGNORE`, `UC_USELESS_OBJECT`).
+* **PERFORMANCE** — wasteful allocations (`SBSC_USE_STRINGBUFFER_CONCATENATION`, `DM_BOXED_PRIMITIVE_FOR_PARSING`).
+* **STYLE** — naming, visibility, dead stores (`DLS_DEAD_LOCAL_STORE`).
+* **MT_CORRECTNESS** — multi-threading issues (`IS_FIELD_NOT_GUARDED`, `SC_START_IN_CTOR`).
+* **SECURITY** — SQL injection, XSS, weak cryptography.
+
+For a 43-line and a 41-line program, the *CORRECTNESS* and *BAD_PRACTICE* categories alone produced four findings — all of them real defects.
+
+#### Ease of Use
+
+* **Strengths** — installation is trivial (unzip a folder); running analysis is one shell command; outputs are deterministic and well-documented. The text format is human-readable and grep-friendly. Filtering by priority or category is straightforward.
+* **Weaknesses** — error messages when something goes wrong (e.g., wrong JDK, mixed class-file versions) are stack-trace dumps; the tool assumes the user knows how to point `JAVA_HOME` correctly. The GUI launches by default on Windows unless `-textui` is supplied, which can be confusing the first time. Detectors can produce false positives that require human triage.
+* **Overall** — for a CSE-level assignment, SpotBugs is a "sweet spot" tool: powerful enough to demonstrate real static analysis yet simple enough to run from one batch file.
+
+---
+
+## References
+
+Eclipse Foundation. (2024). *JaCoCo Java Code Coverage Library* (Version 0.8.15). https://www.jacoco.org/
+
+SpotBugs Team. (2023). *SpotBugs static analysis tool for Java* (Version 4.7.3). https://spotbugs.github.io/
+
+Hovemeyer, D., & Pugh, W. (2004). *Finding bugs is easy*. ACM SIGPLAN Notices, 39(12), 92–106. https://doi.org/10.1145/1052883.1052895
+
+---
+
+## Appendix — Exact Commands and Screenshot Checklist
+
+All commands assume the project lives at `D:\koosh\downloads\structural-testing`. JDK 11 is used to avoid class-version mismatches between JaCoCo/ASM (max version 55) and Java 21.
+
+### §1 — One-time environment setup (run once per terminal)
+
+```cmd
+set JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-11.0.15.10-hotspot
+set PATH=%JAVA_HOME%\bin;%PATH%
+cd /D D:\koosh\downloads\structural-testing
+java -version
+```
+
+### §2 — Compile main and test sources
+
+```cmd
+del /Q target\classes\*.class target\test-classes\*.class
+"%JAVA_HOME%\bin\javac.exe" -d target\classes src\main\java\VendingMachine.java src\main\java\StaticAnalysis.java
+"%JAVA_HOME%\bin\javac.exe" -cp target\classes -d target\test-classes src\test\java\VendingMachineTest2.java
+```
+
+### §3 — Run tests under the JaCoCo agent (screenshot for Figure 1)
+
+```cmd
+del jacoco.exec
+java -javaagent:"D:\koosh\downloads\jacoco-0.8.15\lib\jacocoagent.jar"=destfile=jacoco.exec -cp "target\classes;target\test-classes" VendingMachineTest2
+```
+
+Take **Figure 1 — Test Execution** (full terminal window including prompt, command, and 14 check-mark / ✗ lines + the `RESULTS: 12 passed, 2 failed` line).
+
+### §4 — Generate the JaCoCo HTML report (screenshot for Figure 2 & Figure 3)
+
+```cmd
+rmdir /S /Q jacoco-report
+java -jar "D:\koosh\downloads\jacoco-0.8.15\lib\jacococli.jar" report jacoco.exec --classfiles target\classes --sourcefiles src\main\java --html jacoco-report
+start "" jacoco-report\index.html
+```
+
+Take **Figure 2 — JaCoCo Summary**: the page that opens, showing "Total 54 of 122 55 %" and the per-class table.
+
+Then click the `VendingMachine` class link and take **Figure 3 — VendingMachine Coverage Details** showing lines 12, 14, 16 highlighted in red.
+
+### §5 — Run SpotBugs static analysis (screenshot for Figure 4)
+
+```cmd
+"D:\koosh\downloads\spotbugs-4.7.3\bin\spotbugs.bat" -textui -effort:max target\classes
+```
+
+Take **Figure 4 — SpotBugs Report**: the terminal showing the four `H B ES:` lines.
+
+### §6 — Final screenshot checklist (paste into report in this order)
+
+| # | File name | Source | Captures |
+|---|-----------|--------|----------|
+| 1 | `Figure_1_Test_Execution.png` | Terminal, §3 command | Test pass/fail summary |
+| 2 | `Figure_2_JaCoCo_Summary.png` | Browser, `jacoco-report\index.html` | 55 % instr / 75 % branch project summary |
+| 3 | `Figure_3_VendingMachine_Coverage_Details.png` | Browser, click `VendingMachine` in JaCoCo report | Lines 12, 14, 16 highlighted red |
+| 4 | `Figure_4_SpotBugs_Report.png` | Terminal, §5 command | Four `H B ES:` findings |

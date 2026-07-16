@@ -1,0 +1,385 @@
+"""
+pheno_dag_executor.py  —  Executor scaffolding for spec #010-compute-infra
+
+DORMANT by default.  Importing and instantiating does NOT dispatch any work.
+The user must explicitly call `executor.run_phase(phase_id=1)` to begin.
+
+This module satisfies DAG units F-03 (node type) + F-04 (topological executor)
+as a *reference implementation* in pure Python — no Rust/Cargo dependency,
+runs anywhere, perfect for orchestration-from-CLI / orchestration-from-LLM.
+
+Dogfooded against:
+  - agileplus spec protocol (.agileplus/specs/<id>/{meta.json, spec.md, tasks.md})
+  - phenotype-registry 30-pillar grading (L0-L29)
+  - subagent-driven-development (5 parallel forge workers)
+"""
+from __future__ import annotations
+import json
+import os
+import subprocess
+import sys
+import time
+import hashlib
+from dataclasses import dataclass, field, asdict
+from enum import Enum
+from typing import Optional, Iterable
+from pathlib import Path
+
+DEFAULT_DAG = r"C:\Users\koosh\_compute_infra_audit\compute_infra_dag.yaml"
+DEFAULT_SPEC = r"C:\Users\koosh\_compute_infra_audit\010-compute-infra"
+
+
+class NodeType(str, Enum):
+    AUDIT = "audit"
+    CODE = "code"
+    DOC = "doc"
+    TEST = "test"
+    INFRA = "infra"
+    ARCH = "arch"
+
+
+class Priority(str, Enum):
+    LANDING = "L"  # Must land first
+    MUST = "M"
+    SHOULD = "S"
+    COULD = "C"
+
+
+class NodeStatus(str, Enum):
+    PENDING = "pending"
+    READY = "ready"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    BLOCKED = "blocked"
+
+
+@dataclass(frozen=True)
+class Node:
+    id: str
+    title: str
+    epic: str
+    repo: str
+    pillar: str
+    pillar_name: str
+    type: str          # NodeType value
+    priority: str      # Priority value
+    branch: Optional[str]
+    pre: tuple = ()
+    acceptance: str = ""
+
+    def content_hash(self) -> str:
+        h = hashlib.sha256()
+        h.update(self.id.encode())
+        h.update(self.title.encode())
+        h.update(self.repo.encode())
+        h.update(self.pillar.encode())
+        h.update(self.acceptance.encode())
+        return h.hexdigest()[:16]
+
+
+@dataclass
+class RunRecord:
+    node_id: str
+    status: str = NodeStatus.PENDING.value
+    started_at: Optional[float] = None
+    finished_at: Optional[float] = None
+    worker: Optional[str] = None
+    branch: Optional[str] = None
+    pr_url: Optional[str] = None
+    grade_pillar: Optional[str] = None
+    grade_score: Optional[float] = None
+    error: Optional[str] = None
+
+    def duration_s(self) -> Optional[float]:
+        if self.started_at and self.finished_at:
+            return self.finished_at - self.started_at
+        return None
+
+
+# ---------------------------------------------------------------------------
+# YAML loader (minimal — avoids PyYAML dependency if user lacks it)
+# ---------------------------------------------------------------------------
+def _try_yaml(path: str) -> dict:
+    try:
+        import yaml  # type: ignore
+        return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except ImportError:
+        # Fallback: hand-rolled minimal loader for this specific schema.
+        import re
+        text = Path(path).read_text(encoding="utf-8")
+        # Strip the leading comment block
+        lines = [l for l in text.splitlines() if not l.startswith("#")]
+        body = "\n".join(lines)
+        # Naive parse via safe loader
+        try:
+            import yaml  # noqa
+        except ImportError:
+            raise SystemExit("PyYAML required.  Install: pip install pyyaml")
+
+
+def load_dag(yaml_path: str = DEFAULT_DAG) -> list[Node]:
+    data = _try_yaml(yaml_path)
+    nodes: list[Node] = []
+    for u in data.get("units", []):
+        nodes.append(Node(
+            id=u["id"],
+            title=u["title"],
+            epic=u["epic"],
+            repo=u["repo"],
+            pillar=u["pillar"],
+            pillar_name=u["pillar_name"],
+            type=u["type"],
+            priority=u["priority"],
+            branch=u.get("branch"),
+            pre=tuple(u.get("pre") or ()),
+            acceptance=u.get("acceptance", ""),
+        ))
+    return nodes
+
+
+def load_phase_1(nodes: list[Node]) -> list[Node]:
+    """Phase 1 = Epic A (35) + Epic B (45) + F-01..F-15 (15) = 95 units."""
+    by_id = {n.id: n for n in nodes}
+    a = [n for n in nodes if n.epic == "A"]
+    b = [n for n in nodes if n.epic == "B"]
+    f15 = [by_id[f"F-{i:02d}"] for i in range(1, 16) if f"F-{i:02d}" in by_id]
+    return a + b + f15
+
+
+# ---------------------------------------------------------------------------
+# Topological executor (F-04)
+# ---------------------------------------------------------------------------
+@dataclass
+class ExecutorConfig:
+    max_parallel: int = 5           # 5 forge workers
+    audit_after_each_batch: bool = True
+    dry_run: bool = True            # DORMANT by default
+    worktree_root: str = r"C:\Users\koosh\_compute_infra_wt"
+    phenotype_registry_root: str = r"C:\Users\koosh\phenotype-registry"
+    forge_command: str = "forge"    # could be "forge -p" or "task" subagent
+    gh_token: Optional[str] = None
+
+    def forge_workers(self) -> list[str]:
+        """The 5 subagents we plan to spawn."""
+        return [
+            "forge-infra",     # phenotype-infra
+            "forge-compose",   # PhenoCompose
+            "forge-byteport",  # BytePort
+            "forge-dag",       # DAG foundation crate
+            "forge-auditor",   # 30-pillar grading
+        ]
+
+
+class TopologicalExecutor:
+    """Topological executor with cycle detection and pre-req resolution.
+
+    This is the reference impl for DAG unit F-04.  It does NOT itself run
+    anything destructive — it emits a plan, can dry-run, and only when
+    `cfg.dry_run = False` AND `executor.run_phase(phase_id=1)` is called
+    does it spawn subagents.
+    """
+
+    def __init__(self, nodes: Iterable[Node], cfg: ExecutorConfig | None = None):
+        self.nodes = list(nodes)
+        self.cfg = cfg or ExecutorConfig()
+        self.records: dict[str, RunRecord] = {n.id: RunRecord(node_id=n.id) for n in self.nodes}
+
+    # ---- F-03 / F-04: dependency resolution + cycle detection
+    def _pre(self, n: Node) -> set[str]:
+        return set(n.pre)
+
+    def _dep_graph(self) -> dict[str, set[str]]:
+        """pre-req graph:  {node_id} -> {pre-req ids that node depends on}."""
+        return {n.id: self._pre(n) for n in self.nodes}
+
+    def _reverse_graph(self) -> dict[str, set[str]]:
+        """reverse graph:  {node_id} -> {ids of nodes that depend on it}."""
+        rev: dict[str, set[str]] = {n.id: set() for n in self.nodes}
+        for n in self.nodes:
+            for p in self._pre(n):
+                if p in rev:
+                    rev[p].add(n.id)
+        return rev
+
+    def detect_cycle(self) -> Optional[list[str]]:
+        """Returns a cycle as a list of node ids, or None if DAG is acyclic."""
+        WHITE, GRAY, BLACK = 0, 1, 2
+        color = {n.id: WHITE for n in self.nodes}
+        parent: dict[str, Optional[str]] = {n.id: None for n in self.nodes}
+
+        def dfs(u: str) -> Optional[list[str]]:
+            color[u] = GRAY
+            for v in self._dep_graph().get(u, ()):
+                if v not in color:
+                    continue
+                if color[v] == GRAY:
+                    # cycle found — walk parent chain back to v
+                    cycle = [u, v]
+                    p = parent[u]
+                    while p is not None and p != v:
+                        cycle.append(p)
+                        p = parent[p]
+                    cycle.append(v)
+                    return list(reversed(cycle))
+                if color[v] == WHITE:
+                    parent[v] = u
+                    sub = dfs(v)
+                    if sub:
+                        return sub
+            color[u] = BLACK
+            return None
+
+        for n in self.nodes:
+            if color[n.id] == WHITE:
+                cyc = dfs(n.id)
+                if cyc:
+                    return cyc
+        return None
+
+    def topo_order(self) -> list[Node]:
+        """Kahn's algorithm — returns nodes in topological order.
+        Pre-reqs that fall OUTSIDE the active node set are silently ignored
+        (they will be satisfied by the larger DAG run that includes them).
+        """
+        active_ids = {n.id for n in self.nodes}
+        indeg = {n.id: sum(1 for p in self._pre(n) if p in active_ids) for n in self.nodes}
+
+        ready = sorted([n.id for n in self.nodes if indeg[n.id] == 0])
+        ordered: list[Node] = []
+        by_id = {n.id: n for n in self.nodes}
+        while ready:
+            u = ready.pop(0)
+            ordered.append(by_id[u])
+            for v in self._dep_graph().get(u, ()):
+                if v in indeg:
+                    indeg[v] -= 1
+                    if indeg[v] == 0:
+                        ready.append(v)
+                        ready.sort()
+        if len(ordered) != len(self.nodes):
+            remaining = [n.id for n in self.nodes if n.id not in {o.id for o in ordered}]
+            raise RuntimeError(f"Cycle or missing pre-reqs in remaining nodes: {remaining}")
+        return ordered
+
+    # ---- F-05 / F-06: artifact-aware batching + caching
+    def batch_by_artifact(self) -> list[list[Node]]:
+        """Group ready nodes by (epic, repo) so parallel batches don't conflict."""
+        topo = self.topo_order()
+        batches: list[list[Node]] = []
+        seen: set[str] = set()
+        remaining = list(topo)
+        while remaining:
+            batch: list[Node] = []
+            for n in remaining:
+                if n.id in seen:
+                    continue
+                # Group all nodes of same (epic, repo) into one batch
+                same = [m for m in remaining if m.epic == n.epic and m.repo == n.repo and m.id not in seen]
+                # Cap batch by max_parallel
+                if len(batch) + len(same) <= self.cfg.max_parallel:
+                    batch.extend(same)
+                    seen.update(m.id for m in same)
+                else:
+                    break
+            if not batch:
+                # Force one to break the deadlock
+                batch.append(remaining[0])
+                seen.add(remaining[0].id)
+            batches.append(batch)
+            remaining = [n for n in remaining if n.id not in seen]
+        return batches
+
+    # ---- F-07: status reporter
+    def status_report(self) -> dict:
+        by_status: dict[str, int] = {}
+        for r in self.records.values():
+            by_status[r.status] = by_status.get(r.status, 0) + 1
+        return {
+            "spec": "010-compute-infra",
+            "phase": 1,
+            "node_count": len(self.nodes),
+            "by_status": by_status,
+            "by_epic": {
+                e: sum(1 for n in self.nodes if n.epic == e)
+                for e in sorted({n.epic for n in self.nodes})
+            },
+            "records": [asdict(r) for r in self.records.values()],
+        }
+
+    # ---- DORMANT execution  (only runs when cfg.dry_run = False AND called explicitly)
+    def run_phase(self, phase_id: int = 1) -> dict:
+        """DORMANT — refuses to run unless cfg.dry_run = False."""
+        if self.cfg.dry_run:
+            return {
+                "phase": phase_id,
+                "executed": False,
+                "reason": "DRY_RUN",
+                "message": (
+                    "Executor is DORMANT.  To execute Phase 1, the user must "
+                    "explicitly say 'proceed'.  Set cfg.dry_run = False AND "
+                    "ensure the brainstorming gate has been passed."
+                ),
+                "plan": {
+                    "batches": [
+                        [n.id for n in b] for b in self.batch_by_artifact()
+                    ],
+                    "topo_order": [n.id for n in self.topo_order()],
+                    "status": self.status_report(),
+                },
+            }
+        # ---- Real execution would go here ----
+        # Per unit: spawn forge subagent in worktree, branch, implement, PR.
+        # Per batch: invoke forge-auditor for 30-pillar re-grade.
+        # Auto-extend DAG from grade deltas (F-14 hook).
+        raise NotImplementedError("Real execution wired post-approval.")
+
+
+# ---------------------------------------------------------------------------
+# CLI  (does not execute — only inspects/plans)
+# ---------------------------------------------------------------------------
+def _cli(argv: list[str]) -> int:
+    import argparse
+    p = argparse.ArgumentParser(prog="pheno_dag_executor",
+                                description="DORMANT executor for spec #010-compute-infra")
+    p.add_argument("--dag", default=DEFAULT_DAG, help="Path to DAG YAML")
+    p.add_argument("--phase", type=int, default=1, help="Phase number to inspect")
+    p.add_argument("--show", choices=["nodes", "topo", "batches", "status", "validate"],
+                   default="status")
+    p.add_argument("--json", action="store_true", help="Emit JSON")
+    args = p.parse_args(argv)
+
+    nodes = load_dag(args.dag)
+    phase_nodes = load_phase_1(nodes) if args.phase == 1 else nodes
+    exec_ = TopologicalExecutor(phase_nodes)
+
+    out: object
+    if args.show == "nodes":
+        out = [asdict(n) for n in phase_nodes]
+    elif args.show == "topo":
+        out = [n.id for n in exec_.topo_order()]
+    elif args.show == "batches":
+        out = [[n.id for n in b] for b in exec_.batch_by_artifact()]
+    elif args.show == "validate":
+        cyc = exec_.detect_cycle()
+        out = {"cycle": cyc, "node_count": len(phase_nodes), "phase": args.phase}
+    else:
+        out = exec_.status_report()
+
+    if args.json:
+        print(json.dumps(out, indent=2, default=str))
+    else:
+        if isinstance(out, dict):
+            for k, v in out.items():
+                if k == "records":
+                    continue
+                print(f"{k}: {v}")
+        else:
+            for x in out:
+                print(x)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_cli(sys.argv[1:]))

@@ -1,0 +1,29 @@
+//! PTX binary entrypoint — thin shim that delegates to [`ptx_lib`].
+//!
+//! Keeps `main` minimal so all behaviour remains unit-testable via the
+//! library crate. Mirrors the contract used in `phenotype-cli/src/main.rs`.
+
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
+    match ptx_lib::run_cli() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("error: {err}");
+            Err::<(), _>(err).map_or(ExitCode::FAILURE, |_| ExitCode::FAILURE).callback_failed()
+        }
+    }
+}
+
+/// Tiny extension trait used by `main` to collapse the dual-failure paths.
+trait CallbackFailed {
+    /// Convert a unit error into the standard process exit code.
+    fn callback_failed(self) -> ExitCode;
+}
+
+impl CallbackFailed for ExitCode {
+    #[inline]
+    fn callback_failed(self) -> Self {
+        self
+    }
+}

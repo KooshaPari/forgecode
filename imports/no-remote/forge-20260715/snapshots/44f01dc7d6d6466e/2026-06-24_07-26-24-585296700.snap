@@ -1,0 +1,2 @@
+@echo off
+"C:\program files\Git\usr\bin\bash.exe" --login -c "bash /c/Users/koosh/_dbg_funcs.sh"

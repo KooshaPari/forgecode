@@ -1,0 +1,15 @@
+import subprocess
+import sys
+
+token = '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'
+
+# PhenoObservability push
+url = f'https://KooshaPari:{token}@github.com/KooshaPari/PhenoObservability.git'
+r = subprocess.run(
+    ['git', '-C', r'C:\Users\koosh\PhenoObservability', 'push', url, 'HEAD:fix/repoint-phenotype-error-core-phenoShared'],
+    capture_output=True, text=True
+)
+print('=== PhenoObservability ===')
+print(r.stdout[-500:] if len(r.stdout) > 500 else r.stdout)
+print(r.stderr[-500:] if len(r.stderr) > 500 else r.stderr)
+print(f'RC: {r.returncode}')

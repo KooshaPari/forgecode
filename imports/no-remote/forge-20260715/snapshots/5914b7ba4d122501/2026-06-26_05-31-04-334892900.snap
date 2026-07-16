@@ -1,0 +1,171 @@
+=========================================================================
+A9 - Bulk-close 2026-06-11 CC/QC/SD SOTA chore branches
+Assessment Report
+Generated: 2026-06-25
+Repository: PhenoCompose (C:\Users\koosh\PhenoCompose)
+=========================================================================
+
+EXECUTIVE SUMMARY
+-----------------
+All 12 target branches exist as REMOTE-ONLY tracking refs under origin/.
+None exist as local branches. None have been merged into main. None of
+their tip commits are ancestors of main. Last activity dates range from
+2026-06-12 to 2026-06-14 (11-13 days stale as of 2026-06-25).
+
+These are stale orphan branches that cannot be deleted locally without
+push access. They should be removed from the remote via force push or
+GitHub branch deletion.
+
+BRANCH-BY-BRANCH ASSESSMENT
+---------------------------
+
+=== CC Series ===
+
+1. origin/chore/CC1-005-sota-2026-06-11
+   - Status:      REMOTE ONLY (not local)
+   - Merged?:     NO — not in 'git branch -a --merged main'
+   - Ancestor?:   NO — commit dc40a11 is NOT ancestor of main
+   - Last commit: 2026-06-12 02:23:11 -0700
+   - Message:     "CC1-005(forge-commit): 4 files from agent worktree"
+   - Verdict:     STALE — safe for remote deletion
+
+2. origin/chore/CC2-005-sota-2026-06-11
+   - Status:      REMOTE ONLY (not local)
+   - Merged?:     NO
+   - Ancestor?:   NO — commit 0b72602 is NOT ancestor of main
+   - Last commit: 2026-06-12 02:23:12 -0700
+   - Message:     "CC2-005(forge-commit): 5 files from agent worktree"
+   - Verdict:     STALE — safe for remote deletion
+
+3. origin/chore/CC3-005-sota-2026-06-11
+   - Status:      REMOTE ONLY (not local)
+   - Merged?:     NO
+   - Ancestor?:   NO — commit 08f93ed is NOT ancestor of main
+   - Last commit: 2026-06-14 23:53:11 -0700
+   - Message:     "wip(chore/CC3-005-sota-2026-06-11): SOTA work from resume session"
+   - Verdict:     STALE — safe for remote deletion (latest of the set but still stale)
+
+4. origin/chore/CC4-005-sota-2026-06-11
+   - Status:      REMOTE ONLY (not local)
+   - Merged?:     NO
+   - Ancestor?:   NO — commit 5ae4e2c is NOT ancestor of main
+   - Last commit: 2026-06-12 02:23:12 -0700
+   - Message:     "CC4-005(forge-commit): 3 files from agent worktree"
+   - Verdict:     STALE — safe for remote deletion
+
+=== QC Series ===
+
+5. origin/chore/QC1-005-sota-2026-06-11
+   - Status:      REMOTE ONLY (not local)
+   - Merged?:     NO
+   - Ancestor?:   NO — commit c24feaa is NOT ancestor of main
+   - Last commit: 2026-06-12 02:23:13 -0700
+   - Message:     "QC1-005(forge-commit): 9 files from agent worktree"
+   - Verdict:     STALE — safe for remote deletion
+
+6. origin/chore/QC2-005-sota-2026-06-11
+   - Status:      REMOTE ONLY (not local)
+   - Merged?:     NO
+   - Ancestor?:   NO — commit 8054b37 is NOT ancestor of main
+   - Last commit: 2026-06-12 02:23:13 -0700
+   - Message:     "QC2-005(forge-commit): 6 files from agent worktree"
+   - Verdict:     STALE — safe for remote deletion
+
+7. origin/chore/QC3-005-sota-2026-06-11
+   - Status:      REMOTE ONLY (not local)
+   - Merged?:     NO
+   - Ancestor?:   NO — commit da529d9 is NOT ancestor of main
+   - Last commit: 2026-06-12 02:23:14 -0700
+   - Message:     "QC3-005(forge-commit): 7 files from agent worktree"
+   - Verdict:     STALE — safe for remote deletion
+
+8. origin/chore/QC4-005-sota-2026-06-11
+   - Status:      REMOTE ONLY (not local)
+   - Merged?:     NO
+   - Ancestor?:   NO — commit 83c546c is NOT ancestor of main
+   - Last commit: 2026-06-12 02:23:14 -0700
+   - Message:     "QC4-005(forge-commit): 3 files from agent worktree"
+   - Verdict:     STALE — safe for remote deletion
+
+=== SD Series ===
+
+9. origin/chore/SD2-004-sota-2026-06-11
+   - Status:      REMOTE ONLY (not local)
+   - Merged?:     NO
+   - Ancestor?:   NO — commit d882d3c is NOT ancestor of main
+   - Last commit: 2026-06-12 02:23:14 -0700
+   - Message:     "SD2(forge-commit): 5 files from agent worktree"
+   - Verdict:     STALE — safe for remote deletion
+
+10. origin/chore/SD3-004-sota-2026-06-11
+    - Status:      REMOTE ONLY (not local)
+    - Merged?:     NO
+    - Ancestor?:   NO — commit 4638a5a is NOT ancestor of main
+    - Last commit: 2026-06-12 02:23:15 -0700
+    - Message:     "SD3(forge-commit): 2 files from agent worktree"
+    - Verdict:     STALE — safe for remote deletion
+
+11. origin/chore/SD4-004-sota-2026-06-11
+    - Status:      REMOTE ONLY (not local)
+    - Merged?:     NO
+    - Ancestor?:   NO — commit 53d84ee is NOT ancestor of main
+    - Last commit: 2026-06-12 02:23:15 -0700
+    - Message:     "SD4(forge-commit): 2 files from agent worktree"
+    - Verdict:     STALE — safe for remote deletion
+
+12. origin/chore/SD4-2026-06-12
+    - Status:      REMOTE ONLY (not local)
+    - Merged?:     NO
+    - Ancestor?:   NO — commit cc65bd7 is NOT ancestor of main
+    - Last commit: 2026-06-12 02:29:19 -0700
+    - Message:     "SD4(forge-commit): 1 files from agent worktree"
+    - Verdict:     STALE — safe for remote deletion
+
+SUMMARY TABLE
+-------------
+Ref                                                         Merged?  Ancestor?  Age (days)  Deletable?
+----------------------------------------------------------  -------  ---------  ----------  ----------
+origin/chore/CC1-005-sota-2026-06-11                        NO       NO          13          YES (remote)
+origin/chore/CC2-005-sota-2026-06-11                        NO       NO          13          YES (remote)
+origin/chore/CC3-005-sota-2026-06-11                        NO       NO          11          YES (remote)
+origin/chore/CC4-005-sota-2026-06-11                        NO       NO          13          YES (remote)
+origin/chore/QC1-005-sota-2026-06-11                        NO       NO          13          YES (remote)
+origin/chore/QC2-005-sota-2026-06-11                        NO       NO          13          YES (remote)
+origin/chore/QC3-005-sota-2026-06-11                        NO       NO          13          YES (remote)
+origin/chore/QC4-005-sota-2026-06-11                        NO       NO          13          YES (remote)
+origin/chore/SD2-004-sota-2026-06-11                        NO       NO          13          YES (remote)
+origin/chore/SD3-004-sota-2026-06-11                        NO       NO          13          YES (remote)
+origin/chore/SD4-004-sota-2026-06-11                        NO       NO          13          YES (remote)
+origin/chore/SD4-2026-06-12                                 NO       NO          13          YES (remote)
+
+TOTALS
+------
+  Branches assessed:       12
+  Local branches found:     0
+  Remote-only branches:    12
+  Merged into main:         0
+  Safe to delete remote:   12
+  Already ancestor of main: 0
+
+ACTIONS TAKEN
+-------------
+- [SAFE] No local branches to delete (all remote-only)
+- [REPORT] Full assessment documented above
+- [RECOMMEND] Delete remote branches via push: git push origin --delete <branch>
+  for each of the 12 branches listed above
+
+DELETE COMMAND (for reference):
+  git push origin --delete ^
+    chore/CC1-005-sota-2026-06-11 ^
+    chore/CC2-005-sota-2026-06-11 ^
+    chore/CC3-005-sota-2026-06-11 ^
+    chore/CC4-005-sota-2026-06-11 ^
+    chore/QC1-005-sota-2026-06-11 ^
+    chore/QC2-005-sota-2026-06-11 ^
+    chore/QC3-005-sota-2026-06-11 ^
+    chore/QC4-005-sota-2026-06-11 ^
+    chore/SD2-004-sota-2026-06-11 ^
+    chore/SD3-004-sota-2026-06-11 ^
+    chore/SD4-004-sota-2026-06-11 ^
+    chore/SD4-2026-06-12
+=========================================================================

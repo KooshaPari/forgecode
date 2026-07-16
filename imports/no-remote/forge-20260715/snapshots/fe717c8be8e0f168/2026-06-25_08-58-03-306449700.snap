@@ -1,0 +1,309 @@
+/**
+ * DAG Parallel Bucket & Critical Path Computation (F29)
+ *
+ * Provides:
+ *  - computeBuckets():  topological sort into parallel execution tiers
+ *  - computeCriticalPath(): forward/backward CPM pass
+ *  - computeWallClock():  per-bucket and total wall-clock estimates
+ *
+ * All functions are pure and have no DOM dependencies, making them
+ * testable directly from Node/Bun.
+ */
+
+(function () {
+  "use strict";
+
+  /**
+   * Topological sort (Kahn's algorithm) that also returns per-node
+   * "level" — the longest-path layer (0-indexed root tier).
+   *
+   * @param {{id:string,estimatedDuration?:number}[]} nodes
+   * @param {{from:string,to:string}[]} edges
+   * @returns {{order:string[], level:Object<string,number>}}
+   */
+  function topoSortWithLevels(nodes, edges) {
+    var inDeg = {};
+    var adj = {};
+    var idSet = {};
+    var dur = {};
+
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      idSet[n.id] = true;
+      inDeg[n.id] = 0;
+      adj[n.id] = [];
+      dur[n.id] = n.estimatedDuration || 1;
+    }
+
+    for (var j = 0; j < edges.length; j++) {
+      var e = edges[j];
+      if (!idSet[e.from] || !idSet[e.to]) continue;
+      adj[e.from].push(e.to);
+      inDeg[e.to] = (inDeg[e.to] || 0) + 1;
+    }
+
+    var queue = [];
+    var ids = Object.keys(inDeg);
+    for (var k = 0; k < ids.length; k++) {
+      if (inDeg[ids[k]] === 0) queue.push(ids[k]);
+    }
+
+    var order = [];
+    while (queue.length) {
+      var id = queue.shift();
+      order.push(id);
+      for (var m = 0; m < (adj[id] || []).length; m++) {
+        var nid = adj[id][m];
+        inDeg[nid]--;
+        if (inDeg[nid] === 0) queue.push(nid);
+      }
+    }
+
+    // Longest-path level assignment (earliest bucket)
+    var level = {};
+    for (var i = 0; i < nodes.length; i++) level[nodes[i].id] = 0;
+
+    for (var i = 0; i < order.length; i++) {
+      var id = order[i];
+      var l = level[id] || 0;
+      for (var m = 0; m < (adj[id] || []).length; m++) {
+        var nid = adj[id][m];
+        level[nid] = Math.max(level[nid] || 0, l + 1);
+      }
+    }
+
+    return { order: order, level: level, duration: dur };
+  }
+
+  /**
+   * Compute parallel buckets from DAG topology.
+   *
+   * Returns an array of buckets, each bucket being an array of
+   * { id, label, status, duration, isCritical } objects.
+   *
+   * @param {{id:string,label:string,status:string,estimatedDuration?:number}[]} nodes
+   * @param {{from:string,to:string}[]} edges
+   * @returns {{buckets: Array, criticalPath: string[], nodeLevels: Object}}
+   */
+  function computeBuckets(nodes, edges) {
+    var result = topoSortWithLevels(nodes, edges);
+    var buckets = [];
+    var nodeMap = {};
+    for (var i = 0; i < nodes.length; i++) {
+      nodeMap[nodes[i].id] = nodes[i];
+    }
+
+    // Group by level
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      var l = result.level[n.id] || 0;
+      if (!buckets[l]) buckets[l] = [];
+      buckets[l].push({
+        id: n.id,
+        label: n.label,
+        status: n.status,
+        duration: n.estimatedDuration || 1,
+      });
+    }
+
+    // Compute critical path
+    var criticalPath = computeCriticalPath(nodes, edges);
+    var criticalSet = {};
+    for (var i = 0; i < criticalPath.length; i++) {
+      criticalSet[criticalPath[i]] = true;
+    }
+
+    // Mark critical nodes in each bucket
+    for (var i = 0; i < buckets.length; i++) {
+      var bucket = buckets[i];
+      if (!bucket) continue;
+      for (var j = 0; j < bucket.length; j++) {
+        bucket[j].isCritical = !!criticalSet[bucket[j].id];
+      }
+    }
+
+    // Filter out empty buckets
+    var filtered = [];
+    for (var i = 0; i < buckets.length; i++) {
+      if (buckets[i] && buckets[i].length > 0) {
+        filtered.push(buckets[i]);
+      }
+    }
+
+    return {
+      buckets: filtered,
+      criticalPath: criticalPath,
+      nodeLevels: result.level,
+      duration: result.duration,
+    };
+  }
+
+  /**
+   * Compute the critical path using forward/backward CPM pass.
+   *
+   * The critical path is the longest path through the DAG — any delay
+   * in a critical node delays the entire project.
+   *
+   * @param {{id:string,estimatedDuration?:number}[]} nodes
+   * @param {{from:string,to:string}[]} edges
+   * @returns {string[]} Ordered array of node IDs on the critical path
+   */
+  function computeCriticalPath(nodes, edges) {
+    var result = topoSortWithLevels(nodes, edges);
+    var order = result.order;
+    var dur = result.duration;
+
+    // Build adjacency lists
+    var adj = {};
+    var radj = {}; // reverse adjacency (predecessors)
+    var idSet = {};
+    for (var i = 0; i < nodes.length; i++) {
+      idSet[nodes[i].id] = true;
+      adj[nodes[i].id] = [];
+      radj[nodes[i].id] = [];
+    }
+    for (var j = 0; j < edges.length; j++) {
+      var e = edges[j];
+      if (!idSet[e.from] || !idSet[e.to]) continue;
+      adj[e.from].push(e.to);
+      radj[e.to].push(e.from);
+    }
+
+    // Forward pass: earliest start (ES) and earliest finish (EF)
+    var ES = {};
+    var EF = {};
+    for (var i = 0; i < nodes.length; i++) ES[nodes[i].id] = 0;
+
+    for (var i = 0; i < order.length; i++) {
+      var id = order[i];
+      ES[id] = ES[id] || 0;
+      EF[id] = ES[id] + (dur[id] || 1);
+      for (var m = 0; m < (adj[id] || []).length; m++) {
+        var nid = adj[id][m];
+        ES[nid] = Math.max(ES[nid] || 0, EF[id]);
+      }
+    }
+
+    // Project duration = max EF
+    var projectDuration = 0;
+    for (var i = 0; i < nodes.length; i++) {
+      projectDuration = Math.max(projectDuration, EF[nodes[i].id] || 0);
+    }
+
+    // Backward pass: latest finish (LF) and latest start (LS)
+    var LF = {};
+    var LS = {};
+    for (var i = 0; i < nodes.length; i++) {
+      LF[nodes[i].id] = projectDuration;
+    }
+
+    // Process in reverse topological order
+    var reversed = order.slice().reverse();
+    for (var i = 0; i < reversed.length; i++) {
+      var id = reversed[i];
+      LF[id] = LF[id] || projectDuration;
+      LS[id] = LF[id] - (dur[id] || 1);
+      for (var m = 0; m < (radj[id] || []).length; m++) {
+        var pid = radj[id][m];
+        LF[pid] = Math.min(LF[pid] || projectDuration, LS[id]);
+      }
+    }
+
+    // Critical path = nodes where ES === LS (no slack)
+    var critical = [];
+    var seen = {};
+    // Trace from roots to leaves following critical edges
+    // First, find all roots (nodes with no predecessors)
+    var hasPred = {};
+    for (var i = 0; i < nodes.length; i++) hasPred[nodes[i].id] = false;
+    for (var j = 0; j < edges.length; j++) {
+      hasPred[edges[j].to] = true;
+    }
+
+    var roots = [];
+    for (var i = 0; i < nodes.length; i++) {
+      if (!hasPred[nodes[i].id]) roots.push(nodes[i].id);
+    }
+
+    // Follow critical path from each root, choosing the successor with
+    // earliest start matching this node's finish
+    for (var r = 0; r < roots.length; r++) {
+      var path = [];
+      var current = roots[r];
+      while (current) {
+        if (seen[current]) break;
+        var slack = (LS[current] || 0) - (ES[current] || 0);
+        if (Math.abs(slack) < 0.001) {
+          path.push(current);
+          seen[current] = true;
+        }
+        // Find critical successor
+        var next = null;
+        var bestES = -1;
+        for (var m = 0; m < (adj[current] || []).length; m++) {
+          var cand = adj[current][m];
+          if (Math.abs((LS[cand] || 0) - (ES[cand] || 0)) < 0.001) {
+            // Critical successor — pick one with matching ES
+            if (ES[cand] > bestES) {
+              bestES = ES[cand];
+              next = cand;
+            }
+          }
+        }
+        current = next;
+      }
+      // Keep the longest critical path
+      if (path.length > critical.length) critical = path;
+    }
+
+    // Fallback: if no critical path found, use the topo order itself
+    if (critical.length === 0 && order.length > 0) {
+      critical = order;
+    }
+
+    return critical;
+  }
+
+  /**
+   * Compute wall-clock time estimates per bucket and total.
+   *
+   * @param {{buckets: Array}} bucketsResult - result of computeBuckets()
+   * @returns {{bucketTimes: number[], total: number, criticalPathTime: number}}
+   */
+  function computeWallClock(bucketsResult) {
+    var bucketTimes = [];
+    var total = 0;
+
+    for (var i = 0; i < bucketsResult.buckets.length; i++) {
+      var bucket = bucketsResult.buckets[i];
+      var maxDur = 0;
+      for (var j = 0; j < bucket.length; j++) {
+        if (bucket[j].duration > maxDur) maxDur = bucket[j].duration;
+      }
+      bucketTimes.push(maxDur);
+      total += maxDur;
+    }
+
+    // Critical path time = sum of durations on critical path
+    var cpTime = 0;
+    for (var i = 0; i < bucketsResult.criticalPath.length; i++) {
+      var cid = bucketsResult.criticalPath[i];
+      var dur = bucketsResult.duration ? bucketsResult.duration[cid] : 1;
+      cpTime += dur || 1;
+    }
+
+    return {
+      bucketTimes: bucketTimes,
+      total: total,
+      criticalPathTime: cpTime,
+    };
+  }
+
+  // ── public API ──────────────────────────────────────────────────────────────
+  window.DagBuckets = {
+    computeBuckets: computeBuckets,
+    computeCriticalPath: computeCriticalPath,
+    computeWallClock: computeWallClock,
+    topoSortWithLevels: topoSortWithLevels,
+  };
+})();

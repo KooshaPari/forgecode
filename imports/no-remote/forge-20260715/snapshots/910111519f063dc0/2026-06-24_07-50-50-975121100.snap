@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+chmod +x "C:/Users/koosh/phenotype-registry/registry/audit-absorption-justification/grade.sh"
+ls -la "C:/Users/koosh/phenotype-registry/registry/audit-absorption-justification/grade.sh"

@@ -1,0 +1,239 @@
+# MODEL_MATRIX.md
+
+> **Status:** Design. Goes alongside the perf suite (`perf/*`) and `config/model_engine_matrix.yaml`.
+> **Naming convention:** forks we own carry the `-dev` suffix in bin/path names (`forge-dev`, `omniroute-dev`, `pheno-serve-dev`, `codex-dev`). The matrix references engines by their upstream names (vLLM, SGLang, TensorRT-LLM, llama.cpp/MLX) but binds them through `omniroute-dev` (cloud routing) and `pheno-serve-dev` (local engine lifecycle + OpenAI-compat endpoint).
+
+---
+
+## 0. Constraints recap
+
+- **Primary hardware:** Windows desktop, 64 GB DDR4, RTX 3090 Ti (24 GB VRAM, GA102, no FP8 tensor cores).
+- **Secondary hardware:** M1 Pro MacBook Pro, 10-core, 16 GB RAM. Worker / fallback only.
+- **Cloud baseline:** OpenRouter with `inclusionai/ling-2.6-flash` (104B total / 7.4B active MoE, 262K context, $0.01 / $0.03 per 1M tokens, 90 % promo).
+- **Density rule:** ≤ 12B dense local is fine. > 12B → MoE preferred (or quantized).
+- **Engine rule:** vLLM, SGLang, TensorRT-LLM, llama.cpp / MLX (M1 fallback) are all in scope.
+- **Optimization rule:** prefix-cache, chunked prefill, in-flight batching, speculative decoding (EAGLE / P-EAGLE / N-gram / Suffix / MLP-draft), quantization (AWQ / GPTQ / GGUF / FP8 / INT8), CUDA-graph capture, custom kernels — all permitted.
+
+Pheno-harness already encodes `SGLang primary, vLLM secondary, llama-server legacy, BitNet sub-1B` in `config/inference_runners.yaml`. TensorRT-LLM is `not_recommended_primary` because of compile overhead on 3090 Ti. We honor that on 3090 Ti and re-evaluate on Blackwell.
+
+---
+
+## 1. Tier system
+
+Each model gets a tier key. Engines are bound per tier.
+
+| Tier | Size band | Default engine (3090 Ti) | M1 Pro fallback |
+|---|---|---|---|
+| `T0_draft` | ≤ 1 B dense | ik_llama / llama.cpp | llama.cpp |
+| `T1_small` | 1–4 B dense | SGLang | llama.cpp |
+| `T2_mid` | 4–12 B dense | SGLang (AWQ) or vLLM (AWQ) | (skip — too large) |
+| `T3_moe_mid` | 12–35 B MoE (active ≤ 8 B) | vLLM (AWQ) or SGLang | (skip) |
+| `T4_moe_large` | 35–100 B MoE | vLLM (AWQ / FP8 offload) | (skip) |
+| `T5_cloud` | any, cloud | OpenRouter via `omniroute-dev` | same |
+
+Tier keys are referenced by `harness/lanes.yaml`, `config/models.yaml`, and `config/local_swarm.yaml`. The matrix itself lives in `config/model_engine_matrix.yaml` (new).
+
+---
+
+## 2. Model list
+
+Sizes approximate; verify exact SKUs against HuggingFace on the day of bench. Source distribution is illustrative; final picks come from a leaderboard pull.
+
+### 2.1 Tier 0 — drafts (≤ 1 B)
+
+| Model | Size | Format | Notes |
+|---|---|---|---|
+| Qwen 2.5 0.5B Instruct | 0.5 B | GGUF Q4_K_M | already used in pheno-harness draft path |
+| Llama 3.2 1B Instruct | 1 B | AWQ / GGUF | baseline for spec-dec draft |
+| BitNet b1.58 0.7B | 0.7 B | BitNet native | pheno's `inference_runners.yaml` already names this |
+| SmolLM2 360M | 0.36 B | GGUF | fallback for cache-hit probes |
+
+### 2.2 Tier 1 — small (1–4 B)
+
+| Model | Size | Format | Notes |
+|---|---|---|---|
+| Qwen 2.5 3B Instruct | 3 B | AWQ / GGUF | pheno's main local |
+| Phi-3.5 mini 3.8B | 3.8 B | AWQ | strong baseline at this size |
+| Llama 3.2 3B Instruct | 3 B | AWQ | cross-check |
+| Gemma 2 2B IT | 2 B | AWQ | safety comparison |
+
+### 2.3 Tier 2 — mid (4–12 B dense)
+
+| Model | Size | Format | Notes |
+|---|---|---|---|
+| Qwen 2.5 7B Instruct | 7 B | AWQ / FP8 not on 3090 Ti | primary mid-tier |
+| Llama 3.1 8B Instruct | 8 B | AWQ | baseline |
+| Mistral Nemo 12B | 12 B | AWQ | upper-bound dense at this tier |
+| Qwen 2.5 Coder 7B Instruct | 7 B | AWQ | code-specialized comparison |
+| DeepSeek-Coder-V2-Lite 16B MoE (2.4B active) | 16 B total | AWQ | straddles T2/T3 — measure both |
+
+### 2.4 Tier 3 — MoE mid (12–35 B)
+
+| Model | Size | Active | Format | Notes |
+|---|---|---|---|---|
+| Qwen 2.5 14B-Instruct (A2.7B) — if MoE variant exists | 14 B | 2.7 B | AWQ | local MoE mid |
+| DeepSeek-V2-Lite 16B (2.4B active) | 16 B | 2.4 B | AWQ | already noted |
+| Phi-3.5 MoE 42B (6.6B active) | 42 B | 6.6 B | AWQ | upper-bound mid |
+| Mixtral 8x7B (12.9B active) | 47 B | 12.9 B | AWQ | cross-check |
+
+### 2.5 Tier 4 — MoE large (35–100 B)
+
+| Model | Size | Active | Format | Notes |
+|---|---|---|---|---|
+| Qwen 2.5 72B-Instruct (MoE variant if available) | 72 B | varies | AWQ, optional CPU offload | pushes the 3090 Ti |
+| Llama 3.1 70B-Instruct (dense) | 70 B | 70 B | AWQ + CPU offload | reference dense large |
+| DeepSeek-V2 236B (21B active) | 236 B | 21 B | AWQ + heavy CPU offload | local upper bound |
+| Ling-2.6-flash (cloud baseline) | 104 B | 7.4 B | (cloud) | OpenRouter `inclusionai/ling-2.6-flash` |
+
+### 2.6 Tier 5 — cloud baselines (used for parity checks)
+
+| Model | Provider | Notes |
+|---|---|---|
+| `inclusionai/ling-2.6-flash` | OpenRouter | primary cloud baseline, MoE |
+| `claude-opus-4-8` | forge (claude) | TB2 SOTA ceiling |
+| `gpt-5.5` | forge (openai) | TB2 SOTA ceiling |
+| `gemini-3.1-pro` | forge (google) | TB2 SOTA ceiling |
+| `cursor-composer` | Cursor | role-eval baseline for planner |
+
+---
+
+## 3. Engine × tier matrix (3090 Ti primary)
+
+`✓` = primary path; `◐` = secondary; `✗` = not supported / not recommended.
+
+| Engine | T0 | T1 | T2 | T3 | T4 |
+|---|---|---|---|---|---|
+| ik_llama / llama.cpp | ✓ | ✓ | ◐ | ✗ | ✗ |
+| SGLang | ✓ | ✓ | ✓ | ✓ | ◐ |
+| vLLM | ✓ | ✓ | ✓ | ✓ | ✓ |
+| TensorRT-LLM | ◐ | ◐ | ◐ | ◐ | ◐ |
+| BitNet | ✓ (≤ 1B ternary) | ✗ | ✗ | ✗ | ✗ |
+| MLX (M1 Pro fallback only) | ✓ | ◐ | ✗ | ✗ | ✗ |
+
+**Why this is the recommendation:**
+- **T0 (drafts):** ik_llama / llama.cpp are lowest-overhead and pair naturally with speculative decoding (spec-dec needs a tiny draft model; this tier is the draft).
+- **T1 (small):** SGLang's low-latency RadixAttention is excellent for the chat-loop's tight inner loop. vLLM is also fine.
+- **T2 (mid):** SGLang and vLLM are roughly tied at this size on 3090 Ti. TensorRT-LLM is `◐` only because compile overhead is painful for nightly iteration; worth running once per release.
+- **T3 (MoE mid):** vLLM's paged KV + chunked prefill wins for MoE on consumer GPUs. SGLang viable but slightly behind.
+- **T4 (MoE large):** vLLM with AWQ + CPU offload is the only realistic local option. TensorRT-LLM `◐` because compile is rarely worth it for a single nightly.
+
+---
+
+## 4. Quantization strategy per tier
+
+- **T0:** GGUF Q4_K_M. No AWQ (too coarse).
+- **T1:** AWQ-INT4 default; GGUF Q5_K_M fallback for M1 Pro.
+- **T2:** AWQ-INT4 default. FP8 not available on 3090 Ti (no tensor-core FP8).
+- **T3 (MoE):** AWQ-INT4 on active experts; experts offloaded to CPU with `vllm cpu_offload` / SGLang equivalent.
+- **T4 (MoE large):** AWQ-INT4 + CPU offload; expect batch size 1 only.
+- **M1 Pro:** GGUF Q4_K_M only. No FP8, no AWQ on MLX in stable form as of mid-2026.
+
+---
+
+## 5. Speculative decoding strategy per tier
+
+| Tier | Draft | Spec-dec mode |
+|---|---|---|
+| T0 | self (T0 model is the draft for T1+) | EAGLE-2 / P-EAGLE |
+| T1 | T0 draft | EAGLE-2 / P-EAGLE; N-gram for cache-warm prompts |
+| T2 | T0 or T1 draft | EAGLE-2 / dynamic spec-dec |
+| T3 (MoE) | T1 draft (CPU) | EAGLE-2 only; N-gram when prefix-cache is hot |
+| T4 (MoE large) | T1 draft (CPU) | EAGLE-2 only |
+| Cloud (Ling) | server-side (provider controls) | unknown; measure and report |
+
+Pheno-harness's `config/decode_acceleration_matrix.yaml` is the existing policy file. New spec-dec bindings go there.
+
+---
+
+## 6. vRAM budget on RTX 3090 Ti (24 GB)
+
+| Tier | Approx peak VRAM | Fits solo? | Fits + 1 draft? | Notes |
+|---|---|---|---|---|
+| T0 (≤ 1B) | < 2 GB | yes | yes | trivially |
+| T1 (3B AWQ) | 4–5 GB | yes | yes | headroom for batch 4 |
+| T2 (7B AWQ) | 9–10 GB | yes | yes | headroom for batch 2 |
+| T2 (12B AWQ) | 14–15 GB | yes | tight | batch 1 only with draft |
+| T3 (16B MoE, 2.4B active, AWQ) | 8–10 GB | yes | yes | sweet spot |
+| T3 (42B MoE, 6.6B active, AWQ) | 18–22 GB | tight | marginal | drop CPU offload for experts |
+| T4 (70B AWQ + offload) | 12–14 GB active | yes | yes | experts on CPU |
+| T4 (236B MoE, 21B active, AWQ + offload) | 18–22 GB active | marginal | marginal | long-context will spill |
+
+**Long-context spill:** at 128K+ context, KV cache dominates. SGLang RadixAttention and vLLM paged KV both handle 128K; 262K (Ling-tier) likely needs chunked prefill + KV offload to CPU RAM.
+
+---
+
+## 7. Parallel agent sweep
+
+Local 3090 Ti can sustain one T2 / T3 model at batch 1 reliably. Parallel agent count is bounded by both VRAM and effective concurrency.
+
+| Agents | Tier achievable | Expected ttft p95 |
+|---|---|---|
+| 1 | T4 | < 200 ms |
+| 2 | T3 | < 250 ms |
+| 4 | T2 | < 300 ms |
+| 8 | T1 | < 400 ms |
+| 16 | T0 + spec-dec | < 500 ms |
+| 32+ | Cloud only | (use OpenRouter) |
+
+These are **targets**, not measurements. Sweep script is `perf/parallel_sweep.py` and emits `bench/results/perf/<date>_parallel_<n>.json` per cell.
+
+---
+
+## 8. M1 Pro fallback matrix (16 GB RAM)
+
+M1 Pro is a worker / fallback only. Quantization restricted to GGUF Q4_K_M. Spec-dec on draft only.
+
+| Tier | M1 Pro feasible? |
+|---|---|
+| T0 | yes |
+| T1 (≤ 3B GGUF Q4_K_M) | yes, slow |
+| T2 (4–12B) | no — RAM-bound, not VRAM |
+| T3+ | no |
+
+Use M1 Pro for: cache-warming, draft token generation, monitoring, and emergency fallback when 3090 Ti is busy.
+
+---
+
+## 9. Perf probes (what `perf/*` actually measures)
+
+| Probe | Output | Use |
+|---|---|---|
+| `perf/ttft_probe.py` | TTFT p50/p95/p99 | per engine × tier × batch |
+| `perf/cache_probe.py` | prefix-cache hit rate | canonicalized vs. raw prompts |
+| `perf/harness_overhead.py` | harness wall time − model wall time | identify non-model latency |
+| `perf/parallel_sweep.py` | N-agent fan-out | sweep N ∈ {1, 2, 4, 8, 16, 32} |
+| `perf/profiler.py` | CPU/RAM/VRAM/disk/net + queue depth + leaks + deadlocks | always-on during every eval run |
+| `perf/report.py` | roll-up → `bench/results/perf/<date>/` | human-readable summary |
+
+**Crucial rule:** every probe run is paired with a non-probe reference run on the same model + same workload. The diff between probe-attached and probe-detached is the **probe overhead** itself, which is reported separately so we don't double-count.
+
+---
+
+## 10. Cost / price sanity (July 2026)
+
+- `inclusionai/ling-2.6-flash` (OpenRouter): $0.01 in / $0.03 out per 1M tokens (90 % promo). Promo expiry TBD — verify on every model-binding PR.
+- Local models: amortized electricity only. Pheno-harness's `eval/budget.py` should treat local as $0.
+- Cost cap per eval run: see `config/budget_targets.yaml`. Default per-task ceiling: $0.50 cloud, $0.00 local.
+
+---
+
+## 11. Open decisions
+
+1. **Plank-tier model for T0 draft.** Qwen 2.5 0.5B vs. SmolLM2 360M vs. BitNet 0.7B. Decide after spec-dec bakeoff (`scripts/kv_bakeoff.py` extended).
+2. **Whether to keep TensorRT-LLM as `◐` for T4.** If a Blackwell GPU is added, promote to `✓`. Currently not worth it.
+3. **Ling-tier fallback when 90 % promo expires.** Pre-negotiate a volume tier with OpenRouter or commit a local 70B+ MoE as primary.
+4. **DeepSeek-V2 236B at home.** Only worth it if we have 128 GB RAM; current 64 GB is insufficient.
+
+---
+
+## 12. First matrix sweep (the actual waypoint)
+
+Run order for the first batch:
+
+1. **T0 sweep:** all T0 models × ik_llama + SGLang + vLLM + BitNet. Pick the winner as the universal draft.
+2. **T1 sweep:** Qwen 3B + Phi-3.5 mini + Llama 3.2 3B × SGLang + vLLM + llama.cpp. Pick best per-task-type.
+3. **T2 sweep:** Qwen 7B + Llama 3.1 8B + Mistral Nemo 12B × SGLang + vLLM (AWQ). Pick best per-task-type.
+4. **T3 sweep:** DeepSeek-V2-Lite 16B + Phi-3.5 MoE 42B + Mixtral 8x7B × vLLM (AWQ).
+5. **T4 sweep:** Llama 3.1 70B + DeepSeek-V2 236B × vLLM (AWQ + offload).
+6. **T5 parity check:** Ling-2.6-flash on OpenRouter vs. local equivalent (Mixtral 8x7B / DeepSeek-V2-Lite) for the same 16-task subset.
+7. **M1 fallback:** Qwen 0.5B + Llama 3.2 1B + Qwen 3B (GGUF Q4_K_M) on llama.cpp / MLX.

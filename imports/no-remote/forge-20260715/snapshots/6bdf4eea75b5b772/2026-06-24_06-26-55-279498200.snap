@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+"""Run git commands without GIT_TRACE noise."""
+import subprocess, sys, os
+
+cmd = sys.argv[1:]
+env = dict(os.environ)
+env["GIT_TRACE"] = "0"
+env["GIT_TRACE_SETUP"] = "0"
+env["GIT_TRACE_CURL"] = "0"
+env["GIT_TRACE_PERFORMANCE"] = "0"
+env["GIT_TRACE_PACK_ACCESS"] = "0"
+env["GIT_TRACE_PACKET"] = "0"
+env["GIT_TRACE_SHALLOW"] = "0"
+env["GIT_TRACE2"] = "0"
+env["GIT_FSMONITOR_TEST"] = "0"
+
+r = subprocess.run(cmd, env=env, capture_output=True, text=True, cwd=r"C:\Users\koosh\AgilePlus")
+sys.stdout.write(r.stdout)
+sys.stderr.write(r.stderr)
+sys.exit(r.returncode)

@@ -1,0 +1,23 @@
+$logFile = 'C:\Users\koosh\_wsm3d_audit\ws3d_build_latest.txt'
+if (-not (Test-Path $logFile)) { Write-Host "Log not found: $logFile"; exit 1 }
+
+$lines = Get-Content $logFile | Where-Object { $_ -match 'error CS' }
+Write-Host ("TOTAL: " + $lines.Count)
+Write-Host ""
+
+# Group by file
+Write-Host "=== ERRORS BY FILE ==="
+$byFile = $lines | ForEach-Object {
+    if ($_ -match 'E:\\Dev\\WorldSphereMod\\(.+?)\(\d+,\d+:') { $matches[1] }
+} | Group-Object | Sort-Object Count -Descending
+$byFile | ForEach-Object {
+    Write-Host ("{0,5}  {1}" -f $_.Count, $_.Name)
+}
+
+Write-Host ""
+Write-Host "=== ERROR CODES ==="
+$lines | ForEach-Object {
+    if ($_ -match 'error (CS\d+):') { $matches[1] }
+} | Group-Object | Sort-Object Count -Descending | ForEach-Object {
+    Write-Host ("{0,5}  {1}" -f $_.Count, $_.Name)
+}

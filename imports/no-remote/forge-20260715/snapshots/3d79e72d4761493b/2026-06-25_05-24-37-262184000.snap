@@ -1,0 +1,90 @@
+/**
+ * Convenience metric registry used by the rest of the codebase.
+ *
+ * Pre-creates the counters and histograms the OmniRoute runtime uses most
+ * often (proxy requests, upstream latency, compression savings, cache hits,
+ * auth lookups, fallbacks, errors). Each accessor returns a thin object that
+ * the caller can attach attributes to — no OTel globals are touched at
+ * import time, so the module is safe to use in tests.
+ *
+ * @module observability/metrics
+ */
+
+import { METRIC_NAMES } from "./spanTypes.ts";
+import type { AttrMap, Counter, Histogram } from "./otel.ts";
+
+/** Pre-bound metric instances with sensible no-op defaults. */
+export interface PreboundMetrics {
+  proxyRequests: Counter;
+  proxyDuration: Histogram;
+  upstreamDuration: Histogram;
+  compressionTokensSaved: Histogram;
+  cacheLookups: Counter;
+  authLookups: Counter;
+  fallbacks: Counter;
+  errors: Counter;
+}
+
+let CACHED: PreboundMetrics | null = null;
+
+/**
+ * Bind the canonical metric set against an OTel meter. Re-running this
+ * replaces the cached bindings (useful in tests).
+ *
+ * @param meter - Object exposing `getCounter` / `getHistogram`.
+ * @returns The pre-bound metric instances.
+ */
+export function bindPreboundMetrics(meter: {
+  getCounter: (n: string) => Counter;
+  getHistogram: (n: string) => Histogram;
+}): PreboundMetrics {
+  const bound: PreboundMetrics = {
+    proxyRequests: meter.getCounter(METRIC_NAMES.PROXY_REQUESTS_TOTAL),
+    proxyDuration: meter.getHistogram(METRIC_NAMES.PROXY_DURATION_MS),
+    upstreamDuration: meter.getHistogram(METRIC_NAMES.UPSTREAM_DURATION_MS),
+    compressionTokensSaved: meter.getHistogram(METRIC_NAMES.COMPRESSION_TOKENS_SAVED),
+    cacheLookups: meter.getCounter(METRIC_NAMES.CACHE_LOOKUPS_TOTAL),
+    authLookups: meter.getCounter(METRIC_NAMES.AUTH_LOOKUPS_TOTAL),
+    fallbacks: meter.getCounter(METRIC_NAMES.FALLBACKS_TOTAL),
+    errors: meter.getCounter(METRIC_NAMES.ERRORS_TOTAL),
+  };
+  CACHED = bound;
+  return bound;
+}
+
+/** Returns the cached pre-bound metrics (creating a no-op set on first use). */
+export function getPreboundMetrics(): PreboundMetrics {
+  if (CACHED) return CACHED;
+  // Lazy no-op fallback: every record/add is a safe no-op when telemetry
+  // is disabled. Callers can call `bindPreboundMetrics(meter)` later to
+  // wire real instruments.
+  const noopCounter: Counter = { add: () => {} };
+  const noopHistogram: Histogram = { record: () => {} };
+  return {
+    proxyRequests: noopCounter,
+    proxyDuration: noopHistogram,
+    upstreamDuration: noopHistogram,
+    compressionTokensSaved: noopHistogram,
+    cacheLookups: noopCounter,
+    authLookups: noopCounter,
+    fallbacks: noopCounter,
+    errors: noopCounter,
+  };
+}
+
+/**
+ * Helper: turn a method+route pair into the canonical set of attributes
+ * attached to every proxy-request metric.
+ *
+ * @param method - HTTP method.
+ * @param route - The matched route pattern.
+ * @param status - The HTTP status code.
+ * @returns The attribute map.
+ */
+export function proxyAttrs(method: string, route: string, status: number): AttrMap {
+  return {
+    "http.method": method,
+    "http.route": route,
+    "http.status": status,
+  };
+}

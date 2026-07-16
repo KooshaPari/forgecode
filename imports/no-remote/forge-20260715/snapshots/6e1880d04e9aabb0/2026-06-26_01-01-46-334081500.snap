@@ -1,0 +1,89 @@
+// src/bifrost/index.ts — bifrost-backed provider registry.
+import type { ProviderDescriptor } from "../discovery/types.js";
+export type { ProviderDescriptor } from "../discovery/types.js";
+
+// Minimal request/response shapes (kept inline; @maximhq/bifrost's types are
+// re-exported via @maximhq/bifrost for downstream code that wants strict types).
+export interface ChatRequest {
+  provider: string;
+  model: string;
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  stream?: boolean;
+  temperature?: number;
+  max_tokens?: number;
+}
+
+export interface ChatResponse {
+  id: string;
+  provider: string;
+  model: string;
+  content: string;
+  usage?: { input_tokens: number; output_tokens: number };
+}
+
+export interface ProviderSpec {
+  id: string;
+  label: string;
+  kind: "key" | "cookie" | "vertex" | "bedrock";
+  baseUrl?: string;
+  envKey?: string;
+}
+
+// In-memory registry of provider descriptors (used for discovery + admin UI).
+export const registry = {
+  providers: new Map<string, ProviderDescriptor>(),
+  register(p: ProviderDescriptor): void {
+    this.providers.set(p.id, p);
+  },
+  list(): ProviderDescriptor[] {
+    return [...this.providers.values()];
+  },
+  get(id: string): ProviderDescriptor | undefined {
+    return this.providers.get(id);
+  },
+};
+
+export async function registerProvider(p: ProviderDescriptor): Promise<void> {
+  registry.register(p);
+}
+
+export function listProviders(): ProviderDescriptor[] {
+  return registry.list();
+}
+
+// Bifrost's high-level wrapper. Imported lazily to avoid pulling the native
+// binary into a test that doesn't need it.
+type BifrostLike = {
+  chat: (req: ChatRequest) => Promise<ChatResponse>;
+  chatStream: (req: ChatRequest) => AsyncIterable<unknown>;
+};
+
+let _bifrost: BifrostLike | null = null;
+
+async function getBifrost(): Promise<BifrostLike> {
+  if (_bifrost) return _bifrost;
+  // Lazy import so the entrypoint boots even if bifrost's native binary is
+  // missing on a fresh checkout (e.g. CI lint-only environments).
+  const mod = await import("@maximhq/bifrost");
+  // @ts-expect-error - bifrost's exported API surface varies by version
+  _bifrost = (mod.default ?? mod) as BifrostLike;
+  return _bifrost;
+}
+
+export async function chat(req: ChatRequest): Promise<ChatResponse> {
+  const bi = await getBifrost();
+  // @ts-expect-error - bifrost's response shape is structurally compatible
+  return bi.chat(req) as ChatResponse;
+}
+
+export async function* chatStream(
+  req: ChatRequest,
+): AsyncGenerator<{ delta: string; done: boolean }> {
+  const bi = await getBifrost();
+  for await (const chunk of bi.chatStream(req)) {
+    // Bifrost emits { delta?: string; finish_reason?: string }-shaped chunks.
+    // We normalize to { delta, done } for the SSE handler in server.ts.
+    const c = chunk as { delta?: string; finish_reason?: string };
+    yield { delta: c.delta ?? "", done: Boolean(c.finish_reason) };
+  }
+}

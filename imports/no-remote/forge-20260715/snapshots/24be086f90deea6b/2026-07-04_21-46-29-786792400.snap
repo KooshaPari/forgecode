@@ -1,0 +1,588 @@
+# Phenotype SDK Absorption Plan
+
+> **Status:** scoping / paper exercise
+> **Source tree:** `C:\Users\koosh\absorption-staging\phenotype-sdk\`
+> **Date:** 2026-07-04
+> **Scope:** This plan covers ONLY `phenotype-sdk/`. Sibling trees
+> (`absorption-staging/pheno-runtime/` and `absorption-staging/pheno-research-engine/`)
+> are out of scope for this document.
+
+---
+
+## 1. Executive Summary
+
+`phenotype-sdk` is the consolidation target for the absorption program.
+The tree is a 6-language monorepo that already presents as an SDK-shaped
+workspace (`just` tasks per language, `go.work`, `Cargo.toml` workspace
+members, `package.json` workspaces, `pyproject.toml` `[tool.uv.workspace]`,
+`build.zig`).
+
+**Counts (confirmed by direct read of files):**
+
+| Language | Workspace files | Members | Notes |
+|----------|-----------------|---------|-------|
+| Python | `pyproject.toml` (uv) + `uv.lock` + `justfile` | **16** top-level dirs under `lang/python/packages/` (`+1` for `mcp/agentmcp` aliased) | 4 are umbrella kits with sub-packages inside `python/` AND `rust/` |
+| Rust | `Cargo.toml` workspace + `ORIGIN.md` + `README.md` | **17** direct crates + **1 sub-workspace** `pheno-runtime/crates/*` with **5** sub-crates + **17** Rust crates nested inside 4 Python umbrella kits | **Total Rust crates to absorb ≈ 17 + 5 + 17 = 39** |
+| TypeScript | `package.json` (`name: phenotype-sdk-ts`, `workspaces: [packages/*]`) + `tsconfig.json` | **0** (packages/ dir absent) | Empty workspace — only root metadata |
+| Zig | `build.zig` (static + executable) | **1** (`packages/phenotype-core/`) | Tiny stub |
+| Go | `go.work` + `go.mod` + `justfile` | **10** packages under `lang/go/packages/` + 1 `okf/manifest.okf.yaml` + docs scaffolding | Only `packages/devhex` is the active module (per `go.work`); other 9 are stubs/deferred per ADR-011 |
+| Mojo | `README.md` only | **0** | Stub |
+
+**Total non-empty artifacts to absorb: ~62 units** (16 Python pkgs + 39 Rust crates + 1 Zig crate + ~10 Go modules + 0 TS + 0 Mojo + the justfile/Cargo.toml/pyproject.toml/build.zig/go.work/tsconfig.json scaffolding + `docs/`, `okf/`, `okf/wiki`, `mcp/agentmcp`).
+
+---
+
+## 2. Verdict
+
+**Staged absorption — DO NOT attempt in a single PR.** Absorbing all
+six language workspaces atomically would:
+
+- Touch every Python umbrella-kit (`DataKit`, `ObservabilityKit`,
+  `ResilienceKit`, `TestingKit`, `AuthKit`, `McpKit`) plus four
+  `phenotype-*` Rust-utility repos and the new monorepos
+  (`phenotype-python-sdk`, `phenotype-go-sdk`).
+- Mix unrelated concerns: data-plane primitives (Rust crates),
+  runtime containers (`pheno-runtime` sub-workspace), observability
+  stacks, AI/ML infra (`pheno-minio`, `pheno-nats`, `phenotype-llm`,
+  `phenotype-surrealdb`), and stack umbrellas (data-kit, observability-kit).
+- Move `pheno-runtime` (an edition-2024 sub-workspace with bun.lock,
+  Cargo.lock, justfile, kitty-specs/) into a location the destination
+  monorepo is not shaped to hold.
+
+**Recommend a 3-phase campaign:**
+
+- **Phase 1 — Rust scaffold (PR-1, most surgical).** Fold the 17
+  `lang/rust/packages/*` crates into a destination Rust workspace
+  (see §5.1). Defer the 17 crates hidden inside Python umbrellas
+  and the 5 `pheno-runtime` sub-crates.
+- **Phase 2 — Python unification (PR-2).** Mirror the `lang/python/`
+  monorepo into `phenotype-python-sdk` namespace. The
+  `[tool.uv.workspace] members = [...]` block in
+  `lang/python/pyproject.toml:61-91` is already pre-wired; copying
+  the toml + `uv.lock` + `justfile` should be the main payload.
+- **Phase 3 — TS / Zig / Mojo / Go stubs (PR-3, lowest risk).** These
+  four workspaces are mostly empty; preserve as-is, declare workspace
+  roots only, and require zero source movement.
+
+---
+
+## 3. Inventory — what is in each language workspace
+
+### 3.1 Python — `lang/python/packages/` (16 top-level packages)
+
+Top-level packages, mapped from directory name → `pyproject.toml [project] name`:
+
+| # | Directory | pyproject name | Form | Destination |
+|---|-----------|----------------|------|-------------|
+| 1 | `agentmcp-hex` | `agentmcp-hex` | flat (own pyproject at root) | `phenotype-python-sdk/packages/agentmcp-hex/` |
+| 2 | `auth-kit` | `AuthKit` | flat | `phenotype-py-utils/auth-kit/` OR stay in `phenotype-python-sdk` |
+| 3 | `data-kit` | n/a (umbrella — pyproject is `data-kit/python/db_kit/pyproject.toml` = `pheno-db-kit`) | umbrella (`python/db_kit/` + `rust/phenotype-event-bus` + `rust/phenotype-in-memory-store`) | **split**: Python `pheno-db-kit` → `phenotype-python-sdk`; Rust crates → `DataKit` |
+| 4 | `mcp-kit` | `McpKit` | flat | `phenotype-python-sdk/packages/mcp-kit/` (separate from `phenotype-py-utils` if non-installable) |
+| 5 | `observability-kit` | n/a — pyproject is `observability-kit/python/pyproject.toml` = `performance-kit` | umbrella (`python/performance-kit` + `rust/{phenotype-health-runtime,phenotype-logging,phenotype-metrics,phenotype-telemetry}`) | **split**: Python `performance-kit` → `phenotype-python-sdk`; Rust crates → `PhenoObservability` |
+| 6 | `pheno-cli-builder` | `pheno-cli-builder` | flat | `phenotype-python-sdk/packages/pheno-cli-builder/` |
+| 7 | `pheno-cli-kit` | `pheno-cli-kit` | flat | `phenotype-python-sdk/packages/pheno-cli-kit/` |
+| 8 | `phenokit-config-kit` | `phenokit-config-kit` | flat | `phenotype-py-utils/phenokit-config-kit/` |
+| 9 | `phenotype-config` | `phenotype-config` | flat | `phenotype-python-sdk/packages/phenotype-config/` |
+| 10 | `phenotype-id` | `phenotype-id` | flat | `phenotype-python-sdk/packages/phenotype-id/` |
+| 11 | `phenotype-logging` | `phenotype-logging` | flat | `phenotype-python-sdk/packages/phenotype-logging/` |
+| 12 | `phenotype-py-kit` | `phenotype-py-kit` | flat | `phenotype-python-sdk/packages/phenotype-py-kit/` |
+| 13 | `phenotype-testing` | `phenotype-testing` | flat | `phenotype-python-sdk/packages/phenotype-testing/` |
+| 14 | `resilience-kit` | n/a — sub-pyproject at `python/deploy-kit/pyproject.toml` = `pheno-deploy-kit` (currently excluded from uv workspace due to `vercel>=0.10.0` pin bug) | umbrella (`python/deploy-kit/` + `rust/{phenotype-async-traits,phenotype-contracts,phenotype-error-core,phenotype-port-traits,phenotype-retry,phenotype-state-machine,rust/core/phenotype-retry}`) | **split**: Python `pheno-deploy-kit` → `phenotype-python-sdk` (after fixing `vercel` pin); Rust crates → `PhenoObservability` or new `phenotype-rust-contracts` workspace |
+| 15 | `testing-kit` | n/a — six sub-pyprojects at `python/{mcp-qa,pheno-analysis-cli,pheno-quality-cli,pheno-quality-tools,pheno-testing-cli,qa-kit}` | umbrella (`python/*` 6 sub-packages + `rust/{phenotype-testing,phenotype-mock,phenotype-test-fixtures,phenotype-test-infra,phenotype-compliance-scanner}`) | **split**: 6 Python sub-packages → `phenotype-python-sdk`; 5 Rust crates → `TestingKit` |
+| 16 | `pheno-runtime` (in `lang/python/packages/`) | err — pheno-runtime is actually a Rust sub-workspace (see §3.2.4) | — | (covered by §3.2.4) |
+
+Plus the workspace root already aliases:
+
+- `mcp/agentmcp` (separate from `packages/agentmcp-hex`) → `phenotype-python-sdk/mcp/agentmcp/`
+
+### 3.2 Rust — `lang/rust/packages/` (17 direct) + sub-workspaces
+
+#### 3.2.1 Workspace root (`lang/rust/Cargo.toml`)
+
+```toml
+[workspace]
+resolver = "2"
+members = [
+    "packages/*",
+    "packages/pheno-runtime",
+    "packages/pheno-runtime/crates/*",
+]
+[workspace.package] version = "0.2.0"; edition = "2021"
+```
+
+Plus a fully populated `[workspace.dependencies]` table (serde, thiserror, regex, zstd, unicode-normalization, async-trait, futures, tokio, parking_lot, chrono, rand, uuid, tracing) — this is already a self-contained Cargo workspace and could be reused by an absorber as the upstream of record.
+
+#### 3.2.2 17 direct crates (`lang/rust/packages/*`)
+
+All from `KooshaPari/PhenoLang` (archived 2026-06-20), per `lang/rust/ORIGIN.md:1-26`:
+
+1. `phenotype-core` *(re-export hub)*
+2. `phenotype-async-traits`
+3. `phenotype-cache-adapter`
+4. `phenotype-cost-core`
+5. `phenotype-crypto`
+6. `phenotype-git-core`
+7. `phenotype-http-client-core`
+8. `phenotype-iter`
+9. `phenotype-macros`
+10. `phenotype-process`
+11. `phenotype-rate-limit`
+12. `phenotype-retry`
+13. `phenotype-string`
+14. `phenotype-test-infra`
+15. `phenotype-time`
+16. `phenotype-validation`
+
+(Counted: 16 — but `lang/rust/ORIGIN.md` enumerates 15 because `pheno-runtime` is separately handled in §3.2.4. The `dir` of `lang/rust/packages/` shows 17 entries: the 16 above plus `pheno-runtime`.)
+
+#### 3.2.3 Nested under `data-kit/rust/`, `observability-kit/rust/`, etc. (17 more crates)
+
+These are NOT members of the `lang/rust/Cargo.toml` workspace — each umbrella Python kit ships its OWN `[workspace]` Cargo.toml rooted at `python/<kit>/rust/Cargo.toml`. **This is the surprise**: the absorption-staging tree contains a SECOND parallel set of Cargo workspaces hidden inside Python umbrella directories:
+
+`data-kit/rust/Cargo.toml` (resolver "2", edition 2021):
+
+- `phenotype-event-bus` (v0.2.0)
+- `phenotype-in-memory-store` (v0.2.0)
+
+`observability-kit/rust/Cargo.toml` (resolver "2", edition 2021):
+
+- `phenotype-health-runtime`
+- `phenotype-logging`
+- `phenotype-metrics` (v0.2.0)
+- `phenotype-telemetry`
+
+`resilience-kit/rust/Cargo.toml` (resolver "2", rust-version 1.95 — note out-of-range):
+
+- `phenotype-async-traits`
+- `phenotype-contracts`
+- `phenotype-error-core`
+- `phenotype-port-traits`
+- `phenotype-retry`
+- `phenotype-state-machine`
+
+(There is also a `core/phenotype-retry` nested under `resilience-kit/rust/core/` — likely duplicate or alias.)
+
+`testing-kit/rust/Cargo.toml` (resolver "2", edition 2021):
+
+- `phenotype-testing`
+- `phenotype-mock`
+- `phenotype-test-fixtures`
+- `phenotype-test-infra`
+- `phenotype-compliance-scanner`
+
+**15–17 named crates across these four workspaces**, depending on whether `core/phenotype-retry` is the same crate.
+
+#### 3.2.4 `pheno-runtime` (sub-workspace, NOT a single crate)
+
+`packages/pheno-runtime/Cargo.toml:13-15` declares:
+
+```toml
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+```
+
+This is `pheno-runtime` — a separate, fully self-hosted multi-crate workspace with its own `Cargo.lock`, `bun.lock`, `pyproject.toml`, `go.mod`, `kitty-specs/`, `crates/` directory, `src/`, `tests/`, `docs/`, `.devcontainer/`, `.github/`, `cliff.toml`, `deny.toml`, `justfile`, `package.json`, `rust-toolchain.toml`, `rustfmt.toml`. **It is a sibling repo pretending to be a single crate.** Its 5 sub-crates:
+
+1. `pheno-minio`
+2. `pheno-nats`
+3. `phenotype-llm`
+4. `phenotype-mcp-server`
+5. `phenotype-surrealdb`
+
+This is the most-loaded unit in the entire tree and should be absorbed last (or kept as a sibling reference).
+
+### 3.3 TypeScript — `lang/ts/`
+
+```
+package.json: { "name": "phenotype-sdk-ts", "version": "0.1.0",
+                "private": true, "workspaces": ["packages/*"] }
+tsconfig.json: ES2022 / NodeNext / strict / outDir=dist / rootDir=packages
+README.md: 50 lines — states packages/ is "coming soon"
+```
+
+**No `packages/` directory exists.** Empty workspace root. Recommended destination: leave as-is in the staging repo (or move into an existing TS monorepo — see §5.3).
+
+### 3.4 Zig — `lang/zig/`
+
+`build.zig` (22 lines): declares ONE static library `phenotype-core` and ONE executable `phenotype-sdk`, both pointing at `packages/phenotype-core/src/main.zig`.
+
+`packages/phenotype-core/` exists (per `dir`). Fits the same pattern as TS: a single stub waiting for content.
+
+### 3.5 Go — `lang/go/`
+
+`go.work` is the load-bearing file:
+
+```go
+go 1.25.0
+use ./packages/devhex
+// ADR-011 (2026-06-02) removed platformkit/go and packages/mcpkit from
+// the active workspace.
+```
+
+So only `packages/devhex` is an active module. The other 9 packages are stubs (`phenotype-go-auth`, `phenotype-go-cli`, `phenotype-go-config`, `phenotype-go-kit`, `phenotype-go-middleware`, `phenotype-id`, `pheno-core-cgo`, `mcpkit`, `platformkit`).
+
+Extra directories:
+
+- `okf/manifest.okf.yaml` + `okf/wiki/`
+- `docs/{boundary,disposition,intent,sota,platformkit-migration.md}`
+
+Recommended: bundle into `phenotype-go-sdk` as a copy/paste payload.
+
+### 3.6 Mojo — `lang/mojo/`
+
+A 7-line README. No packages/. Stub.
+
+---
+
+## 4. Landing Matrix
+
+### 4.1 Python landing — target: `phenotype-python-sdk` (canonical monorepo, `name = "phenotype-python-sdk"`, version 0.1.0)
+
+| Stage source | Destination root | Notes |
+|---|---|---|
+| `lang/python/pyproject.toml` | `phenotype-python-sdk/pyproject.toml` | WHOLE FILE — including the existing 19-entry `[tool.uv.workspace] members` block which already maps `agentmcp-hex`, `pheno-cli-builder`, `pheno-cli-kit`, `phenotype-config`, `phenotype-id`, `phenotype-logging`, `phenotype-py-kit`, `phenotype-testing` |
+| `lang/python/uv.lock` | `phenotype-python-sdk/uv.lock` | Direct copy |
+| `lang/python/justfile` | `phenotype-python-sdk/justfile` | Direct copy |
+| `lang/python/README.md` | `phenotype-python-sdk/README.md` | After merging with existing readme |
+| `lang/python/mcp/agentmcp` | `phenotype-python-sdk/mcp/agentmcp` | Already a uv workspace member |
+| `lang/python/packages/agentmcp-hex/` | `phenotype-python-sdk/packages/agentmcp-hex/` | Subtree history preserved |
+| `lang/python/packages/auth-kit/` | `phenotype-python-sdk/packages/auth-kit/` | (Poetry umbrella — not a uv member per exclusion list; copy as-is) |
+| `lang/python/packages/data-kit/python/db_kit/` | `phenotype-python-sdk/packages/pheno-db-kit/` | The Python *part* only |
+| `lang/python/packages/data-kit/` (umbrella) | DELETED — split absorbed into Python monorepo + `DataKit` (rust) | Umbrella artifact not portable |
+| `lang/python/packages/mcp-kit/` | `phenotype-python-sdk/packages/mcp-kit/` | (Poetry umbrella — copy assets) |
+| `lang/python/packages/observability-kit/python/` | `phenotype-python-sdk/packages/performance-kit/` | Rename to match pyproject |
+| `lang/python/packages/observability-kit/` (umbrella) | DELETED — split absorbed | — |
+| `lang/python/packages/pheno-cli-builder/` | `phenotype-python-sdk/packages/pheno-cli-builder/` | Flat |
+| `lang/python/packages/pheno-cli-kit/` | `phenotype-python-sdk/packages/pheno-cli-kit/` | Flat |
+| `lang/python/packages/phenokit-config-kit/` | `phenotype-py-utils/phenokit-config-kit/` OR keep in `phenotype-python-sdk/packages/` | TBD per §5.2 |
+| `lang/python/packages/phenotype-config/` | `phenotype-python-sdk/packages/phenotype-config/` | Flat |
+| `lang/python/packages/phenotype-id/` | `phenotype-python-sdk/packages/phenotype-id/` | Flat |
+| `lang/python/packages/phenotype-logging/` | `phenotype-python-sdk/packages/phenotype-logging/` | Flat |
+| `lang/python/packages/phenotype-py-kit/` | `phenotype-python-sdk/packages/phenotype-py-kit/` | Flat |
+| `lang/python/packages/phenotype-testing/` | `phenotype-python-sdk/packages/phenotype-testing/` | Flat |
+| `lang/python/packages/resilience-kit/python/deploy-kit/` | `phenotype-python-sdk/packages/pheno-deploy-kit/` | After vercel pin fix |
+| `lang/python/packages/resilience-kit/` (umbrella) | DELETED — split absorbed | — |
+| `lang/python/packages/testing-kit/python/{mcp-qa,pheno-analysis-cli,pheno-quality-cli,pheno-quality-tools,pheno-testing-cli,qa-kit}` | `phenotype-python-sdk/packages/{mcp-qa,pheno-analysis-cli,pheno-quality-cli,pheno-quality-tools,pheno-testing-cli,qa-kit}/` | 6 sub-packages |
+| `lang/python/packages/testing-kit/` (umbrella) | DELETED — split absorbed | — |
+
+### 4.2 Rust landing — destinations vary by crate category
+
+| Source crate | Destination | Why |
+|---|---|---|
+| `phenotype-core` | NEW canonical Cargo workspace (proposed name: `phenotype-rust-core`) | Re-export hub; cross-cutting; deserves its own workspace |
+| `phenotype-async-traits` | `phenotype-rust-core` | Low-level trait |
+| `phenotype-cache-adapter` | `phenotype-rust-core` | — |
+| `phenotype-cost-core` | `phenotype-rust-core` | — |
+| `phenotype-crypto` | `phenotype-rust-core` | — |
+| `phenotype-git-core` | `phenotype-rust-core` | — |
+| `phenotype-http-client-core` | `phenotype-rust-core` | — |
+| `phenotype-iter` | `phenotype-rust-core` | — |
+| `phenotype-macros` | `phenotype-rust-core` | Procedural macros used by other core crates |
+| `phenotype-process` | `phenotype-rust-core` | — |
+| `phenotype-rate-limit` | `phenotype-rust-core` | — |
+| `phenotype-retry` | `phenotype-rust-core` | — |
+| `phenotype-string` | `phenotype-rust-core` | — |
+| `phenotype-test-infra` | `phenotype-rust-core` | — |
+| `phenotype-time` | `phenotype-rust-core` | — |
+| `phenotype-validation` | `phenotype-rust-core` | — |
+| `pheno-runtime` (sub-workspace root) | NEW: `phenotype-rust-runtime` OR partner repo per `pheno-runtime` upstream | Keep its sub-workspace shape; don't fold into core |
+| `pheno-runtime/crates/pheno-minio` | `phenotype-rust-runtime/crates/pheno-minio` | Sub-crate of runtime |
+| `pheno-runtime/crates/pheno-nats` | `phenotype-rust-runtime/crates/pheno-nats` | — |
+| `pheno-runtime/crates/phenotype-llm` | `phenotype-rust-runtime/crates/phenotype-llm` | — |
+| `pheno-runtime/crates/phenotype-mcp-server` | `phenotype-rust-runtime/crates/phenotype-mcp-server` | — |
+| `pheno-runtime/crates/phenotype-surrealdb` | `phenotype-rust-runtime/crates/phenotype-surrealdb` | — |
+| `data-kit/rust/phenotype-event-bus` | `DataKit/rust/crates/phenotype-event-bus` | DataKit is the canonical umbrella |
+| `data-kit/rust/phenotype-in-memory-store` | `DataKit/rust/crates/phenotype-in-memory-store` | — |
+| `observability-kit/rust/phenotype-health-runtime` | `PhenoObservability/crates/phenotype-health-runtime` | (or merge into ObservabilityKit) |
+| `observability-kit/rust/phenotype-logging` | `PhenoObservability/crates/phenotype-logging` | — |
+| `observability-kit/rust/phenotype-metrics` | `PhenoObservability/crates/phenotype-metrics` | — |
+| `observability-kit/rust/phenotype-telemetry` | `PhenoObservability/crates/phenotype-telemetry` | — |
+| `resilience-kit/rust/phenotype-async-traits` | DEDUPE — see §6 — likely fold into `phenotype-rust-core` (existing) | Same name → conflict |
+| `resilience-kit/rust/phenotype-contracts` | NEW: `phenotype-rust-contracts` OR `phenotype-rust-core` (if it scales) | Standalone |
+| `resilience-kit/rust/phenotype-error-core` | `phenotype-rust-core` | Error infrastructure |
+| `resilience-kit/rust/phenotype-port-traits` | `phenotype-rust-contracts` | Hexagonal port traits belong with contracts |
+| `resilience-kit/rust/phenotype-retry` | DEDUPE — likely fold into `phenotype-rust-core` | Same name → conflict |
+| `resilience-kit/rust/phenotype-state-machine` | `phenotype-rust-contracts` or new `phenotype-rust-state` | — |
+| `resilience-kit/rust/core/phenotype-retry` | treat as duplicate of `phenotype-retry` above | Verify and delete |
+| `testing-kit/rust/phenotype-testing` | `TestingKit/rust/crates/phenotype-testing` | Existing |
+| `testing-kit/rust/phenotype-mock` | `TestingKit/rust/crates/phenotype-mock` | — |
+| `testing-kit/rust/phenotype-test-fixtures` | `TestingKit/rust/crates/phenotype-test-fixtures` | — |
+| `testing-kit/rust/phenotype-test-infra` | DEDUPE — same name as `lang/rust/packages/phenotype-test-infra` → fold into `phenotype-rust-core` | — |
+| `testing-kit/rust/phenotype-compliance-scanner` | `TestingKit/rust/crates/phenotype-compliance-scanner` | — |
+
+**Net delta in `phenotype-rust-core` once dedup resolves: ~17 new crates + absorption of 2 ResilienceKit-named duplicates.**
+
+### 4.3 TypeScript landing — destination: `phenotype-ts` (NEW monorepo) or attach to `phenoXdd` / `phenotype-auth-ts`
+
+The `lang/ts/` workspace is empty. Recommend creating **no new packages** in this PR and just preserving the workspace root files in a sibling location. Concrete options:
+
+| Option | Pros | Cons |
+|---|---|---|
+| 4.3.a Land as `phenotype-ts-sdk` new mono | Clean ownership | No content yet — over-weight |
+| 4.3.b Bundle into `phenoXdd` as `packages/phenotype-sdk-ts` | Reuses existing TS | Off-topic |
+| 4.3.c Keep in `phenotype-sdk/lang/ts/` | No movement | Doesn't reduce the staging footprint |
+
+**Recommendation: 4.3.c (keep as-is) for Phase 3** — there is literally no source to absorb.
+
+### 4.4 Zig landing — destination: `phenotype-zig-sdk` (NEW monorepo) or keep in-place
+
+Same as TS — only one stub crate. Recommended: 4.3.c/4.4.c (keep in-place).
+
+### 4.5 Go landing — destination: `phenotype-go-sdk` (already exists in fleet)
+
+| Source | Destination |
+|---|---|
+| `lang/go/go.work` | `phenotype-go-sdk/go.work` |
+| `lang/go/go.mod` | root or merge with `phenotype-go-sdk/go.mod` |
+| `lang/go/go.work.sum` | merge |
+| `lang/go/justfile` | merge with `phenotype-go-sdk/justfile` |
+| `lang/go/README.md` | merge with `phenotype-go-sdk/README.md` |
+| `lang/go/packages/devhex` | `phenotype-go-sdk/packages/devhex/` — this is the only active module per ADR-011 |
+| `lang/go/packages/{mcpkit,pheno-core-cgo,phenotype-go-auth,phenotype-go-cli,phenotype-go-config,phenotype-go-kit,phenotype-go-middleware,phenotype-id,platformkit}` | Folded as in-tree workspace members; majority are stubs |
+| `lang/go/okf/` | `phenotype-go-sdk/okf/` |
+| `lang/go/docs/{boundary,disposition,intent,sota,platformkit-migration.md}` | `phenotype-go-sdk/docs/` |
+
+### 4.6 Mojo landing — destination: keep as a stub
+
+Mojo has zero package content. Defer entirely. Re-evaluate when source appears.
+
+---
+
+## 5. Starter file layout (per landing zone)
+
+### 5.1 NEW: `phenotype-rust-core` — Rust workspace for the 17 core crates
+
+```
+phenotype-rust-core/
+├── Cargo.toml                          # workspace manifest (copy lang/rust/Cargo.toml)
+├── README.md                           # copy lang/rust/README.md (with new repo name)
+├── ORIGIN.md                           # copy lang/rust/ORIGIN.md (provenance note)
+├── justfile                            # new (cargo fmt/clippy/test/clean/build)
+├── rust-toolchain.toml                 # optional, pin rust 1.85+
+├── crates/
+│   ├── phenotype-core/                 # copied verbatim
+│   ├── phenotype-async-traits/
+│   ├── phenotype-cache-adapter/
+│   ├── phenotype-cost-core/
+│   ├── phenotype-crypto/
+│   ├── phenotype-git-core/
+│   ├── phenotype-http-client-core/
+│   ├── phenotype-iter/
+│   ├── phenotype-macros/
+│   ├── phenotype-process/
+│   ├── phenotype-rate-limit/
+│   ├── phenotype-retry/
+│   ├── phenotype-string/
+│   ├── phenotype-test-infra/
+│   ├── phenotype-time/
+│   └── phenotype-validation/
+└── docs/
+    └── PROVENANCE.md
+```
+
+### 5.2 EXISTING: `phenotype-python-sdk` — Python monorepo (current landing target)
+
+```
+phenotype-python-sdk/
+├── pyproject.toml                      # copy lang/python/pyproject.toml
+├── uv.lock                             # copy lang/python/uv.lock (898 KB)
+├── README.md                           # merge lang/python/README.md + existing
+├── justfile                            # copy lang/python/justfile
+├── mcp/
+│   └── agentmcp/                       # already a uv member
+├── packages/
+│   ├── agentmcp-hex/                   # flat
+│   ├── auth-kit/                       # non-uv-member Poetry umbrella (assets only)
+│   ├── mcp-kit/                        # non-uv-member Poetry umbrella (assets only)
+│   ├── pheno-cli-builder/              # flat
+│   ├── pheno-cli-kit/                  # flat
+│   ├── phenokit-config-kit/            # flat (TBD §6)
+│   ├── pheno-db-kit/                   # ← from data-kit/python/db_kit
+│   ├── pheno-deploy-kit/               # ← from resilience-kit/python/deploy-kit (excluded by default; fix vercel first)
+│   ├── performance-kit/                # ← from observability-kit/python
+│   ├── phenotype-config/               # flat
+│   ├── phenotype-id/                   # flat
+│   ├── phenotype-logging/              # flat
+│   ├── phenotype-py-kit/               # flat
+│   ├── phenotype-testing/              # flat
+│   ├── mcp-qa/                         # ← from testing-kit/python/mcp-qa
+│   ├── pheno-analysis-cli/             # ← from testing-kit/python
+│   ├── pheno-quality-cli/              # ← from testing-kit/python
+│   ├── pheno-quality-tools/            # ← from testing-kit/python
+│   ├── pheno-testing-cli/              # ← from testing-kit/python
+│   └── qa-kit/                         # ← from testing-kit/python
+└── okf/                                # optional
+```
+
+### 5.3 EXISTING: `phenotype-go-sdk` — Go workspace
+
+```
+phenotype-go-sdk/
+├── go.work                             # copy / merge from lang/go/go.work
+├── go.mod                              # merge with existing
+├── README.md                           # merge
+├── justfile                            # merge
+├── packages/
+│   ├── devhex/                         # ACTIVE per ADR-011
+│   ├── mcpkit/                         # stub / deferred
+│   ├── pheno-core-cgo/                 # stub
+│   ├── phenotype-go-auth/              # stub
+│   ├── phenotype-go-cli/               # stub
+│   ├── phenotype-go-config/            # stub
+│   ├── phenotype-go-kit/               # stub
+│   ├── phenotype-go-middleware/        # stub
+│   ├── phenotype-id/                   # stub
+│   └── platformkit/                    # stub
+├── okf/                                # copy of lang/go/okf
+└── docs/
+    ├── boundary/                       # copy
+    ├── disposition/                    # copy
+    ├── intent/                         # copy
+    ├── sota/                           # copy
+    └── platformkit-migration.md        # copy
+```
+
+### 5.4 KEEP-IN-PLACE: TypeScript workspace root
+
+```
+absorption-staging/phenotype-sdk/lang/ts/
+├── package.json                        # name=phenotype-sdk-ts, workspaces=[packages/*]
+├── tsconfig.json                       # ES2022 / NodeNext / strict
+├── README.md
+└── packages/                           # REMAIN EMPTY; will be filled externally
+```
+
+### 5.5 KEEP-IN-PLACE: Zig workspace root
+
+```
+absorption-staging/phenotype-sdk/lang/zig/
+├── build.zig                           # static lib phenotype-core + exec phenotype-sdk
+├── README.md
+└── packages/
+    └── phenotype-core/                 # single stub crate
+        └── src/main.zig                # (presumed)
+```
+
+### 5.6 KEEP-IN-PLACE: Mojo stub
+
+```
+absorption-staging/phenotype-sdk/lang/mojo/
+└── README.md                           # 7-line "Coming soon"
+```
+
+---
+
+## 6. Dedup risks (crate name collisions)
+
+These crate `name` values appear in MORE THAN ONE of the cargo workspaces. Must be resolved before any merge to avoid `cargo` refusing to register two crates with the same name in one workspace.
+
+| Crate name | Sites | Action |
+|---|---|---|
+| `phenotype-async-traits` | `lang/rust/packages/` AND `lang/python/packages/resilience-kit/rust/` | Make one the canonical (lang/rust), deprecate the other. Compare `[dev-dependencies]` and `pin-project` usage; both currently pin to `0.1` and `1.1`; otherwise identical surface. |
+| `phenotype-retry` | `lang/rust/packages/` AND `lang/python/packages/resilience-kit/rust/` AND `lang/python/packages/resilience-kit/rust/core/` | Same — pick lang/rust as canonical. The `core/` nested copy is likely an alias; delete. |
+| `phenotype-test-infra` | `lang/rust/packages/` AND `lang/python/packages/testing-kit/rust/` | Same — same content per `ORIGIN.md` provenance. Make lang/rust canonical. |
+| `phenotype-error-core` | `lang/python/packages/resilience-kit/rust/` | No conflict, but introduce as a new core crate. |
+| `phenotype-port-traits` | `lang/python/packages/resilience-kit/rust/` (depends on `phenotype-contracts`) | New |
+| `phenotype-contracts` | `lang/python/packages/resilience-kit/rust/` | New |
+| `phenotype-state-machine` | `lang/python/packages/resilience-kit/rust/` | New |
+
+These are **17 → ~14** if fully deduped — 3 collisions expected to drop, 6 brand-new crates net.
+
+---
+
+## 7. Phase plan
+
+### Phase 1 — Rust scaffold (PR-1, target `phenotype-rust-core`)
+
+**Goal:** Stand up the new Rust workspace. Land the 16 direct crates from `lang/rust/packages/*` plus the 3 ResilienceKit-named duplicates (folded in as upgrades) plus the 6 truly-new contracts/port/state-machine/error-core crates.
+
+**Tasks:**
+
+1. Create `phenotype-rust-core` skeleton (§5.1) at the destination org.
+2. Copy `lang/rust/Cargo.toml` (workspace manifest) → `phenotype-rust-core/Cargo.toml`, retaining `resolver = "2"`, edition 2021, version 0.2.0.
+3. Copy `lang/rust/ORIGIN.md` and `lang/rust/README.md` unchanged.
+4. For each of the 16 direct crates in `lang/rust/packages/`: `git subtree add` (history preserved per `lang/python/pyproject.toml:5-11` precedent).
+5. Resolve the 3 dedups (§6) by comparing contents — keep the richer implementation as canonical.
+6. Add the 6 new ResilienceKit crates (contracts, port-traits, error-core, state-machine) as new members.
+7. Verify `cargo check --workspace` and `cargo test --workspace`.
+8. Lock down branch protection on `phenotype-rust-core`.
+
+**Out of scope for PR-1:** `pheno-runtime` sub-workspace, all umbrella-kit Rust crates (data/observability/testing/resilience).
+
+### Phase 2 — Python unification (PR-2, target `phenotype-python-sdk`)
+
+**Goal:** Fold the entire `lang/python/` tree into `phenotype-python-sdk`.
+
+**Tasks:**
+
+1. Confirm `phenotype-python-sdk` pyproject already exists with a `name = "phenotype-python-sdk"` workspace root (it does, per `phenotype-registry`).
+2. Copy `lang/python/pyproject.toml`, `uv.lock`, `justfile`, `README.md` into the destination (after merge/rebase if there's existing history).
+3. `git subtree add` for each of the 16 flat packages and the `mcp/agentmcp` aliased package.
+4. Split the 4 umbrella kits:
+   - `data-kit/python/db_kit/` → `packages/pheno-db-kit/` (flat rename)
+   - `observability-kit/python/` → `packages/performance-kit/` (flat rename)
+   - `resilience-kit/python/deploy-kit/` → `packages/pheno-deploy-kit/` (AFTER resolving vercel>=0.10.0 pin to a real release, per `lang/python/pyproject.toml:73-75` exclusion note)
+   - `testing-kit/python/{mcp-qa, pheno-analysis-cli, pheno-quality-cli, pheno-quality-tools, pheno-testing-cli, qa-kit}` → 6 flat packages
+5. Resolve `auth-kit` and `mcp-kit` — both are Poetry umbrellas with empty `[packages]` per `lang/python/pyproject.toml:62-65`. Copy assets but they won't be uv workspace members.
+6. Delete umbrellas after split (Python folders do not need to outlive the absorption).
+7. Run `uv sync` and `uv run pytest` to verify.
+
+**Open question:** `phenokit-config-kit` — is it the canonical home of `phenotype-config`? Both packages live in this tree. Recommend keeping both flat in `phenotype-python-sdk/packages/`.
+
+### Phase 3 — TS / Zig / Mojo / Go (PR-3, low risk)
+
+**Goal:** Stand up the four application-language workspaces and route the Go workspace into `phenotype-go-sdk`.
+
+**Tasks:**
+
+1. **TS (no-op):** Move `phenotype-sdk/lang/ts/{package.json,tsconfig.json,README.md}` into `phenotype-ts-sdk/` if/when that repo materializes. Today: keep as-is.
+2. **Zig (no-op):** Same — copy `lang/zig/{build.zig,packages/phenotype-core/,README.md}` into a future `phenotype-zig-sdk/` if and when that repo materializes.
+3. **Mojo (no-op):** Single README. Mark for deletion of `lang/mojo/` directory.
+4. **Go (real work):** Mirror `lang/go/` into `phenotype-go-sdk/`. Keep `go.work` as-is per ADR-011.
+
+### Phase 4 — Cleanup (separate cleanup PR)
+
+**Goal:** Decommision the staging tree.
+
+**Tasks:**
+
+1. After Phase 1+2+3 land and CI is green for ≥7 days, delete `C:\Users\koosh\absorption-staging\phenotype-sdk/` (or move to `~/.trash`/`_Dino_ARCHIVED_*`).
+2. The sibling trees `pheno-runtime/` and `pheno-research-engine/` are out of scope for this plan but should be reviewed separately.
+
+---
+
+## 8. Open questions
+
+1. **`phenotype-rust-core` — does this exist already?** It is listed in the public fleet (`public_active_list.txt` includes `phenotype-rust` precedent? — no, but `phenoData`, `phenoAI`, `PhenoVCS` exist). Need: confirm naming preference vs. an existing destination.
+2. **Resilience-kit `phenotype-retry` and `phenotype-async-traits` are exact-name duplicates of `lang/rust/packages/phenotype-retry` and `phenotype-async-traits`.** Which implementation is canonical? `lang/rust/ORIGIN.md` says both came from `KooshaPari/PhenoLang`. Need a content diff to confirm.
+3. **`pheno-runtime` sub-workspace should it be a peer or folded?** It currently sits under `lang/rust/packages/pheno-runtime/` which is misleading — it's a full repo with bun.lock and kitty-specs. Should land at its own top-level: `phenotype-rust-runtime/` (5 sub-crates + their `kitty-specs/`).
+4. **`phenokit-config-kit` vs `phenotype-config`** — both Python packages exist. They are not the same module. Why was `phenokit-config-kit` preserved separately? Resolve before Phase 2.
+5. **`rust-version = "1.95"`** in `lang/python/packages/resilience-kit/rust/Cargo.toml:14` is out of range (current stable is <1.85). Will block any consumer that pins MSRV; flag and lower to 1.85 in the merge.
+6. **`pheno-deploy-kit`** has a broken `[full]` extra requiring `vercel>=0.10.0` (PyPI only has ≤0.5.9 per `lang/python/pyproject.toml:73-75`). Either fix the upstream `ResilienceKit` first or absorb with the feature permanently excluded.
+7. **`mcp-kit`** has a Poetry umbrella with `packages = []` and is excluded from uv workspace; it is effectively an asset-only bundle. Should `mcp-kit`'s ADRs/CHARTER be preserved at `phenotype-python-sdk/packages/mcp-kit/`? Worth a yes/no decision.
+8. **Rust toolchain pin** — `pheno-runtime` uses edition 2024; `lang/rust` workspace is edition 2021. Decide edition target before merge.
+
+---
+
+## 9. Final decision
+
+**Stage the absorption across three PRs.**
+
+| PR | Scope | Touches | Risk |
+|---|---|---|---|
+| PR-1: `phenotype-rust-core` scaffold | §5.1 + §3.2.2 + dedup of 3 ResilienceKit duplicates | 16 + 3 + 6 = 25 crates | LOW (verbatim copy of an existing workspace) |
+| PR-2: `phenotype-python-sdk` unification | §5.2 + §3.1 + umbrella split | 16 Python pkgs, 1 umbrella split (data-kit), 1 (obs-kit), 1 (test-kit), 1 (resilience-kit with vercel fix), 2 non-uv (auth-kit/mcp-kit) | MEDIUM (umbrella splits + vercel pin fix + uv workspace conflict) |
+| PR-3: TS/Zig/Mojo/Go | §5.3 + §5.4 + §5.5 + §5.6 | 1 Go workspace copy; 3 no-ops | LOW |
+
+**Phased recommendation:**
+
+- **DO:** Begin with PR-1 — establish the Rust workspace and validate the `cargo` workspace mechanics with the existing `[workspace.dependencies]` table.
+- **DO:** In the same window, draft PR-3 (low risk) so we can clear out TS/Zig/Mojo early.
+- **DO NOT:** Bundle any single PR with `pheno-runtime` sub-workspace absorption — defer to its own PR or keep `pheno-runtime` in the staging tree.
+- **DO NOT:** Try to absorb the four umbrella Python kits in one pass — split first, then add the Python halves to PR-2 separately.
+
+**Final one-line verdict:**
+
+> **Staged over three PRs — start with the Rust scaffold (PR-1), follow with the Python unification (PR-2), close with the Go workspace + TS/Zig/Mojo no-ops (PR-3). Do not absorb `pheno-runtime` in this campaign.**
+

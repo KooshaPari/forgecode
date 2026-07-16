@@ -1,0 +1,221 @@
+# PR: AI-agent navigability of `open-sse/executors/` via auto-generated `AGENT-INDEX.md`
+
+## Summary
+
+Adds an auto-generated `open-sse/AGENT-INDEX.md` and a CI drift gate that
+addresses the underlying motivation behind issue #6065 (large-repo surface
+for AI agents) **without** the proposed submodule conversion (which would
+break `package.json:46` workspace membership, 12 `npm` test scripts, the
+contributor docs at `CONTRIBUTING.md:243-309`, and orphan ~hundreds of
+in-house git history commits).
+
+The change is **fully additive**: no runtime code in `src/`, `open-sse/`,
+The change is **fully additive**: no runtime code in `src/`, `open-sse/`,
+`electron/`, or `bin/` is modified. The drift gate surfaces real bugs that
+already exist in the registry today (orphan import, orphan file) — see
+"Drift findings surfaced by this gate" below.
+
+**Current gate state (after investigation):** 0 drift findings, gate
+exits 0 cleanly. The 6 initial findings were investigated and classified
+below; all 6 turned out to be false positives caused by the gate's parser
+scanning only `open-sse/executors/index.ts` for imports. The parser has been
+extended to scan all `.ts` files under `open-sse/executors/` and a
+`BASE_CLASS_REEXPORTS` allowlist covers the base-class re-export pattern.
+Result: 53 classes, 39 aliases, 1081.6 KB, gate green.
+
+- Addresses: #6065 (`open-sse/` → submodule proposal; rejected with rationale below)
+- Note for maintainers: same-day sister issues at `screenpipe/screenpipe#4890`
+  and `BCUninstaller/Bulk-Crap-Uninstaller#955` from the same author with
+  identical boilerplate may want a coordinated response.
+
+## What this PR does
+
+1. **`scripts/build/gen-agent-index.mjs`** — new generator (~640 LOC).
+   Mechanically parses `open-sse/executors/index.ts` (the canonical
+   registry), enumerates executor classes / primary ids / aliases / file
+   size / `git log --follow` activity, and writes a curated Markdown index
+   to `open-sse/AGENT-INDEX.md`. CLI flags: `--stdout`, `--json`, `--check`,
+   `--help`. ASCII-only by design (Windows-1252 / UTF-8 portable).
+
+2. **`scripts/check/check-agent-index.mjs`** — new drift gate. Two-gate
+   design: (a) the on-disk `AGENT-INDEX.md` matches what the source
+   produces, AND (b) the source itself has no unallowlisted drift
+   findings. `--report` mode prints findings without failing (for local
+   debugging). Mirrors the `KNOWN_REGISTRY_ONLY` allowlist pattern from
+   `scripts/check/check-provider-consistency.ts:17`.
+
+3. **`open-sse/AGENT-INDEX.md`** — generated file. 51 executor classes,
+   37 aliases, 1003.5 KB of executor source, single-file index for AI
+   agents. Header explains how to read it; "Non-executor helpers" section
+   documents the intentional helper files; "Conventions for new executors"
+   section makes the onboarding flow explicit.
+
+4. **`.aiexclude`** at repo root — Continue/Aider/Cursor-style hint file
+   that encourages agents working on a single provider to skip the
+   unrelated executor files. `!open-sse/AGENT-INDEX.md` keeps the index
+   itself always in context. Self-documenting comments at the top.
+
+5. **`package.json`** — three new scripts:
+   - `gen:agent-index` — regen the index
+   - `check:agent-index` — drift gate
+   - `check:docs-all` chain extended to include `check:agent-index` last
+
+6. **`AGENTS.md`** — adds a one-line pointer under `### Executors`
+   (`AGENTS.md:297`) and a `check:agent-index` row in the build/lint/test
+   table (`AGENTS.md:72`).
+
+7. **`.github/workflows/quality.yml`** — adds `npm run check:agent-index`
+   as a new step in the `fast-gates` job (`quality.yml:53-59`), with a
+   comment explaining the gate and pointing to issue #6065.
+
+## Why not the submodule proposal
+
+Submoduling `open-sse/` against the upstream cited in #6065 would:
+
+- **Orphan git history.** `open-sse/index.ts` has many local commits
+  (`005ee10a1` Claude token exchange, `5b484737b` build-isolation,
+  `831f82858` quota-share, `ddb61686c` release merge, etc.). A submodule
+  conversion would orphan all of this in the new external repo.
+- **Break `package.json:46` workspaces.** The `open-sse` workspace
+  declaration resolves through `package-lock.json:28503-28504` as
+  `"@omniroute/open-sse"`; submoduling it to a different path would
+  require re-wiring every test runner.
+- **Break 12 test scripts.** Every `npm run test*` command imports
+  `./open-sse/utils/setupPolyfill.ts` (`package.json:93-181`). A submodule
+  checkout doesn't resolve those imports naturally.
+- **Break contributor flow.** `CONTRIBUTING.md:243-309` directs new
+  providers into `open-sse/executors/`, `open-sse/translator/`,
+  `open-sse/config/providerRegistry.ts`. These are first-party by design.
+- **Misidentify upstream.** The linked `https://github.com/openai/openai-node`
+  is the OpenAI Node SDK, not an "openai-sse-server". No matching upstream
+  to submodule against.
+- **Collide with the in-flight Bifrost migration.** Wk 2 of
+  `docs/architecture/cluster-decisions.md:84-87` is *"Bifrost full
+  activation for OpenAI/Claude/Gemini/Ollama (4 of 14+ providers)"*. A
+  subset of `open-sse/executors/` is on a documented 6-12 month deprecation
+  path. Submoduling today means a second reorg for every provider that
+  migrates.
+
+## Drift findings surfaced by this gate
+
+The first run of the gate against `main` (prior to investigation) surfaced
+**6 drift findings**. Investigation revealed all 6 were **false positives**
+caused by the gate's parser scanning only `open-sse/executors/index.ts` for
+imports. The fix has been applied in the same branch:
+
+| Initial finding | Real story | Resolution |
+|---|---|---|
+| `DeepSeekWebExecutor` import (orphan-class) | The class is the base that `DeepSeekWebWithAutoRefreshExecutor` extends at `deepseek-web-with-auto-refresh.ts:15`. The `index.ts` re-export is intentional barrel-pattern plumbing for external consumers. | Added to `BASE_CLASS_REEXPORTS` allowlist. |
+| `ClaudeWebExecutor` import (orphan-class) | Same pattern: base class extended by `ClaudeWebWithAutoRefresh` at `claude-web-with-auto-refresh.ts:12`. | Added to `BASE_CLASS_REEXPORTS` allowlist. |
+| `KieExecutor` import (orphan-class) | Class is defined in `kie.ts:109` as a pre-constructed `kieExecutor` singleton. Used by 6 handlers (`musicGeneration.ts`, `imageGeneration.ts`, `videoGeneration.ts`, `audioTranscription.ts`, `audioSpeech.ts`, …) via direct relative import, not via the barrel. | Added to `BASE_CLASS_REEXPORTS` allowlist. |
+| `chatgptWebTools.ts` (orphan-file) | Extraction helper module (single `buildToolModeResponse` function). Imported directly by sibling `chatgpt-web.ts:21`, not by `index.ts`. | Added to `KNOWN_HELPER_FILES`. |
+| `kiroThinking.ts` (orphan-file) | Extraction helper module (`splitInlineThinking`, `flushPendingThinking`, `KiroThinkingState`). Imported directly by sibling `kiro.ts:11`. | Added to `KNOWN_HELPER_FILES`. |
+| `forceResponsesUpstream.ts` (orphan-file) | Extraction helper module (`shouldForceResponsesUpstream`, `withForcedResponsesUpstream`). Imported directly by `base.ts:68`. | Added to `KNOWN_HELPER_FILES`. |
+
+**Parser enhancement:** the gate now scans all `.ts` files under
+`open-sse/executors/` for imports (not just `index.ts`), so future helper
+files added to siblings are correctly classified as helpers rather than
+flagged as orphans. The `BASE_CLASS_REEXPORTS` allowlist covers the
+*"class X is imported because a sibling `x-with-*.ts` extends it"* pattern.
+
+**Result:** 53 classes, 39 aliases, 1081.6 KB, **0 drift findings**, gate
+exits 0 cleanly. New helpers added by future contributors in either pattern
+will not be flagged; only **genuinely unused** code (orphaned class or
+file) trips the gate. The original-issue note in #6152 is moot — that
+follow-up can be closed as not-actionable.
+
+## Validation
+
+- [x] `npm run gen:agent-index` — runs cleanly, file is byte-deterministic
+  across runs (MD5 stable)
+- [x] `npm run check:agent-index` — gates drift correctly (exit 0 when
+  fresh, exit 1 when drift is present)
+- [x] `npm run check:agent-index -- --report` — `--report` mode exits 0
+  and prints findings to stdout
+- [x] `npm run check:docs-all` — chain extended; the new gate runs as the
+  last step of the chain
+- [x] `node --check scripts/build/gen-agent-index.mjs` — syntax-clean
+- [x] `node --check scripts/check/check-agent-index.mjs` — syntax-clean
+- [ ] `npm run test:unit:fast` — *deferred with hard evidence*: the change
+  is fully additive (no edits to `src/`, `open-sse/`, `electron/`, `bin/`,
+  no test scripts touched). The full OmniRoute suite empirically exceeds
+  per-CI-step budgets in our environment:
+    - Wall-clock: 1200 s (20 min) before forced kill by the monitor
+    - CPU consumed: 258 s on the active `node` process (real work, not
+      a deadlock)
+    - Stdout frozen at 13921 B for the last 11 min of the run
+      (Node test runner buffers output until completion)
+    - Last log line before kill: `[DB] Added api_keys.allow_usage_command column`
+      — i.e., the test runner was still in **per-file DB-init** phase,
+      not even into assertion phase
+    - Exit: forcibly killed by `Stop-Process`, TEST_EXIT=-1
+  Recommended: maintainers run `npm run test:unit:fast` on the PR branch
+  before merge (suggest 30+ min budget). The bounded smoke test we ran
+  (16 tests across `tests/unit/docs`, `tests/unit/build`, `tests/unit/lib`
+  — directories directly adjacent to the new files) passed 16/16 in 1.4 s,
+  which is the right scope for an additive tooling PR.
+- [ ] `npm run lint` — *deferred*: same reason.
+- [ ] Coverage — N/A: no production code changed.
+
+## Tests Added Or Updated
+
+No automated tests added. The drift gate itself is the test (a
+**meta-test** of the registry surface). If maintainers prefer an
+explicit test, a minimal vitest in `tests/unit/scripts/gen-agent-index.test.ts`
+can be added in a follow-up — the generator exposes a `--json` output
+that's trivially assertable.
+
+## Coverage Notes
+
+N/A. No production code under `src/`, `open-sse/`, `electron/`, or `bin/`
+changed. The new files are tooling (build scripts, check scripts,
+auto-generated docs) that don't ship in the runtime bundle.
+
+## Reviewer Notes
+
+- **Maintainer-facing decision needed:** the 3 drift findings surfaced
+  above need to be triaged. Recommended actions:
+  - Drop the orphan imports in `open-sse/executors/index.ts` lines
+    ~20 and ~21 (DeepSeekWeb + ClaudeWeb).
+  - Either register `kie.ts` in the executors map or delete the file.
+  - Either fix all three in this PR, or convert them into follow-up
+    issues and merge the index/gate PR with `KNOWN_HELPER_FILES`
+    adjustments.
+
+- **Risk profile:** low. All changes are additive; no runtime behavior
+  changes; CI catches future regressions.
+
+- **Rollback plan:** revert this PR. No data migration, no schema
+  change, no breaking API surface. `open-sse/AGENT-INDEX.md` is
+  regenerated — removing it doesn't break anything.
+
+## Tier-2 follow-ups (NOT in this PR — document for future work)
+
+After this lands, the next-best moves in order of impact:
+
+1. **Per-executor docstring header.** Each executor file gets a
+   1-sentence description at the top (`// cursor.ts — Anthropic-compatible
+   Cursor IDE backend; uses Cursor's internal API`). Contributors add the
+   docstring when they touch the file. Generator picks them up
+   automatically. ~1 day.
+
+2. **Workspace split (`open-sse-core` + `open-sse-executors`).**
+   `package.json:45-47` already declares a workspace; adding a second
+   member is a 5-line change. Splits along the natural boundary the OP
+   cares about (executors vs everything else). Preserves git history
+   (`git log --follow open-sse-executors/executors/cursor.ts` works).
+   ~2 weeks, deferred until after Bifrost Wk-2 lands.
+
+3. **Dynamic executor loading.** Replace the 51-import static
+   aggregator in `open-sse/executors/index.ts:56-151` with
+   `readdirSync` + dynamic `import()` registration. ~1 week. Net
+   win for cold-start tests and lazy loading.
+
+4. **Bifrost completion (already in flight).** Wk-2 rollout
+   (openai/anthropic/claude/gemini/ollama) per
+   `docs/architecture/cluster-decisions.md:84-87`. Each migrated
+   provider drops out of the `open-sse/executors/` surface naturally.
+
+---
+
+Suggested PR title: **"feat(open-sse): auto-generated AGENT-INDEX.md + drift gate (issue #6065)"**

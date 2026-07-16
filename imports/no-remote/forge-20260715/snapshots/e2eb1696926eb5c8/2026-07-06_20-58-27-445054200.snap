@@ -1,0 +1,8 @@
+$tokens = $null; $errs = $null
+[System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$tokens, [ref]$errs) | Out-Null
+if ($errs -and $errs.Count -gt 0) {
+    Write-Host "PARSE ERRORS in $($args[0]):"
+    foreach ($e in $errs) { Write-Host "  $($e.Extent.StartLineNumber): $($e.Message)" }
+    exit 1
+}
+Write-Host "OK: $($args[0])"

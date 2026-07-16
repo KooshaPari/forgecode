@@ -1,0 +1,265 @@
+# Per-trace extraction v3 - guards against dot-source running the sweep.
+# - Functions defined at top.
+# - Sweep loop wrapped in a function `Run-Sweep` invoked only at the bottom
+#   AND guarded by `if ($MyInvocation.InvocationName -ne '.')` so dot-source
+#   for testing does not trigger it.
+$ErrorActionPreference = 'SilentlyContinue'
+
+$outLines = New-Object System.Collections.Generic.List[string]
+$flushAt = 200
+
+function Flush {
+  if ($outLines.Count -gt 0) {
+    $outLines | ForEach-Object { Write-Output $_ }
+    $outLines.Clear()
+  }
+}
+function Emit([string]$json) {
+  $outLines.Add($json) | Out-Null
+  if ($outLines.Count -ge $flushAt) { Flush }
+}
+
+function TryParseTs($ts) {
+  if (-not $ts) { return $null }
+  try {
+    $dt = [DateTime]::Parse([string]$ts, [System.Globalization.CultureInfo]::InvariantCulture,
+      [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal)
+    return @{ iso = $dt.ToString('o'); dt = $dt }
+  } catch { return $null }
+}
+
+# ---------------- Claude Code jsonl ----------------
+function Extract-ClaudeCode([string]$path) {
+  $lineCount = 0
+  $firstIso = $null; $lastIso = $null; $firstDt = $null; $lastDt = $null
+  $sessionId = $null; $agentId = $null; $version = $null; $gitBranch = $null
+  $cwd = $null; $slug = $null; $entrypoint = $null; $userType = $null
+  $parentUuidFirst = $null; $isSidechain = $null
+  $models = New-Object System.Collections.Generic.HashSet[string]
+  $userMsgs = 0; $assistantMsgs = 0; $systemMsgs = 0; $toolUse = 0; $toolResult = 0
+  $inTokens = 0; $outTokens = 0; $cacheCreation = 0; $cacheRead = 0
+  $bytes = 0
+  try {
+    $fileStream = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    $reader = New-Object System.IO.StreamReader($fileStream)
+    while (-not $reader.EndOfStream) {
+      $line = $reader.ReadLine()
+      if ($null -eq $line -or $line.Length -lt 2) { continue }
+      $lineCount++; $bytes += $line.Length + 1
+      $obj = $null
+      try { $obj = $line | ConvertFrom-Json -ErrorAction SilentlyContinue } catch {}
+      if ($null -eq $obj) { continue }
+      if (-not $sessionId -and $obj.sessionId) { $sessionId = [string]$obj.sessionId }
+      if (-not $agentId -and $obj.agentId)     { $agentId = [string]$obj.agentId }
+      if (-not $version -and $obj.version)     { $version = [string]$obj.version }
+      if (-not $gitBranch -and $obj.gitBranch) { $gitBranch = [string]$obj.gitBranch }
+      if (-not $cwd -and $obj.cwd)             { $cwd = [string]$obj.cwd }
+      if (-not $slug -and $obj.slug)           { $slug = [string]$obj.slug }
+      if (-not $entrypoint -and $obj.entrypoint) { $entrypoint = [string]$obj.entrypoint }
+      if (-not $userType -and $obj.userType)   { $userType = [string]$obj.userType }
+      if (-not $parentUuidFirst -and $obj.parentUuid) { $parentUuidFirst = [string]$obj.parentUuid }
+      if ($null -eq $isSidechain -and ($obj.PSObject.Properties.Name -contains 'isSidechain')) { $isSidechain = [bool]$obj.isSidechain }
+      switch ($obj.type) {
+        'user'      { $userMsgs++ }
+        'assistant' { $assistantMsgs++ }
+        'system'    { $systemMsgs++ }
+        'tool_use'  { $toolUse++ }
+        'tool_result' { $toolResult++ }
+      }
+      if ($obj.message) {
+        if ($obj.message.model) { [void]$models.Add([string]$obj.message.model) }
+        if ($obj.message.usage) {
+          $u = $obj.message.usage
+          if ($u.input_tokens) { $inTokens += [int]$u.input_tokens }
+          if ($u.output_tokens) { $outTokens += [int]$u.output_tokens }
+          if ($u.cache_creation_input_tokens) { $cacheCreation += [int]$u.cache_creation_input_tokens }
+          if ($u.cache_read_input_tokens) { $cacheRead += [int]$u.cache_read_input_tokens }
+        }
+      }
+      $parsed = TryParseTs $obj.timestamp
+      if ($parsed) {
+        if (-not $firstIso) { $firstIso = $parsed.iso; $firstDt = $parsed.dt }
+        $lastIso = $parsed.iso; $lastDt = $parsed.dt
+      }
+    }
+    $reader.Close(); $fileStream.Close()
+  } catch {
+    return [ordered]@{ source='claudecode'; path=$path; error="read_failed: $($_.Exception.Message)" }
+  }
+  $spanSec = $null
+  if ($firstDt -and $lastDt) { $spanSec = [int][math]::Floor(($lastDt - $firstDt).TotalSeconds) }
+  $isSubagent = $path -match '[\\/]subagents[\\/]'
+  $driverType = if ($isSubagent) { 'agent_spawned' } else { 'human' }
+  $driverSignal = if ($isSubagent) { 'subagents_dir' } else { 'root_session' }
+  $modelsStr = ($models | Sort-Object) -join '|'
+  $turnCount = $userMsgs + $assistantMsgs
+  $projectRoot = $null
+  $parentDir = Split-Path -LiteralPath $path -Parent
+  $grandParentDir = Split-Path -LiteralPath $parentDir -Parent
+  $ggp = Split-Path -LiteralPath $grandParentDir -Parent
+  if ($ggp) { $projectRoot = Split-Path -Leaf $ggp }
+  [ordered]@{
+    source='claudecode'; path=$path; kind='jsonl'
+    line_count=$lineCount; bytes=$bytes
+    session_id=$sessionId; agent_id=$agentId; version=$version; git_branch=$gitBranch
+    cwd=$cwd; slug=$slug; entrypoint=$entrypoint; user_type=$userType
+    is_subagent=$isSubagent; is_sidechain=$isSidechain; parent_uuid_first=$parentUuidFirst
+    project_root=$projectRoot
+    models=$modelsStr
+    user_msgs=$userMsgs; assistant_msgs=$assistantMsgs; system_msgs=$systemMsgs
+    tool_use=$toolUse; tool_result=$toolResult; turn_count=$turnCount
+    input_tokens=$inTokens; output_tokens=$outTokens
+    cache_creation_input_tokens=$cacheCreation; cache_read_input_tokens=$cacheRead
+    first_ts=$firstIso; last_ts=$lastIso; span_seconds=$spanSec
+    driver_type=$driverType; driver_signal=$driverSignal
+  }
+}
+
+# ---------------- Codex rollout jsonl ----------------
+function Extract-Codex([string]$path) {
+  $lineCount = 0; $bytes = 0
+  $sessionId = $null; $cwd = $null; $originator = $null; $cliVersion = $null
+  $source = $null; $threadSource = $null; $modelProvider = $null
+  $firstIso = $null; $lastIso = $null; $firstDt = $null; $lastDt = $null
+  $models = New-Object System.Collections.Generic.HashSet[string]
+  $userMsgs = 0; $assistantMsgs = 0; $developerMsgs = 0
+  $taskStarted = 0; $taskComplete = 0
+  $eventUserMessage = 0; $eventAgentMessage = 0
+  $toolUse = 0; $toolResult = 0
+  $inputTokens = 0; $outputTokens = 0
+  try {
+    $fileStream = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    $reader = New-Object System.IO.StreamReader($fileStream)
+    while (-not $reader.EndOfStream) {
+      $line = $reader.ReadLine()
+      if ($null -eq $line -or $line.Length -lt 2) { continue }
+      $lineCount++; $bytes += $line.Length + 1
+      $obj = $null
+      try { $obj = $line | ConvertFrom-Json -ErrorAction SilentlyContinue } catch {}
+      if ($null -eq $obj) { continue }
+      $parsed = TryParseTs $obj.timestamp
+      if ($parsed) { if (-not $firstIso) { $firstIso = $parsed.iso; $firstDt = $parsed.dt }; $lastIso = $parsed.iso; $lastDt = $parsed.dt }
+      if ($obj.type -eq 'session_meta' -and $obj.payload) {
+        $p = $obj.payload
+        if (-not $sessionId -and $p.session_id) { $sessionId = [string]$p.session_id }
+        elseif (-not $sessionId -and $p.id) { $sessionId = [string]$p.id }
+        if (-not $cwd -and $p.cwd) { $cwd = [string]$p.cwd }
+        if (-not $originator -and $p.originator) { $originator = [string]$p.originator }
+        if (-not $cliVersion -and $p.cli_version) { $cliVersion = [string]$p.cli_version }
+        if (-not $source -and $p.source) { $source = [string]$p.source }
+        if (-not $threadSource -and $p.thread_source) { $threadSource = [string]$p.thread_source }
+        if (-not $modelProvider -and $p.model_provider) { $modelProvider = [string]$p.modelProvider }
+      }
+      if ($obj.type -eq 'turn_context' -and $obj.payload -and $obj.payload.model) {
+        [void]$models.Add([string]$obj.payload.model)
+      }
+      if ($obj.type -eq 'response_item' -and $obj.payload) {
+        $p = $obj.payload
+        if ($p.type -eq 'message') {
+          switch ($p.role) {
+            'user'      { $userMsgs++ }
+            'assistant' { $assistantMsgs++ }
+            'developer' { $developerMsgs++ }
+          }
+          if ($p.usage) {
+            if ($p.usage.input_tokens) { $inputTokens += [int]$p.usage.input_tokens }
+            if ($p.usage.output_tokens) { $outputTokens += [int]$p.usage.output_tokens }
+          }
+        } elseif ($p.type -in @('function_call','tool_use')) { $toolUse++ }
+        elseif ($p.type -in @('function_call_output','tool_result')) { $toolResult++ }
+      }
+      if ($obj.type -eq 'event_msg' -and $obj.payload -and $obj.payload.type) {
+        switch ($obj.payload.type) {
+          'task_started'    { $taskStarted++ }
+          'task_complete'   { $taskComplete++ }
+          'user_message'    { $eventUserMessage++ }
+          'agent_message'   { $eventAgentMessage++ }
+        }
+      }
+    }
+    $reader.Close(); $fileStream.Close()
+  } catch {
+    return [ordered]@{ source='codex'; path=$path; error="read_failed: $($_.Exception.Message)" }
+  }
+  $spanSec = $null
+  if ($firstDt -and $lastDt) { $spanSec = [int][math]::Floor(($lastDt - $firstDt).TotalSeconds) }
+  $driverType = if ($source -eq 'exec' -and $threadSource -eq 'user') { 'human' } else { 'agent_spawned_or_unknown' }
+  $driverSignal = "source=$source;thread_source=$threadSource;originator=$originator"
+  $turnCount = $userMsgs + $assistantMsgs
+  $modelsStr = ($models | Sort-Object) -join '|'
+  [ordered]@{
+    source='codex'; path=$path; kind='jsonl'
+    line_count=$lineCount; bytes=$bytes
+    session_id=$sessionId; cwd=$cwd; originator=$originator; cli_version=$cliVersion
+    source_field=$source; thread_source=$threadSource; model_provider=$modelProvider
+    models=$modelsStr
+    user_msgs=$userMsgs; assistant_msgs=$assistantMsgs; developer_msgs=$developerMsgs
+    event_user_message=$eventUserMessage; event_agent_message=$eventAgentMessage
+    task_started=$taskStarted; task_complete=$taskComplete
+    tool_use=$toolUse; tool_result=$toolResult; turn_count=$turnCount
+    input_tokens=$inputTokens; output_tokens=$outputTokens
+    first_ts=$firstIso; last_ts=$lastIso; span_seconds=$spanSec
+    driver_type=$driverType; driver_signal=$driverSignal
+  }
+}
+
+# ---------------- Forge ----------------
+function Extract-Forge([string]$path) {
+  $ext = (Get-Item -LiteralPath $path).Extension.TrimStart('.').ToLower()
+  $lineCount = 0; $bytes = (Get-Item -LiteralPath $path).Length
+  if ($ext -in @('jsonl','log','txt','md','yaml','yml')) {
+    try { $lineCount = (Get-Content -LiteralPath $path -ReadCount 0 | Measure-Object -Line).Lines } catch {}
+  }
+  [ordered]@{
+    source='forge'; path=$path; kind=$ext; line_count=$lineCount; bytes=$bytes
+    is_conversation_trace=$false
+    note='forge_sessions_dir_contains_only_build_artifacts_no_conversation_trace'
+  }
+}
+
+# ---------------- Sweep runner ----------------
+function Run-Sweep {
+  param([string]$OutPath)
+  Emit "# extraction_v3_start"
+  $count = 0
+  if (Test-Path -LiteralPath "$env:USERPROFILE\.codex\sessions") {
+    Get-ChildItem -LiteralPath "$env:USERPROFILE\.codex\sessions" -Recurse -File -Filter '*.jsonl' -ErrorAction SilentlyContinue | ForEach-Object {
+      try { Emit ((Extract-Codex $_.FullName) | ConvertTo-Json -Depth 4 -Compress) } catch { Emit "{`"source`":`"codex`",`"path`":`"$($_.FullName)`",`"error`":`"extract_fail`"}" }
+      $count++
+    }
+  }
+  if (Test-Path -LiteralPath "$env:USERPROFILE\.claude\projects") {
+    Get-ChildItem -LiteralPath "$env:USERPROFILE\.claude\projects" -Recurse -File -Filter '*.jsonl' -ErrorAction SilentlyContinue | ForEach-Object {
+      try { Emit ((Extract-ClaudeCode $_.FullName) | ConvertTo-Json -Depth 4 -Compress) } catch { Emit "{`"source`":`"claudecode`",`"path`":`"$($_.FullName)`",`"error`":`"extract_fail`"}" }
+      $count++
+    }
+  }
+  if (Test-Path -LiteralPath "$env:USERPROFILE\.claude\sessions") {
+    Get-ChildItem -LiteralPath "$env:USERPROFILE\.claude\sessions" -File -ErrorAction SilentlyContinue | ForEach-Object {
+      try { Emit ((Extract-ClaudeCode $_.FullName) | ConvertTo-Json -Depth 4 -Compress) } catch { Emit "{`"source`":`"claudecode`",`"path`":`"$($_.FullName)`",`"error`":`"extract_fail`"}" }
+      $count++
+    }
+  }
+  if (Test-Path -LiteralPath "$env:USERPROFILE\.forge\sessions") {
+    Get-ChildItem -LiteralPath "$env:USERPROFILE\.forge\sessions" -Recurse -File -ErrorAction SilentlyContinue | Where-Object {
+      $_.Extension -match '^\.(json|jsonl|yaml|yml|log|md|txt)$'
+    } | ForEach-Object {
+      try { Emit ((Extract-Forge $_.FullName) | ConvertTo-Json -Depth 4 -Compress) } catch { Emit "{`"source`":`"forge`",`"path`":`"$($_.FullName)`",`"error`":`"extract_fail`"}" }
+      $count++
+    }
+  }
+  Emit "# extraction_v3_end count=$count"
+  Flush
+  if ($OutPath) {
+    $tmp = "$OutPath.part"
+    $outLines | Set-Content -LiteralPath $tmp -Encoding UTF8
+    Move-Item -LiteralPath $tmp -Destination $OutPath -Force
+    Write-Output ("WROTE {0} records -> {1}" -f $count, $OutPath)
+  }
+}
+
+# ---------------- Auto-run guard ----------------
+# Only run sweep when executed directly, not when dot-sourced for testing.
+if ($MyInvocation.InvocationName -ne '.') {
+  Run-Sweep -OutPath (Join-Path $PSScriptRoot 'trace_index.jsonl')
+}

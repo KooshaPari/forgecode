@@ -1,0 +1,30 @@
+import time
+import time, os
+
+ts = time.time()
+
+base = r"C:\Users\koosh\repos\phenotype-tooling"
+
+# Read main.rs
+main_path = os.path.join(base, "crates", "phenotype-cli", "src", "main.rs")
+with open(main_path) as f:
+    main_content = f.read()
+
+# Read Cargo.toml (cli)
+cargo_path = os.path.join(base, "crates", "phenotype-cli", "Cargo.toml")
+with open(cargo_path) as f:
+    cargo_content = f.read()
+
+# Output using repr to avoid encoding issues
+out = f"TIMESTAMP: {ts}\n"
+out += "=" * 50 + "\n"
+out += "MAIN.RS:\n"
+out += "=" * 50 + "\n"
+out += main_content
+out += "\n" + "=" * 50 + "\n"
+out += "CARGO.TOML (phenotype-cli):\n"
+out += "=" * 50 + "\n"
+out += cargo_content
+
+print(out)
+

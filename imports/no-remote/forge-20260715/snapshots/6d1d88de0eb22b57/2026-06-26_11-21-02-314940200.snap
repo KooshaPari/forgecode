@@ -1,0 +1,1 @@
+DELETE FROM proxy_logs WHERE id IN (SELECT id FROM proxy_logs WHERE timestamp < datetime('now','-7 days') ORDER BY timestamp ASC LIMIT 1000);

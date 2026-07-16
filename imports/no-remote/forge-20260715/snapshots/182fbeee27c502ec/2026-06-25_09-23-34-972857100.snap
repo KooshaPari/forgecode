@@ -1,0 +1,104 @@
+name: Tier-1 Enforcement (PR Gate)
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+jobs:
+  # ── Job 1: Security scan (cargo audit) ──────────────────────────────
+  security-audit:
+    name: Security Audit (cargo-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Job 2: SBOM validity check ──────────────────────────────────────
+  sbom-check:
+    name: SBOM Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check SBOM file exists
+        run: |
+          if [ -f sbom.json ]; then
+            echo "✅ SBOM file found: sbom.json"
+          elif [ -f sbom.spdx.json ]; then
+            echo "✅ SBOM file found: sbom.spdx.json"
+          elif [ -f sbom.cdx.json ]; then
+            echo "✅ SBOM file found: sbom.cdx.json"
+          elif [ -f target/sbom.json ]; then
+            echo "✅ SBOM file found: target/sbom.json"
+          else
+            echo "❌ No SBOM file found (checked: sbom.json, sbom.spdx.json, sbom.cdx.json, target/sbom.json)"
+            echo "Run cargo sbom or cargo-cyclonedx to generate one, or add a generation step."
+            exit 1
+          fi
+
+  # ── Job 3: LICENSE presence & content check ─────────────────────────
+  license-check:
+    name: LICENSE Presence Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Verify LICENSE file exists
+        run: |
+          if [ -f LICENSE ]; then
+            echo "✅ LICENSE file present"
+            head -5 LICENSE
+          elif [ -f LICENSE-MIT ]; then
+            echo "✅ LICENSE-MIT file present"
+            head -5 LICENSE-MIT
+          elif [ -f LICENSE.md ]; then
+            echo "✅ LICENSE.md file present"
+            head -5 LICENSE.md
+          else
+            echo "❌ No LICENSE file found"
+            exit 1
+          fi
+
+      - name: Check LICENSE is not boilerplate empty
+        run: |
+          line_count=$(wc -l < LICENSE)
+          if [ "$line_count" -lt 5 ]; then
+            echo "❌ LICENSE file appears too short ($line_count lines); may be a placeholder"
+            exit 1
+          fi
+          echo "✅ LICENSE file is substantive ($line_count lines)"
+
+  # ── Job 4: CHANGELOG updated check ──────────────────────────────────
+  changelog-check:
+    name: CHANGELOG Update Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check CHANGELOG.md was modified
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            head="${{ github.event.pull_request.head.sha }}"
+            if git diff --name-only "$base"..."$head" | grep -q "^CHANGELOG.md"; then
+              echo "✅ CHANGELOG.md has been updated in this PR"
+            else
+              echo "❌ CHANGELOG.md has NOT been modified in this PR"
+              echo "Please update CHANGELOG.md under [Unreleased] with your changes."
+              exit 1
+            fi
+          else
+            echo "⏭️ Skipping CHANGELOG check (not a PR event)"
+          fi

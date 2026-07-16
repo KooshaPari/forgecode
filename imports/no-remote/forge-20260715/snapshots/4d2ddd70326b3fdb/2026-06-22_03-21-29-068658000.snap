@@ -1,0 +1,65 @@
+//! Integration tests for the Sampler port.
+
+use pheno_tracing::sampling::{AlwaysSample, DeterministicSampler, RatioSampler, Sampler};
+
+#[test]
+fn always_sample_always_true() {
+    let s = AlwaysSample;
+    for _ in 0..1000 {
+        assert!(s.should_sample());
+    }
+}
+
+#[test]
+fn ratio_sampler_zero_never_samples() {
+    let s = RatioSampler::new(0.0).expect("rate=0.0 should be valid");
+    for _ in 0..1000 {
+        assert!(!s.should_sample());
+    }
+}
+
+#[test]
+fn ratio_sampler_one_always_samples() {
+    let s = RatioSampler::new(1.0).expect("rate=1.0 should be valid");
+    for _ in 0..1000 {
+        assert!(s.should_sample());
+    }
+}
+
+#[test]
+fn ratio_sampler_rejects_out_of_range() {
+    assert!(RatioSampler::new(-0.1).is_err());
+    assert!(RatioSampler::new(1.1).is_err());
+    assert!(RatioSampler::new(f64::NAN).is_err());
+}
+
+#[test]
+fn ratio_sampler_stores_rate() {
+    let s = RatioSampler::new(0.5).unwrap();
+    assert_eq!(s.rate(), 0.5);
+}
+
+#[test]
+fn deterministic_sampler_is_deterministic() {
+    let s1 = DeterministicSampler::new(0.5);
+    let s2 = DeterministicSampler::new(0.5);
+    for _ in 0..1000 {
+        assert_eq!(s1.should_sample(), s2.should_sample());
+    }
+}
+
+#[test]
+fn deterministic_sampler_zero_never() {
+    let s = DeterministicSampler::new(0.0);
+    for _ in 0..1000 {
+        assert!(!s.should_sample());
+    }
+}
+
+#[test]
+fn deterministic_sampler_one_always() {
+    let s = DeterministicSampler::new(1.0);
+    for _ in 0..1000 {
+        assert!(s.should_sample());
+    }
+}

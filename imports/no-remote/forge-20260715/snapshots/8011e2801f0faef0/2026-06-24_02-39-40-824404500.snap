@@ -1,0 +1,9 @@
+cd "C:\Users\koosh\Dev\Civis\.worktrees\wt-physics-impl"
+# First reset everything
+git reset HEAD 2>&1
+echo "--- after reset ---"
+git status --short
+echo "--- staging plan ---"
+git add -f docs/design/PHYSICS_INTEGRATION_PLAN.md
+echo "--- after add plan ---"
+git diff --cached --name-only

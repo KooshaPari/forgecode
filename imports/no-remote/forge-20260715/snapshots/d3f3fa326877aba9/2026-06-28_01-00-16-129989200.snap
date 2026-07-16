@@ -1,0 +1,44 @@
+import os, re, subprocess
+
+root = r'C:\Users\koosh'
+
+# 1. Find all .rs files with FR-CIV-LIFE
+print("=== FR-CIV-LIFE in .rs files ===")
+for dirpath, dirnames, filenames in os.walk(root):
+    if '.git' in dirnames: dirnames.remove('.git')
+    for f in filenames:
+        if f.endswith('.rs'):
+            fp = os.path.join(dirpath, f)
+            try:
+                with open(fp, 'r', encoding='utf-8', errors='ignore') as fh:
+                    content = fh.read(4096)
+                    if 'FR-CIV-LIFE' in content:
+                        print(f"  {fp}")
+            except:
+                pass
+
+# 2. Find directories with 'codex' and 'mini'
+print("\n=== codex-mini directories ===")
+for dirpath, dirnames, filenames in os.walk(root):
+    if '.git' in dirnames: dirnames.remove('.git')
+    if 'codex' in dirpath.lower() and 'mini' in dirpath.lower():
+        print(f"  {dirpath}")
+        print(f"    contents: {os.listdir(dirpath)[:30]}")
+
+# 3. Find any FR-CIV-LIFE* files
+print("\n=== FR-CIV-LIFE* files ===")
+for dirpath, dirnames, filenames in os.walk(root):
+    if '.git' in dirnames: dirnames.remove('.git')
+    for f in filenames:
+        if 'FR-CIV-LIFE' in f:
+            print(f"  {os.path.join(dirpath, f)}")
+
+# 4. Find files with 'lifecycle' and 'civ' in path
+print("\n=== lifecycle-related dirs ===")
+for dirpath, dirnames, filenames in os.walk(root):
+    if '.git' in dirnames: dirnames.remove('.git')
+    if 'lifecycle' in dirpath.lower() and 'civ' in dirpath.lower():
+        print(f"  {dirpath}")
+        print(f"    files: {[f for f in filenames if f.endswith(('.py','.rs','.toml','.md'))][:20]}")
+
+print("\n=== DONE ===")

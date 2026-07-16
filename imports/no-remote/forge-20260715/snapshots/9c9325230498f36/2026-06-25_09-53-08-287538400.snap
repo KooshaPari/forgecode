@@ -1,0 +1,303 @@
+//! DAG-aware agent spawn — parallel where safe.
+//!
+//! When `--dag-yaml` is passed to `agileplus implement`, the normal
+//! scheduler-based WP dispatch is replaced by DAG-based unit dispatch.
+//! The executor loads the YAML manifest, filters by epic, computes
+//! topological waves, then within each wave uses file-scope conflict
+//! resolution to partition units into parallel-safe batches.
+//!
+//! Each batch is dispatched concurrently via `futures_util::join_all`.
+//! Units whose file-scopes do not overlap run in parallel; conflicting
+//! units run in successive batches within the same wave.
+//!
+//! Traceability: F13 / epic_F
+
+use std::collections::HashSet;
+use std::path::PathBuf;
+
+use anyhow::{Context, Result};
+use futures_util::future::join_all;
+use tracing;
+
+use agileplus_dag::executor::{DagExecutor, DagExecutorOptions};
+use agileplus_dag::manifest::DagManifest;
+use agileplus_dag::unit::DagUnit;
+use agileplus_domain::ports::agent::{AgentConfig, AgentKind, AgentPort, AgentTask};
+use agileplus_domain::ports::{StoragePort, VcsPort};
+
+/// Arguments injected by the implement command when DAG mode is active.
+#[derive(Debug, Clone)]
+pub struct DagDispatchArgs {
+    /// Path to the DAG YAML file.
+    pub dag_yaml: PathBuf,
+    /// Epic ID to filter (e.g. "F").
+    pub epic: String,
+    /// Maximum parallel agents.
+    pub parallel: usize,
+    /// Maximum review-fix cycles per unit.
+    pub max_review_cycles: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Per-unit dispatch result
+// ---------------------------------------------------------------------------
+
+/// The outcome of dispatching a single DAG unit to an agent.
+#[derive(Debug)]
+struct UnitResult {
+    unit_id: String,
+    job_id: Option<String>,
+    success: bool,
+    error: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Top-level entry point
+// ---------------------------------------------------------------------------
+
+/// Run the DAG-aware dispatch phase.
+///
+/// This replaces the sequential WP loop in `run_implement` when the
+/// user passes `--dag-yaml`.  The executive flow is:
+///
+/// 1. Load and parse the DAG YAML file.
+/// 2. Extract units for the target epic.
+/// 3. Compute topological execution waves.
+/// 4. For each wave, resolve file-scope conflicts and partition into
+///    parallel-safe batches.
+/// 5. Dispatch each batch concurrently via `join_all`.
+/// 6. Advance through waves (units blocked by conflicts run in later
+///    batches within the same wave).
+/// 7. Report per-agent job IDs and summary.
+pub async fn run_dag_dispatch<S, V, A>(
+    args: DagDispatchArgs,
+    _storage: &S,
+    _vcs: &V,
+    agent: &A,
+) -> Result<()>
+where
+    S: StoragePort,
+    V: VcsPort,
+    A: AgentPort,
+{
+    let start = std::time::Instant::now();
+    println!(
+        "DAG dispatch: loading '{}' (epic={})",
+        args.dag_yaml.display(),
+        args.epic
+    );
+
+    // 1. Load DAG manifest
+    let manifest = DagManifest::from_yaml_path(&args.dag_yaml)
+        .with_context(|| format!("loading DAG from {}", args.dag_yaml.display()))?;
+
+    tracing::info!(
+        dag_id = %manifest.meta.id,
+        title = %manifest.meta.title,
+        "DAG manifest loaded"
+    );
+
+    // 2. Build executor
+    let options = DagExecutorOptions {
+        max_parallel: args.parallel,
+        filter_by_repo: Some("agileplus".into()),
+        epic_filter: Some(args.epic.clone()),
+    };
+
+    let mut executor = DagExecutor::new(manifest, options);
+    let pending = executor.pending_count();
+    println!("  Found {pending} pending units for epic '{}'.", args.epic);
+
+    if pending == 0 {
+        println!("  No units to dispatch.");
+        return Ok(());
+    }
+
+    // 3. Compute execution waves
+    let waves = executor
+        .execution_plan()
+        .context("computing DAG execution plan")?;
+
+    println!("  Execution plan: {} wave(s)", waves.len());
+    for wave in &waves {
+        let ids: Vec<&str> = wave.unit_ids.iter().map(|s| s.as_str()).collect();
+        println!("    Wave {}: [{}]", wave.wave_number, ids.join(", "));
+    }
+    println!();
+
+    // 4. Agent config
+    let agent_config = AgentConfig {
+        kind: AgentKind::ClaudeCode,
+        max_review_cycles: args.max_review_cycles,
+        timeout_secs: 3600,
+        extra_args: vec![],
+    };
+
+    // Collect all job IDs for reporting.
+    let mut all_results: Vec<UnitResult> = Vec::new();
+
+    // 5. Execute wave by wave
+    for wave in &waves {
+        println!(
+            "--- Wave {} ({} unit(s)) ---",
+            wave.wave_number,
+            wave.units.len()
+        );
+
+        // Resolve ready units (should be all within this wave).
+        let completed: HashSet<String> = HashSet::new();
+        let mut ready: Vec<DagUnit> = executor
+            .ready_units(&completed)
+            .into_iter()
+            .cloned()
+            .collect();
+
+        // Filter to only units belonging to this wave.
+        let wave_set: HashSet<&str> = wave.unit_ids.iter().map(|s| s.as_str()).collect();
+        ready.retain(|u| wave_set.contains(u.id.as_str()));
+
+        if ready.is_empty() {
+            println!("  No ready units in this wave.");
+            continue;
+        }
+
+        // Partition into parallel-safe batches (file-scope conflict aware).
+        let batches = executor.partition_parallel_safe(&ready);
+        println!(
+            "  Resolved into {} parallel-safe batch(es) based on file-scope.",
+            batches.len()
+        );
+        for (bi, batch) in batches.iter().enumerate() {
+            let ids: Vec<&str> = batch.iter().map(|u| u.id.as_str()).collect();
+            println!("    Batch {}: [{}]", bi, ids.join(", "));
+        }
+
+        // Execute each batch sequentially (within-batch units are parallel).
+        let mut wave_completed: HashSet<String> = HashSet::new();
+
+        for (bi, batch) in batches.iter().enumerate() {
+            println!("  Executing batch {bi} ({} unit(s))...", batch.len());
+
+            // Dispatch all units in this batch concurrently.
+            let futures: Vec<_> = batch
+                .iter()
+                .map(|unit| {
+                    let unit = unit.clone();
+                    let agent_config = agent_config.clone();
+                    let dag_yaml = args.dag_yaml.clone();
+                    async move {
+                        dispatch_single_unit(unit, &agent_config, &dag_yaml, agent).await
+                    }
+                })
+                .collect();
+
+            let results = join_all(futures).await;
+
+            for result in &results {
+                if result.success {
+                    println!(
+                        "    -> Job {} completed for unit {}",
+                        result.job_id.as_deref().unwrap_or("?"),
+                        result.unit_id
+                    );
+                    executor.mark_done(&result.unit_id);
+                    wave_completed.insert(result.unit_id.clone());
+                } else {
+                    let err_msg = result
+                        .error
+                        .as_deref()
+                        .unwrap_or("unknown error");
+                    tracing::error!(
+                        unit = %result.unit_id,
+                        error = %err_msg,
+                        "dispatch failed"
+                    );
+                    println!(
+                        "    -> FAILED unit {}: {}",
+                        result.unit_id, err_msg
+                    );
+                    executor.mark_failed(&result.unit_id);
+                    // Continue with remaining units (graceful degradation).
+                }
+            }
+
+            all_results.extend(results);
+        }
+
+        println!("  Wave {} complete.\n", wave.wave_number);
+    }
+
+    // 6. Report
+    let elapsed_ms = start.elapsed().as_millis();
+    let done = executor.done_count();
+    let failed = pending - done;
+
+    tracing::info!(
+        command = "implement-dag",
+        epic = %args.epic,
+        done = done,
+        failed = failed,
+        total = pending,
+        elapsed_ms = %elapsed_ms,
+        "DAG dispatch completed"
+    );
+
+    println!();
+    println!("DAG dispatch complete: {done}/{pending} units done in {elapsed_ms}ms.");
+    if failed > 0 {
+        println!("  {failed} unit(s) failed or blocked.");
+    }
+
+    // Print per-agent job summary.
+    println!();
+    println!("--- Per-agent job summary ---");
+    for result in &all_results {
+        let status = if result.success { "OK" } else { "FAIL" };
+        let job = result.job_id.as_deref().unwrap_or("N/A");
+        println!("  [{status}] {:<8} job={job}", result.unit_id);
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Single-unit dispatch helper
+// ---------------------------------------------------------------------------
+
+/// Dispatch a single DAG unit to the agent and wait for the result.
+async fn dispatch_single_unit<A: AgentPort>(
+    unit: DagUnit,
+    agent_config: &AgentConfig,
+    dag_yaml: &PathBuf,
+    agent: &A,
+) -> UnitResult {
+    let task = AgentTask {
+        wp_id: unit.id.clone(),
+        feature_slug: format!("dag-{}-{}", unit.epic, unit.id),
+        prompt_path: PathBuf::from(format!(
+            "agileplus-specs/{}-{}/tasks/{}.md",
+            unit.epic, unit.id, unit.id
+        )),
+        worktree_path: PathBuf::from(format!(".worktrees/{}-{}", unit.epic, unit.id)),
+        context_files: vec![dag_yaml.clone()],
+    };
+
+    match agent.dispatch_async(task, agent_config).await {
+        Ok(job_id) => {
+            // For the stub agent, the job completes immediately.
+            // In a production system we would poll `query_status` here.
+            UnitResult {
+                unit_id: unit.id,
+                job_id: Some(job_id),
+                success: true,
+                error: None,
+            }
+        }
+        Err(e) => UnitResult {
+            unit_id: unit.id,
+            job_id: None,
+            success: false,
+            error: Some(e.to_string()),
+        },
+    }
+}

@@ -1,0 +1,208 @@
+/**
+ * PR-025 — Compression Budget Forecaster
+ *
+ * Projects historical compression savings into a future horizon so that the
+ * cost guard / dashboard / scheduler can answer: "if we keep compressing at
+ * the recent rate, how many tokens will we save in the next N ms?"
+ *
+ * Pure function — no I/O, no Date.now(), no module-level state, deterministic
+ * for a given input array. Safe to call from request hot paths and from
+ * background job loops.
+ *
+ * Forecast model (per-history-shape):
+ *   - constant-rate history → linear extrapolation of the mean rate
+ *   - declining-rate history → log-shaped decay, capped at observed peak
+ *   - bursty history → median-anchored projection, ignoring outliers
+ *   - mixed / degenerate history → falls back to mean rate
+ *
+ * All outputs are non-negative finite numbers. The function never throws on
+ * caller-provided bad inputs; instead it returns `{0, 0, 0}`-shaped objects
+ * with a documented degenerate-case rationale. This matches the contract
+ * used by `costRules.ts` and the dashboard `forecast` widget.
+ */
+
+export interface BudgetHistoryPoint {
+  /** Epoch milliseconds at which this observation was recorded. */
+  tsMs: number;
+  /** Total tokens observed in the input (pre-compression). */
+  tokens: number;
+  /** Tokens saved by compression for this observation. */
+  savedTokens: number;
+}
+
+export interface BudgetForecast {
+  /** 50th-percentile projection of saved tokens over the horizon. */
+  p50SavedTokens: number;
+  /** 90th-percentile projection of saved tokens over the horizon. */
+  p90SavedTokens: number;
+  /** Mean saved tokens per hour extrapolated from the history window. */
+  meanSavedPerHour: number;
+}
+
+const MS_PER_HOUR = 60 * 60 * 1000;
+
+/**
+ * Compute a deterministic percentile (0–100) over a numeric array.
+ * Uses linear interpolation between order statistics (type 7, same as
+ * NumPy's default). Returns 0 for empty input.
+ */
+function percentile(sortedAsc: number[], p: number): number {
+  if (sortedAsc.length === 0) return 0;
+  if (sortedAsc.length === 1) return sortedAsc[0]!;
+  if (p <= 0) return sortedAsc[0]!;
+  if (p >= 100) return sortedAsc[sortedAsc.length - 1]!;
+  const rank = (p / 100) * (sortedAsc.length - 1);
+  const lo = Math.floor(rank);
+  const hi = Math.ceil(rank);
+  if (lo === hi) return sortedAsc[lo]!;
+  const w = rank - lo;
+  return sortedAsc[lo]! * (1 - w) + sortedAsc[hi]! * w;
+}
+
+/**
+ * Sort ascending without mutating the input array.
+ */
+function sortedCopy(arr: number[]): number[] {
+  const out = arr.slice();
+  out.sort((a, b) => a - b);
+  return out;
+}
+
+/**
+ * Median of a numeric array. Returns 0 for empty input.
+ */
+function median(arr: number[]): number {
+  if (arr.length === 0) return 0;
+  return percentile(sortedCopy(arr), 50);
+}
+
+/**
+ * Mean of a numeric array. Returns 0 for empty input.
+ */
+function mean(arr: number[]): number {
+  if (arr.length === 0) return 0;
+  let sum = 0;
+  for (const v of arr) sum += v;
+  return sum / arr.length;
+}
+
+/**
+ * Classify the history shape so the forecaster can pick the right model.
+ * Returns: "constant" | "declining" | "bursty" | "mixed"
+ */
+function classifyShape(savingsRates: number[]): "constant" | "declining" | "bursty" | "mixed" {
+  if (savingsRates.length < 3) return "mixed";
+  const m = mean(savingsRates);
+  if (m <= 0) return "mixed";
+  let varianceSum = 0;
+  for (const v of savingsRates) varianceSum += (v - m) ** 2;
+  const variance = varianceSum / savingsRates.length;
+  const stddev = Math.sqrt(variance);
+  const cv = stddev / m; // coefficient of variation
+
+  // Bursty: high coefficient of variation relative to mean → spiky traffic.
+  if (cv > 0.6) return "bursty";
+
+  // Declining: monotonically (or near-monotonically) shrinking rates.
+  let decreasing = 0;
+  for (let i = 1; i < savingsRates.length; i++) {
+    if (savingsRates[i]! <= savingsRates[i - 1]!) decreasing++;
+  }
+  if (decreasing >= savingsRates.length - 1) return "declining";
+
+  // Constant: low CV, mostly flat.
+  if (cv < 0.15) return "constant";
+
+  return "mixed";
+}
+
+/**
+ * Project compression-token savings into a future horizon given a history
+ * window. Pure function — see file header for the forecast model and the
+ * no-throw degenerate-case contract.
+ */
+export function projectBudgetSavings(
+  history: ReadonlyArray<BudgetHistoryPoint>,
+  horizonMs: number
+): BudgetForecast {
+  // Degenerate: no history → no projection possible.
+  if (!Array.isArray(history) || history.length === 0) {
+    return { p50SavedTokens: 0, p90SavedTokens: 0, meanSavedPerHour: 0 };
+  }
+
+  // Guard weird horizon values up front. Non-finite or non-positive
+  // horizons cannot anchor a forecast.
+  if (!Number.isFinite(horizonMs) || horizonMs <= 0) {
+    return { p50SavedTokens: 0, p90SavedTokens: 0, meanSavedPerHour: 0 };
+  }
+
+  // Sort by timestamp so "the most recent N points" means "the latest N".
+  const sorted = history.slice().sort((a, b) => a.tsMs - b.tsMs);
+
+  // Build per-point savings rates (savedTokens / tokens, guarded).
+  const rates: number[] = [];
+  const savedAbs: number[] = [];
+  let totalSaved = 0;
+  for (const p of sorted) {
+    const saved = Math.max(0, p.savedTokens);
+    const tokens = Math.max(0, p.tokens);
+    savedAbs.push(saved);
+    totalSaved += saved;
+    if (tokens > 0) rates.push(saved / tokens);
+  }
+
+  // Window span (ms) — clamped to a positive value to avoid div-by-zero
+  // when the caller hands us duplicate timestamps.
+  const firstTs = sorted[0]!.tsMs;
+  const lastTs = sorted[sorted.length - 1]!.tsMs;
+  const spanMs = Math.max(1, lastTs - firstTs);
+
+  // Mean rate of saved tokens per hour over the observed window.
+  const observedRatePerHour = (totalSaved / spanMs) * MS_PER_HOUR;
+  const meanSavedPerHour = Math.max(0, observedRatePerHour);
+
+  // Build per-point "what would we save in the horizon if this rate held"
+  // candidates — one per history point — so we can take a percentile over
+  // them rather than only the mean. This is what lets us answer p50/p90.
+  const shape = classifyShape(rates);
+
+  let p50SavedTokens: number;
+  let p90SavedTokens: number;
+
+  if (shape === "bursty") {
+    // Bursty: anchor on median (robust to outliers), use a small lift for p90.
+    const med = median(savedAbs);
+    const sortedAbs = sortedCopy(savedAbs);
+    const p90Abs = percentile(sortedAbs, 90);
+    p50SavedTokens = Math.max(0, med * (horizonMs / spanMs));
+    p90SavedTokens = Math.max(0, p90Abs * (horizonMs / spanMs));
+  } else if (shape === "declining") {
+    // Declining: the mean overestimates the future. Cap the projection at
+    // the most recent observation scaled by a logarithmic decay that never
+    // exceeds the observed peak.
+    const peak = Math.max(...savedAbs);
+    const latest = savedAbs[savedAbs.length - 1]!;
+    const decay = Math.log1p(horizonMs / spanMs) / Math.log1p(2); // log2-ish
+    const scale = Math.min(1, Math.max(0, decay));
+    p50SavedTokens = Math.max(0, latest * scale * (horizonMs / spanMs));
+    p90SavedTokens = Math.max(0, peak * (horizonMs / spanMs));
+  } else if (shape === "constant") {
+    // Constant: linear extrapolation from the mean is exact.
+    const m = mean(savedAbs);
+    p50SavedTokens = Math.max(0, m * (horizonMs / spanMs));
+    p90SavedTokens = Math.max(0, m * (horizonMs / spanMs));
+  } else {
+    // Mixed / unknown: fall back to mean. p90 gets a modest upward bump
+    // proportional to the observed stddev so it isn't identical to p50.
+    const m = mean(savedAbs);
+    const sd = Math.sqrt(mean(savedAbs.map((v) => (v - m) ** 2)));
+    p50SavedTokens = Math.max(0, m * (horizonMs / spanMs));
+    p90SavedTokens = Math.max(0, (m + sd) * (horizonMs / spanMs));
+  }
+
+  return {
+    p50SavedTokens: Math.max(0, p50SavedTokens),
+    p90SavedTokens: Math.max(p50SavedTokens, p90SavedTokens),
+    meanSavedPerHour,
+  };
+}

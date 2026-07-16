@@ -1,0 +1,13 @@
+import json
+d = json.load(open('docs/audits/fr-matrix.json', encoding='utf-8'))
+rows = d['rows']
+total = len(rows)
+covered = sum(1 for r in rows if r.get('status') == 'COVERED')
+spec_only = sum(1 for r in rows if r.get('status') == 'SPEC-ONLY')
+spec_only_tc = sum(1 for r in rows if r.get('status') == 'SPEC-ONLY' and r.get('test_refs') and not r.get('code_refs'))
+print(f'Total: {total}')
+print(f'COVERED: {covered}')
+print(f'SPEC-ONLY: {spec_only}')
+print(f'SPEC-ONLY w/ tests: {spec_only_tc}')
+coverage_pct = 100 * covered // total
+print(f'Coverage: {coverage_pct}%')

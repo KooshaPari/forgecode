@@ -1,0 +1,12 @@
+{
+  "name": "pheno-harness",
+  "role": "testing-framework",
+  "lifecycle": "active",
+  "status": "active",
+  "description": "Phenotype-org test harness and integration test framework for MCP protocol compliance and cross-repo feature verification.",
+  "repo_path": "KooshaPari/pheno-harness",
+  "default_branch": "main",
+  "language": "unknown",
+  "audit_artifact": "pheno-harness-2026-06-25.md",
+  "summary": "Active testing framework — see pheno-harness-2026-06-25.md for absorption-justification."
+}

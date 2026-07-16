@@ -1,0 +1,32 @@
+// Reproduce the exact parseRegistry minimal from gen-agent-index.mjs to
+// pinpoint the bug.
+const fs = require("node:fs");
+const path = require("node:path");
+const REPO_ROOT = "C:/Users/koosh/OmniRoute-clean";
+const EXECUTORS_DIR = path.join(REPO_ROOT, "open-sse", "executors");
+const INDEX_TS_PATH = path.join(EXECUTORS_DIR, "index.ts");
+const indexTs = fs.readFileSync(INDEX_TS_PATH, "utf8");
+console.log("chars:", indexTs.length);
+console.log("first import line raw:", JSON.stringify(indexTs.split("\n")[0]));
+
+// EXACT same regex as in gen-agent-index.mjs
+const importRe = /import\s*\{\s*([A-Za-z0-9_]+)\s*\}\s*from\s*"\.\/([A-Za-z0-9_-]+)\.ts"\s*;?/g;
+let m;
+let n = 0;
+while ((m = importRe.exec(indexTs)) !== null) {
+  n++;
+  if (n <= 3) console.log("imp", m[1], m[2]);
+}
+console.log("imports matched:", n);
+
+const start = indexTs.indexOf("const executors = {");
+console.log("executors block at:", start);
+const block = indexTs.slice(start, start + 600);
+const lineRe = /^\s*"?([a-zA-Z0-9_-]+)"?\s*:\s*new\s+([A-Za-z0-9_]+)\s*\(/gm;
+let mm;
+let k = 0;
+while ((mm = lineRe.exec(block))) {
+  k++;
+  if (k <= 5) console.log("map", JSON.stringify(mm[1]), "<-- id", "|", JSON.stringify(mm[2]), "<-- class");
+}
+console.log("map entries:", k);

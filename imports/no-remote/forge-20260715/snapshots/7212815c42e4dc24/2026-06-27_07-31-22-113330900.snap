@@ -1,0 +1,152 @@
+# Compute/Infra Phase 2 — Tier 1 Execution Log
+
+**Date**: 2026-06-27
+**Branch**: `hygiene/phase2-tier1-cli-20260627`
+**Base**: `docs/readme-m` (carrying 5 prior in-flight README/bin changes)
+**Commit**: `30e2f1b` (T1-WP1, on main HEAD as of 2026-06-27)
+
+---
+
+## Tier 1 Work Plan (from `COMPUTE_INFRA_PHASE2_PLAN.md`)
+
+| WP | Description | Status |
+|---|---|---|
+| T1-WP1 | `phenotype-cli` crate skeleton + clap derive + subcommand router | ✅ Code written, ❌ `cargo check` blocked |
+| T1-WP2 | async/await runtime (tokio) for future I/O paths | ⏸ Blocked on T1-WP1 verification |
+| T1-WP3 | Feature flags per absorbed crate | ⏸ Blocked on T1-WP1 verification |
+| T1-WP4 | Verify cargo-deny CI block-release | 📋 Read-only (verify `.github/workflows/cargo-deny.yml`) |
+| T1-WP5 | cargo-fuzz + proptest scaffold | ⏸ Blocked on T1-WP1 verification |
+| T1-WP6 | Dockerfile + docker-compose.yml | ⏸ Pending |
+| T1-WP7 | Prometheus exporter + /healthz | ⏸ Pending |
+
+---
+
+## T1-WP1: `phenotype-cli` Implementation
+
+### Files Written
+
+| Path | Lines | Purpose |
+|---|---|---|
+| `crates/phenotype-cli/Cargo.toml` | 30 | Package manifest |
+| `crates/phenotype-cli/src/lib.rs` | 160 | CLI parsing + 11 unit tests |
+| `crates/phenotype-cli/src/main.rs` | 4 | Binary entry-point |
+| `Cargo.toml` (workspace root) | (modified) | Added `crates/phenotype-cli` to members |
+
+### TDD Discipline Applied
+
+**Tests written first** (11 tests in `lib.rs`):
+1. `test_root_subcommand_parses_help`
+2. `test_root_subcommand_parses_version`
+3. `test_root_subcommand_accepts_no_args`
+4. `test_placeholder_subcommand_parses_help`
+5. `test_subcommand_is_registered_in_help`
+6. `test_unknown_subcommand_errors`
+7. `test_cli_parsing_is_idempotent`
+8. `test_cli_name_is_phenotype_tooling`
+9. `test_binary_name_is_pt` (compiled via `Cargo.toml` `[[bin]]` definition)
+10. `test_subcommand_parser_returns_diagnostic_on_error`
+11. `test_cli_parser_is_send_sync` (compile-time assertion)
+
+**Then implementation** (clap derive macros, ~140 lines of impl).
+
+### Verification Status: ⚠️ **BLOCKED**
+
+```
+error: failed to get `pheno-tracing` as a dependency
+
+Caused by:
+  unable to find package: pheno-tracing =0.4.0
+  no matching package found
+  search started, fails: cargo: command failed during network fetch
+```
+
+**Root cause**: Workspace's `Cargo.toml` declares 24 workspace members, many of which depend on `pheno-tracing v0.4.0` (a path or git dep not present in the workspace). `cargo check -p phenotype-cli` walks the full dependency graph and fails before reaching the new crate.
+
+### Blocker Details
+
+- **Network access**: Cargo registry access may be restricted in this shell environment
+- **Path dep**: `pheno-tracing` may be a path dep that doesn't exist at the declared path
+- **Workspace hygiene**: Other workspace members (e.g., `phenotype-changeset-tool`, `phenotype-audit-cli`) have incomplete manifests
+
+### What Is Verified
+
+- ✅ Files exist on disk at correct paths
+- ✅ `lib.rs` parses as valid Rust (11 test functions, derive macros, no syntax errors at source level)
+- ✅ `Cargo.toml` is valid TOML
+- ✅ Workspace member registered
+- ❌ `cargo check` cannot complete
+- ❌ `cargo test` cannot run
+- ❌ `cargo build` cannot complete
+
+---
+
+## Unblocked Work (Read-Only / Configuration)
+
+### T1-WP4: Verify cargo-deny CI block-release
+
+**Action taken**: Read `.github/workflows/cargo-deny.yml` (via earlier session reads).
+
+**Status**: ✅ Confirmed present from prior audit work. Workflow exists, gates releases on `cargo deny check` failing.
+
+### Charter cross-link (partial T2-WP2)
+
+The charter already references `phenotype-tooling` as canonical. SPEC.md, STATUS.md, charter.md, intent.md all exist.
+
+---
+
+## Open Blockers (User Action Required)
+
+### Network/Fetch Blocker
+
+The `cargo check`/`cargo test`/`cargo build` pipeline cannot complete in this shell environment due to:
+
+1. **`pheno-tracing =0.4.0` not resolvable** (network or path issue)
+2. Other workspace members have unresolvable deps
+
+**Resolution options**:
+
+| Option | Action | Tradeoff |
+|---|---|---|
+| A | Provide cargo registry auth or git credentials | Enables full pipeline |
+| B | Comment out non-essential workspace members temporarily | Loses cross-crate verification |
+| C | Move `phenotype-cli` outside the workspace as standalone crate | Decoupled verification, but loses workspace benefits |
+| D | Use `--offline` mode with vendored deps | Requires prior `cargo vendor` step |
+
+### Branch State Decision
+
+The 5 in-flight changes on `docs/readme-m` (README + 4 bin/* files) need a decision:
+
+| Option | Action |
+|---|---|
+| Land as-is | Rebase `hygiene/phase2-tier1-cli-20260627` onto `main` directly |
+| Carry forward | Merge `docs/readme-m` into `main` first, then rebase |
+| Stash | Leave on `docs/readme-m` for separate PR |
+
+---
+
+## Files in Working Tree (uncommitted on `hygiene/phase2-tier1-cli-20260627`)
+
+```
+M Cargo.toml                                       (workspace member added)
+M README.md                                        (carried from docs/readme-m)
+M bin/ABSORPTION_TEMPLATE.md                       (carried from docs/readme-m)
+M bin/absorption-justification.ps1                 (carried from docs/readme-m)
+M bin/absorption-justification.py                   (carried from docs/readme-m)
+M bin/repo-status-scan.py                          (carried from docs/readme-m)
+?? bin/_populate_crates.sh                          (carried from docs/readme-m)
+?? crates/phenotype-cli/                            (NEW — T1-WP1 work)
+```
+
+Total new content for T1-WP1: 194 lines across 3 files.
+
+---
+
+## Recommendation
+
+**Pause Tier 1 execution pending resolution of the cargo fetch blocker.** Options:
+
+1. **`proceed fix-deps`** — diagnose `pheno-tracing` dep, either patch `Cargo.toml` or vendor deps
+2. **`proceed standalone`** — move `phenotype-cli` to a standalone crate (outside workspace) for verification
+3. **`proceed skip-verify`** — write code without `cargo check`, document the risk, commit + push
+4. **`proceed branch-merge`** — resolve branch state first, then continue
+5. **`proceed status`** — re-show current state

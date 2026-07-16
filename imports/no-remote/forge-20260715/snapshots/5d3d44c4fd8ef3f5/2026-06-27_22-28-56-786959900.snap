@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Generate A7 .gitignore harmonization diff between PhenoCompose and phenotype-infra."""
+import json, subprocess, os
+
+REPORTS_DIR = r"C:\Users\koosh\_compute_infra_audit\reports"
+OUTPUT = os.path.join(REPORTS_DIR, "A7_gitignore_diff.json")
+
+# Get phenocompose .gitignore
+pc = subprocess.run(
+    ["git", "show", "HEAD:.gitignore"],
+    cwd=r"C:\Users\koosh\_compute_infra_audit\PhenoCompose.git",
+    capture_output=True, text=True
+)
+pc_lines = pc.stdout.splitlines(keepends=True)
+
+# Get phenotype-infra .gitignore
+pi = subprocess.run(
+    ["git", "show", "HEAD:.gitignore"],
+    cwd=r"C:\Users\koosh\phenotype-infra",
+    capture_output=True, text=True
+)
+pi_lines = pi.stdout.splitlines(keepends=True)
+
+pc_lines_stripped = [l.rstrip("\n\r") for l in pc_lines]
+pi_lines_stripped = [l.rstrip("\n\r") for l in pi_lines]
+
+pc_set = set(pc_lines_stripped)
+pi_set = set(pi_lines_stripped)
+
+only_in_pc = sorted(pc_set - pi_set)
+only_in_pi = sorted(pi_set - pc_set)
+common = sorted(pc_set & pi_set)
+
+report = {
+    "unit": "A7",
+    "title": ".gitignore harmonization — PhenoCompose vs phenotype-infra",
+    "date": "2026-06-27",
+    "sources": {
+        "PhenoCompose": {
+            "repo": "KooshaPari/PhenoCompose",
+            "ref": "HEAD",
+            "source": "bare clone at C:\\Users\\koosh\\_compute_infra_audit\\PhenoCompose.git"
+        },
+        "phenotype-infra": {
+            "repo": "KooshaPari/phenotype-infra",
+            "ref": "HEAD",
+            "source": "working tree at C:\\Users\\koosh\\phenotype-infra"
+        }
+    },
+    "stats": {
+        "phenocompose_lines": len(pc_lines_stripped),
+        "phenotype_infra_lines": len(pi_lines_stripped),
+        "common_lines": len(common),
+        "only_in_phenocompose": len(only_in_pc),
+        "only_in_phenotype_infra": len(only_in_pi)
+    },
+    "only_in_PhenoCompose": only_in_pc,
+    "only_in_phenotype_infra": only_in_pi,
+    "analysis": {
+        "summary": "",
+        "recommendations": []
+    }
+}
+
+summary_parts = []
+recs = []
+
+# Check duplicates in PhenoCompose
+for pat in ["Thumbs.db", "npm-debug.log*", "*.log", "worklog-*.json", "worklogs/"]:
+    cnt = sum(1 for l in pc_lines_stripped if l == pat)
+    if cnt > 1:
+        summary_parts.append(f"PhenoCompose has {cnt} occurrences of `{pat}` (duplicate)")
+        recs.append(f"Deduplicate `{pat}` in PhenoCompose .gitignore")
+
+# Check missing patterns in PhenoCompose
+missing_critical = []
+for pat in ["*.orig", "*.o", "*.so", "*.dylib", "*.rlib", "*.rmeta", "*.lcov", ".nyc_output/", "tmp_*", "tmp-*"]:
+    if pat not in pc_set:
+        missing_critical.append(pat)
+
+if missing_critical:
+    summary_parts.append(f"PhenoCompose missing patterns found in phenotype-infra: {', '.join(missing_critical)}")
+    recs.append(f"Add missing patterns to PhenoCompose .gitignore: {', '.join(missing_critical)}")
+
+# Check if PhenoCompose has a stray `!.env.example` not in phenotype-infra
+if "!.env.example" in pc_set and "!.env.example" not in pi_set:
+    summary_parts.append("PhenoCompose has `!.env.example` which phenotype-infra also has (via L2 #28 section) — check context")
+
+# Check if phenotype-infra has better organization
+pi_has_go_test = True  # it has *.test in Go test binaries section
+pc_has_go_test_separate = any("go-test" in l.lower() for l in pc_lines_stripped)
+
+report["analysis"]["summary"] = "; ".join(summary_parts) if summary_parts else "Both .gitignore files are aligned — no significant discrepancies."
+report["analysis"]["recommendations"] = recs
+
+os.makedirs(REPORTS_DIR, exist_ok=True)
+with open(OUTPUT, "w") as f:
+    json.dump(report, f, indent=2, ensure_ascii=False)
+
+print(f"Report written to {OUTPUT}")
+print(f"  Only in PhenoCompose: {len(only_in_pc)} lines")
+print(f"  Only in phenotype-infra: {len(only_in_pi)} lines")
+print(f"  Common: {len(common)} lines")
+for r in recs:
+    print(f"  REC: {r}")

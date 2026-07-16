@@ -1,0 +1,78 @@
+#!/usr/bin/env python
+"""
+verify_deliverables.py — independent verifier for the compute/infra audit.
+
+Returns JSON {"verification_passed": bool, "missing": [...], "details": {...}}.
+Does NOT gate execution; the gate is go_nogo.py. This script just asserts the
+artifacts referenced by the DAG exist and the data structures are well-formed.
+"""
+from __future__ import annotations
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+missing: list[str] = []
+details: dict = {}
+
+def need(p: Path, key: str) -> None:
+    if not p.exists():
+        missing.append(key)
+
+try:
+    import yaml  # type: ignore
+except Exception:
+    yaml = None
+
+decisions_p = ROOT / "scaffolding" / "decisions.json"
+dag_p = ROOT / "dags" / "compute_infra_dag.yaml"
+go_nogo_p = ROOT / "scaffolding" / "go_nogo.py"
+verify_yaml_p = ROOT / "verify_deliverables.yaml"
+
+need(decisions_p, "decisions.json")
+need(dag_p, "compute_infra_dag.yaml")
+need(go_nogo_p, "go_nogo.py")
+need(verify_yaml_p, "verify_deliverables.yaml")
+
+# Structural checks
+if decisions_p.exists():
+    try:
+        d = json.loads(decisions_p.read_text(encoding="utf-8"))
+        details["decisions_keys"] = sorted(d.keys())
+        for k in ("depth", "nanovms_repoint", "phenotype_sdk"):
+            if k not in d:
+                missing.append(f"decisions_key:{k}")
+    except Exception as e:
+        missing.append(f"decisions_unparseable:{e}")
+
+if dag_p.exists() and yaml is not None:
+    try:
+        dag = yaml.safe_load(dag_p.read_text(encoding="utf-8"))
+        total = dag.get("total_units")
+        pillars = dag.get("pillars_set") or dag.get("pillars") or []
+        details["dag_total_units"] = total
+        details["dag_pillars_count"] = len(pillars)
+        details["dag_pillars"] = pillars
+        if not isinstance(total, int) or not (1 <= total <= 10000):
+            missing.append(f"dag_total_units_out_of_range:{total}")
+    except Exception as e:
+        missing.append(f"dag_unparseable:{e}")
+else:
+    if dag_p.exists() and yaml is None:
+        missing.append("yaml_module_missing")
+    elif not dag_p.exists():
+        missing.append("dag_missing")
+
+# External repos that should exist (light sanity check)
+for repo in ("phenotype-infra", "PhenoCompose", "BytePort"):
+    if not (Path("C:/Users/koosh") / repo).exists():
+        missing.append(f"external_repo_missing:{repo}")
+
+passed = len(missing) == 0
+out = {
+    "verification_passed": passed,
+    "missing": missing,
+    "details": details,
+}
+print(json.dumps(out, indent=2))
+sys.exit(0 if passed else 2)

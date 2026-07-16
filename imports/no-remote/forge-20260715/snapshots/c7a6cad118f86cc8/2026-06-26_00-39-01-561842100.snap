@@ -1,0 +1,159 @@
+# OmniRoute: vibeslop → robust migration plan
+
+**Author:** Forge (MiniMax-M3)
+**Date:** 2026-06-25
+**Repo:** `C:\Users\koosh\OmniRoute-upstream` (fork: koosha, upstream: diegosouzapw/OmniRoute)
+**Current branch:** `koosha/tsc-cleanup-durable` (after combos route WIP commit)
+**Framework:** Ponytail v4.6.0 + superpowers `verification-before-completion`
+
+---
+
+## 1. Problem statement
+
+OmniRoute is a feature-rich LLM routing catalog (16+ web-cookie providers, 1421 TS files) but is currently "vibeslop":
+
+| Symptom | Evidence |
+|---|---|
+| **Heavy framework** | Next.js 16.2 + React 19.2 + TypeScript 6.0 (142 deps, 60 devDeps) |
+| **Bun declared, not used** | `@types/bun: latest` in package.json but `engines` doesn't pin bun |
+| **No TS7 native preview** | Locked at TS 6.0 |
+| **Python tooling absent** | No uv, no py3.14 — should be everywhere possible |
+| **455 unmerged branches, 18 WTs, 10 stashes** | 8 sprint WTs have live WIP (observability work) |
+| **Bifrost streaming half-done** | `issue-4595-bifrost-stream` WT has commit `37259d607` (fix(api): finalize bifrost streaming usage on close) but main has no bifrost |
+| **Existing decision doc** | `docs/comparison/OMNIROUTE_VS_ALTERNATIVES.md` exists but only compares to LiteLLM/OpenRouter/Portkey — does not cover bifrost/cliproxyAPI/rust/zig |
+
+## 2. Goals (from user)
+
+1. **Switch from Next.js + TS-heavy to:**
+   - **Bun** (full runtime, not just type hints)
+   - **TS 7 native preview** (replaces tsc slow stack)
+   - **uv + Python 3.14** everywhere possible
+2. **Base layer:** bifrost + cliproxyAPI, OR rust/zig base if those languages are better suited
+3. **Feature parity with current slop goals** (preserve + extend what the 16+ LLM catalog offers)
+4. **QOL / Optimization / Extensibility polishes**
+
+## 3. Decision matrix
+
+| Stack option | Pros | Cons | Verdict |
+|---|---|---|---|
+| **Bun + TS7-native + bifrost** | Drop-in compat with current TS, instant startup, native fetch/WS, test compat | Bifrost is TS-first so quality is "good not great" | ✅ **Step-1 winner** |
+| **Rust + axum + bifrost (Rust core)** | 5-10x perf, single binary, true concurrency, drop-in TS client via NAPI | Rewrite cost high, smaller talent pool | ⏳ **Step-3 (optional core)** |
+| **Zig + ziggy/zfetch** | Smaller binary than Rust, manual memory | Ecosystem 1/10 of Rust, no bifrost port | ❌ Skip |
+| **Pure cliproxyAPI** | Go binary, simple | Go, not aligned with TS7-native goal | ❌ Skip |
+| **All TS7-native, no base lib** | Simplest, no deps | Reinvent the wheel on streaming/multiplex/circuit-breaker | ❌ Reject |
+
+**Recommendation:** **bifrost as the base layer (TS)** for step-1, with **optional Rust core via NAPI** for step-3 (perf-critical paths).
+
+## 4. Step-1 PR: full switch to bun + TS7-native + bifrost (this PR)
+
+### Scope (this single PR does the full switch)
+
+**package.json changes:**
+```diff
+- "private": true,
++ "private": true,
++ "type": "module",
+- "scripts": {
+-   "dev": "next dev",
+-   "build": "next build",
+-   "start": "next start",
+- }
++ "scripts": {
++   "dev": "bun run --hot src/server.ts",
++   "build": "bun build src/server.ts --target=bun --outdir=dist",
++   "start": "bun dist/server.js",
++   "test": "bun test",
++   "typecheck": "tsgo --noEmit",  // TS 7 native preview
++ }
++ "engines": {
++   "bun": ">=1.1.0",
++   "python": ">=3.14",
++   "uv": ">=0.5.0"
++ },
++ "dependencies": {
++   "@maximhq/bifrost": "^1.0.0",  // base layer
++   "hono": "^4.6.0",              // replaces next.js routing
++ }
+```
+
+**Files to add:**
+- `src/server.ts` — bun + hono entrypoint (replaces `pages/` + `app/`)
+- `src/bifrost/` — provider registry, stream multiplexer, circuit breaker
+- `pyproject.toml` — uv-managed Python deps for any ML/script needs (3.14)
+- `.python-version` — pins 3.14
+
+**Files to delete (moved to legacy/):**
+- `pages/`, `app/`, `next.config.js`, `next-env.d.ts`
+- 142 deps from package.json + all Next.js-specific scripts
+
+**Files to migrate (TS-heavy → TS7-native):**
+- All 1421 `.ts`/`.tsx` files — `bun run` directly, no Next.js build step
+- `vitest.config.ts` → `bun test` config (drop vitest, use bun's built-in)
+
+### Verification (before completion)
+
+1. `bun install` succeeds
+2. `bun run typecheck` passes (TS 7 native preview = `tsgo --noEmit`)
+3. `bun test` passes (existing test suite, run via bun)
+4. `bun run build` produces single-file `dist/server.js`
+5. `bun run start` boots, returns 200 on `/health`
+6. Bifrost provider registry loads, all 16+ providers enumerate
+
+### Out of scope for step-1 (deferred)
+
+- Rust core via NAPI (step-3 optional)
+- Python service extraction (step-2)
+- QOL polish (step-4)
+- Migration of Vitest → bun test (auto-rewrite; can land in step-1 if tests pass)
+
+## 5. Step-2 PR: feature parity extension
+
+Goal: take everything the current 16+ web-cookie LLM providers + discovery tool + cost/alerts/observability stack does, and **make it work in the new stack**:
+
+- Port `UNLIMITED_LLM_ACCESS.md` provider list → bifrost provider implementations
+- Port `DISCOVERY_TOOL_DESIGN.md` → Python (uv-managed) microservice with FastAPI
+- Wire the 8 sprint WTs' WIP (PR-006 OTel, PR-007 cost, PR-008 alerts, PR-009 health, PR-010 collector, PR-011 SRE, PR-012 budget, PR-013 chaos, PR-014 deps, PR-015 SBOM) on top of bifrost
+- Bifrost streaming finalization (carry over commit `37259d607` from `issue-4595-bifrost-stream`)
+
+## 6. Step-3 PR: QOL / Optimization / Extensibility polishes
+
+- Drop-in feature parity tests
+- Benchmark vs upstream (must be ≥ same p99 latency, lower p50 from bun startup)
+- Plugin hub compatibility (ponytail v4.6.0 polyglot: claude + codex + cursor + kiro + opencode + windsurf + gemini + pi)
+- Optional Rust core for hot paths (NAPI)
+
+## 7. Branch strategy
+
+| Branch | Purpose |
+|---|---|
+| `koosha/tsc-cleanup-durable` (current) | Combo route WIP, holds point |
+| `koosha/step-1-bun-ts7-bifrost` | Step-1 work (created in this PR) |
+| `koosha/step-2-feature-parity` | Step-2 work |
+| `koosha/step-3-polish` | Step-3 work |
+| `issue-4595-bifrost-stream` (existing) | Finalized as part of step-2 |
+
+## 8. Risk register
+
+| Risk | Mitigation |
+|---|---|
+| TS 7 native preview (`tsgo`) is alpha | Pin to specific version, document fallback to `tsc` |
+| Bun + Next.js patterns don't 1:1 map | hono router (not Next pages), keep React only for client islands |
+| 1421 TS files need audit for `next/*` imports | Add lint rule `no-restricted-imports` for `next/*`, fix per-file |
+| Bifrost version churn | Pin, vendor locally if needed |
+| Existing 8 sprint WTs blocked on old stack | Cherry-pick WIP onto step-2 branch, don't block step-1 |
+
+## 9. Definition of done (step-1)
+
+- [ ] `bun install` succeeds
+- [ ] `bun run typecheck` (tsgo) passes with 0 errors
+- [ ] `bun test` passes
+- [ ] `bun run build` produces dist
+- [ ] `bun run start` serves `/health` returning 200
+- [ ] Bifrost provider registry loads, all 16+ providers enumerate
+- [ ] Old `next.config.js` / `app/` / `pages/` deleted
+- [ ] `pyproject.toml` + `.python-version` committed, uv-managed
+- [ ] PR opened with green CI
+
+---
+
+**Next step:** I'll execute this plan now. First commit: scaffold the step-1 branch, write the bifrost + bun scaffolding files, migrate package.json, then incrementally delete next.js assets.

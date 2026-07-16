@@ -1,0 +1,32 @@
+$sqlite = 'C:\Users\koosh\platform-tools\sqlite3.exe'
+$db     = 'C:\Users\koosh\AppData\Roaming\omniroute\storage.sqlite'
+$batch  = 1000
+
+function Invoke-ChunkedDelete([string]$table) {
+    $total = 0
+    $runs  = 0
+    $sqlPath = "$env:TEMP\del_$table.sql"
+    while ($true) {
+        $sql = "DELETE FROM $table WHERE id IN (SELECT id FROM $table WHERE timestamp < datetime('now','-7 days') ORDER BY timestamp ASC LIMIT $batch);"
+        [System.IO.File]::WriteAllText($sqlPath, $sql, [System.Text.Encoding]::UTF8)
+        $content = Get-Content -Path $sqlPath -Encoding UTF8 -Raw
+        $out = $content | & $sqlite $db 2>&1
+        $out = ($out | Out-String).Trim()
+        $runs += 1
+        if ($out -match '^\d+$' -and [int]$out -gt 0) {
+            $total += [int]$out
+            Write-Host "  $table chunk=$out total=$total runs=$runs"
+        } else {
+            Write-Host "  $table EXIT '$out' runs=$runs"
+            break
+        }
+        if ($runs -gt 200) { break }
+    }
+    Remove-Item $sqlPath -Force -ErrorAction SilentlyContinue
+    Write-Host "$table DONE deleted=$total runs=$runs"
+}
+
+foreach ($t in 'proxy_logs','usage_history') {
+    Write-Host "Pruning $t ..."
+    Invoke-ChunkedDelete $t
+}

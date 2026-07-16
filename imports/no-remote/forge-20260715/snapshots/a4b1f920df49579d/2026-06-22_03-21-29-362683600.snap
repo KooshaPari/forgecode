@@ -1,0 +1,77 @@
+use std::sync::Mutex;
+
+use crate::port::{SpanKind, SpanRecord, SpanSink};
+
+/// In-memory sink — useful in tests and for shipping spans to a
+/// log/aggregation adapter owned by the host process.
+pub struct VecSpanSink {
+    inner: Mutex<Vec<SpanRecord>>,
+}
+
+impl VecSpanSink {
+    pub fn new() -> Self {
+        Self { inner: Mutex::new(Vec::new()) }
+    }
+
+    pub fn snapshot(&self) -> Vec<SpanRecord> {
+        self.inner.lock().unwrap().clone()
+    }
+
+    pub fn len(&self) -> usize {
+        self.inner.lock().unwrap().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.lock().unwrap().is_empty()
+    }
+}
+
+impl Default for VecSpanSink {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SpanSink for VecSpanSink {
+    fn record(&self, span: SpanRecord) {
+        self.inner.lock().unwrap().push(span);
+    }
+}
+
+/// Zero-cost sink — discards all spans.
+pub struct NoopSpanSink;
+
+impl SpanSink for NoopSpanSink {
+    fn record(&self, _span: SpanRecord) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn make_span(name: &str) -> SpanRecord {
+        SpanRecord {
+            name: name.into(),
+            kind: SpanKind::Internal,
+            fields: BTreeMap::new(),
+            started_at_ns: 0,
+            ended_at_ns: 1,
+        }
+    }
+
+    #[test]
+    fn vec_sink_records() {
+        let s = VecSpanSink::new();
+        s.record(make_span("a"));
+        s.record(make_span("b"));
+        assert_eq!(s.len(), 2);
+        assert_eq!(s.snapshot()[0].name, "a");
+    }
+
+    #[test]
+    fn noop_sink_drops() {
+        let s = NoopSpanSink;
+        s.record(make_span("a"));
+    }
+}

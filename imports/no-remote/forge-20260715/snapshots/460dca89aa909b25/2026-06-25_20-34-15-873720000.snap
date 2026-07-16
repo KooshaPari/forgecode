@@ -1,0 +1,18 @@
+"""Push agileplus main to remote."""
+import subprocess
+import sys
+
+token = "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"
+url = f"https://KooshaPari:{token}@github.com/KooshaPari/agileplus.git"
+
+r = subprocess.run(
+    ["git", "-C", r"C:\Users\koosh\agileplus", "push", url, "HEAD:main"],
+    capture_output=True,
+    text=True,
+    timeout=180,
+)
+out = r.stderr if r.returncode != 0 else r.stdout
+if not out.strip():
+    out = "NO OUTPUT (check Network)"
+print(out[-500:] if out else "EMPTY")
+print(f"RC: {r.returncode}")

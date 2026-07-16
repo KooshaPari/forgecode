@@ -1,0 +1,84 @@
+# Added by ForgeCode installer
+export PATH="C:\Users\koosh\AppData\Local/Programs/Forge:$PATH"
+# ~/.zshrc - Forge-friendly config
+# Ensures HOME is set on Windows so Forge/Node tools that rely on it work.
+# This file is read by Git Bash (zsh) and any zsh you start manually.
+
+# --- Cross-platform HOME ---
+# Forge + many Unix tools expect $HOME. On Windows USERPROFILE is the real thing.
+if [[ -z "$HOME" && -n "$USERPROFILE" ]]; then
+    export HOME="$USERPROFILE"
+fi
+
+# --- Optional Nerd Font toggle (defaults to enabled now that fonts are installed) ---
+# To force-disable Nerd Fonts, set NERD_FONT=0 in your environment.
+export NERD_FONT="${NERD_FONT:-1}"
+
+# --- PATH (user-local bins) ---
+[[ -d "$HOME/.bun/bin" ]] && export PATH="$HOME/.bun/bin:$PATH"
+[[ -d "$HOME/.local/bin" ]] && export PATH="$HOME/.local/bin:$PATH"
+[[ -d "$HOME/scoop/shims" ]] && export PATH="$HOME/scoop/shims:$PATH"
+
+# --- Locale (UTF-8) ---
+export LANG="${LANG:-en_US.UTF-8}"
+export LC_ALL="${LC_ALL:-en_US.UTF-8}"
+
+# --- Windows code page for cmd interop ---
+alias chcp65001='chcp.com 65001 >/dev/null'
+
+# >>> forge initialize >>>
+# !! Contents within this block are managed by 'forge zsh setup' !!
+# !! Do not edit manually - changes will be overwritten !!
+
+# Add required zsh plugins if not already present
+if [[ ! " ${plugins[@]} " =~ " zsh-autosuggestions " ]]; then
+    plugins+=(zsh-autosuggestions)
+fi
+if [[ ! " ${plugins[@]} " =~ " zsh-syntax-highlighting " ]]; then
+    plugins+=(zsh-syntax-highlighting)
+fi
+
+# Load forge shell plugin (commands, completions, keybindings) if not already loaded
+if [[ -z "$_FORGE_PLUGIN_LOADED" ]]; then
+    eval "$(forge zsh plugin)"
+fi
+
+# Load forge shell theme (prompt with AI context) if not already loaded
+if [[ -z "$_FORGE_THEME_LOADED" ]]; then
+    eval "$(forge zsh theme)"
+fi
+
+# Editor for editing prompts (set during setup)
+# To change: update FORGE_EDITOR or remove to use $EDITOR
+export FORGE_EDITOR="nvim"
+# <<< forge initialize <<<
+
+# ─── Claude Code profiles: env bundles + full flag passthrough ───
+# Usage:
+#   claude-omni [any flags]   # → http://100.96.135.160:20128/v1
+#   claude-mm   [any flags]   # → https://api.minimax.io/anthropic
+# All flags (-p, --dangerously-skip-permissions, --resume, etc.) pass through "$@".
+
+_claude_env() {
+  export CLAUDE_CODE_AUTO_COMPACT_WINDOW='512000'
+  export ANTHROPIC_MODEL='Main'
+  export ANTHROPIC_DEFAULT_SONNET_MODEL='Main'
+  export ANTHROPIC_DEFAULT_OPUS_MODEL='Main'
+  export ANTHROPIC_DEFAULT_HAIKU_MODEL='Main'
+}
+
+claude-omni() {
+  _claude_env
+  export ANTHROPIC_AUTH_TOKEN='sk-a6e8236359cd319b-3w6jyp-b0931376'
+  # Route through local SSE-cleanup proxy to strip OmniRoute's post-response.trailer
+  # `: x-omniroute-*` annotations. See C:\Users\koosh\.omniroute\bin\sse-cleanup-proxy.mjs
+  export ANTHROPIC_BASE_URL='http://127.0.0.1:20130/v1'
+  command claude "$@"
+}
+
+claude-mm() {
+  _claude_env
+  export ANTHROPIC_AUTH_TOKEN='sk-cp-gPIgSPD1rxNMDQqvb4nYNj0HE4HfElst4cbyJQby9eMhod_1FU5OVTh1KisjFDPoPSngE-R_WwHAhA4ehgzqoIKhaXfipS-1CmEjUqCTPk2brR2Fq6PH0OA'
+  export ANTHROPIC_BASE_URL='https://api.minimax.io/anthropic'
+  command claude "$@"
+}

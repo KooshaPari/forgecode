@@ -1,0 +1,410 @@
+//! DAG executor — topological dispatch of work units.
+//!
+//! The `DagExecutor` reads a YAML DAG manifest, computes topological
+//! waves (parallel where safe), and exposes a future-based dispatch API
+//! that the `implement.rs` command can call during its Dispatch phase.
+
+use std::collections::{HashMap, HashSet, VecDeque};
+
+use crate::manifest::DagManifest;
+use crate::unit::{DagError, DagUnit, ExecutionWave, UnitStatus};
+
+// ---------------------------------------------------------------------------
+// Executor
+// ---------------------------------------------------------------------------
+
+/// Options for the DAG executor.
+#[derive(Debug, Clone)]
+pub struct DagExecutorOptions {
+    /// Maximum number of parallel workers.
+    pub max_parallel: usize,
+    /// Whether to skip units whose `repo` does not match the target.
+    pub filter_by_repo: Option<String>,
+    /// If set, only run units for the given epic ID (e.g. `"F"`).
+    pub epic_filter: Option<String>,
+}
+
+impl Default for DagExecutorOptions {
+    fn default() -> Self {
+        Self {
+            max_parallel: 3,
+            filter_by_repo: None,
+            epic_filter: None,
+        }
+    }
+}
+
+/// The DAG executor — orchestrates work-unit dispatch respecting
+/// topological ordering with parallel waves.
+#[derive(Debug)]
+pub struct DagExecutor {
+    manifest: DagManifest,
+    options: DagExecutorOptions,
+
+    /// All units extracted from the manifest (post-filtering).
+    units: Vec<DagUnit>,
+
+    /// Unit index by ID.
+    unit_map: HashMap<String, usize>,
+
+    /// Dependencies: `unit_id -> set of unit IDs it depends on`.
+    /// For the simple case (no explicit cross-unit edges in the YAML),
+    /// we sequence units within an epic by the YAML list order but
+    /// treat them as independent (all can run in parallel).
+    deps: HashMap<String, HashSet<String>>,
+}
+
+impl DagExecutor {
+    /// Create a new executor from a loaded manifest and options.
+    pub fn new(manifest: DagManifest, options: DagExecutorOptions) -> Self {
+        let mut ex = Self {
+            manifest,
+            options,
+            units: Vec::new(),
+            unit_map: HashMap::new(),
+            deps: HashMap::new(),
+        };
+        ex.refresh_units();
+        ex
+    }
+
+    /// Convenience constructor: load from a YAML file path.
+    pub fn from_yaml_path(
+        path: &std::path::Path,
+        options: DagExecutorOptions,
+    ) -> Result<Self, DagError> {
+        let manifest = DagManifest::from_yaml_path(path)?;
+        Ok(Self::new(manifest, options))
+    }
+
+    /// Rebuild the internal unit list from the manifest (respects filters).
+    pub fn refresh_units(&mut self) {
+        let mut all_units: Vec<DagUnit> = Vec::new();
+
+        // Decide which epics to extract.
+        let epic_ids: Vec<&str> = match &self.options.epic_filter {
+            Some(eid) => vec![eid.as_str()],
+            None => {
+                // Collect all epic IDs from the manifest.
+                self.manifest
+                    .epics
+                    .keys()
+                    .filter_map(|k| {
+                        // Strip "epic_" prefix if present.
+                        if let Some(id) = k.strip_prefix("epic_") {
+                            Some(id)
+                        } else {
+                            Some(k.as_str())
+                        }
+                    })
+                    .collect()
+            }
+        };
+
+        for eid in &epic_ids {
+            for mut u in self.manifest.units_for_epic(eid) {
+                if let Some(ref repo_filter) = self.options.filter_by_repo {
+                    if u.repo != *repo_filter {
+                        u.status = UnitStatus::Skipped;
+                    }
+                }
+                all_units.push(u);
+            }
+        }
+
+        // Build index.
+        self.unit_map.clear();
+        for (i, u) in all_units.iter().enumerate() {
+            self.unit_map.insert(u.id.clone(), i);
+        }
+
+        // Build dependency graph.
+        // In a YAML-only DAG without explicit edge definitions, all
+        // units in the same epic and repo are sequential by YAML order
+        // (to avoid file conflicts).  Units from different repos can
+        // run in parallel.
+        //
+        // A future version can read explicit `depends_on` fields.
+        self.deps.clear();
+        for (i, a) in all_units.iter().enumerate() {
+            for (j, b) in all_units.iter().enumerate() {
+                if i < j && a.repo == b.repo && a.epic == b.epic {
+                    // Same repo + same epic: sequential by YAML order.
+                    self.deps
+                        .entry(b.id.clone())
+                        .or_default()
+                        .insert(a.id.clone());
+                }
+            }
+        }
+
+        self.units = all_units;
+    }
+
+    // ------------------------------------------------------------------
+    // Public accessors
+    // ------------------------------------------------------------------
+
+    /// The current list of units (respects filters).
+    pub fn units(&self) -> &[DagUnit] {
+        &self.units
+    }
+
+    /// The loaded manifest.
+    pub fn manifest(&self) -> &DagManifest {
+        &self.manifest
+    }
+
+    /// The executor options.
+    pub fn options(&self) -> &DagExecutorOptions {
+        &self.options
+    }
+
+    // ------------------------------------------------------------------
+    // Topological ordering
+    // ------------------------------------------------------------------
+
+    /// Compute execution waves using Kahn's algorithm.
+    ///
+    /// Wave 0 = no dependencies (can run in parallel).
+    /// Wave N = depends on at least one unit from wave N-1.
+    ///
+    /// Units whose status is not `Pending` are excluded.
+    /// Units that were `Skipped` (repo filter mismatch) are not included.
+    pub fn execution_plan(&self) -> Result<Vec<ExecutionWave>, DagError> {
+        let active_ids: Vec<&String> = self
+            .units
+            .iter()
+            .filter(|u| u.status == UnitStatus::Pending)
+            .map(|u| &u.id)
+            .collect();
+
+        let id_set: HashSet<&String> = active_ids.iter().copied().collect();
+
+        // Only consider edges where both endpoints are active.
+        let mut in_degree: HashMap<&String, usize> =
+            active_ids.iter().map(|id| (*id, 0usize)).collect();
+
+        let mut reverse: HashMap<&String, Vec<&String>> = HashMap::new();
+
+        for (id, deps) in &self.deps {
+            if !id_set.contains(id) {
+                continue;
+            }
+            for dep in deps {
+                if !id_set.contains(dep) {
+                    continue;
+                }
+                *in_degree.entry(id).or_default() += 1;
+                reverse.entry(dep).or_default().push(id);
+            }
+        }
+
+        let mut queue: VecDeque<&String> = in_degree
+            .iter()
+            .filter(|(_, deg)| **deg == 0)
+            .map(|(id, _)| *id)
+            .collect();
+
+        let mut waves: Vec<ExecutionWave> = Vec::new();
+        let mut processed = 0usize;
+        let mut wave_number = 0u32;
+
+        while !queue.is_empty() {
+            let mut batch: Vec<&String> = queue.drain(..).collect();
+            batch.sort();
+            processed += batch.len();
+
+            for &id in &batch {
+                if let Some(dependents) = reverse.get(id) {
+                    for &dep_id in dependents {
+                        if let Some(deg) = in_degree.get_mut(dep_id) {
+                            *deg -= 1;
+                            if *deg == 0 {
+                                queue.push_back(dep_id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            let units_in_wave: Vec<DagUnit> = batch
+                .iter()
+                .filter_map(|id| {
+                    self.unit_map
+                        .get(*id)
+                        .map(|&idx| self.units[idx].clone())
+                })
+                .collect();
+
+            let unit_ids: Vec<String> = units_in_wave.iter().map(|u| u.id.clone()).collect();
+
+            waves.push(ExecutionWave {
+                wave_number,
+                unit_ids,
+                units: units_in_wave,
+            });
+            wave_number += 1;
+        }
+
+        if processed != active_ids.len() {
+            return Err(DagError::Cycle(format!(
+                "cycle detected: processed {processed}/{} active units",
+                active_ids.len()
+            )));
+        }
+
+        Ok(waves)
+    }
+
+    // ------------------------------------------------------------------
+    // Dispatch helpers (called by implement.rs)
+    // ------------------------------------------------------------------
+
+    /// Return the set of units that are ready to dispatch now
+    /// (no unmet dependencies within the pending set).
+    pub fn ready_units(&self, completed: &HashSet<String>) -> Vec<&DagUnit> {
+        let mut ready = Vec::new();
+        for u in &self.units {
+            if u.status == UnitStatus::Skipped {
+                continue;
+            }
+            if completed.contains(&u.id) {
+                continue;
+            }
+            let blocked = self
+                .deps
+                .get(&u.id)
+                .map(|deps| deps.iter().any(|d| !completed.contains(d)))
+                .unwrap_or(false);
+            if !blocked {
+                ready.push(u);
+            }
+        }
+        ready
+    }
+
+    /// Mark a unit as done (updates in-memory status).
+    pub fn mark_done(&mut self, unit_id: &str) {
+        if let Some(&idx) = self.unit_map.get(unit_id) {
+            self.units[idx].status = UnitStatus::Done;
+        }
+    }
+
+    /// Mark a unit as failed.
+    pub fn mark_failed(&mut self, unit_id: &str) {
+        if let Some(&idx) = self.unit_map.get(unit_id) {
+            self.units[idx].status = UnitStatus::Failed;
+        }
+    }
+
+    /// Total pending units.
+    pub fn pending_count(&self) -> usize {
+        self.units
+            .iter()
+            .filter(|u| u.status == UnitStatus::Pending)
+            .count()
+    }
+
+    /// Total done units.
+    pub fn done_count(&self) -> usize {
+        self.units
+            .iter()
+            .filter(|u| u.status == UnitStatus::Done)
+            .count()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_yaml() -> &'static str {
+        r#"
+meta:
+  id: test-001
+  title: "Test DAG"
+  owner: test
+  generated: "2026-06-24"
+  schema: agileplus-v1-work-unit
+epic_F:
+  id: F
+  title: "Test epic"
+  units:
+    - { id: F1,  repo: repo-a, type: dag,  title: "First unit" }
+    - { id: F2,  repo: repo-a, type: dag,  title: "Second unit (depends on F1 via same repo)" }
+    - { id: F3,  repo: repo-b, type: bridge, title: "Third unit (different repo)" }
+"#
+    }
+
+    #[test]
+    fn parse_and_filter_by_epic() {
+        let manifest = DagManifest::from_yaml_str(sample_yaml()).unwrap();
+        let opts = DagExecutorOptions {
+            epic_filter: Some("F".into()),
+            ..Default::default()
+        };
+        let ex = DagExecutor::new(manifest, opts);
+        assert_eq!(ex.units.len(), 3);
+    }
+
+    #[test]
+    fn execution_plan_waves() {
+        let manifest = DagManifest::from_yaml_str(sample_yaml()).unwrap();
+        let opts = DagExecutorOptions {
+            epic_filter: Some("F".into()),
+            ..Default::default()
+        };
+        let ex = DagExecutor::new(manifest, opts);
+        let waves = ex.execution_plan().unwrap();
+        // repo-a units F1, F2 are sequential (F1 -> F2)
+        // repo-b unit F3 is independent so it goes in wave 0
+        // So wave 0: [F1, F3], wave 1: [F2]
+        assert!(!waves.is_empty());
+        assert_eq!(waves[0].wave_number, 0);
+        // wave 0 should have F1 and F3
+        assert!(waves[0].unit_ids.contains(&"F1".into()));
+        assert!(waves[0].unit_ids.contains(&"F3".into()));
+        if waves.len() > 1 {
+            assert_eq!(waves[1].unit_ids, vec!["F2"]);
+        }
+    }
+
+    #[test]
+    fn ready_units() {
+        let manifest = DagManifest::from_yaml_str(sample_yaml()).unwrap();
+        let opts = DagExecutorOptions {
+            epic_filter: Some("F".into()),
+            ..Default::default()
+        };
+        let ex = DagExecutor::new(manifest, opts);
+        let completed = HashSet::new();
+        let ready = ex.ready_units(&completed);
+        // F1 and F3 should be ready (F2 blocked by F1)
+        let ids: Vec<&str> = ready.iter().map(|u| u.id.as_str()).collect();
+        assert!(ids.contains(&"F1"));
+        assert!(ids.contains(&"F3"));
+        assert!(!ids.contains(&"F2"));
+    }
+
+    #[test]
+    fn mark_done_unblocks_next() {
+        let manifest = DagManifest::from_yaml_str(sample_yaml()).unwrap();
+        let opts = DagExecutorOptions {
+            epic_filter: Some("F".into()),
+            ..Default::default()
+        };
+        let mut ex = DagExecutor::new(manifest, opts);
+        let mut completed: HashSet<String> = HashSet::new();
+        completed.insert("F1".into());
+        completed.insert("F3".into());
+        let ready = ex.ready_units(&completed);
+        let ids: Vec<&str> = ready.iter().map(|u| u.id.as_str()).collect();
+        // Now F2 should be ready
+        assert!(ids.contains(&"F2"));
+    }
+}

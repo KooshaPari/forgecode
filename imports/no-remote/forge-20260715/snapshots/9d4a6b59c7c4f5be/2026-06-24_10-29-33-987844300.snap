@@ -1,0 +1,38 @@
+"""Create bash shims for Windows-side Python tools so lefthook's pre-push
+`./grade.sh` can find them in the Git Bash environment."""
+
+from pathlib import Path
+import shutil
+import tempfile
+
+TOOLS = {
+    "ruff": r"C:\Python313\Scripts\ruff.exe",
+    "pytest": r"C:\Python313\Scripts\pytest.exe",
+    "mypy": r"C:\Python314\Scripts\mypy.exe",
+    "bandit": r"C:\Python314\Scripts\bandit.exe",
+    "pip-audit": r"C:\Python314\Scripts\pip-audit.exe",
+    "uv": r"C:\Python314\Scripts\uv.exe",
+}
+
+
+def main() -> None:
+    shim_dir = Path(tempfile.mkdtemp(prefix="qs-"))
+    for tool, win_src in TOOLS.items():
+        win_path = Path(win_src)
+        if not win_path.exists():
+            print(f"SKIP {tool}: {win_path} missing")
+            continue
+        # bash on Windows uses /mnt/c/... path form to reach Windows binaries
+        s = str(win_path).replace("\\", "/")
+        if len(s) >= 2 and s[1] == ":":
+            s = s[0].lower() + s[2:]
+        bash_src = "/mnt/" + s
+        shim = shim_dir / tool
+        shim.write_text(f"#!/bin/bash\nexec '{bash_src}' \"$@\"\n", encoding="utf-8", newline="\n")
+        shim.chmod(0o755)
+        print(f"shim: {shim} -> {bash_src}")
+    print(f"\nSHIM_DIR={shim_dir}")
+
+
+if __name__ == "__main__":
+    main()

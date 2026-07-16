@@ -1,0 +1,72 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rck-core",
+    "crates/rck-cli",
+    # Absorbed from https://github.com/KooshaPari/kmobile (KMobile merge, FR-COLLECTION-2026-06)
+    "crates/kmobile",
+    "crates/kmobile-core",
+    "crates/kmobile-api",
+    "crates/kmobile-cli",
+    "crates/kmobile-mcp",
+]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KooshaPari/rich-cli-kit"
+authors = ["Phenotype org"]
+
+[workspace.dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+axum = { version = "0.7", features = ["macros"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive"] }
+cpal = "0.15"
+crossterm = "0.29"
+dirs = { version = "5.0", optional = true }
+directories = { version = "5.0", optional = true }
+eframe = { version = "0.28", optional = true }
+egui = { version = "0.28", optional = true }
+egui_extras = { version = "0.28", features = ["default"], optional = true }
+env_logger = { version = "0.11", optional = true }
+futures = "0.3"
+futures-util = { version = "0.3", optional = true }
+gilrs = { version = "0.10", optional = true }
+hound = { version = "3.5", optional = true }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+imageproc = { version = "0.25", optional = true }
+mockall = "0.11"
+plist = "1.5"
+rand = "0.9"
+ratatui = { version = "0.24", optional = true }
+regex = { version = "1.10", optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rodio = { version = "0.19", optional = true }
+rusttype = { version = "0.9", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sysinfo = "0.30"
+tempfile = "3.8"
+thiserror = "2.0"
+tokio = { version = "1.39", features = ["rt", "rt-multi-thread", "macros", "io-std", "time", "io-util"] }
+tokio-tungstenite = { version = "0.23", optional = true }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tts = { version = "0.26", optional = true }
+unicode-width = "0.2"
+unicode-segmentation = "1.12"
+uuid = { version = "1.6", features = ["v4"] }
+winit = { version = "0.30", optional = true }
+
+# Absorbed from KMobile — MCP protocol SDK
+mcp-sdk = "0.1"
+
+# Dev dependencies
+assert_cmd = "2.0"
+predicates = "3.0"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

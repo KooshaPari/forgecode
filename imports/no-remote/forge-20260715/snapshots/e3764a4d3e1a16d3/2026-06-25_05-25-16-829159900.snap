@@ -1,0 +1,176 @@
+/**
+ * @file tests/unit/observability/collectorHealth.test.ts
+ *
+ * Unit tests for src/lib/observability/collectorHealth.ts — PR-010 OTLP
+ * collector health probe (default-OFF, talks to the OTel collector
+ * health_check extension over HTTP).
+ *
+ * Strategy:
+ *  - Spin up a tiny in-process http.Server for each scenario (healthy /
+ *    unhealthy / 5xx / slow).
+ *  - Probe it with `checkCollectorHealth` and assert the shape of the
+ *    returned `{ healthy, status }` value.
+ *  - Use short timeouts so the suite is fast.
+ */
+import { describe, it, before, after } from "node:test";
+import assert from "node:assert/strict";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import {
+  checkCollectorHealth,
+  BUILTIN_COLLECTOR_ENDPOINTS,
+} from "../../../src/lib/observability/collectorHealth";
+
+interface FixtureServer {
+  url: string;
+  close: () => Promise<void>;
+}
+
+/** Spin up a tiny HTTP server that always returns 200 / "ok". */
+function startHealthy(): Promise<FixtureServer> {
+  return new Promise((resolve) => {
+    const srv = http.createServer((_req, res) => {
+      res.statusCode = 200;
+      res.setHeader("content-type", "text/plain");
+      res.end("ok");
+    });
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address() as AddressInfo;
+      resolve({
+        url: `http://127.0.0.1:${port}`,
+        close: () =>
+          new Promise<void>((r) => {
+            srv.close(() => r());
+          }),
+      });
+    });
+  });
+}
+
+/** Spin up an HTTP server that always responds with HTTP 503. */
+function startUnhealthy(): Promise<FixtureServer> {
+  return new Promise((resolve) => {
+    const srv = http.createServer((_req, res) => {
+      res.statusCode = 503;
+      res.setHeader("content-type", "text/plain");
+      res.end("not ready");
+    });
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address() as AddressInfo;
+      resolve({
+        url: `http://127.0.0.1:${port}`,
+        close: () =>
+          new Promise<void>((r) => {
+            srv.close(() => r());
+          }),
+      });
+    });
+  });
+}
+
+/** Spin up an HTTP server that never responds (used for timeout tests). */
+function startSlow(): Promise<FixtureServer> {
+  return new Promise((resolve) => {
+    const srv = http.createServer(() => {
+      // Intentionally empty — never call res.end() so the client times out.
+    });
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address() as AddressInfo;
+      resolve({
+        url: `http://127.0.0.1:${port}`,
+        close: () =>
+          new Promise<void>((r) => {
+            srv.close(() => r());
+          }),
+      });
+    });
+  });
+}
+
+describe("collectorHealth.checkCollectorHealth", () => {
+  let healthy: FixtureServer | null = null;
+  let unhealthy: FixtureServer | null = null;
+  let slow: FixtureServer | null = null;
+
+  before(async () => {
+    healthy = await startHealthy();
+    unhealthy = await startUnhealthy();
+    slow = await startSlow();
+  });
+
+  after(async () => {
+    await Promise.all([
+      healthy?.close() ?? Promise.resolve(),
+      unhealthy?.close() ?? Promise.resolve(),
+      slow?.close() ?? Promise.resolve(),
+    ]);
+  });
+
+  it("returns healthy=true when /health returns 200", async () => {
+    const out = await checkCollectorHealth(`${healthy!.url}/health`, 2000);
+    assert.equal(out.healthy, true);
+    assert.equal(out.status, "ok");
+  });
+
+  it("returns healthy=false on HTTP 503", async () => {
+    const out = await checkCollectorHealth(`${unhealthy!.url}/health`, 2000);
+    assert.equal(out.healthy, false);
+    assert.notEqual(out.status, "ok");
+  });
+
+  it("returns healthy=false on connection refused", async () => {
+    // Port 1 is virtually guaranteed to refuse on any host.
+    const out = await checkCollectorHealth("http://127.0.0.1:1/health", 1000);
+    assert.equal(out.healthy, false);
+    assert.match(out.status, /refused|ECONNREFUSED|error/i);
+  });
+
+  it("respects a custom timeout and returns healthy=false on slow response", async () => {
+    const out = await checkCollectorHealth(`${slow!.url}/health`, 250);
+    assert.equal(out.healthy, false);
+    // Should mention timeout / abort in the status.
+    assert.match(out.status, /timeout|abort|ETIMEDOUT|aborted/i);
+  });
+
+  it("appends /health automatically when caller passes a bare endpoint", async () => {
+    // healthy.url already ends without /health; we ask for the root and the
+    // helper should fall back to /health when 404 is returned.
+    const out = await checkCollectorHealth(healthy!.url, 2000);
+    assert.equal(out.healthy, true);
+  });
+
+  it("uses default timeout when none is provided", async () => {
+    const out = await checkCollectorHealth(`${healthy!.url}/health`);
+    assert.equal(typeof out.healthy, "boolean");
+    assert.equal(typeof out.status, "string");
+  });
+
+  it("returns an object with healthy and status keys only", async () => {
+    const out = await checkCollectorHealth(`${healthy!.url}/health`, 2000);
+    assert.deepEqual(Object.keys(out).sort(), ["healthy", "status"]);
+  });
+
+  it("treats HTTP 200 as healthy regardless of body content", async () => {
+    // Healthy server's body is "ok" — OTel collector health_check can return
+    // either plain text or JSON {"status":"Server available"}.
+    const out = await checkCollectorHealth(`${healthy!.url}/health`, 2000);
+    assert.equal(out.healthy, true);
+  });
+});
+
+describe("collectorHealth.BUILTIN_COLLECTOR_ENDPOINTS", () => {
+  it("contains localhost endpoint as first entry", () => {
+    assert.ok(BUILTIN_COLLECTOR_ENDPOINTS.length >= 2);
+    assert.equal(BUILTIN_COLLECTOR_ENDPOINTS[0], "http://localhost:13133");
+  });
+
+  it("contains container service endpoint as second entry", () => {
+    assert.equal(BUILTIN_COLLECTOR_ENDPOINTS[1], "http://otel-collector:13133");
+  });
+
+  it("all entries use the standard OTel health_check port 13133", () => {
+    for (const ep of BUILTIN_COLLECTOR_ENDPOINTS) {
+      assert.match(ep, /^https?:\/\/.+:13133$/);
+    }
+  });
+});

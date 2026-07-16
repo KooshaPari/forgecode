@@ -1,0 +1,56 @@
+"""Push src/tracertm/repositories/account_repository.py via Contents API.
+
+Used because `git push` hangs in this environment. This script:
+1. Reads the local file
+2. base64-encodes it
+3. POSTs to the Contents API on branch fix/tracera-import-regression
+4. Prints the API response
+"""
+
+import base64
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = "KooshaPari/Tracera"
+BRANCH = "fix/tracera-import-regression"
+FILE_PATH = "src/tracertm/repositories/account_repository.py"
+LOCAL_PATH = Path("src/tracertm/repositories/account_repository.py")
+
+# 1. Read + encode
+content_b64 = base64.b64encode(LOCAL_PATH.read_bytes()).decode("ascii")
+
+# 2. Check existing file SHA on branch (None = new file -> create)
+check = subprocess.run(
+    ["gh", "api", f"repos/{REPO}/contents/{FILE_PATH}?ref={BRANCH}"],
+    capture_output=True, text=True
+)
+existing_sha = None
+if check.returncode == 0:
+    try:
+        existing_sha = json.loads(check.stdout).get("sha")
+    except json.JSONDecodeError:
+        existing_sha = None
+
+print(f"existing_sha: {existing_sha}", file=sys.stderr)
+
+# 3. Build payload
+payload = {
+    "message": "fix: restore account_repository to repair FastAPI import regression",
+    "branch": BRANCH,
+    "content": content_b64,
+}
+if existing_sha:
+    payload["sha"] = existing_sha
+
+# 4. POST
+result = subprocess.run(
+    ["gh", "api", "-X", "PUT", f"repos/{REPO}/contents/{FILE_PATH}",
+     "--input", "-"],
+    input=json.dumps(payload).encode(),
+    capture_output=True, text=True,
+)
+print("STDOUT:", result.stdout)
+print("STDERR:", result.stderr, file=sys.stderr)
+sys.exit(result.returncode)

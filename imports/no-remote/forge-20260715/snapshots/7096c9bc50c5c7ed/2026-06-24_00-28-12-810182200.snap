@@ -1,0 +1,29 @@
+#!/bin/bash
+set -e
+export PATH="/home/kooshapari/bun-extract/bun-linux-x64:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+cd /mnt/c/Users/koosh/.claude/lanes/portage-final/viewer
+
+echo "=== Format check ==="
+bunx oxfmt --config .oxfmtrc.json --check app
+echo "FMT_EXIT=$?"
+
+echo ""
+echo "=== Lint (no type-aware) ==="
+bunx oxlint --config .oxlintrc.json app
+echo "LINT_EXIT=$?"
+
+echo ""
+echo "=== Lint (type-aware) ==="
+bunx oxlint --type-aware --config .oxlintrc.json app
+echo "LINT_TA_EXIT=$?"
+
+echo ""
+echo "=== Typecheck ==="
+bunx react-router typegen
+bunx tsc --noEmit
+echo "TYPECHECK_EXIT=$?"
+
+echo ""
+echo "=== Build ==="
+bun run build
+echo "BUILD_EXIT=$?"

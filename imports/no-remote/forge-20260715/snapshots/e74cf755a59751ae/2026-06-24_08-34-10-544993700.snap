@@ -1,0 +1,66 @@
+[workspace]
+resolver = "2"
+
+# =============================================================================
+# phenotype-infra — Compute/Infra Consolidation Monorepo
+# =============================================================================
+#
+# Members will be added as crates are absorbed:
+#   - nanovms-core (Go static lib via CGo)
+#   - nvms-ffi     (Rust FFI bindings to NVMS Go Core)
+#   - pheno-compose-driver (High-level Rust driver)
+#
+# Tooling sub-projects live under tools/ and are NOT workspace members
+# (they use their own build systems).
+#
+# tools/kodevibego/ — Go lint/analysis engine (absorbed from KodeVibeGo).
+#   Build: cd tools/kodevibego && make build
+#   Tests: cd tools/kodevibego && go test ./..
+# =============================================================================
+
+members = [
+    "crates/nanovms-core",           # Go source — absorbed as C static lib
+    "crates/nvms-ffi",              # Rust FFI bindings
+    "crates/pheno-compose",         # Rust high-level driver
+    "crates/pheno-config",          # Shared configuration
+    "crates/kodevibego-ffi",        # KodeVibeGo Go→Rust FFI bindings
+    "crates/credential-manager",     # Credential mgr from KVirtualStage
+    "crates/kvirtualdesktop-core",  # KVirtualStage MCP protocol types
+    "crates/kvirtualdesktop-mcp-server", # KVirtualStage MCP server
+    "crates/thegent-utils",         # thegent-workspace binary utilities
+    "tests",                        # Cross-crate integration tests
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KooshaPari/phenotype-infra"
+description = "Phenotype Compute/Infra Consolidation Monorepo"
+authors = ["kooshapari"]
+publish = false
+
+[workspace.dependencies]
+async-trait = "0.1"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bindgen = "0.68"
+figment = { version = "0.10", features = ["toml", "env"] }
+tokio = { version = "1", features = ["rt", "sync", "macros", "full"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+url = "2"
+clap = { version = "4", features = ["derive"] }
+jsonwebtoken = "9"
+reqwest = { version = "0.12", features = ["json"] }
+anyhow = "1"
+hex = "0.4"
+shellexpand = "3"
+wait-timeout = "0.2"
+rand = "0.8"
+futures = "0.3"
+oauth2 = "4"

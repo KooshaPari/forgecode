@@ -1,0 +1,101 @@
+"""
+Check if the upstream-pr/* branches have any commits whose tree matches
+parts of our HEAD (i.e., already partially cherry-picked).
+"""
+import subprocess
+import json
+from collections import defaultdict
+
+REPO = r'C:\Users\koosh\OmniRoute-fresh2'
+
+def run(args):
+    r = subprocess.run(args, capture_output=True, text=True, cwd=REPO, encoding='utf-8', errors='replace')
+    return r.stdout.strip(), r.returncode
+
+USER_NAMED = [
+    'upstream-pr/refactor-apikey-providers',
+    'upstream-pr/refactor-token-refresh',
+    'upstream-pr/perf-budgets',
+    'upstream-pr/threat-model',
+    'upstream-pr/openapi-redoc',
+    'upstream-pr/pr-template',
+    'upstream-pr/incident-response',
+    'upstream-pr/log-buffer-cap-2026-06-24',
+    'upstream-pr/security-sweep-2026-06-24',
+    'upstream-pr/diego-mimocode-fix',
+    'upstream-pr/bifrost-docs',
+    'upstream-pr/kill-switch-extraction',
+    'upstream-pr/l1a-dispatch-2026-06-27',
+    'upstream-pr/cherry-batch-2026-06-24',
+    'upstream-pr/cherry-batch-2-2026-06-24',
+    'upstream-pr/cherry-batch-3-clean-2026-06-25',
+    'upstream-pr/antigravity-nvidia-fallback-2026-06-24',
+    'koosha/upstream-quota-4540-2026-06-21',
+    'koosha/upstream-perf-observability-2026-06-21',
+    'koosha/upstream-backend-health-2026-06-21',
+    'koosha/upstream-routing-stability-2026-06-21',
+    'koosha/upstream-concurrency-4580-2026-06-21',
+]
+
+# Get HEAD's tree (set of blob SHAs for files)
+print('Building HEAD file SHA index (this may take a moment)...')
+head_files = {}  # path -> blob_sha
+out, _ = run(['git', 'ls-tree', '-r', 'HEAD', '--name-only'])
+files = [f for f in out.split('\n') if f]
+print(f'  HEAD has {len(files)} files')
+for i, f in enumerate(files):
+    sha, _ = run(['git', 'rev-parse', f'HEAD:{f}'])
+    if sha:
+        head_files[sha] = f
+
+# Build a reverse index: blob_sha -> list of paths in HEAD
+print(f'  HEAD has {len(head_files)} unique blob SHAs')
+
+# Now for each user-named branch, look at its tip tree and see how many
+# blob SHAs match HEAD's blobs.
+results = []
+for name in USER_NAMED:
+    branch = f'origin/{name}'
+    print(f'  Checking {name}...')
+    out, _ = run(['git', 'ls-tree', '-r', branch, '--name-only'])
+    files = [f for f in out.split('\n') if f]
+    same_count = 0
+    diff_count = 0
+    missing_count = 0
+    matched_examples = []
+    for f in files[:200]:  # sample 200 files
+        sha, _ = run(['git', 'rev-parse', f'{branch}:{f}'])
+        if not sha:
+            missing_count += 1
+            continue
+        if sha in head_files:
+            same_count += 1
+            if len(matched_examples) < 5:
+                matched_examples.append(f)
+        else:
+            diff_count += 1
+    results.append({
+        'name': name,
+        'sample_total': 200,
+        'same_blobs': same_count,
+        'diff_blobs': diff_count,
+        'missing_blobs': missing_count,
+        'sample_matches': matched_examples,
+    })
+
+# Sort by same_blobs descending
+results.sort(key=lambda r: -r['same_blobs'])
+
+print()
+print(f'{"name":50} {"same":>6}/{"diff":>6}/{"miss":>6}')
+print('-' * 80)
+for r in results:
+    print(f"  {r['name']:48} {r['same_blobs']:>6}/{r['diff_blobs']:>6}/{r['missing_blobs']:>6}")
+
+# Save
+with open(r'C:\Users\koosh\_content_overlap.json', 'w') as f:
+    json.dump(results, f, indent=2)
+
+# Calculate percentage of branches with substantial content overlap (>30%)
+substantial = [r for r in results if r['same_blobs'] > 60]
+print(f'\n{len(substantial)} of {len(USER_NAMED)} have >30% content overlap with HEAD')

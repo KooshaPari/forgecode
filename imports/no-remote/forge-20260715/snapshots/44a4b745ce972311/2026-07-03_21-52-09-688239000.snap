@@ -1,0 +1,48 @@
+# WP-17 coverage threshold configuration.
+# Enforced by .github/workflows/coverage.yml.
+# Bump these as the workspace stabilises.
+# See docs/WP-17-COVERAGE.md for the rollout plan.
+
+[thresholds]
+# Minimum line coverage percent for the entire workspace.
+line_coverage_min = 80.0
+# Minimum branch coverage percent for the entire workspace.
+branch_coverage_min = 70.0
+# Critical crates need a higher bar than the rest of the workspace.
+critical_crate_coverage_min = 90.0
+
+# Crates that gate releases when they slip below the higher bar.
+critical_crates = [
+  "phenotype-cli",
+  "phenotype-config",
+  "phenotype-diff",
+  "phenotype-tooling-observability",
+  "ptx",
+]
+
+# Coverage measurement is skipped for these paths.
+[exclude.paths]
+patterns = [
+  "target/",
+  "crates/*/target/",
+  "crates/*/tests/",
+  "crates/*/benches/",
+  "crates/*/examples/",
+  "**/tests/*.rs",
+  "**/benches/*.rs",
+  "**/examples/*.rs",
+]
+
+# Generated artifacts that should never be counted.
+[exclude.generated_paths]
+patterns = [
+  "crates/sbom-gen/docs/security/sbom.json",
+]
+
+[tool]
+name = "cargo-llvm-cov"
+version_min = "0.6.0"
+report_format = ["lcov", "html", "json"]
+
+# Which threshold the CI gate uses to decide pass/fail.
+fail_under = "line_coverage_min"

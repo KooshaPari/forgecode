@@ -1,0 +1,60 @@
+"""
+pheno_dag_status.py  —  Snapshot of the dormant executor and Phase 1 plan.
+
+Safe to run.  Does NOT execute anything.
+"""
+import json
+from pathlib import Path
+import sys
+sys.path.insert(0, r"C:\Users\koosh\_compute_infra_audit")
+from pheno_dag_executor import load_dag, load_phase_1, TopologicalExecutor
+
+OUT = Path(r"C:\Users\koosh\_compute_infra_audit")
+
+def main():
+    nodes = load_dag(str(OUT / "compute_infra_dag.yaml"))
+    phase = load_phase_1(nodes)
+    ex = TopologicalExecutor(phase)
+    topo = ex.topo_order()
+    batches = ex.batch_by_artifact()
+    cycle = ex.detect_cycle()
+    status = ex.status_report()
+
+    summary = {
+        "spec": "010-compute-infra",
+        "dag_total_units": len(nodes),
+        "phase1_units": len(phase),
+        "phase1_epic_breakdown": {
+            "A (Hygiene garden)": sum(1 for n in phase if n.epic == "A"),
+            "B (Consolidation + grading)": sum(1 for n in phase if n.epic == "B"),
+            "F (DAG foundation, F-01..F-15)": sum(1 for n in phase if n.epic == "F"),
+        },
+        "phase1_topological_order_size": len(topo),
+        "phase1_parallel_batches": len(batches),
+        "phase1_max_batch_size": max(len(b) for b in batches),
+        "phase1_avg_batch_size": round(sum(len(b) for b in batches) / len(batches), 2),
+        "phase1_cycles_detected": cycle,
+        "phase1_initial_ready": sum(1 for r in status["records"] if r["status"] == "pending"),
+        "pillar_coverage_in_full_dag": {
+            k: v for k, v in
+            json.load(open(OUT / "compute_infra_dag.yaml", encoding="utf-8"))["pillar_count"].items()
+            if v > 0
+        },
+        "phase1_node_ids": [n.id for n in phase],
+        "dormant_until_user_says_proceed": True,
+    }
+    out_path = OUT / "phase1_plan.json"
+    out_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    print(f"Wrote {out_path}")
+    print()
+    print("=== Phase 1 Plan Summary ===")
+    for k, v in summary.items():
+        if k == "phase1_node_ids" or k == "pillar_coverage_in_full_dag":
+            continue
+        print(f"  {k}: {v}")
+    print()
+    print(f"Pillar coverage (full DAG): {len(summary['pillar_coverage_in_full_dag'])}/30")
+    print(f"  Pillars touched: {sorted(summary['pillar_coverage_in_full_dag'].keys())}")
+
+if __name__ == "__main__":
+    main()

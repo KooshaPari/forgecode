@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""Capture archive tag details using git's --format option without shell expansion."""
+import subprocess
+import sys
+
+TAGS = [
+    "archive/CC1-2026-06-11",
+    "archive/CC2-2026-06-11",
+    "archive/CC3-2026-06-11",
+    "archive/CC4-2026-06-11",
+    "archive/QC1-2026-06-11",
+    "archive/QC2-2026-06-11",
+    "archive/QC3-2026-06-11",
+    "archive/QC4-2026-06-11",
+    "archive/SD2-2026-06-11",
+    "archive/SD3-2026-06-11",
+    "archive/SD4-2026-06-11",
+    "archive/sota-cargo-deny-2026-06-11",
+]
+
+with open("audits/branch-clean/evidence/A9-archive-tags.txt", "w") as f:
+    f.write("refname|objectname|taggerdate_iso|subject\n")
+    for t in TAGS:
+        fmt = "%(refname:short)|%(objectname:short)|%(taggerdate:iso8601)|%(subject)"
+        out = subprocess.run(
+            ["git", "for-each-ref", f"--format={fmt}", f"refs/tags/{t}"],
+            capture_output=True, text=True
+        )
+        f.write(out.stdout if out.stdout else "(missing)\n")
+
+print(open("audits/branch-clean/evidence/A9-archive-tags.txt").read())

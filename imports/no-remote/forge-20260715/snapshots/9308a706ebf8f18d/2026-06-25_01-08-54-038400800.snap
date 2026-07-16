@@ -1,0 +1,853 @@
+/**
+ * Request translator hub — converts requests in any supported source format
+ * (OpenAI, Claude, Gemini) into the Mistral chat/completions wire format.
+ *
+ * Mistral's API is OpenAI-compatible but has a few sharper edges that we
+ * tighten here:
+ *
+ *   1. `model` is rewritten via `normalizeMistralModel` so dated snapshots
+ *      (`mistral-small-2409`) and bare aliases resolve to the canonical
+ *      `*-latest` ids Mistral's `/v1/models` always lists.
+ *   2. `temperature` is clamped to [0, 1] — Mistral 400s on values > 1.
+ *   3. `developer` role is mapped to `system` (Mistral 422s on developer).
+ *   4. Tool-call ids are normalised to 9-char `[a-zA-Z0-9]` ids via the
+ *      shared Mistral regex. OpenAI accepts up to 64-char ids; Mistral
+ *      truncates silently and then 422s when the assistant turn and the
+ *      `role: "tool"` follow-up disagree.
+ *   5. `reasoning_effort` and `reasoning` are stripped — Mistral's chat
+ *      schema doesn't accept them.
+ *   6. `parallel_tool_calls` is dropped on models that reject it.
+ *   7. Echo fields (`reasoning_content`, `refusal`, `annotations`,
+ *      `cache_control`, `reasoning`) on history turns are stripped — Mistral
+ *      422s with extra_forbidden.
+ *
+ * Public exports (one per supported source format):
+ *   - `convertOpenAIToMistral`  (aliased to `openaiToMistralRequest`)
+ *   - `convertClaudeToMistral`
+ *   - `convertGeminiToMistral`
+ *
+ * The translator is also auto-registered with the global translator
+ * registry so `translateRequest('openai', 'mistral', …)` works through the
+ * hub-and-spoke path in `translator/index.ts`.
+ */
+import { register } from "../registry.ts";
+import { FORMATS } from "../formats.ts";
+import {
+  acceptsMistralReasoningEffort,
+  normalizeMistralModel,
+  resolveMistralModel,
+} from "./modelNormalizer.ts";
+import {
+  applyValidationFixes,
+  MISTRAL_TOOL_CALL_ID_PATTERN,
+} from "./validation.ts";
+
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+/** Mistral's hard ceiling for the `temperature` parameter. */
+const MISTRAL_TEMPERATURE_MIN = 0;
+const MISTRAL_TEMPERATURE_MAX = 1;
+
+/** `top_p` must be in (0, 1]. */
+const MISTRAL_TOP_P_MIN = 0.01;
+const MISTRAL_TOP_P_MAX = 1;
+
+/**
+ * Mistral reserves the id format `/^[a-zA-Z0-9]{9}$/`. We generate fresh
+ * ids deterministically from a numeric counter + an alphanum alphabet so
+ * translations are reproducible (no `Math.random` to keep snapshot tests
+ * stable).
+ */
+const ID_ALPHABET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const ID_LENGTH = 9;
+
+/**
+ * Fields that Mistral's chat/completions schema treats as extra_forbidden
+ * when they appear on history turns. Drop them unconditionally before the
+ * request leaves the proxy.
+ */
+const ECHO_FIELDS_TO_STRIP = [
+  "reasoning_content",
+  "reasoning",
+  "refusal",
+  "annotations",
+  "cache_control",
+];
+
+/**
+ * Top-level fields that Mistral's chat/completions does not accept. We strip
+ * these silently rather than 422'ing the caller — most clients add them out
+ * of habit for OpenAI / Claude.
+ */
+const TOP_LEVEL_FIELDS_TO_STRIP = ["reasoning_effort", "reasoning"];
+
+// ─── Types ──────────────────────────────────────────────────────────────────
+
+interface MistralToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+interface MistralMessage {
+  role: string;
+  content?: string | null | Array<Record<string, unknown>>;
+  tool_calls?: MistralToolCall[];
+  tool_call_id?: string;
+  name?: string;
+}
+
+interface MistralFunctionDef {
+  name: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
+}
+
+interface MistralTool {
+  type: "function";
+  function: MistralFunctionDef;
+}
+
+export interface MistralRequestBody {
+  model: string;
+  stream?: boolean;
+  messages: MistralMessage[];
+  max_tokens?: number;
+  temperature?: number;
+  top_p?: number;
+  tools?: MistralTool[];
+  tool_choice?: string | Record<string, unknown>;
+  response_format?: Record<string, unknown>;
+  stop?: string | string[];
+  presence_penalty?: number;
+  frequency_penalty?: number;
+  [key: string]: unknown;
+}
+
+// ─── Public API: OpenAI → Mistral ───────────────────────────────────────────
+
+/**
+ * Convert an OpenAI-format request body to Mistral format.
+ *
+ * Accepts the standard OpenAI `messages` / `tools` / `tool_choice` shape and
+ * returns a body suitable for `POST /v1/chat/completions` on api.mistral.ai.
+ *
+ * Side effects:
+ *  - `body.model` is rewritten to the canonical Mistral id.
+ *  - Tool-call ids in history turns are normalised to 9-char Mistral ids.
+ *  - `developer` role is mapped to `system`.
+ *  - `temperature`, `top_p`, `max_tokens` are clamped to Mistral ranges.
+ *  - Echo fields (`reasoning_content`, etc.) are stripped from history turns.
+ *  - `reasoning_effort` / `reasoning` are stripped from the top level.
+ *
+ * The body is not mutated — a new object is returned. `stream` is preserved
+ * unless the caller explicitly overrides it.
+ */
+export function convertOpenAIToMistral(
+  model: string,
+  body: Record<string, unknown>,
+  stream = false
+): MistralRequestBody {
+  const result: MistralRequestBody = {
+    model: normalizeMistralModel(model),
+    messages: [],
+    stream,
+  };
+
+  // ── Sampling ─────────────────────────────────────────────────────────────
+  if (body.temperature !== undefined) {
+    result.temperature = clampNumber(
+      Number(body.temperature),
+      MISTRAL_TEMPERATURE_MIN,
+      MISTRAL_TEMPERATURE_MAX
+    );
+  }
+  if (body.top_p !== undefined) {
+    result.top_p = clampNumber(Number(body.top_p), MISTRAL_TOP_P_MIN, MISTRAL_TOP_P_MAX);
+  }
+  if (body.max_tokens !== undefined) {
+    result.max_tokens = Math.max(1, Math.floor(Number(body.max_tokens)));
+  }
+  if (body.presence_penalty !== undefined) {
+    result.presence_penalty = Number(body.presence_penalty);
+  }
+  if (body.frequency_penalty !== undefined) {
+    result.frequency_penalty = Number(body.frequency_penalty);
+  }
+  if (body.stop !== undefined) {
+    result.stop = Array.isArray(body.stop) ? body.stop : String(body.stop);
+  }
+
+  // ── Messages ─────────────────────────────────────────────────────────────
+  if (Array.isArray(body.messages)) {
+    result.messages = (body.messages as MistralMessage[]).map(normaliseOpenAIMessage);
+  }
+
+  // ── Tools ────────────────────────────────────────────────────────────────
+  if (Array.isArray(body.tools)) {
+    result.tools = (body.tools as Array<Record<string, unknown>>)
+      .map(normaliseOpenAITool)
+      .filter((t): t is MistralTool => t !== null);
+  }
+  if (body.tool_choice !== undefined) {
+    result.tool_choice = normaliseOpenAIToolChoice(body.tool_choice);
+  }
+
+  // ── Response format ──────────────────────────────────────────────────────
+  if (body.response_format && typeof body.response_format === "object") {
+    result.response_format = normaliseResponseFormat(body.response_format as Record<string, unknown>);
+  }
+
+  // ── Strip top-level fields Mistral rejects ───────────────────────────────
+  for (const field of TOP_LEVEL_FIELDS_TO_STRIP) {
+    if (!acceptsMistralReasoningEffort(model) || field === "reasoning") {
+      delete (result as Record<string, unknown>)[field];
+    }
+  }
+
+  // ── Drop parallel_tool_calls on models that reject it ────────────────────
+  const modelInfo = resolveMistralModel(model);
+  if (modelInfo && !modelInfo.supportsParallelToolCalls) {
+    delete (result as Record<string, unknown>).parallel_tool_calls;
+  }
+
+  return result;
+}
+
+/** Alias expected by `bootstrap.ts` and `translateRequest`. */
+export const openaiToMistralRequest = convertOpenAIToMistral;
+
+// ─── Public API: Claude → Mistral ───────────────────────────────────────────
+
+/**
+ * Convert an Anthropic Claude-format request to Mistral.
+ *
+ * Claude differs from OpenAI in three structural ways that matter here:
+ *   1. The top-level `system` field is a string OR an array of `{type: "text"}` blocks
+ *      (vs. OpenAI's `messages: [{role: "system", ...}]`). We collapse both
+ *      forms into a single Mistral `system` message at the head of the array.
+ *   2. Claude tool definitions use `{name, description, input_schema}` with
+ *      no `type: "function"` wrapper and `input_schema` instead of `parameters`.
+ *      Mistral wants `{type: "function", function: {name, description, parameters}}`.
+ *   3. Claude messages can be string OR `content: [{type: "text"|"image"|"tool_use"|"tool_result"}]`.
+ *      We translate tool_use/tool_result blocks into the OpenAI-style
+ *      `tool_calls` / `tool` role forms Mistral expects.
+ */
+export function convertClaudeToMistral(
+  model: string,
+  body: Record<string, unknown>,
+  stream = false
+): MistralRequestBody {
+  const result: MistralRequestBody = {
+    model: normalizeMistralModel(model),
+    messages: [],
+    stream,
+  };
+
+  // Sampling params
+  if (body.temperature !== undefined) {
+    result.temperature = clampNumber(
+      Number(body.temperature),
+      MISTRAL_TEMPERATURE_MIN,
+      MISTRAL_TEMPERATURE_MAX
+    );
+  }
+  if (body.top_p !== undefined) {
+    result.top_p = clampNumber(Number(body.top_p), MISTRAL_TOP_P_MIN, MISTRAL_TOP_P_MAX);
+  }
+  if (body.max_tokens !== undefined) {
+    result.max_tokens = Math.max(1, Math.floor(Number(body.max_tokens)));
+  }
+  if (body.stop_sequences !== undefined) {
+    result.stop = Array.isArray(body.stop_sequences)
+      ? (body.stop_sequences as string[])
+      : [String(body.stop_sequences)];
+  }
+
+  // ── System prompt ────────────────────────────────────────────────────────
+  const systemParts: string[] = [];
+  if (typeof body.system === "string" && body.system.length > 0) {
+    systemParts.push(body.system);
+  } else if (Array.isArray(body.system)) {
+    for (const block of body.system as Array<Record<string, unknown>>) {
+      if (block && block.type === "text" && typeof block.text === "string") {
+        systemParts.push(block.text);
+      }
+    }
+  }
+  if (systemParts.length > 0) {
+    result.messages.push({ role: "system", content: systemParts.join("\n\n") });
+  }
+
+  // ── Messages ─────────────────────────────────────────────────────────────
+  if (Array.isArray(body.messages)) {
+    for (const rawMsg of body.messages as Array<Record<string, unknown>>) {
+      const translated = translateClaudeMessage(rawMsg);
+      if (translated) result.messages.push(translated);
+    }
+  }
+
+  // ── Tools ────────────────────────────────────────────────────────────────
+  if (Array.isArray(body.tools)) {
+    result.tools = (body.tools as Array<Record<string, unknown>>)
+      .map(translateClaudeTool)
+      .filter((t): t is MistralTool => t !== null);
+  }
+  if (body.tool_choice !== undefined) {
+    result.tool_choice = translateClaudeToolChoice(body.tool_choice);
+  }
+
+  // ── response_format: Claude doesn't natively support it; fall back to
+  //    json_object / json_schema only if the caller explicitly set it.
+  if (body.response_format && typeof body.response_format === "object") {
+    result.response_format = normaliseResponseFormat(body.response_format as Record<string, unknown>);
+  }
+
+  return result;
+}
+
+// ─── Public API: Gemini → Mistral ───────────────────────────────────────────
+
+/**
+ * Convert a Google Gemini-format request (contents / parts / tools.functionDeclarations)
+ * to Mistral chat/completions format.
+ *
+ * Gemini's `contents` array has a different shape than OpenAI's `messages`:
+ *   - `role: "user" | "model"` (vs. "user" | "assistant")
+ *   - `parts: [{text: "..."} | {functionCall: {...}} | {functionResponse: {...}} | {inlineData: {...}}]`
+ *
+ * Tool calls are nested inside `parts[].functionCall` and tool results live
+ * in `parts[].functionResponse`. We unnest both into Mistral's tool_calls /
+ * role: "tool" message pattern.
+ */
+export function convertGeminiToMistral(
+  model: string,
+  body: Record<string, unknown>,
+  stream = false
+): MistralRequestBody {
+  const result: MistralRequestBody = {
+    model: normalizeMistralModel(model),
+    messages: [],
+    stream,
+  };
+
+  // Sampling — Gemini uses `generationConfig.{temperature, topP, maxOutputTokens}`.
+  const genConfig =
+    body.generationConfig && typeof body.generationConfig === "object"
+      ? (body.generationConfig as Record<string, unknown>)
+      : null;
+  if (genConfig) {
+    if (genConfig.temperature !== undefined) {
+      result.temperature = clampNumber(
+        Number(genConfig.temperature),
+        MISTRAL_TEMPERATURE_MIN,
+        MISTRAL_TEMPERATURE_MAX
+      );
+    }
+    if (genConfig.topP !== undefined) {
+      result.top_p = clampNumber(Number(genConfig.topP), MISTRAL_TOP_P_MIN, MISTRAL_TOP_P_MAX);
+    }
+    if (genConfig.maxOutputTokens !== undefined) {
+      result.max_tokens = Math.max(1, Math.floor(Number(genConfig.maxOutputTokens)));
+    }
+    if (Array.isArray(genConfig.stopSequences) && genConfig.stopSequences.length > 0) {
+      result.stop = genConfig.stopSequences as string[];
+    }
+  }
+
+  // system_instruction is a separate field in Gemini; collapse to Mistral's
+  // leading `system` message.
+  const sysInstr = body.systemInstruction;
+  if (sysInstr && typeof sysInstr === "object") {
+    const parts = (sysInstr as Record<string, unknown>).parts;
+    if (Array.isArray(parts)) {
+      const text = parts
+        .map((p: Record<string, unknown>) => (typeof p.text === "string" ? p.text : ""))
+        .filter((s: string) => s.length > 0)
+        .join("\n\n");
+      if (text) result.messages.push({ role: "system", content: text });
+    }
+  }
+
+  // Contents → messages
+  if (Array.isArray(body.contents)) {
+    for (const rawContent of body.contents as Array<Record<string, unknown>>) {
+      const translated = translateGeminiContent(rawContent);
+      if (translated) result.messages.push(...translated);
+    }
+  }
+
+  // Tools → functionDeclarations
+  const tools = body.tools;
+  if (Array.isArray(tools) && tools.length > 0) {
+    const first = tools[0] as Record<string, unknown>;
+    const fnDecls = Array.isArray(first.functionDeclarations)
+      ? (first.functionDeclarations as Array<Record<string, unknown>>)
+      : [];
+    if (fnDecls.length > 0) {
+      result.tools = fnDecls
+        .map(translateGeminiFunctionDecl)
+        .filter((t): t is MistralTool => t !== null);
+    }
+  }
+
+  // tool_config → tool_choice
+  const toolConfig = body.tool_config;
+  if (toolConfig && typeof toolConfig === "object") {
+    const fnCfg = (toolConfig as Record<string, unknown>).functionCallingConfig;
+    if (fnCfg && typeof fnCfg === "object") {
+      const mode = (fnCfg as Record<string, unknown>).mode as string | undefined;
+      if (mode === "NONE") result.tool_choice = "none";
+      else if (mode === "ANY") result.tool_choice = "any";
+      else result.tool_choice = "auto";
+    }
+  }
+
+  return result;
+}
+
+// ─── Helpers: shared transforms ─────────────────────────────────────────────
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  if (value < min) return min;
+  if (value > max) return max;
+  return value;
+}
+
+/** Strip fields Mistral 422s on, in-place on a copy. */
+function stripEchoFields(msg: MistralMessage): MistralMessage {
+  let modified = false;
+  const cleaned: MistralMessage = { ...msg };
+  for (const field of ECHO_FIELDS_TO_STRIP) {
+    if ((cleaned as Record<string, unknown>)[field] !== undefined) {
+      delete (cleaned as Record<string, unknown>)[field];
+      modified = true;
+    }
+  }
+  return modified ? cleaned : msg;
+}
+
+/** Normalise a tool-call id to the 9-char Mistral shape. */
+function normaliseToolCallId(rawId: unknown, indexHint: number): string {
+  if (typeof rawId === "string" && MISTRAL_TOOL_CALL_ID_PATTERN.test(rawId)) {
+    return rawId;
+  }
+  // Deterministic fallback — reproducible for tests.
+  return generateDeterministicId(rawId ?? `idx-${indexHint}`);
+}
+
+/**
+ * Build a 9-char [a-zA-Z0-9] id deterministically from an input seed.
+ * Used when the upstream id is missing or wrong-shaped. We hash the seed
+ * into a 9-char base62 string using a simple FNV-1a-inspired walk; this is
+ * NOT cryptographic — just stable per seed so test snapshots match.
+ */
+function generateDeterministicId(seed: unknown): string {
+  const seedStr = typeof seed === "string" ? seed : String(seed);
+  let h1 = 0x811c9dc5;
+  let h2 = 0xcbf29ce4;
+  for (let i = 0; i < seedStr.length; i++) {
+    const c = seedStr.charCodeAt(i);
+    h1 = ((h1 ^ c) >>> 0) * 0x01000193;
+    h2 = ((h2 ^ (c + i)) >>> 0) * 0x100000001b3;
+  }
+  let out = "";
+  let n = ((h1 ^ h2) >>> 0);
+  for (let i = 0; i < ID_LENGTH; i++) {
+    out += ID_ALPHABET[n % ID_ALPHABET.length];
+    n = Math.floor(n / ID_ALPHABET.length) + (h2 >>> ((i % 4) * 8));
+  }
+  return out.slice(0, ID_LENGTH);
+}
+
+/** Coerce a message's `content` field to Mistral's expected shapes. */
+function normaliseContent(
+  content: unknown
+): string | Array<Record<string, unknown>> | null {
+  if (content === null || content === undefined) return null;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content as Array<Record<string, unknown>>;
+  }
+  if (typeof content === "object") {
+    return [content as Record<string, unknown>];
+  }
+  return String(content);
+}
+
+// ─── OpenAI message normaliser ──────────────────────────────────────────────
+
+function normaliseOpenAIMessage(msg: MistralMessage): MistralMessage {
+  const role = msg.role === "developer" ? "system" : msg.role;
+  const out: MistralMessage = { role, content: normaliseContent(msg.content) };
+
+  if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+    out.tool_calls = msg.tool_calls.map((tc, i) => ({
+      id: normaliseToolCallId(tc.id, i),
+      type: "function" as const,
+      function: {
+        name: tc.function?.name ?? "",
+        arguments: tc.function?.arguments ?? "",
+      },
+    }));
+  }
+
+  if (role === "tool" && typeof msg.tool_call_id === "string") {
+    out.tool_call_id = normaliseToolCallId(msg.tool_call_id, 0);
+  }
+
+  if (msg.name && typeof msg.name === "string") {
+    out.name = msg.name;
+  }
+
+  return stripEchoFields(out);
+}
+
+function normaliseOpenAITool(tool: Record<string, unknown>): MistralTool | null {
+  // OpenAI: { type: "function", function: { name, description, parameters } }
+  if (tool.type === "function" && tool.function && typeof tool.function === "object") {
+    const fn = tool.function as MistralFunctionDef;
+    if (!fn.name) return null;
+    return {
+      type: "function",
+      function: {
+        name: fn.name,
+        description: fn.description,
+        parameters: fn.parameters ?? { type: "object", properties: {} },
+      },
+    };
+  }
+  // Some clients send a bare function definition.
+  if (typeof tool.name === "string") {
+    return {
+      type: "function",
+      function: {
+        name: tool.name,
+        description: typeof tool.description === "string" ? tool.description : undefined,
+        parameters:
+          tool.parameters && typeof tool.parameters === "object"
+            ? (tool.parameters as Record<string, unknown>)
+            : { type: "object", properties: {} },
+      },
+    };
+  }
+  return null;
+}
+
+function normaliseOpenAIToolChoice(choice: unknown): string | Record<string, unknown> {
+  if (typeof choice === "string") {
+    if (choice === "auto" || choice === "none" || choice === "required") return choice;
+    return "auto";
+  }
+  if (choice && typeof choice === "object") {
+    const obj = choice as Record<string, unknown>;
+    const type = obj.type as string | undefined;
+    if (type === "function" && obj.function && typeof obj.function === "object") {
+      const fnName = (obj.function as Record<string, unknown>).name;
+      if (typeof fnName === "string") return { type: "function", function: { name: fnName } };
+    }
+    return obj;
+  }
+  return "auto";
+}
+
+function normaliseResponseFormat(
+  fmt: Record<string, unknown>
+): Record<string, unknown> {
+  const type = fmt.type as string | undefined;
+  if (type === "json_object") return { type: "json_object" };
+  if (type === "json_schema") {
+    const schema = fmt.json_schema;
+    if (schema && typeof schema === "object") return { type: "json_schema", json_schema: schema };
+    return { type: "json_object" };
+  }
+  if (type === "text") return { type: "text" };
+  // Unknown — pass through unchanged, validation will surface a warning.
+  return fmt;
+}
+
+// ─── Claude message / tool normalisers ──────────────────────────────────────
+
+function translateClaudeMessage(msg: Record<string, unknown>): MistralMessage | null {
+  if (!msg || typeof msg !== "object") return null;
+  const role = msg.role as string | undefined;
+  if (role === "assistant") {
+    return translateClaudeAssistant(msg);
+  }
+  if (role === "user") {
+    return translateClaudeUser(msg);
+  }
+  // Claude has no `tool` role at the top level — tool_result blocks live
+  // inside user messages. Anything else is passed through.
+  if (role === "system" || role === "developer") {
+    return {
+      role: "system",
+      content: typeof msg.content === "string" ? msg.content : normaliseContent(msg.content),
+    };
+  }
+  return null;
+}
+
+function translateClaudeAssistant(msg: Record<string, unknown>): MistralMessage {
+  const content = normaliseContent(msg.content);
+  const toolUses: MistralToolCall[] = [];
+
+  if (Array.isArray(content)) {
+    for (const block of content as Array<Record<string, unknown>>) {
+      if (block && block.type === "tool_use") {
+        const id = normaliseToolCallId(block.id, toolUses.length);
+        const name = typeof block.name === "string" ? block.name : "";
+        const input = block.input;
+        toolUses.push({
+          id,
+          type: "function",
+          function: {
+            name,
+            arguments: input === undefined ? "" : JSON.stringify(input),
+          },
+        });
+      }
+    }
+  } else if (Array.isArray(msg.tool_calls)) {
+    for (let i = 0; i < (msg.tool_calls as unknown[]).length; i++) {
+      const tc = (msg.tool_calls as Array<Record<string, unknown>>)[i];
+      toolUses.push({
+        id: normaliseToolCallId(tc.id, i),
+        type: "function",
+        function: {
+          name: typeof tc.name === "string" ? tc.name : "",
+          arguments: typeof tc.input === "string" ? tc.input : JSON.stringify(tc.input ?? {}),
+        },
+      });
+    }
+  }
+
+  // Filter the content array to text-only blocks (drop tool_use / thinking
+  // — tool_use is represented in tool_calls; thinking blocks aren't part of
+  // Mistral's wire schema).
+  let assistantContent: string | Array<Record<string, unknown>> | null = null;
+  if (Array.isArray(content)) {
+    const textParts = (content as Array<Record<string, unknown>>)
+      .filter((b) => b && b.type === "text")
+      .map((b) => (typeof b.text === "string" ? b.text : ""));
+    if (textParts.length > 0) assistantContent = textParts.join("\n");
+    else if (toolUses.length === 0) assistantContent = null;
+  } else {
+    assistantContent = content;
+  }
+
+  const out: MistralMessage = { role: "assistant", content: assistantContent };
+  if (toolUses.length > 0) out.tool_calls = toolUses;
+  return stripEchoFields(out);
+}
+
+function translateClaudeUser(msg: Record<string, unknown>): MistralMessage | MistralMessage[] {
+  const content = normaliseContent(msg.content);
+  if (!Array.isArray(content)) {
+    return { role: "user", content };
+  }
+
+  // Split tool_result blocks out into Mistral `role: tool` follow-ups.
+  const toolResults: MistralMessage[] = [];
+  const userBlocks: Array<Record<string, unknown>> = [];
+  for (const block of content as Array<Record<string, unknown>>) {
+    if (block && block.type === "tool_result") {
+      const id = normaliseToolCallId(block.tool_use_id, toolResults.length);
+      const toolContent =
+        typeof block.content === "string"
+          ? block.content
+          : normaliseContent(block.content);
+      toolResults.push({
+        role: "tool",
+        tool_call_id: id,
+        content: toolContent as string,
+      });
+    } else {
+      userBlocks.push(block);
+    }
+  }
+
+  // Translate image blocks for vision-capable Mistral models
+  const userContent = userBlocks.map(translateClaudeImageBlock);
+
+  const userMessage: MistralMessage = { role: "user", content: userContent };
+
+  return [userMessage, ...toolResults];
+}
+
+/** Translate Claude `image` source blocks to Mistral's `image_url` form. */
+function translateClaudeImageBlock(block: Record<string, unknown>): Record<string, unknown> {
+  if (!block || block.type !== "image") return block;
+  const source = block.source as Record<string, unknown> | undefined;
+  if (!source) return block;
+  if (source.type === "base64" && source.media_type && source.data) {
+    return {
+      type: "image_url",
+      image_url: {
+        url: `data:${source.media_type};base64,${source.data}`,
+      },
+    };
+  }
+  if (source.type === "url" && typeof source.url === "string") {
+    return {
+      type: "image_url",
+      image_url: { url: source.url },
+    };
+  }
+  return block;
+}
+
+function translateClaudeTool(tool: Record<string, unknown>): MistralTool | null {
+  const name = typeof tool.name === "string" ? tool.name.trim() : "";
+  if (!name) return null;
+  return {
+    type: "function",
+    function: {
+      name,
+      description: typeof tool.description === "string" ? tool.description : undefined,
+      parameters:
+        tool.input_schema && typeof tool.input_schema === "object"
+          ? (tool.input_schema as Record<string, unknown>)
+          : { type: "object", properties: {} },
+    },
+  };
+}
+
+function translateClaudeToolChoice(choice: unknown): string | Record<string, unknown> {
+  if (typeof choice === "string") {
+    if (choice === "auto" || choice === "any" || choice === "none") return choice;
+    return "auto";
+  }
+  if (choice && typeof choice === "object") {
+    const obj = choice as Record<string, unknown>;
+    const type = obj.type as string | undefined;
+    if (type === "tool" && typeof obj.name === "string") {
+      return { type: "function", function: { name: obj.name } };
+    }
+    return obj;
+  }
+  return "auto";
+}
+
+// ─── Gemini content / tool normalisers ──────────────────────────────────────
+
+function translateGeminiContent(
+  content: Record<string, unknown>
+): MistralMessage[] | null {
+  if (!content || typeof content !== "object") return null;
+  const role = content.role as string | undefined;
+  const parts = Array.isArray(content.parts) ? (content.parts as Array<Record<string, unknown>>) : [];
+  if (parts.length === 0) return null;
+
+  if (role === "user") {
+    return [translateGeminiUser(parts)];
+  }
+  if (role === "model") {
+    return [translateGeminiModel(parts)];
+  }
+  // Unknown role — treat as user.
+  return [translateGeminiUser(parts)];
+}
+
+function translateGeminiUser(parts: Array<Record<string, unknown>>): MistralMessage {
+  const toolResults: MistralMessage[] = [];
+  const content: Array<Record<string, unknown>> = [];
+
+  for (const part of parts) {
+    if (!part || typeof part !== "object") continue;
+    if (part.functionResponse) {
+      const fn = part.functionResponse as Record<string, unknown>;
+      const id = typeof fn.id === "string" && fn.id
+        ? normaliseToolCallId(fn.id, toolResults.length)
+        : typeof fn.name === "string"
+          ? normaliseToolCallId(`gemini-${fn.name}`, toolResults.length)
+          : generateDeterministicId(`gemini-fr-${toolResults.length}`);
+      const resp = fn.response;
+      toolResults.push({
+        role: "tool",
+        tool_call_id: id,
+        content: typeof resp === "string" ? resp : JSON.stringify(resp ?? {}),
+      });
+    } else if (typeof part.text === "string") {
+      content.push({ type: "text", text: part.text });
+    } else if (part.inlineData) {
+      const inline = part.inlineData as Record<string, unknown>;
+      if (inline.mimeType && inline.data) {
+        content.push({
+          type: "image_url",
+          image_url: { url: `data:${inline.mimeType};base64,${inline.data}` },
+        });
+      }
+    }
+  }
+
+  if (toolResults.length === 0) {
+    return { role: "user", content };
+  }
+  return [
+    { role: "user", content },
+    ...toolResults,
+  ];
+}
+
+function translateGeminiModel(parts: Array<Record<string, unknown>>): MistralMessage {
+  const toolCalls: MistralToolCall[] = [];
+  let text = "";
+
+  for (const part of parts) {
+    if (!part || typeof part !== "object") continue;
+    if (part.functionCall) {
+      const fc = part.functionCall as Record<string, unknown>;
+      const id = typeof fc.id === "string" && fc.id
+        ? normaliseToolCallId(fc.id, toolCalls.length)
+        : generateDeterministicId(`gemini-${fc.name ?? "tool"}-${toolCalls.length}`);
+      toolCalls.push({
+        id,
+        type: "function",
+        function: {
+          name: typeof fc.name === "string" ? fc.name : "",
+          arguments: JSON.stringify(fc.args ?? {}),
+        },
+      });
+    } else if (typeof part.text === "string") {
+      text += part.text;
+    }
+  }
+
+  const out: MistralMessage = {
+    role: "assistant",
+    content: text || null,
+  };
+  if (toolCalls.length > 0) out.tool_calls = toolCalls;
+  return out;
+}
+
+function translateGeminiFunctionDecl(decl: Record<string, unknown>): MistralTool | null {
+  const name = typeof decl.name === "string" ? decl.name.trim() : "";
+  if (!name) return null;
+  // Gemini uses camelCase parameter names in JSON Schema; Mistral expects
+  // standard JSON Schema. Pass through.
+  return {
+    type: "function",
+    function: {
+      name,
+      description: typeof decl.description === "string" ? decl.description : undefined,
+      parameters:
+        decl.parameters && typeof decl.parameters === "object"
+          ? (decl.parameters as Record<string, unknown>)
+          : { type: "object", properties: {} },
+    },
+  };
+}
+
+// ─── Registry ───────────────────────────────────────────────────────────────
+
+register(FORMATS.OPENAI, FORMATS.MISTRAL, convertOpenAIToMistral, null);
+register(FORMATS.CLAUDE, FORMATS.MISTRAL, convertClaudeToMistral, null);
+register(FORMATS.GEMINI, FORMATS.MISTRAL, convertGeminiToMistral, null);
+
+// Re-export validation helpers for callers that want to inspect issues
+// without invoking the translator (e.g. dry-run validation in the UI).
+export { applyValidationFixes };
+export const mistralTranslatorVersion = "1.0.0";

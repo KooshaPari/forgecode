@@ -1,0 +1,121 @@
+$branches = @(
+    @{name="feat/language-emergence";       ahead=8},
+    @{name="chore/ci-workflow-fix";         ahead=8},
+    @{name="feat/religion-emergence";       ahead=8},
+    @{name="feat/voxel-bridge";             ahead=9},
+    @{name="docs/adr-014-016-emergence";    ahead=10},
+    @{name="feat/diplomacy-engine-v2";      ahead=12},
+    @{name="chore/fog-coverage";            ahead=12},
+    @{name="feat/population-demographics";  ahead=13},
+    @{name="feat/faction-emergence-v2";     ahead=14},
+    @{name="feat/lod-dirty-remesh";         ahead=14},
+    @{name="feat/daily-path-system";        ahead=15},
+    @{name="chore/bench-baseline";          ahead=16},
+    @{name="feat/emergence-dashboard-v3";   ahead=17},
+    @{name="feat/appstate-machine-v2";      ahead=17},
+    @{name="feat/audio-era-system";         ahead=17},
+    @{name="feat/fluid-ca-dirty-v2";        ahead=18},
+    @{name="chore/dep-security-fix";        ahead=19},
+    @{name="feat/server-jsonrpc-extend";    ahead=22},
+    @{name="fix/clippy-warnings";           ahead=80},
+    @{name="feat/p-w1-bevy-gameplay-026";   ahead=92},
+    @{name="feat/p-w1-bevy-item-027";       ahead=145}
+)
+
+$repoDir = "C:\Users\koosh\Civis"
+
+foreach ($b in $branches) {
+    $name = $b.name
+    Write-Host "========================================"
+    Write-Host "Processing: $name (ahead=$($b.ahead))"
+    Write-Host "========================================"
+    
+    Set-Location $repoDir
+    
+    # Ensure clean state on main
+    git checkout main 2>$null | Out-Null
+    
+    # Fetch the branch
+    Write-Host "[FETCH] $name..."
+    $fetchResult = git fetch origin "${name}:refs/remotes/origin/${name}" --depth $maxDepth 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[FAIL] Fetch failed: $fetchResult"
+        continue
+    }
+    
+    # Checkout as local branch
+    $localName = "rb-$($name.Replace('/','-'))"
+    git branch -D $localName 2>$null | Out-Null
+    $checkoutResult = git checkout -b $localName "origin/$name" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[FAIL] Checkout failed: $checkoutResult"
+        continue
+    }
+    
+    # Attempt rebase with -X theirs to auto-resolve
+    Write-Host "[REBASE] $name onto main..."
+    $rebaseResult = git rebase -X theirs main 2>&1
+    
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[PUSH] Force-pushing $name..."
+        $pushResult = git push origin "$localName:$name" --force 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] $name rebased and pushed!"
+        } else {
+            Write-Host "[FAIL] Push failed: $pushResult"
+        }
+        git checkout main 2>$null | Out-Null
+        git branch -D $localName 2>$null | Out-Null
+        continue
+    }
+    
+    # Handle conflicts
+    if ($rebaseResult -match "CONFLICT") {
+        Write-Host "[CONFLICTS] Resolving with --theirs..."
+        
+        # Loop until rebase completes or fails
+        $rebaseDir = Join-Path $repoDir ".git\rebase-merge"
+        while (Test-Path $rebaseDir) {
+            $files = git diff --name-only --diff-filter=U 2>&1
+            if ($files -and $files.Length -gt 0) {
+                foreach ($f in $files) {
+                    git checkout --theirs $f 2>$null
+                    git add $f 2>$null
+                }
+            }
+            $env:GIT_EDITOR = "true"
+            $contResult = git rebase --continue 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                if ($contResult -match "CONFLICT") {
+                    continue
+                }
+                Write-Host "[FAIL] Rebase continue failed"
+                git rebase --abort 2>$null
+                break
+            }
+            if ($contResult -match "Successfully rebased") { break }
+        }
+    } elseif ($rebaseResult -match "error:") {
+        Write-Host "[FAIL] Rebasing $name`: $rebaseResult"
+        git rebase --abort 2>$null | Out-Null
+        continue
+    }
+    
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[PUSH] Force-pushing $name..."
+        $pushResult = git push origin "$localName:$name" --force 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "[OK] $name rebased and pushed!"
+        } else {
+            Write-Host "[FAIL] Push failed: $pushResult"
+        }
+    }
+    
+    git checkout main 2>$null | Out-Null
+    git branch -D $localName 2>$null | Out-Null
+    git rebase --abort 2>$null | Out-Null
+}
+
+Write-Host "========================================"
+Write-Host "ALL DONE"
+Write-Host "========================================"

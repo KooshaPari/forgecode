@@ -1,0 +1,2 @@
+Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run "cmd /c taskkill /F /IM cargo.exe >nul 2>&1 & taskkill /F /IM rustc.exe >nul 2>&1 & C:\Users\koosh\.claude\lanes\substrate-feat-cloud-dispatch\run_clippy.cmd", 0, False

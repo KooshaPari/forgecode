@@ -1,0 +1,43 @@
+#!/bin/bash
+# _grade-all.sh — run grade.sh on all 8 audits, emit aggregated report.
+set -u
+GRADER="/mnt/c/Users/koosh/phenotype-registry/registry/audit-absorption-justification/grade.sh"
+AUDITS_DIR="/mnt/c/Users/koosh/phenotype-registry/audits/absorption-justifications"
+cd "$AUDITS_DIR" || exit 1
+
+python3 <<'PYEOF'
+import json, os, subprocess, glob
+
+GRADER = "/mnt/c/Users/koosh/phenotype-registry/registry/audit-absorption-justification/grade.sh"
+AUDITS_DIR = "/mnt/c/Users/koosh/phenotype-registry/audits/absorption-justifications"
+
+results = []
+for f in sorted(glob.glob(os.path.join(AUDITS_DIR, "*-2026-06-23.md"))):
+    name = os.path.basename(f)
+    p = subprocess.run(["bash", GRADER, f], capture_output=True, text=True)
+    try:
+        d = json.loads(p.stdout)
+    except json.JSONDecodeError as e:
+        print(f"  {name}: JSON parse error: {e}")
+        continue
+    pillars = {p["id"]: p for p in d["pillars"]}
+    p6 = pillars[6]
+    p7 = pillars[7]
+    p4 = pillars[4]
+    print(f"  {name:<32}  {int(d['score']):>2}/14  {d['percentage']:>6}%  {d['grade']}  P4={p4['status']:<8} P6={p6['status']:<8} P7={p7['status']}")
+    results.append({"name": name, "score": d["score"], "pct": float(d["percentage"]), "grade": d["grade"], "pillars": {p["id"]: p["status"] for p in d["pillars"]}})
+
+print()
+print("Fleet summary:")
+print("==============")
+total = sum(r["score"] for r in results)
+n = len(results)
+avg = total / n if n else 0
+print(f"  Audits graded:    {n}")
+print(f"  Total score:      {total:.1f} / {n*14}")
+print(f"  Fleet average:    {avg:.2f}/14  ({100*avg/14:.2f}%)")
+g_dist = {}
+for r in results:
+    g_dist[r["grade"]] = g_dist.get(r["grade"], 0) + 1
+print(f"  Grade distribution: {g_dist}")
+PYEOF

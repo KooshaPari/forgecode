@@ -1,0 +1,295 @@
+"""Audit each compute/infra repo for state. Writes C:\\Users\\koosh\\_infra_recon.json"""
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+REPOS = [
+    r"C:\Users\koosh\phenotype-infra",
+    r"C:\Users\koosh\nanovms",
+    r"C:\Users\koosh\PhenoCompose",
+    r"C:\Users\koosh\BytePort",
+    r"C:\Users\koosh\heliosBench",
+    r"C:\Users\koosh\helioslab-bootstrap",
+    r"C:\Users\koosh\phenotype-journeys",
+    r"C:\Users\koosh\phenotype-registry",
+    r"C:\Users\koosh\phenotype-voxel",
+    r"C:\Users\koosh\phenotype-infra-ci-fix",
+]
+
+
+def run(cmd, cwd, timeout=60):
+    try:
+        r = subprocess.run(
+            cmd, cwd=cwd, capture_output=True, text=True,
+            shell=True, timeout=timeout, encoding="utf-8", errors="replace",
+        )
+        return r.stdout.strip(), r.stderr.strip(), r.returncode
+    except subprocess.TimeoutExpired:
+        return "", "timeout", -1
+    except Exception as e:
+        return "", str(e), -1
+
+
+def git_one_line(args, cwd):
+    out, _, _ = run(f"git {args}", cwd)
+    return out
+
+
+def parse_branches_ahead(origin_branches_output):
+    """git for-each-ref refs/heads format gives ahead/behind if upstream set."""
+    # Use: git for-each-ref --format='%(refname:short) %(upstream:short) %(upstream:track)'
+    pass
+
+
+def audit_repo(path):
+    name = os.path.basename(path.rstrip("\\/"))
+    rec = {
+        "name": name,
+        "path": path,
+        "exists": os.path.isdir(path),
+        "is_git": False,
+        "head_sha": None,
+        "head_short": None,
+        "current_branch": None,
+        "dirty_count": 0,
+        "dirty_files": [],
+        "local_branches": [],
+        "branches_ahead_of_origin": [],
+        "stashes_count": 0,
+        "stashes_first_lines": [],
+        "worktrees_count": 0,
+        "worktrees": [],
+        "readme_first_line": None,
+        "primary_language": None,
+        "languages": {},
+        "packages": {
+            "Cargo.toml": False,
+            "package.json": False,
+            "pyproject.toml": False,
+            "go.mod": False,
+        },
+        "remote_url": None,
+        "remote_origin": None,
+        "upstream_branch": None,
+        "last_fetch": None,
+        "last_commit_ts": None,
+        "last_commit_subject": None,
+        "recent_commits": [],
+        "size_bytes": None,
+    }
+
+    if not rec["exists"]:
+        return rec
+
+    # .git presence
+    git_dir = os.path.join(path, ".git")
+    rec["is_git"] = os.path.isdir(git_dir)
+
+    # size
+    try:
+        total = 0
+        for root, dirs, files in os.walk(path):
+            # skip .git for size
+            if ".git" in dirs:
+                dirs.remove(".git")
+            for f in files:
+                try:
+                    fp = os.path.join(root, f)
+                    total += os.path.getsize(fp)
+                except OSError:
+                    pass
+        rec["size_bytes"] = total
+    except Exception:
+        pass
+
+    # package presence
+    rec["packages"]["Cargo.toml"] = os.path.isfile(os.path.join(path, "Cargo.toml"))
+    rec["packages"]["package.json"] = os.path.isfile(os.path.join(path, "package.json"))
+    rec["packages"]["pyproject.toml"] = os.path.isfile(os.path.join(path, "pyproject.toml"))
+    rec["packages"]["go.mod"] = os.path.isfile(os.path.join(path, "go.mod"))
+
+    # README first line
+    for cand in ("README.md", "README.MD", "readme.md", "Readme.md", "README.rst", "README.txt", "README"):
+        fp = os.path.join(path, cand)
+        if os.path.isfile(fp):
+            try:
+                with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                    line = f.readline().strip()
+                    rec["readme_first_line"] = line[:200] if line else None
+            except Exception:
+                rec["readme_first_line"] = None
+            break
+
+    if not rec["is_git"]:
+        return rec
+
+    # HEAD sha
+    rec["head_sha"] = git_one_line("rev-parse HEAD", path)
+    rec["head_short"] = git_one_line("rev-parse --short HEAD", path)
+
+    # current branch (detached safe)
+    cb, _, _ = run("git symbolic-ref --short -q HEAD || git rev-parse --short HEAD", path)
+    rec["current_branch"] = cb
+
+    # upstream tracking
+    upstream, _, _ = run("git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>nul", path)
+    rec["upstream_branch"] = upstream if upstream else None
+
+    # remote
+    rec["remote_url"] = git_one_line("config --get remote.origin.url", path)
+    rec["remote_origin"] = rec["remote_url"]
+
+    # dirty count (porcelain)
+    dirty_out, _, _ = run("git status --porcelain", path)
+    if dirty_out:
+        lines = [l for l in dirty_out.splitlines() if l.strip()]
+        rec["dirty_count"] = len(lines)
+        rec["dirty_files"] = lines[:50]  # cap
+
+    # local branches ahead of origin
+    # Use git for-each-ref with upstream track info
+    fmt = "%(refname:short)|%(upstream:short)|%(upstream:track)|%(objectname:short)|%(committerdate:iso)"
+    branch_out, _, _ = run(f'git for-each-ref --format="{fmt}" refs/heads', path)
+    if branch_out:
+        for ln in branch_out.splitlines():
+            parts = ln.split("|")
+            if len(parts) < 5:
+                continue
+            br, up, track, sha, cdate = parts[0], parts[1], parts[2], parts[3], parts[4]
+            entry = {
+                "branch": br,
+                "upstream": up if up else None,
+                "tracking": track if track else "",
+                "sha": sha,
+                "commit_date": cdate,
+            }
+            rec["local_branches"].append(entry)
+            # ahead/behind: track string e.g. "[ahead 3, behind 1]" or "[gone]"
+            if track and track != "":
+                # parse ahead/behind
+                import re
+                ma = re.search(r"ahead\s+(\d+)", track)
+                mb = re.search(r"behind\s+(\d+)", track)
+                if ma or mb:
+                    ahead = int(ma.group(1)) if ma else 0
+                    behind = int(mb.group(1)) if mb else 0
+                    if ahead > 0 or behind > 0:
+                        rec["branches_ahead_of_origin"].append({
+                            "branch": br,
+                            "upstream": up,
+                            "ahead": ahead,
+                            "behind": behind,
+                        })
+
+    # stashes
+    stash_out, _, _ = run("git stash list --format='%gd|%s'", path)
+    if stash_out:
+        slines = [l for l in stash_out.splitlines() if l.strip()]
+        rec["stashes_count"] = len(slines)
+        for s in slines:
+            # split first '|' only
+            parts = s.split("|", 1)
+            if len(parts) == 2:
+                rec["stashes_first_lines"].append({
+                    "ref": parts[0],
+                    "subject": parts[1][:200],
+                })
+            else:
+                rec["stashes_first_lines"].append({"ref": s, "subject": ""})
+
+    # worktrees
+    wt_out, _, _ = run("git worktree list --porcelain", path)
+    if wt_out:
+        wts = []
+        cur = {}
+        for ln in wt_out.splitlines():
+            if ln.startswith("worktree "):
+                if cur:
+                    wts.append(cur)
+                cur = {"path": ln[len("worktree "):]}
+            elif ln.startswith("HEAD "):
+                cur["head"] = ln[len("HEAD "):]
+            elif ln.startswith("branch "):
+                cur["branch"] = ln[len("branch "):]
+            elif ln.startswith("detached"):
+                cur["detached"] = True
+            elif ln.startswith("locked"):
+                cur["locked"] = True
+        if cur:
+            wts.append(cur)
+        rec["worktrees"] = wts
+        rec["worktrees_count"] = len(wts)
+
+    # recent commits (last 5 on HEAD)
+    rec["recent_commits"] = []
+    log_out, _, _ = run("git log --pretty=format:'%h|%ai|%s' -n 5", path)
+    if log_out:
+        for ln in log_out.splitlines():
+            parts = ln.split("|", 2)
+            if len(parts) >= 3:
+                rec["recent_commits"].append({
+                    "sha": parts[0],
+                    "date": parts[1],
+                    "subject": parts[2][:200],
+                })
+                if rec["last_commit_ts"] is None:
+                    rec["last_commit_ts"] = parts[1]
+                    rec["last_commit_subject"] = parts[2][:200]
+
+    # last fetch (use FETCH_HEAD if present; else reflog time)
+    fetch_head = os.path.join(path, ".git", "FETCH_HEAD")
+    if os.path.isfile(fetch_head):
+        try:
+            import datetime
+            mtime = os.path.getmtime(fetch_head)
+            rec["last_fetch"] = datetime.datetime.fromtimestamp(mtime).isoformat()
+        except Exception:
+            pass
+
+    # primary language via GitHub linguist heuristic (simple extension count)
+    ext_count = {}
+    skip_dirs = {".git", "node_modules", "target", "dist", "build", "__pycache__", ".venv", "venv"}
+    for root, dirs, files in os.walk(path):
+        # prune
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
+        for f in files:
+            ext = os.path.splitext(f)[1].lower()
+            if not ext:
+                continue
+            ext_count[ext] = ext_count.get(ext, 0) + 1
+
+    lang_map = {
+        ".rs": "Rust", ".py": "Python", ".js": "JavaScript", ".ts": "TypeScript",
+        ".tsx": "TypeScript", ".jsx": "JavaScript", ".go": "Go", ".java": "Java",
+        ".cs": "C#", ".cpp": "C++", ".c": "C", ".h": "C", ".hpp": "C++",
+        ".rb": "Ruby", ".php": "PHP", ".sh": "Shell", ".ps1": "PowerShell",
+        ".md": "Markdown", ".yaml": "YAML", ".yml": "YAML", ".toml": "TOML",
+        ".json": "JSON", ".html": "HTML", ".css": "CSS", ".scss": "SCSS",
+        ".swift": "Swift", ".kt": "Kotlin", ".dart": "Dart", ".lua": "Lua",
+    }
+    for ext, cnt in sorted(ext_count.items(), key=lambda x: -x[1])[:15]:
+        lang = lang_map.get(ext, ext.lstrip("."))
+        rec["languages"][lang] = rec["languages"].get(lang, 0) + cnt
+    if rec["languages"]:
+        rec["primary_language"] = max(rec["languages"].items(), key=lambda x: x[1])[0]
+
+    return rec
+
+
+def main():
+    results = []
+    for path in REPOS:
+        print(f"Auditing {path}...", flush=True)
+        rec = audit_repo(path)
+        results.append(rec)
+
+    out_path = r"C:\Users\koosh\_infra_recon.json"
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+    print(f"Wrote {out_path}", flush=True)
+
+
+if __name__ == "__main__":
+    main()

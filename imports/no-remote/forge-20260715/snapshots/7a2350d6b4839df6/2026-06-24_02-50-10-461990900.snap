@@ -1,0 +1,10 @@
+import json, re, sys, subprocess
+
+# Get a list of repos in KooshaPari's account
+out = subprocess.run(['gh', 'api', 'users/KooshaPari/repos?per_page=100'], capture_output=True, text=True)
+text = re.sub(r'\x1b\[[0-9;]*m', '', out.stdout)
+data = json.loads(text)
+for r in data:
+    if 'phenotype' in r['name'].lower() or 'pheno' in r['name'].lower():
+        sys.stdout.write(f"{r['name']} | {r['default_branch']}\n")
+sys.stdout.flush()

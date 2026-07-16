@@ -1,0 +1,41 @@
+## Summary
+
+Restore green CI by fixing `clippy::manual_map` in `RequestExtractor::bearer_token` and resolving the `cargo fmt` drift across `httpora-core`. No behavior change, no test-weakening, no doctest path edits required.
+
+## Context
+
+CI on `main` was failing on the Rust crate:
+
+- `cargo clippy --workspace --all-targets -- -D warnings` produced one hard error from `clippy::manual_map` in `crates/httpora-core/src/builder.rs:100-104`. The function `RequestExtractor::bearer_token` was hand-rolling an `if let Some / Some(..) / None` block over `Option<&str>` — exactly the pattern clippy auto-fixes to `.map(...)`.
+- `cargo fmt --check` was producing formatting drift across the crate (line wrapping changes from a newer `rustfmt`), so any fmt CI gate would have failed too.
+
+Both were real, no-skips failures. They share a common root category — the crate hadn't been re-run against the current rustfmt/clippy versions — but the clippy error was the blocking one.
+
+## Changes
+
+- `crates/httpora-core/src/builder.rs` — semantic fix: collapse the `if let Some / Some / None` block on `auth.strip_prefix("Bearer ")` into the idiomatic `auth.strip_prefix("Bearer ").map(str::to_owned)`. Same `Option<String>` return type, same semantics for all four `strip_prefix` cases (`"Bearer abc"`, `"Basic abc"`, `"abc"`, `""`), one line instead of five.
+- `crates/httpora-core/src/middleware/{circuit_breaker,cors,retry}.rs` and `crates/httpora-core/tests/{circuit_breaker,rate_limit,retry}_test.rs` — `cargo fmt`-only whitespace/line-wrap tidy-ups. Zero semantic changes.
+
+### Key Implementation Details
+
+- `str::to_owned` is used inside `.map` (rather than `|t| t.to_owned()`) so clippy's `manual_map` substitution lands cleanly and stays idiomatic.
+- No public API changes, no signature changes, no test edits, no doctest path corrections — the crate-name `httpora_core` and all `use` paths were already correct.
+
+## Testing
+
+Local checks run (all green):
+
+```
+cargo fmt --all -- --check                                              OK
+cargo clippy --workspace --all-targets --all-features -- -D warnings    OK
+cargo test --workspace --all-features                                   OK (30 unit + integration tests)
+cargo test --doc                                                        OK (5 doctests)
+cargo build --release                                                   OK
+```
+
+`crates/httpora-core/src/builder.rs:100-107` is the only function with a behavior-bearing diff; all other diffs are formatting-only and trivially auditable via `git diff`.
+
+## Links
+
+- Branch: `fix/ci-green`
+- Diff: `git diff origin/main..HEAD` (7 files, +28/-25)

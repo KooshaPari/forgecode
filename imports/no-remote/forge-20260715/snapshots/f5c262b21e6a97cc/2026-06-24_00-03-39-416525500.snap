@@ -1,0 +1,10 @@
+param([string]$Repo)
+
+Write-Host "=== BRANCHES ==="
+gh api "repos/kooshapari/$Repo/branches" --jq '.[].name'
+Write-Host "=== COMMITS ==="
+gh api "repos/kooshapari/$Repo/commits?per_page=5" --jq '.[] | (.sha[0:7] + " " + .commit.author.date + " " + (.commit.message | split("\n")[0]))'
+Write-Host "=== TREE ==="
+gh api "repos/kooshapari/$Repo/git/trees/HEAD?recursive=1" --jq '.tree[]? | select(.type=="blob") | (.path + " (" + (.size | tostring) + " bytes)")'
+Write-Host "=== README ==="
+gh repo view "kooshapari/$Repo"

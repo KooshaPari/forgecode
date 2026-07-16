@@ -1,0 +1,132 @@
+//! Report storage + summary for Benchora.
+
+use std::path::{Path, PathBuf};
+
+use crate::cli::baseline::open_for_read;
+use crate::cli::CliError;
+
+/// Run a benchmark suite and capture a JSON report to disk.
+///
+/// This is a minimal scaffold: it does not yet invoke criterion. The
+/// intention is to wire it up in a follow-up DAG unit (`benchora-002`)
+/// after the suite registry is finalised. For now, it writes a stub
+/// report JSON describing what *would* be run, so the rest of the
+/// pipeline (storage, baseline, compare) can be exercised end-to-end.
+pub fn run_suite(db: &Path, suite: &str, out: Option<&Path>) -> Result<(), CliError> {
+    let now = crate::cli::baseline::now_iso_via_pub();
+    let out_path: PathBuf = match out {
+        Some(p) => p.to_path_buf(),
+        None => {
+            let stem = format!("{}-{}", suite, sanitize(&now));
+            PathBuf::from(format!("{}.json", stem))
+        }
+    };
+    let body = serde_json::json!({
+        "schema": "benchora.report.v1",
+        "suite": suite,
+        "created_at": now,
+        "benchmarks": [],
+        "note": "scaffold — bench execution is wired up in benchora-002",
+    });
+    let pretty = serde_json::to_string_pretty(&body).map_err(|e| CliError::Json {
+        path: out_path.clone(),
+        source: e,
+    })?;
+    std::fs::write(&out_path, pretty).map_err(|e| CliError::Io {
+        path: out_path.clone(),
+        source: e,
+    })?;
+
+    // Register in the reports table.
+    let conn = open_for_read(db)?;
+    let sha = crate::cli::baseline::sha256_via_pub(&out_path)?;
+    conn.execute(
+        r#"INSERT INTO reports(suite, report_path, sha256, created_at)
+           VALUES(?,?,?,?)"#,
+        rusqlite::params![suite, out_path.to_string_lossy(), sha, now],
+    )
+    .map_err(|e| CliError::Db {
+        path: db.to_path_buf(),
+        source: e,
+    })?;
+
+    println!("wrote report {}", out_path.display());
+    Ok(())
+}
+
+/// Summarize a saved report to stdout.
+pub fn summarize(path: &Path) -> Result<(), CliError> {
+    let raw = std::fs::read_to_string(path).map_err(|e| CliError::Io {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+    let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| CliError::Json {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+    let suite = v
+        .get("suite")
+        .and_then(|s| s.as_str())
+        .unwrap_or("<unknown>");
+    let created = v
+        .get("created_at")
+        .and_then(|s| s.as_str())
+        .unwrap_or("<unknown>");
+    let count = v
+        .get("benchmarks")
+        .and_then(|b| b.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    println!("report: {}", path.display());
+    println!("  suite      : {}", suite);
+    println!("  created_at : {}", created);
+    println!("  benchmarks : {}", count);
+    Ok(())
+}
+
+/// List stored reports.
+pub fn list(db: &Path) -> Result<(), CliError> {
+    let conn = open_for_read(db)?;
+    let mut stmt = conn
+        .prepare("SELECT id, suite, sha256, created_at, report_path FROM reports ORDER BY id DESC LIMIT 200")
+        .map_err(|e| CliError::Db {
+            path: db.to_path_buf(),
+            source: e,
+        })?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(|e| CliError::Db {
+            path: db.to_path_buf(),
+            source: e,
+        })?;
+    println!("{:<6} {:<12} {:<14} {:<22} {}", "ID", "SUITE", "SHA256-PREFIX", "CREATED", "PATH");
+    for row in rows {
+        let (id, suite, sha, created, path) = row.map_err(|e| CliError::Db {
+            path: db.to_path_buf(),
+            source: e,
+        })?;
+        println!(
+            "{:<6} {:<12} {:<14} {:<22} {}",
+            id,
+            suite,
+            &sha[..12.min(sha.len())],
+            created,
+            path
+        );
+    }
+    Ok(())
+}
+
+fn sanitize(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
+}

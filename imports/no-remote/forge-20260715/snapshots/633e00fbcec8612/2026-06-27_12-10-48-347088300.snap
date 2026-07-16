@@ -1,0 +1,401 @@
+//! Wave-based parallel agent dispatch.
+//!
+//! Reads the [`Plan::waves()`] topological wave plan and fans each wave out
+//! across the configured lanes. Concurrency is bounded per-lane via
+//! [`tokio::sync::Semaphore`]; mutex-protected lanes (build-retry,
+//! oracle-gate, …) acquire an in-memory mutex before dispatch so two
+//! exclusive lanes cannot overlap. Every state transition queues a
+//! [`crate::reporter::DagEvent`] for the reporter.
+
+use anyhow::{anyhow, Result};
+use async_trait::async_trait;
+use std::collections::{HashMap, HashSet};
+use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::{Mutex, Semaphore};
+use tokio::time::{sleep, Duration};
+
+use crate::model::{Lane, NodeId, NodeState, Plan};
+use crate::reporter::{DagEvent, Reporter};
+
+/// What an agent runner returns for a single node.
+#[derive(Debug, Clone)]
+pub struct NodeReport {
+    pub node_id: String,
+    pub summary: String,
+    pub artifacts: Vec<String>,
+    pub elapsed_ms: u64,
+}
+
+/// Async runner contract: the executor hands the runner one node at a
+/// time. Implementations decide whether they shell out, talk to a model,
+/// call cargo, etc.
+#[async_trait]
+pub trait AgentRunner: Send + Sync {
+    async fn run(&self, node: &crate::model::Node, lane: &Lane) -> Result<NodeReport>;
+}
+
+/// Wallet placeholder — actual implementations carry rate-limiting
+/// counters, retry budgets, etc. Kept as a passive trait so the
+/// executor can be cheaply cloned through `Arc`.
+#[derive(Debug, Default)]
+pub struct Wallet;
+
+#[derive(Clone)]
+pub struct WaveContext {
+    pub plan: Arc<Plan>,
+    pub tick_id: String,
+    pub reporter: Arc<dyn Reporter>,
+    pub wallet: Arc<Wallet>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RetryPolicy {
+    pub max_attempts: u32,
+    pub backoff_ms: u64,
+    pub retry_on_states: Vec<NodeState>,
+}
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self { max_attempts: 3, backoff_ms: 250, retry_on_states: vec![NodeState::Retrying, NodeState::Failed] }
+    }
+}
+
+#[derive(Default)]
+pub struct WaveExecutor {
+    plan: Arc<Plan>,
+    runners: HashMap<String, Arc<dyn AgentRunner>>,
+    default_runner: Arc<dyn AgentRunner>,
+    concurrency_per_lane: HashMap<String, usize>,
+    retry_policy: RetryPolicy,
+    active_mutexes: Arc<Mutex<HashSet<String>>>,
+    current_tick: Arc<AtomicU64>,
+}
+
+impl std::fmt::Debug for WaveExecutor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WaveExecutor")
+            .field("lanes", &self.runners.keys().collect::<Vec<_>>())
+            .field("tick_count", &self.current_tick.load(Ordering::Relaxed))
+            .finish()
+    }
+}
+
+impl WaveExecutor {
+    /// Build an executor around a plan. The default runner is the no-op
+    /// runner so unconfigured lanes still resolve.
+    pub fn new(plan: Arc<Plan>) -> Self {
+        Self {
+            plan,
+            runners: HashMap::new(),
+            default_runner: Arc::new(NoopRunner),
+            concurrency_per_lane: HashMap::new(),
+            retry_policy: RetryPolicy::default(),
+            active_mutexes: Arc::new(Mutex::new(HashSet::new())),
+            current_tick: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    pub fn register_lane_runner(&mut self, lane_id: &str, runner: Arc<dyn AgentRunner>) {
+        self.runners.insert(lane_id.to_string(), runner);
+    }
+
+    pub fn set_concurrency(&mut self, lane_id: &str, n: usize) {
+        self.concurrency_per_lane.insert(lane_id.to_string(), n);
+    }
+
+    fn lane_concurrency(&self, lane_id: &str) -> usize {
+        self.concurrency_per_lane.get(lane_id).copied().unwrap_or(4)
+    }
+
+    /// Identify ready nodes in a wave. A wave is "ready" if all of its
+    /// deps are in earlier waves' completed nodes.
+    pub fn ready_in_wave(&self, wave: &[NodeId]) -> Vec<&crate::model::Node> {
+        let done_ids: HashSet<&str> = self
+            .plan
+            .nodes
+            .iter()
+            .filter(|n| {
+                n.state == NodeState::Done
+                    || wave.iter().any(|w| w.0 == n.id)
+            })
+            .map(|n| n.id.as_str())
+            .collect();
+        let wave_ids: HashSet<&str> = wave.iter().map(|n| n.0.as_str()).collect();
+        self.plan
+            .nodes
+            .iter()
+            .filter(|n| wave_ids.contains(n.id.as_str()))
+            .filter(|n| n.state == NodeState::Queued)
+            .filter(|n| n.deps.iter().all(|d| done_ids.contains(d.as_str())))
+            .collect()
+    }
+
+    /// Run a single wave from the wave plan.
+    pub async fn run_wave(
+        &self,
+        wave_idx: usize,
+        ctx: WaveContext,
+    ) -> Result<Vec<NodeReport>> {
+        let wave = self
+            .plan
+            .waves()
+            .into_iter()
+            .nth(wave_idx)
+            .ok_or_else(|| anyhow!("wave {} out of range", wave_idx))?;
+        ctx.reporter.event(DagEvent::WaveStart { wave_id: wave_idx, total: self.plan.waves().len() });
+
+        let ready = self.ready_in_wave(&wave);
+        if ready.is_empty() {
+            ctx.reporter.event(DagEvent::WaveEnd { wave_id: wave_idx, succeeded: 0, failed: 0 });
+            return Ok(Vec::new());
+        }
+
+        // Partition ready nodes by lane
+        let mut by_lane: HashMap<String, Vec<&crate::model::Node>> = HashMap::new();
+        for n in &ready {
+            by_lane.entry(n.lane.clone()).or_default().push(n);
+        }
+
+        let mut handles = Vec::new();
+        for (lane_id, nodes) in by_lane {
+            let lane_obj = self
+                .plan
+                .lanes
+                .iter()
+                .find(|l| l.id == lane_id)
+                .cloned()
+                .unwrap_or(Lane {
+                    id: lane_id.clone(),
+                    purpose: "(default)".into(),
+                    scope: "default".into(),
+                    mutex: None,
+                    default_concurrency: 1,
+                    partition_by: None,
+                });
+
+            // Acquire named mutex if lane has one
+            let mutex_lane = lane_obj.mutex.clone();
+            let active_mutexes = Arc::clone(&self.active_mutexes);
+            let mu_lock = if let Some(m) = &mutex_lane {
+                let g = active_mutexes.lock().await;
+                if g.contains(m) {
+                    drop(g);
+                    // Wait on the mutex by re-acquiring until empty
+                    let mut waits = 0u32;
+                    loop {
+                        let g = active_mutexes.lock().await;
+                        if !g.contains(m) { break; }
+                        drop(g);
+                        if waits > 60 { return Err(anyhow!("mutex {} busy", m)); }
+                        sleep(Duration::from_millis(250)).await;
+                        waits += 1;
+                    }
+                }
+                Some((m.clone(), Arc::clone(&active_mutexes)))
+            } else { None };
+
+            // Register mutex for the duration of this lane's wave
+            let _mu_guard_hold: Option<tokio::sync::OwnedMutexGuard<()>> = None;
+
+            let runner = self
+                .runners
+                .get(&lane_id)
+                .cloned()
+                .unwrap_or_else(|| Arc::clone(&self.default_runner));
+            let cap = self.lane_concurrency(&lane_id);
+            let sem = Arc::new(Semaphore::new(cap));
+            for n in nodes {
+                let permit = sem.clone().acquire_owned().await.ok_or_else(|| anyhow!("semaphore closed"))?;
+                let runner = Arc::clone(&runner);
+                let reporter = Arc::clone(&ctx.reporter);
+                let lane = lane_obj.clone();
+                let active_mutexes_h = Arc::clone(&self.active_mutexes);
+                let mutex_lane_h = mutex_lane.clone();
+                let ctx2 = ctx.clone();
+                let epidemiologic_lock = mu_lock.clone();
+                handles.push(tokio::spawn(async move {
+                    let _permit = permit;
+                    if let Some((m, set)) = &epidemiologic_lock {
+                        let mut g = set.lock().await;
+                        g.insert(m.clone());
+                        drop(g);
+                    }
+
+                    reporter.event(DagEvent::NodeStarted {
+                        node: n.id.clone(),
+                        agent: runner.label(),
+                    });
+
+                    let mut attempt = 0u32;
+                    let res = loop {
+                        attempt += 1;
+                        let res = runner.run(n, &lane).await;
+                        match &res {
+                            Ok(r) => {
+                                reporter.event(DagEvent::NodeFinished {
+                                    node: n.id.clone(),
+                                    duration_ms: r.elapsed_ms,
+                                    summary: r.summary.clone(),
+                                });
+                                break Ok(r.clone());
+                            }
+                            Err(e) => {
+                                if attempt >= RetryPolicy::default().max_attempts {
+                                    break Err(e);
+                                }
+                                sleep(Duration::from_millis(RetryPolicy::default().backoff_ms)).await;
+                            }
+                        }
+                    };
+
+                    if let Some((m, set)) = &mutex_lane_h {
+                        let mut g = active_mutexes_h.lock().await;
+                        g.remove(m);
+                    }
+                    res
+                }));
+            }
+        }
+
+        let mut reports = Vec::new();
+        let mut failed = 0usize;
+        for h in handles {
+            let r = h
+                .await
+                .map_err(|e| anyhow!("join error: {}", e))??;
+            if r.summary.contains("FAILED") { failed += 1; }
+            reports.push(r);
+        }
+        let succeeded = reports.len() - failed;
+        ctx.reporter.event(DagEvent::WaveEnd { wave_id: wave_idx, succeeded, failed });
+        Ok(reports)
+    }
+
+    /// Drive every wave to completion, in order.
+    pub async fn run_all(&self) -> Result<Vec<NodeReport>> {
+        let probe = self.plan.clone();
+        let ctx = WaveContext {
+            plan: Arc::clone(&self.plan),
+            tick_id: format!("T{}", self.current_tick.fetch_add(1, Ordering::Relaxed)),
+            reporter: Arc::new(crate::reporter::NoopReporter),
+            wallet: Arc::new(Wallet),
+        };
+        let wave_count = probe.waves().len();
+        let mut total = Vec::new();
+        for i in 0..wave_count {
+            self.run_wave(i, ctx.clone()).await
+                .map_err(|e| anyhow!("wave {} failed: {}", i, e))?
+                .into_iter()
+                .for_each(|r| total.push(r));
+        }
+        Ok(total)
+    }
+}
+
+/// Trivial no-op runner used when a lane has no specific agent assigned.
+#[derive(Debug, Default)]
+pub struct NoopRunner;
+#[async_trait]
+impl AgentRunner for NoopRunner {
+    async fn run(&self, node: &crate::model::Node, _lane: &Lane) -> Result<NodeReport> {
+        Ok(NodeReport {
+            node_id: node.id.clone(),
+            summary: format!("noop:{} (no runner registered)", node.id),
+            artifacts: vec![],
+            elapsed_ms: 0,
+        })
+    }
+}
+impl AgentRunner for dyn std::any::Any + Send + Sync {
+    fn label(&self) -> &str { "dyn" }
+}
+// Workaround: AgentRunner has no label method — define it here so callers
+// can query a stable runner name during dispatch without trait-object dances.
+pub trait RunnerLabel { fn label(&self) -> &str; }
+impl<T: ?Sized + AgentRunner> RunnerLabel for T { fn label(&self) -> &str { "agent" } }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::*;
+    use crate::reporter::RecorderReporter;
+    use std::sync::Arc;
+
+    fn sample_plan() -> Arc<Plan> {
+        let nodes = vec![
+            make_node("root",  NodeState::Queued, vec![],      "core"),
+            make_node("left",  NodeState::Queued, vec!["root"], "core"),
+            make_node("right", NodeState::Queued, vec!["root"], "core"),
+            make_node("done",  NodeState::Done,   vec![],       "core"),
+        ];
+        Arc::new(Plan {
+            id: "test".into(),
+            version: "v0".into(),
+            layers: vec![],
+            lanes: vec![],
+            ticks: vec![],
+            pillars: vec![],
+            queued_pillars: vec![],
+            phases: vec![],
+            nodes,
+            metadata: PlanMeta {
+                total_nodes: 4,
+                total_ticks: 0,
+                last_updated: Utc::now(),
+                source_path: PathBuf::from("test.md"),
+            },
+        })
+    }
+    fn make_node(id: &str, state: NodeState, deps: Vec<&str>, lane: &str) -> Node {
+        Node {
+            id: id.into(),
+            layer: "P0".into(),
+            pr: None,
+            title: format!("t-{id}"),
+            scope: "scope".into(),
+            state,
+            lane: lane.into(),
+            deps: deps.into_iter().map(String::from).collect(),
+            fr_ref: None,
+            adr_ref: None,
+            eta: None,
+            started_at: None,
+            finished_at: None,
+            summary: None,
+            agent: None,
+            task: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn ready_in_wave_respects_deps() {
+        let p = sample_plan();
+        let ex = WaveExecutor::new(p.clone());
+        let waves = p.waves();
+        assert!(waves.len() >= 3, "a, b/c, d? — actually `done` is already Done, so root+2 leaves+0:");
+        let wave0 = ex.ready_in_wave(&waves[0]);
+        let wave1 = ex.ready_in_wave(&waves[1]);
+        assert!(!wave0.is_empty() || !wave1.is_empty());
+    }
+
+    #[tokio::test]
+    async fn run_all_emits_reports() {
+        let p = sample_plan();
+        let recorder = Arc::new(RecorderReporter::default());
+        let ex = WaveExecutor::new(p.clone());
+        let ctx = WaveContext {
+            plan: Arc::clone(&p),
+            tick_id: "T0".into(),
+            reporter: recorder.clone() as Arc<dyn Reporter>,
+            wallet: Arc::new(Wallet),
+        };
+        let reports = ex.run_all().await.unwrap();
+        assert!(reports.len() >= 4, "all 4 nodes should resolve (incl. done)");
+        let evs = recorder.events.lock().unwrap();
+        assert!(evs.iter().any(|e| matches!(e, DagEvent::WaveStart { .. })));
+        assert!(evs.iter().any(|e| matches!(e, DagEvent::WaveEnd { .. })));
+    }
+}

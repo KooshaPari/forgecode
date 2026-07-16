@@ -1,0 +1,105 @@
+/**
+ * Public surface for `@/lib/observability/*`. Re-exports the modules in a
+ * stable order so callers can `import { initTelemetry } from "@/lib/observability"`
+ * instead of reaching into individual files.
+ *
+ * @module observability/index
+ */
+
+export {
+  SPAN_NAMES,
+  SPAN_ATTRS,
+  SPAN_EVENTS,
+  METRIC_NAMES,
+  resolveTenantId,
+} from "./spanTypes.ts";
+
+export {
+  buildResource,
+  encodeResourceEnv,
+  decodeResourceEnv,
+  resolveServiceVersion,
+  resolveEnvironment,
+  getServiceName,
+  getServiceVersion,
+  getDeploymentEnvironment,
+  DEFAULT_RESOURCE,
+  type ResourceInputs,
+} from "./resource.ts";
+
+export {
+  initTelemetry,
+  initTelemetryDefault,
+  flushTelemetry,
+  shutdown,
+  shutdownTelemetry,
+  isTelemetryEnabled,
+  isTelemetryInitialized,
+  getTracer,
+  getMeter,
+  getLogger,
+  runInSpan,
+  __resetTelemetryForTests,
+  type AttrMap,
+  type Counter,
+  type Histogram,
+  type Logger,
+  type Span,
+  type SpanContext,
+  type SpanStatusCode,
+  type TelemetryConfig,
+  type Tracer,
+} from "./otel.ts";
+
+export {
+  createOtlpExporter,
+  toOtlpAttributes,
+  msToNanos,
+  type OtlpExporter,
+  type OtlpExporterConfig,
+  type OtlpPayload,
+  type OtlpSpan,
+  type OtlpMetric,
+  type OtlpLog,
+  type OtlpAttribute,
+} from "./otlpExporter.ts";
+
+export {
+  bindPreboundMetrics,
+  getPreboundMetrics,
+  proxyAttrs,
+  type PreboundMetrics,
+} from "./metrics.ts";
+
+export {
+  bindLogger,
+  getBoundLogger,
+  logInfo,
+  logWarn,
+  logError,
+  logDebug,
+  reportError,
+} from "./logger.ts";
+
+export {
+  autoInit,
+  setProcessMetrics,
+  stopProcessMetrics,
+  collectProcessMetrics,
+  isEnabledCached,
+  __resetAutoForTests,
+} from "./auto.ts";
+
+export {
+  withProxySpan,
+  recordProxyStatus,
+  recordUpstreamCall,
+  recordHealthProbe,
+  type WithProxySpanInput,
+} from "./proxySpan.ts";
+
+export {
+  checkCollectorHealth,
+  BUILTIN_COLLECTOR_ENDPOINTS,
+  type CollectorHealth,
+} from "./collectorHealth.ts";

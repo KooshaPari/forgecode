@@ -1,0 +1,5 @@
+with open(r'C:\Users\koosh\omniroute-dev\omniroute.mjs', 'r') as f:
+    content = f.read()
+with open(r'C:\Users\koosh\_omni_output.txt', 'w') as out:
+    out.write(content)
+print(f"Wrote {len(content)} chars, {len(content.splitlines())} lines")

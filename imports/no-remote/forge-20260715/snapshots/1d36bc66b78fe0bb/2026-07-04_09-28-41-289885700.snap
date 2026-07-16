@@ -1,0 +1,124 @@
+# ADR 0005 — Locked baseline: 8 cloud + 3 self-hosted, March-2026 cutoff
+
+**Date:** 2026-07-04
+**Status:** Accepted (per user message 2026-07-04)
+**Supersedes:** ADR 0003 §3 (which proposed Qwen3.8B AWQ as T2 workhorse — rejected by user)
+**Author:** Forge (claude-code session, with corrections from user push-back on rounds 1–4)
+
+---
+
+## 1. Decision
+
+Lock the baseline matrix to **8 cloud + 3 self-hosted models**, with a **March-2026 recency cutoff** for both lists. Everything else is "candidate for later" and not in the eval matrix until it gets its own ADR.
+
+### 1.1 Cloud baselines (routed `forge-dev → omniroute-dev → OpenRouter`)
+
+| # | OR id | Canonical HF repo | params_b | ctx | OR $/M prompt | OR $/M completion | HF last_modified | recency |
+|---|---|---|---:|---:|---:|---:|---|---|
+| 1 | `inclusionai/ling-2.6-flash` | (proprietary) | 104.0 (7.4 active) | 262 144 | $0.01 | $0.03 | n/a | ✓ |
+| 2 | `ibm-granite/granite-4.0-h-micro` | `ibm-granite/granite-4.0-h-micro` | 3.20 | 131 000 | $0.017 | $0.112 | 2025-11-03 | **PRE-MARCH_2026** |
+| 3 | `liquid/lfm-2-24b-a2b` | `LiquidAI/LFM2-24B-A2B` | 23.84 (MoE) | 128 000 | $0.03 | $0.12 | 2026-03-30 | ✓ |
+| 4 | `arcee-ai/trinity-mini` | `arcee-ai/Trinity-Mini` | 26.12 (MoE 3B-active) | 131 072 | $0.045 | $0.15 | 2026-05-28 | ✓ |
+| 5 | `ibm-granite/granite-4.1-8b` | `ibm-granite/granite-4.1-8b` | 8.79 | 131 072 | $0.05 | $0.10 | 2026-05-04 | ✓ |
+| 6 | `poolside/laguna-xs-2.1` | `poolside/Laguna-XS-2.1` | 33.44 (MoE 3B-active) | 262 144 | $0.06 | $0.12 | 2026-07-02 | ✓ |
+| 7 | `tencent/hy3-preview` | `tencent/Hy3-preview` | 298.79 (MoE) | 262 144 | $0.063 | $0.21 | 2026-04-23 | ✓ |
+| 8 | `qwen/qwen3.5-flash-02-23` | (HF cross-ref not exposed) | n/a | 1 000 000 | $0.065 | $0.26 | n/a | needs re-probe |
+
+**Total cloud eval cost, full sweep:** to be sized once we know n_tasks × n_attempts × ctx window. Estimate: TB2.0 (89 tasks × ~1 attempt × ~30K ctx avg) + DeepSWE (113 tasks × 1 attempt) ≈ **$3–8** per model for the smoke sweep. The full TB2.0+DeepSWE+SWE-bench Verified sweep at 3 attempts per task lands in the **$30–80** range per model. The locked cloud baseline (8 models) → **~$240–640** for one full sweep.
+
+### 1.2 Self-hosted (loaded onto 3090 Ti, served by `pheno-serve-dev`)
+
+| # | Canonical HF repo | params_b | arch | ctx | HF last_modified | recency | disk | vRAM (BF16) |
+|---|---|---:|---|---:|---|---|---:|---:|
+| T0_drafter | `Qwen/Qwen3.5-0.8B` | 0.87 | image-text-to-text | (TBD) | 2026-03-02 | ✓ | ~1.8 GB | 1.8 GB |
+| T2_workhorse | `LiquidAI/LFM2.5-8B-A1B` | 8.47 | lfm2_moe (1B-active) | (TBD) | 2026-07-02 | ✓ | ~17 GB | ~17 GB (8.47B × 2) |
+| T3_mid_moe | `deepreinforce-ai/Ornith-1.0-9B` | 9.41 | qwen3_5-base MoE | (TBD) | 2026-06-25 | ✓ | ~19 GB | ~19 GB |
+
+**Notes on self-hosted:**
+
+- **`Qwen3.5-0.8B`** is `image-text-to-text` pipeline_tag, **not** `text-generation`. Many open-source engines expect the text-only variant; if `Qwen3.5-0.8B` doesn't run cleanly under SGLang's text path, fall back to the closest text-only sibling (TBD).
+- **`LiquidAI/LFM2.5-8B-A1B`** uses `hf_implementation: lfm2_moe` — needs an LFM2-MOE-aware backend. SGLang 0.5.2 + vLLM 0.20.0 may need a custom integration; if not, fall back to the text-only `LiquidAI/LFM2.5-8B` (non-MoE) variant if it exists.
+- **`Ornith-1.0-9B`** is officially tagged `qwen3_5` — it's a Qwen3.5-family model. The MTP-trained derivative `protoLabsAI/Ornith-1.0-9B-MTP-GGUF` exists for the spec-dec zoo eval.
+- **`Ornith is 9B, not 8B.** The user's "ornith 8b" reference is likely a casual memory of the family; the canonical base is 9B. No separate "8B" model exists in this lineage as of 2026-07-04.
+
+**Disk budget for 3 local models:** ~38 GB raw BF16 weights + ~2 GB safetensors metadata. Plus GGUF quantizations for the spec-dec eval (each ≈ 4–6 GB compressed) and AWQ/INT4 quants (each ≈ 3 GB). With all variants on disk: ~70–80 GB. D: has 528 GB free — comfortable.
+
+**vRAM reality:** Total resident vRAM if all three are loaded concurrently: ~38 GB BF16. Doesn't fit on a single 24 GB card. The default operational mode is **one model resident at a time**, with hot-swapping orchestrated by `pheno/model_manager.py`. Concurrent load possible only with quantization (Q4_0) — for the parallel agent sweep in `MODEL_MATRIX.md` §10, each agent loads `LFM2.5-8B-A1B-Q4_0` (~5 GB) and `Qwen3.5-0.8B-Q4_0` (always-on draft, ~1 GB).
+
+### 1.3 Routing chain (cloud)
+
+```
+forge-dev  ── HTTP/WS ──▶  omniroute-dev  ── OpenRouter API ──▶  {ling, granite, lfm, trinity, hy3, ...}
+                  ▲                                            ▲
+                  │                                            │
+                  └──── policy + cost cap + retry ◀──────────────┘
+```
+
+- `forge-dev` issues the agent loop and tool calls.
+- `omniroute-dev` enforces: per-model cost cap, retry policy, fallback chain, response-shape normalization.
+- OpenRouter is the upstream API for the 8 cloud baselines.
+- Local inference (3 self-hosted) is also reachable through `omniroute-dev` once `pheno-serve-dev` is up — the router treats it as a 9th model.
+
+## 2. March-2026 recency rule
+
+Added as **Rule #6** to ADR 0004. Full text in §6 of that document.
+
+Quick summary:
+
+1. **Default cutoff:** `HF last_modified >= 2026-03-01 UTC`. Below that = `recency_dlq` by default.
+2. **OR mirror exception:** if HF repo is fresh (≥ 2026-03-01) but OR `created` is pre-March, the model passes. The OR mirror is treated as a metadata view of the canonical HF weights.
+3. **Stale-both:** both pre-March AND not recently updated → `recency_dlq` + needs explicit user keep/drop with a deep-justification block.
+4. **Weekly re-scrape** regenerates the shortlist. Each entry has a `recency` field with a reason string. Reviewers read it; the field is required in the JSON.
+
+## 3. HF_TOKEN handling (security policy)
+
+Per `RISKS.md` §2 (secret leakage), the HF token provided in chat on 2026-07-04 is handled as follows:
+
+1. **Never stored on disk.** No file in `pheno-harness/` contains the token. Confirmed by grep.
+2. **Never logged.** The wrapper script `state/_round4_run.ps1` accepts the token as `args[0]`, sets `$env:HF_TOKEN` for the child Python process only, and immediately clears it after the process exits.
+3. **Never committed.** `.gitignore` will be updated to exclude `state/hf_scrape/*/secrets.*` even though no such file exists yet.
+4. **Rotated by user.** The token is the user's; rotation policy is the user's call. Forge does not rotate.
+5. **Scope.** Token used for `HfApi.list_models` + `HfApi.model_info` reads. No write/push operations invoked.
+
+## 4. Spec-dec zoo (added to matrix spec)
+
+The matrix spec (`docs/specs/003-model-engine-matrix.md`) §7 now covers the spec-dec frontier:
+
+- **EAGLE-2 / EAGLE-3** — vanilla self-speculative (vanilla & lookahead).
+- **Medusa** — head-based parallel candidates.
+- **PLD** — prompt lookup, draft-from-prompt.
+- **Lookahead decoding** — Jacobi-iteration based.
+- **MTP** — multi-token prediction trained-in. Live on `protoLabsAI/Ornith-1.0-9B-MTP-GGUF`.
+- **DSpark** — diffusion-based spec-dec (per user 2026-07-04: "dspark is a dflash-like diffusion speculative decoder").
+- **JetSpec** — jet-iteration spec-dec (per user).
+- **DDTree** — diffusion-decision-tree spec-dec (per user).
+- **Speculative-speculative** — "intentional double type, speculating all possible options rather than just 1 for a given token" (per user).
+
+Engines covered: SGLang (EAGLE, MTP, lookahead), vLLM (EAGLE, Medusa, lookahead, suffix-decoding, n-gram), TensorRT-LLM (EAGLE, MTP), llama.cpp (MTP-GGUF, PLD, lookahead).
+
+Pheno-harness picks **SGLang primary** for the EAGLE/MTP/Lookahead path. vLLM secondary for Medusa/PLD/cross-check. llama.cpp for the MTP-GGUF Ornith derivative (where SGLang/vLLM do not yet have native MTP support).
+
+## 5. b16 (BitNet b1.58) — NOT in scope
+
+The user noted that **b16 was never under consideration** and that I should have known this from corpus. Confirmed: b16/BitNet b1.58 does NOT appear in any of the locked picks (the TernaryBit path requires custom kernels that don't ship with SGLang 0.5.2 / vLLM 0.20.0, and the brief's 0.8B floor is well-served by `Qwen3.5-0.8B`). The 3090 Ti's VRAM is more efficiently used by BF16/AWQ-INT4 than by ternary quantization for our tier targets.
+
+This is documented here so a future agent does not re-raise the BitNet question.
+
+## 6. Decisions still pending user sign-off
+
+1. **`granite-4.0-h-micro`** — only cloud entry in `recency_dlq` (OR 2025-10-20, HF 2025-11-03). Keep with deep-justification, or drop?
+2. **`Qwen/Qwen3.5-0.8B` text-only variant** — verify `text-generation` sibling exists, or use the multimodal variant as-is.
+3. **Disk partition for `state/model_cache/`** — confirm D: or move to E: (NVMe, 1.36 TB free).
+4. **Sequencing: which model gets downloaded first** — recommendation: T2 workhorse `LiquidAI/LFM2.5-8B-A1B` (just-released 2026-07-02, most critical for the parallel-agent sweep), then T0 drafter `Qwen/Qwen3.5-0.8B`, then T3 mid-moe `deepreinforce-ai/Ornith-1.0-9B` + its MTP-GGUF derivative.
+
+## 7. References
+
+- `state/hf_scrape/2026-07-04/locked_shortlist.md` — full sign-off-ready shortlist (8 + 3 + derivatives + DLQ).
+- `state/hf_scrape/2026-07-04/locked_shortlist.json` — machine-readable version, re-generated by `state/hf_scrape/2026-07-04/persist_locked_shortlist.py`.
+- `state/hf_scrape/2026-07-04/round4_v2.out` — raw scrape output (OR + HF, 11 records).
+- `state/hf_scrape/2026-07-04/lm_probes.out` — last_modified probes (recency stamps).
+- `state/hf_scrape/2026-07-04/canonical_followups_v2.json` — owner-only flagships for the local 3.
+- `docs/adrs/0004-stale-sku-retrospective.md` — Rule #6 (March-2026 cutoff).
+- `docs/specs/003-model-engine-matrix.md` §7 — spec-dec zoo.
+- `docs/adrs/0002-risks-register.md` §2 — secret-handling rule.
+- `D:\koosh\Downloads\ChatGPT-Agent-Aware Speculative Decoding.md` — corpus anchor for spec-dec frontier.

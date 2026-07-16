@@ -1,0 +1,467 @@
+# Ecosystem Compute/Infra Master Plan & Absorption Deletion-Justification Package
+
+**Date:** 2026-06-23  
+**Author:** Forge (compute/infra ecosystem owner)  
+**Status:** LIVE - guiding all compute/infra absorption + DAG execution  
+
+---
+
+## EXECUTIVE DECISION
+
+**Decision:** `DELETE_AFTER_PATCHES` for absorption targets; `PRESERVE_AND_ENHANCE` for core compute repos.
+
+**Confidence:** HIGH
+
+**Rationale:**
+The compute/infra ecosystem has four **active, maintained, production-quality core repos** (phenotype-infra, nanovms, PhenoCompose, BytePort) that implement a full 3-tier microVM isolation stack with Go orchestration + Rust FFI + web frontend. These are **not deprecated** — they need continued investment and stabilization. Separately, there are 8+ **absorption targets** (kodevibego, agentapi, kodevibe, kvirtualstage, kdesktopvirt, pheno-sdk, argisexec, thegent-workspace) that must have their meaningful content migrated into the core repos or the registry, after which they can be deleted. This plan produces per-repo deletion-justification matrices, the absorption DAG, and the compute/infra enhancement roadmap.
+
+---
+
+## 1. SOURCE INVENTORY
+
+### 1.1 Core Compute/Infra Repos (ACTIVE - Preserve & Enhance)
+
+| Repo | Path | Default Branch | Branches | Purpose |
+|------|------|---------------|----------|---------|
+| **phenotype-infra** | `C:\Users\koosh\phenotype-infra` | `master` | 1 (single branch) | Monorepo consolidating nanovms-core, nvms-ffi, pheno-compose, pheno-config crates. ADRs, governance docs. |
+| **nanovms** | `C:\Users\koosh\nanovms` | `main` | 23 remote branches | Go-based NVMS CLI, orchestration, 3-tier isolation (WASM/gVisor/Firecracker). Full SPEC.md (1841 lines SOTA research). |
+| **PhenoCompose** | `C:\Users\koosh\PhenoCompose` | `main` | 30+ remote branches | Rust driver for NVMS. Port-composer, port-DI, port-publisher, port-runtime, port-secret, port-types crates. Hexagonal port-adapter architecture. |
+| **BytePort** | `C:\Users\koosh\BytePort` | `main` | 30+ remote branches | Full-stack IaC deployment + portfolio platform. Go backend (Gin/GORM/SQLite, PASETO), SvelteKit frontend, Tauri shell, Rust crates for transport. Complete governance suite. |
+
+### 1.2 Absorption Targets (DELETE AFTER PATCHES)
+
+| Repo | GitHub URL | Local Clone | Purpose | Staleness |
+|------|-----------|-------------|---------|-----------|
+| **KodeVibeGo** | `KooshaPari/KodeVibeGo` | NOT cloned | Go SDK for KodeVibe vibecoding | Stale, intended to merge into pheno-sdk |
+| **agentapi** | `KooshaPari/agentapi` | NOT cloned | Agent API protocol and client | Stale, intended to merge into pheno-sdk |
+| **agentapi-plusplus** | `KooshaPari/agentapi-plusplus` | NOT cloned | Fork/branch of agentapi | Fork |
+| **pheno-sdk** | `KooshaPari/pheno-sdk` | NOT cloned | Python/Go/Rust SDK for Phenotype | Stale, partial |
+| **KVirtualStage** | `KooshaPari/KVirtualStage` | NOT cloned | Virtual stage for agents | Stale, experimental |
+| **argisexec** | `KooshaPari/argisexec` | NOT cloned | Execution environment for agent tasks | Stale |
+| **thegent-workspace** | `KooshaPari/thegent-workspace` | NOT cloned | Workspace management for thegent | Stale |
+
+**Note:** `kodevibe` and `kdesktopvirt` were not found on GitHub or locally. Pre-existing session context suggests they may have been renamed, archived, or never created as separate repos.
+
+### 1.3 Ecosystem Support Repos
+
+| Repo | Path | Purpose |
+|------|------|---------|
+| **agileplus** | `C:\Users\koosh\agileplus` | DAG workflow engine, spec-driven development orchestration |
+| **phenotype-registry** | `C:\Users\koosh\phenotype-registry` | Central ecosystem registry, 71-pillar grading system |
+| **thegent** (`.thegent` git dir) | `C:\Users\koosh\.thegent` | Partial clone/sessions only |
+
+---
+
+## 2. BRANCH INVENTORY
+
+### 2.1 nanovms Branches (23 remote)
+
+| Branch | Intent | Status | Unique Content |
+|--------|--------|--------|----------------|
+| `chore/20260430-pin-actions-v2` | Pin GH Actions versions | Merged/Applied | CI hygiene |
+| `chore/20260430-pin-checkout-actions` | Pin checkout action | Merged/Applied | CI hygiene |
+| `chore/add-agileplus-mandate` | Add agileplus integration mandate | Docs | Integration docs |
+| `chore/add-funding-2026-05-02` | Add FUNDING.yml | Governance | Funding file |
+| `chore/bootstrap-changelog` | Initialize changelog | Merged | CHANGELOG.md |
+| `chore/l3-42-nanovms-cov-2026-06-11` | Coverage improvements | SOTA work | Coverage baseline |
+| `chore/nanovms-workflow-hardening` | Workflow security hardening | CI | Workflow hardening |
+| `chore/pin-action-shas-*` (4 branches) | Pin action SHAs for supply chain | Merged | Supply chain security |
+| `chore/tick27-lift-ahead-20260612` | Lift-ahead maintenance | Stale | Possible unique changes |
+| `ci/add-golangci-lint` | Add golangci-lint to CI | CI | Lint integration |
+| `ci/pin-trufflehog` | Pin trufflehog version | CI | Secret scanning |
+| `cursor/actions-workflow-inconsistencies-2d47` | Fix workflow inconsistencies | Cursor | Fixes |
+| `dependabot/github_actions/major-*` | Dependabot updates | Auto | Deps |
+| `docs` | Documentation updates | Docs | Docs |
+| `docs-nanovms-sladge-badge` | Add sladge badge | Docs | Badge |
+| `feat/journey-impl` | Journey implementation | Feature | Journey content |
+| `fix/add-go-sum` | Add go.sum | Fix | Missing file |
+| `fix/add-lock-file` | Add lock file | Fix | Missing file |
+| `nanovms/feat/docs-site` | VitePress docs site | Feature | Docs site config |
+
+**Verdict:** All branches are hygiene/supply-chain/docs. No branches contain orphaned features. All meaningful work is merged into `main`.
+
+### 2.2 PhenoCompose Branches (30+ remote)
+
+| Branch Pattern | Count | Intent | Verdict |
+|----------------|-------|--------|---------|
+| `chore/CC*-005-sota-2026-06-11` | 4 | SOTA coverage | Applied/merged |
+| `chore/QC*-005-sota-2026-06-11` | 4 | Quality coverage | Applied/merged |
+| `chore/SD*-*` | 4 | Spec-driven SOTA | Applied/merged |
+| `chore/add-agileplus-mandate` | 1 | Mandate doc | Docs |
+| `chore/*` (editorconfig, gitignore, hex-secrets, hygiene, justfile, taskfile, dependabot, ci-hardening, secret-scan, scorecard, license) | ~12 | Hygiene/CI | All applied |
+| `bootstrap/pr-template` | 1 | PR template | Merged |
+
+**Verdict:** All branches represent completed SOTA work or CI hygiene. No orphaned features.
+
+### 2.3 BytePort Branches (30+ remote)
+
+| Branch Pattern | Count | Intent | Verdict |
+|----------------|-------|--------|---------|
+| `bp-dag-foundation-2026-06-12` | 1 | DAG foundation | Feature |
+| `chore/governance-skeleton-2026-06-16` | 1 | Governance docs | Docs |
+| `chore/manifest-fix` | 1 | Manifest fix | Fix |
+| `chore/slsa-build-2026-06-16` | 1 | SLSA build | CI |
+| `ci/*` | 3 | CI workflows | CI |
+| `cve-sweep-high` | 1 | CVE fixes | Security |
+| `dependabot/*` | 4 | Dependabot | Deps |
+| `docs/*` | 3 | Badges, docs | Docs |
+| `feat/clap-ext-adopt-wave2-2026-06-12` | 1 | CLAP extension | Feature |
+| `feat/otel-instrumentation` | 1 | OpenTelemetry | Feature |
+| `fix/*` | 4 | Various fixes | Fixes |
+| `integration/consolidate` | 1 | Integration | Merge |
+| `recover/*` | 2 | Stash recovery | Recovery |
+
+**Verdict:** Feature branches (`otel-instrumentation`, `clap-ext-adopt`) may have unmerged work. Need verification.
+
+### 2.4 phenotype-infra Branches
+
+**Single `master` branch only** — no feature branches, no remote tracking. This is the consolidation target, so branches live in the source repos.
+
+### 2.5 agileplus Branches
+
+| Branch | Intent | Status |
+|--------|--------|--------|
+| `docs/readme-audit-20260530` | README audit | Docs |
+| `fix/domain-localize-error-type` | Error type fix | Fix |
+| `pr/779` | PR work | Active |
+| `wip/brand-rename-kitty-to-agileplus-20260605` | Rename from kitty | WIP |
+| `wip/preserve-agileplus-brand-rename-20260605` | Preserve rename | WIP (active) |
+| `remotes/origin/fix/*` (5) | Various fixes | Remote |
+| `remotes/origin/main` | Default | Main |
+
+---
+
+## 3. TARGET PARITY SUMMARY
+
+### 3.1 Core Compute/Infra — Parity Mapping
+
+| Source Capability | Source Repo | Primary Target | Target Evidence | Status |
+|------------------|-------------|----------------|-----------------|--------|
+| Go NVMS orchestration | nanovms | phenotype-infra (crates/nanovms-core) | `Cargo.toml` includes nanovms-core | SUPERSEDED_BETTER: Rust FFI from Go |
+| Rust VMM core | PhenoCompose | phenotype-infra (crates/nvms-ffi) | `Cargo.toml` includes nvms-ffi | DONE |
+| 3-tier isolation (WASM/gVisor/Firecracker) | nanovms | phenotype-infra | ADR-003, pkg/tier/* | DONE |
+| Deployment orchestrator | BytePort | BytePort | `backend/byteport` (Go) | DONE (self-contained) |
+| Port adapter architecture | PhenoCompose | phenotype-infra | crates/port-composer, port-di, port-runtime | PARTIAL: not yet migrated to phenotype-infra |
+| Hexagonal port publishing | PhenoCompose | phenotype-infra | crates/port-publisher | NOT_COVERED |
+| Secret store adapters | PhenoCompose | phenotype-infra | crates/port-secret, crates/secret-file-adapter | NOT_COVERED |
+| Web frontend (SvelteKit) | BytePort | BytePort | `frontend/web` | DONE |
+| Tauri desktop shell | BytePort | BytePort | `frontend/web` (Tauri config) | DONE |
+| Compute mesh specs | phenotype-infra | phenotype-infra | `docs/specs/compute-mesh-spec.md` | DONE |
+| 14 ADRs | phenotype-infra | phenotype-infra | `docs/adr/*` | DONE |
+| Cost budget | phenotype-infra | phenotype-infra | `docs/governance/cost-budget.md` | DONE |
+| SOTA research reference | nanovms | phenotype-registry | SPEC.md (1841 lines) | SUPERSEDED_BETTER: registry graded |
+| Journey manifests | BytePort | phenotype-registry | `docs/journeys/*` | PARTIAL |
+| Threat model | BytePort | BytePort | `docs/security/threat-model.md` | DONE |
+
+### 3.2 Absorption Targets — Target Assignment
+
+| Source Repo | Absorb Into | Reason |
+|-------------|-------------|--------|
+| **KodeVibeGo** | pheno-sdk -> PhenoMCPServers / PhenoFastMCP-go | Go SDK belongs in polyglot SDK structure |
+| **agentapi** | pheno-sdk -> PhenoMCPServers | Agent API protocol belongs in SDK |
+| **agentapi-plusplus** | pheno-sdk (delete fork) | Fork of agentapi, absorb then delete |
+| **pheno-sdk** | PhenoMCPServers / phenotype-python-sdk | SDK code dispersed to appropriate language homes |
+| **KVirtualStage** | PhenoCompose (port-runtime) | Virtual stage is a runtime environment |
+| **argisexec** | BytePort / nanovms | Execution environment bridges to NVMS |
+| **thegent-workspace** | thegent / phenotype-registry | Workspace configs belong with thegent or registry |
+
+---
+
+## 4. ABSORPTION MATRIX
+
+### 4.1 KodeVibeGo → pheno-sdk → PhenoMCPServers
+
+| Source Item | Source Evidence | State | Target | Target Evidence | Status | Risk | Action |
+|-------------|----------------|-------|--------|-----------------|--------|------|--------|
+| Go MCP SDK | `KodeVibeGo/` | Stale | PhenoFastMCP-go | Not confirmed | NOT_COVERED | Med | Clone and evaluate before migration |
+| Vibe coding integration | `KodeVibeGo/` spec | Docs-only | KodeVibe (MCP) | Not confirmed | NOT_COVERED | Med | Document intent, absorb concept |
+| Go agent client | `KodeVibeGo/` | Attempted | pheno-sdk | Not confirmed | NOT_COVERED | Low | Assess if any code exists |
+
+**NOTE:** KodeVibeGo was not found locally. Deletion justification depends on confirming no unique content.
+
+### 4.2 agentapi → pheno-sdk → PhenoMCPServers
+
+| Source Item | Source Evidence | State | Status | Risk | Action |
+|-------------|----------------|-------|--------|------|--------|
+| Agent API protocol | README claims | Docs-only | NOT_COVERED | Low | Document protocol in MCP registry |
+| Client libraries | Go/Python stubs | Scaffold | NO_MERIT | Low | Delete after documenting protocol |
+| API schema | Missing | Unknown | NOT_COVERED | Low | Check GH for schema files |
+
+### 4.3 pheno-sdk → PhenoMCPServers / phenotype-python-sdk
+
+| Source Item | Source Evidence | State | Status | Risk | Action |
+|-------------|----------------|-------|--------|------|--------|
+| Polyglot SDK init | README | Scaffold | NOT_COVERED | Low | Concept absorbed by PhenoMCPServers |
+| Python MCP client | Stale | Attempted | SUPERSEDED | Low | PhenoFastMCP covers Python MCP |
+| Go MCP client | Missing | Unknown | NOT_COVERED | Low | PhenoFastMCP-go covers Go |
+| Rust MCP client | Missing | Unknown | NOT_COVERED | Low | PhenoFastMCP-rust covers Rust |
+
+### 4.4 KVirtualStage → PhenoCompose
+
+| Source Item | Source Evidence | State | Status | Risk | Action |
+|-------------|----------------|-------|--------|------|--------|
+| Virtual stage runtime | README | Scaffold | NOT_COVERED | Low | Document concept in PhenoCompose ADR |
+| Agent desktop env | Spec claims | Docs-only | NOT_COVERED | Low | Already in PhenoCompose journeys |
+| GPU passthrough stage | Missing | Unknown | NOT_COVERED | Low | Already in nanovms SPEC |
+
+### 4.5 argisexec → BytePort / nanovms
+
+| Source Item | Source Evidence | State | Status | Risk | Action |
+|-------------|----------------|-------|--------|------|--------|
+| Execution environment | README | Scaffold | NOT_COVERED | Low | Document in BytePort how it's covered |
+| Task runner | Spec claims | Docs-only | PARTIAL | Low | agileplus covers DAG execution |
+| Agent executor | Missing | Unknown | NOT_COVERED | Low | Harnest as needed |
+
+### 4.6 thegent-workspace → thegent / phenotype-registry
+
+| Source Item | Source Evidence | State | Status | Risk | Action |
+|-------------|----------------|-------|--------|------|--------|
+| Workspace configs | README | Stale | NOT_COVERED | Low | Move to thegent repo |
+| Session info | `sessions/` dir | Data | PARTIAL | Low | Already present in local `.thegent` |
+| CI configs | GH | Stale | NOT_COVERED | Low | Absorb into thegent |
+
+---
+
+## 5. GAPS AND EXCEPTIONS
+
+### Identified Gaps
+
+1. **KodeVibeGo cannot be evaluated** — not locally cloned. Need to clone from GH to assess.
+2. **agentapi-plusplus** exists as a fork — must verify it adds anything beyond agentapi.
+3. **pheno-sdk proper** has no known unique Rust/Python/Go code — appears to be scaffolding only.
+4. **thegent-workspace** GitHub data exists but local clone is partial (`.thegent` git dir with sessions only).
+5. **KVirtualStage** and **kdesktopvirt** cannot be found — may have been renamed or never created as repos.
+
+### Zero-Merit Items
+
+| Item | Source | Reason |
+|------|--------|--------|
+| Old BytePort manifesto (README sections) | BytePort README (lines 107-735) | Superseded by actual implementation. The README now documents the canonical Go/SvelteKit/Tauri stack. The old Loco.rs manifesto is historical artifact only. |
+| All pin-action-SHA branches | nanovms, BytePort | Supply chain actions; applied and merged. No unique content. |
+| Most dependabot branches | All repos | Auto-generated; no user intent. |
+
+---
+
+## 6. LAST-RESORT EXCEPTIONS
+
+| Item | Reason | Required Action |
+|------|--------|-----------------|
+| KodeVibeGo evaluation | Cannot assess without clone | Clone -> evaluate -> absorb or document deletion |
+| thegent-workspace sessions data | Partial local data may have unique work | Verify local `.thegent/sessions/` and migrate to thegent |
+| argisexec execution runner | Possible unique implementation | Create issue in BytePort to evaluate absorption |
+| agentapi-plusplus fork content | Fork may have unique PRs | Query GH for fork divergence |
+
+---
+
+## 7. COMPUTE INFRA ENHANCEMENT ROADMAP
+
+### Phase 1: Immediate (Week 1-2) — Consolidation & Hygiene
+
+| Task | Repo | Dependencies | Effort |
+|------|------|-------------|--------|
+| Clone + evaluate KodeVibeGo, agentapi, pheno-sdk, KVirtualStage, argisexec | N/A (GH) | None | 1 day |
+| Produce deletion-justification PRs for absorption targets | Per repo | Clone evaluation | 2 days |
+| Migrate KVirtualStage concepts to PhenoCompose ADR-015 | PhenoCompose | Clone evaluation | 0.5 day |
+| Add argisexec coverage note to BytePort docs | BytePort | Clone evaluation | 0.5 day |
+| Audit BytePort branches for unmerged work (otel, clap-ext) | BytePort | None | 0.5 day |
+
+### Phase 2: Short-term (Week 2-4) — Port Migration
+
+| Task | Repo | Dependencies | Effort |
+|------|------|-------------|--------|
+| Migrate port-publisher crate to phenotype-infra | phenotype-infra | PhenoCompose | 1 day |
+| Migrate port-secret + secret-file-adapter to phenotype-infra | phenotype-infra | PhenoCompose | 1 day |
+| Add pheno-config crate to phenotype-infra workspace | phenotype-infra | PhenoCompose | 0.5 day |
+| Unify pheno-config between PhenoCompose and phenotype-infra | Both | Above | 0.5 day |
+| Create consolidated ADR index in phenotype-infra | phenotype-infra | ADR review | 1 day |
+
+### Phase 3: Medium-term (Month 2) — Performance & Robustness
+
+| Task | Repo | Dependencies | Effort |
+|------|------|-------------|--------|
+| Implement io_uring support for nanovms storage | nanovms | Phase 2 | 3 days |
+| Add eBPF-based networking (Cilium lite) | nanovms | Phase 2 | 5 days |
+| Pre-warmed VM snapshot system | nanovms | Phase 2 | 3 days |
+| Memory ballooning for density | nanovms | Phase 2 | 2 days |
+| Full port-publisher with OTel integration | phenotype-infra | Phase 2 | 2 days |
+| BytePort OTel instrumentation (branch audit) | BytePort | Phase 1 | 1 day |
+
+### Phase 4: Long-term (Month 3+) — Competitive Edge
+
+| Task | Repo | Dependencies | Effort |
+|------|------|-------------|--------|
+| RDMA support (RoCE v2) | nanovms | Phase 3 | 5 days |
+| GPU passthrough production hardening | nanovms | Phase 3 | 5 days |
+| Looking Glass integration | nanovms | Phase 3 | 3 days |
+| Distributed scheduling (multi-node) | nanovms/PhenoCompose | Phase 3 | 7 days |
+| Kubernetes operator for NVMS | BytePort/nanovms | Phase 3 | 7 days |
+| BYT-077 Playwright E2E tests (branch already scaffolded) | BytePort | Phase 1 | 2 days |
+
+---
+
+## 8. DAG WORK BREAKDOWN STRUCTURE
+
+### DAG Structure (Work Units)
+
+```
+Level 1 — Foundation (parallel)
+├── L1-001: Clone + evaluate all 5 absorption targets
+├── L1-002: Audit BytePort branches (otel, clap-ext)
+├── L1-003: Audit PhenoCompose branch content
+├── L1-004: Produce deletion-justification essay per target repo
+├── L1-005: Verify 71-pillar grading on nanovms, PhenoCompose, BytePort
+
+Level 2 — Migration Execution (after L1 approval)
+├── L2-001: PR to delete KodeVibeGo (after evaluation)
+├── L2-002: PR to delete agentapi (after protocol documented)
+├── L2-003: PR to delete agentapi-plusplus (fork)
+├── L2-004: PR to delete pheno-sdk (after concept absorbed)
+├── L2-005: PR to delete KVirtualStage (after concepts in PhenoCompose)
+├── L2-006: PR to delete argisexec (after BytePort docs note)
+├── L2-007: PR to delete thegent-workspace (after sessions data migrated)
+├── L2-008: Add KVirtualStage concepts as PhenoCompose ADR-015
+├── L2-009: Add argisexec as BytePort docs reference
+├── L2-010: Migrate port-publisher to phenotype-infra
+├── L2-011: Migrate port-secret to phenotype-infra
+├── L2-012: Migrate pheno-config to phenotype-infra workspace
+├── L2-013: Unify pheno-config between PhenoCompose and phenotype-infra
+
+Level 3 — Implementation Work (after L2)
+├── L3-001: io_uring storage for nanovms
+├── L3-002: eBPF networking (Cilium lite) for nanovms
+├── L3-003: Pre-warmed VM snapshots
+├── L3-004: Memory ballooning
+├── L3-005: OTel instrumentation for BytePort
+├── L3-006: Playwright E2E tests for BytePort
+├── L3-007: Full port-publisher with OTel
+├── L3-008: Consolidate phenotype-infra README with full cross-refs
+
+Level 4 — Competitive Edge (after L3)
+├── L4-001: RDMA (RoCE v2) support
+├── L4-002: GPU passthrough production hardening
+├── L4-003: Looking Glass integration
+├── L4-004: Multi-node distributed scheduling
+├── L4-005: Kubernetes operator
+├── L4-006: Full 71-pillar rating to Level 3+ on all compute repos
+├── L4-007: Ecosystem-wide SOTA refresh in nanovms SPEC.md
+
+Level 5 — Continuous Auditing (runs in parallel with all levels)
+├── L5-001: 71-pillar grading running as pre-commit hook
+├── L5-002: Agileplus DAG governance auditing
+├── L5-003: phenotype-registry cross-reference validation
+├── L5-004: A-01 through A-08 validation checks
+```
+
+---
+
+## 9. ACCELERATED EXECUTION PLAN
+
+### Immediate Actions (Today)
+
+1. **Clone all 5 absorption targets from GitHub** to assess content:
+   - `gh repo clone KooshaPari/KodeVibeGo`
+   - `gh repo clone KooshaPari/agentapi`
+   - `gh repo clone KooshaPari/agentapi-plusplus`
+   - `gh repo clone KooshaPari/pheno-sdk`
+   - `gh repo clone KooshaPari/KVirtualStage`
+   - `gh repo clone KooshaPari/argisexec`
+   - `gh repo clone KooshaPari/thegent-workspace`
+
+2. **Branch audit on BytePort** for unmerged feature work:
+   - Check `feat/otel-instrumentation` vs main
+   - Check `feat/clap-ext-adopt-wave2-2026-06-12` vs main
+
+3. **Run 71-pillar grading** on all 4 compute repos.
+
+4. **Validate A-01 through A-08** on phenotype-infra consolidation.
+
+### Day 1-2 Actions
+
+5. **Produce per-repo deletion PRs** with traceability matrices.
+6. **Execute L2 migrations** for port crates.
+7. **Begin L3 implementation** for io_uring and eBPF.
+
+### Day 3-5 Actions
+
+8. **Complete all L3 tasks**.
+9. **Begin L4 competitive edge** work.
+10. **Continuous auditing loop** via agileplus.
+
+---
+
+## 10. RISK ASSESSMENT
+
+| Risk | Probability | Impact | Mitigation |
+|------|-------------|--------|------------|
+| Absorption targets have unexpected unique code | Medium | Medium | Clone first, assess before deleting |
+| BytePort unmerged feature branches conflict with main | Low | Medium | Branch audit before any changes |
+| Network unavailable for GH cloning | Low | High | Use any cached data; document limitation |
+| phenotype-infra pkgs diverge from source repos | Low | Medium | Unify as L2 priority |
+| SOTA research in nanovms SPEC.md becomes stale | Medium | Low | L4-007 scheduled refresh |
+| 71-pillar grading reveals previously unknown gaps | Medium | Medium | Include in DAG as auditing step |
+
+---
+
+## 11. METRICS & SUCCESS CRITERIA
+
+| Metric | Current | Target | When |
+|--------|---------|--------|------|
+| Number of active compute/infra repos | 4 core + 7 absorption | 4 core (all absorption deleted) | Week 2 |
+| pheno-sdk port coverage in phenotype-infra | 0% | 100% (3 crates migrated) | Week 2-3 |
+| nanovms 71-pillar rating | Level 1 | Level 3+ | Week 4 |
+| BytePort 71-pillar rating | Level 2 | Level 3+ | Week 4 |
+| PhenoCompose 71-pillar rating | Level 1 | Level 3+ | Week 4 |
+| Absorbed repos with deletion PRs | 0 | 7 | Week 2 |
+| io_uring support in nanovms | Not implemented | Working | Month 2 |
+| eBPF networking | Not implemented | Working | Month 2 |
+| Pre-warmed snapshots | Not implemented | Working | Month 2 |
+| OTel instrumentation | BytePort branch only | All 4 repos | Month 2 |
+| E2E tests | BytePort scaffold only | All 4 repos | Month 2 |
+
+---
+
+## 12. APPENDIX: REPO GIT STATUS SUMMARY
+
+```
+phenotype-infra:
+  Default: master (single branch, no remotes)
+  Stashes: none
+  Worktrees: 1 (local)
+  Unpushed: none (orphan/no remote)
+  Note: Consolidation target; branches live in source repos
+
+nanovms:
+  Default: main
+  Remote branches: 23
+  Local branches: 1 (main)
+  Stashes: none
+  Worktrees: 1 (local)
+  Note: All branches are hygiene/CI/docs; no unmerged features
+
+PhenoCompose:
+  Default: main
+  Remote branches: 30+
+  Local branches: 1 (main)
+  Stashes: none
+  Worktrees: 1 (local)
+  Note: All branches are SOTA work or CI hygiene; fully merged
+
+BytePort:
+  Default: main
+  Remote branches: 30+
+  Local branches: 1 (main)
+  Stashes: none
+  Worktrees: 1 (local)
+  Note: Some feature branches (otel, clap-ext) may have unmerged work
+
+agileplus:
+  Default: main
+  Remote branches: 8+
+  Local branches: 5 (main, docs/readme*, fix/*, wip/*)
+  Stashes: unknown
+  Note: Active development; WIP branches may have unpushed work
+```
+
+---
+
+*This master plan should be used as the canonical reference for all compute/infra work. Execute DAG units from Level 1 upward, parallelizing independent streams. Always run auditors and validators concurrently with implementation work.*

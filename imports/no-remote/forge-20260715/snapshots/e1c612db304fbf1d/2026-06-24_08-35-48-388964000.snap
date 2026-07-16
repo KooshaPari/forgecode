@@ -1,0 +1,4 @@
+@echo off
+cd /d C:\Users\koosh\Civis
+cargo check --workspace --offline --message-format short > _check_out.log 2> _check_err.log
+echo EXIT=%ERRORLEVEL% > _check_done.txt

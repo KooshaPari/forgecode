@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Consolidate autofix worktree info per repo."""
+import json
+import subprocess
+from pathlib import Path
+
+REPOS = ["eyetracker", "eventra", "configra", "benchora", "authvault", "quillr"]
+
+# Repo root → list of (worktree_path, branch)
+def list_wt(repo_root: str):
+    p = subprocess.run(["git", "-C", repo_root, "worktree", "list", "--porcelain"],
+                       capture_output=True, text=True, timeout=10)
+    if p.returncode != 0:
+        return []
+    wts, cur = [], {}
+    for line in p.stdout.splitlines():
+        if line.startswith("worktree "):
+            if cur: wts.append(cur); cur = {}
+            cur["path"] = line[len("worktree "):]
+        elif line.startswith("HEAD "):
+            cur["head"] = line[len("HEAD "):]
+        elif line.startswith("branch "):
+            cur["branch"] = line[len("branch "):]
+    if cur: wts.append(cur)
+    return wts
+
+
+def is_autofix(branch: str) -> bool:
+    if not branch:
+        return False
+    b = branch.lower()
+    return any(t in b for t in ["ci-red", "ci-fix", "deny-fix", "docs-fix", "fix/ci", "fix/rustfmt", "rust-v2"])
+
+
+# Map: repo -> list of {path, branch, autofix}
+result = {}
+
+# Main clones
+for r in REPOS:
+    candidates = [
+        Path(fr"C:\Users\koosh\Dev\{r}"),
+        Path(fr"C:\Users\koosh\pheno\{r}"),
+        Path(fr"C:\Users\koosh\{r}"),
+    ]
+    repo_roots = [str(c).lower().replace("\\", "/") for c in candidates if c.is_dir()]
+    seen = set()
+    entries = []
+    for cand in candidates:
+        if not cand.is_dir():
+            continue
+        for wt in list_wt(str(cand)):
+            path = wt["path"]
+            norm = path.lower().replace("\\", "/")
+            # Only include paths that live directly under one of our repo roots,
+            # not under parent dirs (e.g. C:/Users/koosh/pheno itself).
+            if not any(norm == root or norm.startswith(root + "/") for root in repo_roots):
+                continue
+            if norm in seen:
+                continue
+            seen.add(norm)
+            entries.append({
+                "path": path,
+                "branch": wt.get("branch", ""),
+                "head": wt.get("head", ""),
+                "autofix": is_autofix(wt.get("branch", "")),
+            })
+    result[r] = entries
+
+# authvault-cve-13RjMo (non-git)
+result["authvault_cve_13RjMo_snapshot"] = [{
+    "path": r"C:\Users\koosh\authvault-cve-13RjMo",
+    "branch": "(non-git snapshot)",
+    "head": "",
+    "autofix": True,
+    "note": "loose directory named authvault-cve-13RjMo; not a git worktree",
+}]
+
+# Print
+print(json.dumps(result, indent=2))
+Path(r"C:\Users\koosh\_pr_state\_autofix_worktrees.json").write_text(json.dumps(result, indent=2), encoding="utf-8")

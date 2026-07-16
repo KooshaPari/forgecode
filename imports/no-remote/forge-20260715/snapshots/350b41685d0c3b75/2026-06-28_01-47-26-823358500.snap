@@ -1,0 +1,88 @@
+# -- Tracera Helm values (default; override per environment) --
+
+replicaCount: 1
+
+# Autoscaling defaults (used by templates/tracera.yaml)
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
+image:
+  repository: ghcr.io/kooshapari/tracera
+  pullPolicy: IfNotPresent
+  tag: "v0.1.0-native-exe"
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: LoadBalancer
+  port: 38123
+  targetPort: 38123
+  nodePort: 30123
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: tracera.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+persistence:
+  enabled: true
+  size: 10Gi
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+
+env:
+  - name: TRACERA_PORT
+    value: "38123"
+  - name: RUST_LOG
+    value: "info"
+  - name: DATA_DIR
+    value: /data
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 38123
+  initialDelaySeconds: 10
+  periodSeconds: 15
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 38123
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+# Desktop-as-backend-server: bind to host network namespace for low-latency
+hostNetwork: false
+dnsPolicy: ClusterFirst
+
+# Annotations for desktop deployment (single-node kind/k3s clusters)
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "38123"
+  prometheus.io/path: "/metrics"

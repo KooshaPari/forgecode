@@ -1,0 +1,75 @@
+# OmniRoute Step-1: Vibeslop → Robust
+
+**Branch:** `koosha/step-1-bun-ts7-bifrost`
+**Date:** 2026-06-25
+**Status:** IN PROGRESS (scaffold done; verify pending)
+
+## Goal
+Replace Next.js 16.2 + React 19.2 + TS 6 stack with **bun + hono + tsgo (TS 7 native) + bifrost** as the LLM routing base. Add **uv + Python 3.14** for any py-side work (discovery microservices).
+
+## Stack swap
+
+| From | To |
+|---|---|
+| Next.js 16.2 | hono on bun |
+| React 19.2 routing | server-side hono routes |
+| TypeScript 6 (tsc) | TS 7 native preview (`tsgo`) |
+| Vitest | bun test |
+| Ad-hoc provider code | `@maximhq/bifrost` |
+| npm scripts | bun scripts |
+| No Python | uv + pyproject.toml + .python-version (py 3.14) |
+
+## Files added (this PR)
+
+- `src/server.ts` — bun + hono entrypoint with /health, /v1/chat/completions, /v1/models, /discovery/*
+- `src/bifrost/index.ts` — bifrost registry (16+ providers), /v1/models, /v1/chat/completions bridge
+- `src/bifrost/sse.ts` — SSE streaming multiplexer for bifrost
+- `src/discovery/providers.ts` — provider health checker (parallel HEAD probes)
+- `src/discovery/index.ts` — /discovery/providers, /discovery/scan routes
+- `pyproject.toml` — uv-managed py 3.14 deps (httpx, fastapi, pydantic)
+- `.python-version` — `3.14`
+- `tsconfig.json` — TS 7 native preview config
+
+## Files preserved (not deleted)
+
+- `app/` → moved to `legacy/app/`
+- `pages/` → moved to `legacy/pages/`
+- `next.config.js`, `next-env.d.ts` → moved to `legacy/`
+- `components/`, `src/lib/`, `src/app/` → preserved as reference for step-2 parity
+
+## Existing work folded in
+
+- `issue-4595-bifrost-stream` WT (commit `37259d607 fix(api): finalize bifrost streaming usage on close`) → brought in as bifrost SSE module
+- Sprint WTs (PR-006 OTel, PR-007 cost, PR-008 alerts, PR-009 health, PR-010 collector, PR-011 SRE CI, PR-012 budget, PR-013 chaos, PR-014 deps, PR-015 SBOM) → step-2 carries these forward
+
+## Verification
+
+- [ ] `bun install` succeeds
+- [ ] `bun run typecheck` (tsgo) passes 0 errors
+- [ ] `bun test` passes existing suite (or documents what was moved)
+- [ ] `bun run build` → `dist/server.js`
+- [ ] `bun run start` serves `/health` 200
+- [ ] `curl /v1/models` returns 16+ providers
+- [ ] `curl /discovery/providers` returns live health report
+
+## Decision: why TS7-native over Rust/Zig
+
+Rust/Zig bases were considered (for the core LLM router). Tradeoff:
+
+- **TS7-native:** native-preview speed (~10x tsc), keeps bun ecosystem, bifrost is already TS-native, fast iteration
+- **Rust core:** ~3x faster per request, but build pipeline complexity (cargo + NAPI), kills bun-only stack purity
+- **Zig:** similar to Rust for performance, even less mature ecosystem for HTTP/SSE
+
+**Decision:** TS7-native for step-1, evaluate Rust NAPI addon for hot paths in step-3 if profiling shows it's worth the build cost.
+
+## Step-2 (deferred)
+
+- Port `UNLIMITED_LLM_ACCESS.md` provider catalog → bifrost registry expansion
+- Port `DISCOVERY_TOOL_DESIGN.md` → Python FastAPI microservice (uv + py 3.14)
+- Carry sprint WT PR-006..PR-014 work forward as QOL/observability layer
+
+## Step-3 (deferred)
+
+- QOL / Optimization / Extensibility polishes
+- Optional Rust core via NAPI if profiling shows bottleneck
+- bun-native binary distribution (compile to single binary)

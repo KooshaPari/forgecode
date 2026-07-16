@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Add 3 disposition rows + 1 paperwork ledger row for the consolidation."""
+import json
+from pathlib import Path
+
+SRC = Path(r"C:\Users\koosh\disp_index_raw.json")
+OUT = Path(r"C:\Users\koosh\disp_index_new.json")
+
+d = json.load(open(SRC, encoding="utf-8"))
+rows = d["rows"]
+
+# 3 new disposition rows
+new_rows = [
+    {
+        "id": "repo-phenoRouterMonitor",
+        "path": "KooshaPari/phenoRouterMonitor",
+        "disposition": "ABSORBED",
+        "target": "KooshaPari/phenoAI/crates/llm-router",
+        "wave": "P5-4",
+        "fsm": "done",
+        "adr": "ADR-ECO-014-phenoroutermonitor-absorption",
+        "relocated_date": "2026-06-21",
+        "note": "Router + Streamlit absorbed to phenoAI/crates/llm-router; repo archived 2026-06-21 per docs/operations/p5-4-phenoroutermonitor-absorption-2026-06-20.md",
+    },
+    {
+        "id": "repo-PhenoProject",
+        "path": "KooshaPari/PhenoProject",
+        "disposition": "ARCHIVED",
+        "target": "KooshaPari/phenotype-registry",
+        "wave": "P5-4",
+        "fsm": "done",
+        "adr": "ADR-ECO-014-surface-reduction",
+        "relocated_date": "2026-06-21",
+        "note": "Dependabot-only activity, no PRs since 2026-04; boundary docs migrated to phenotype-registry/registry/; archived 2026-06-21",
+    },
+    {
+        "id": "repo-thegent-sharecli",
+        "path": "KooshaPari/thegent-sharecli",
+        "disposition": "DEPRECATED-MERGED",
+        "target": "KooshaPari/sharecli",
+        "wave": "P5-4",
+        "fsm": "done",
+        "adr": "ADR-ECO-014-sharecli-canonical",
+        "relocated_date": "2026-06-21",
+        "note": "DEPRECATED duplicate of sharecli (per repo description); content (SPEC, PLAN, GEMINI, TEST_COVERAGE_MATRIX) superseded by sharecli 27-file strict superset; repo archived 2026-06-21",
+    },
+    {
+        "id": "gate-thegent-sharecli",
+        "path": "KooshaPari/thegent-sharecli",
+        "disposition": "DELETE-eligible",
+        "target": "KooshaPari/sharecli",
+        "wave": "P5-4",
+        "fsm": "done",
+        "relocated_date": "2026-06-21",
+        "note": "3 open PRs (GEMINI.md mirror, phase3 spec, orch-v12 governance) closed obsolete 2026-06-21; sharecli is canonical",
+    },
+]
+
+rows.extend(new_rows)
+d["rows"] = rows
+d["_paperwork_audit"] = {
+    "session": "consolidation-2026-06-21",
+    "added": [r["id"] for r in new_rows],
+    "repos_archived": [
+        "KooshaPari/thegent-sharecli",
+        "KooshaPari/phenoRouterMonitor",
+        "KooshaPari/PhenoProject",
+    ],
+    "open_prs_closed": [
+        "KooshaPari/thegent-sharecli#9",
+        "KooshaPari/thegent-sharecli#11",
+        "KooshaPari/thegent-sharecli#12",
+        "KooshaPari/phenoRouterMonitor#634",
+    ],
+    "policy": "ADR-ECO-014 — archive-only, never delete with live git deps, mandatory fleet re-scan",
+    "fleet_rescan_post_consolidation": "zero phenoShared / Pyron / phenoRouterMonitor / phenoAI-sharecli cross-refs in any org Cargo.toml",
+}
+
+json.dump(d, open(OUT, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
+print(f"wrote {OUT}: {len(rows)} rows ({len(new_rows)} new)")

@@ -1,0 +1,13 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const repoRoot = path.resolve(__dirname, '..')
+console.log('repoRoot:', repoRoot)
+const configPath = path.join(repoRoot, 'docs/.vitepress/config.mjs')
+console.log('configPath:', configPath)
+const cfg = (await import(pathToUrl(configPath))).default
+console.log('srcDir (raw):', cfg.srcDir)
+console.log('outDir (raw):', cfg.outDir)
+function pathToUrl(p) {
+  return 'file:///' + p.replace(/\\/g, '/')
+}
