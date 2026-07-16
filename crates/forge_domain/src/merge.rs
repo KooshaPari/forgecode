@@ -1,19 +1,18 @@
 use ::std::collections::HashMap;
 use ::std::hash::Hash;
 
-pub mod std {
-    pub fn overwrite<T>(base: &mut T, other: T) {
-        *base = other;
-    }
+/// Merges `other` into this value according to the type's configuration precedence.
+pub trait Merge {
+    /// Applies the values from `other` to this value.
+    fn merge(&mut self, other: Self);
 }
 
 pub mod vec {
 
     use std::collections::HashMap;
 
-    use merge::Merge;
-
     use super::Key;
+    use super::Merge;
 
     #[allow(unused)]
     pub fn unify_by_key<T: Merge + Key>(base: &mut Vec<T>, other: Vec<T>)
@@ -40,11 +39,6 @@ pub mod vec {
     }
 }
 
-pub fn option<A>(base: &mut Option<A>, other: Option<A>) {
-    if other.is_some() {
-        *base = other;
-    }
-}
 #[allow(unused)]
 pub trait Key {
     type Id: Eq;

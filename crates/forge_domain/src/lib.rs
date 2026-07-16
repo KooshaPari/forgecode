@@ -24,6 +24,7 @@ mod max_tokens;
 mod mcp;
 mod mcp_servers;
 mod merge;
+pub use merge::Merge;
 mod message;
 mod message_pattern;
 mod migration;

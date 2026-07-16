@@ -8,7 +8,7 @@ use forge_app::{
     EnvironmentInfra, FileInfoInfra, FileReaderInfra, FileWriterInfra, KVStore, McpConfigManager,
     McpServerInfra, UserInfra,
 };
-use merge::Merge;
+use forge_domain::Merge;
 
 pub struct ForgeMcpManager<I> {
     infra: Arc<I>,

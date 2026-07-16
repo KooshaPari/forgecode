@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use forge_config::ForgeConfig;
+use forge_domain::Merge;
 use forge_domain::{
     Agent, ChatCompletionMessage, Compact, Context, Conversation, Effort, MaxTokens, ModelId,
     ProviderId, ReasoningConfig, ResultStream, Temperature, ToolCallContext, ToolCallFull,
     ToolResult, TopK, TopP,
 };
-use merge::Merge;
 
 use crate::services::AppConfigService;
 use crate::tool_registry::ToolRegistry;

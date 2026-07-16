@@ -3,11 +3,11 @@ use std::sync::{Arc, LazyLock};
 use bytes::Bytes;
 use forge_app::domain::{ProviderId, ProviderResponse};
 use forge_app::{EnvironmentInfra, FileReaderInfra, FileWriterInfra, HttpInfra};
+use forge_domain::Merge;
 use forge_domain::{
     AnyProvider, ApiKey, AuthCredential, AuthDetails, Error, MigrationResult, Provider,
     ProviderRepository, ProviderType, URLParam, URLParamSpec, URLParamValue,
 };
-use merge::Merge;
 use serde::Deserialize;
 
 /// Represents the source of models for a provider
@@ -72,31 +72,22 @@ impl UrlParamVarConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Merge)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 struct ProviderConfig {
-    #[merge(strategy = overwrite)]
     id: ProviderId,
     #[serde(default)]
-    #[merge(strategy = overwrite)]
     provider_type: ProviderType,
     #[serde(default)]
-    #[merge(strategy = overwrite)]
     api_key_vars: Option<String>,
     #[serde(default)]
-    #[merge(strategy = merge::vec::append)]
     url_param_vars: Vec<UrlParamVarConfig>,
     #[serde(default)]
-    #[merge(strategy = overwrite)]
     response_type: Option<ProviderResponse>,
-    #[merge(strategy = overwrite)]
     url: String,
     #[serde(default)]
-    #[merge(strategy = overwrite)]
     models: Option<Models>,
-    #[merge(strategy = merge::vec::append)]
     auth_methods: Vec<forge_domain::AuthMethod>,
     #[serde(default)]
-    #[merge(strategy = overwrite)]
     custom_headers: Option<std::collections::HashMap<String, String>>,
 }
 
@@ -127,15 +118,25 @@ fn default_url_param_value(name: &str) -> Option<&'static str> {
     }
 }
 
-fn overwrite<T>(base: &mut T, other: T) {
-    *base = other;
+impl Merge for ProviderConfig {
+    fn merge(&mut self, other: Self) {
+        self.id = other.id;
+        self.provider_type = other.provider_type;
+        self.api_key_vars = other.api_key_vars;
+        self.url_param_vars.extend(other.url_param_vars);
+        self.response_type = other.response_type;
+        self.url = other.url;
+        self.models = other.models;
+        self.auth_methods.extend(other.auth_methods);
+        self.custom_headers = other.custom_headers;
+    }
 }
 
 /// Transparent wrapper for Vec<ProviderConfig> that implements custom merge
 /// logic
-#[derive(Debug, Clone, Deserialize, Merge)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(transparent)]
-struct ProviderConfigs(#[merge(strategy = merge_configs)] Vec<ProviderConfig>);
+struct ProviderConfigs(Vec<ProviderConfig>);
 
 fn merge_configs(base: &mut Vec<ProviderConfig>, other: Vec<ProviderConfig>) {
     let mut map: std::collections::HashMap<_, _> =
@@ -149,6 +150,12 @@ fn merge_configs(base: &mut Vec<ProviderConfig>, other: Vec<ProviderConfig>) {
     }
 
     base.extend(map.into_values());
+}
+
+impl Merge for ProviderConfigs {
+    fn merge(&mut self, other: Self) {
+        merge_configs(&mut self.0, other.0);
+    }
 }
 
 impl From<forge_config::ProviderUrlParam> for UrlParamVarConfig {
