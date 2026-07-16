@@ -19,6 +19,8 @@ grep -Fq '> v2.10.0.' README.md
 test "$(rg -c '^name = "forge-dev"$' crates/forge_main/Cargo.toml)" -eq 1
 ! rg -q '^name = "forge"$' crates/forge_main/Cargo.toml
 rg -Fq '#[command(name = "forge-dev", version = "v2.10.0")]' crates/forge_main/src/cli.rs
+! rg -q '0\.1\.0-dev' crates/forge_main/build.rs flake.nix
+rg -Fq 'unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string())' crates/forge_main/build.rs
 
 # The public executable has one canonical identity.  Do not restore the
 # historical `forge` or HeliosLite aliases as release/build targets.
