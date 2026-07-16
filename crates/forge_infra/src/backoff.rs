@@ -40,11 +40,7 @@ impl Backoff {
     /// Build a new schedule. `base` is the unit interval; `max` caps any
     /// individual delay.
     pub fn new(strategy: BackoffStrategy, base: Duration, max: Duration) -> Self {
-        Self {
-            strategy,
-            base,
-            max,
-        }
+        Self { strategy, base, max }
     }
 
     /// Delay for the given (zero-based) retry attempt.

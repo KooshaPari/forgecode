@@ -123,9 +123,7 @@ mod tests {
 
     #[test]
     fn parse_hex_accepts_canonical_terminal_forge_tokens() {
-        for hex in [
-            "#0d1117", "#161b22", "#ffb454", "#ff7edb", "#7ee787",
-        ] {
+        for hex in ["#0d1117", "#161b22", "#ffb454", "#ff7edb", "#7ee787"] {
             assert!(
                 TerminalForgePalette::parse_hex(hex).is_some(),
                 "expected {hex} to parse"
