@@ -14,6 +14,20 @@ grep -Fq "matrix.target == 'aarch64-unknown-linux-gnu'" .github/workflows/releas
 grep -Fq 'ForgeCode / KooshaPari/forgecode / forge-dev /' README.md
 grep -Fq '> v2.10.0.' README.md
 
+# The public executable has one canonical identity.  Do not restore the
+# historical `forge` or HeliosLite aliases as release/build targets.
+grep -Fq 'name = "forge-dev"' crates/forge_main/Cargo.toml
+if rg -Pq '^name = "forge"$|helioslite' crates/forge_main/Cargo.toml \
+  .github/workflows scripts install.sh install.ps1 Justfile flake.nix Taskfile.yml; then
+  echo 'obsolete executable identity found' >&2
+  exit 1
+fi
+if rg -Pq -- '--bin forge($| )|target/(debug|release)/forge($|[^[:alnum:]-])' \
+  .github/workflows scripts install.sh install.ps1 Justfile flake.nix Taskfile.yml; then
+  echo 'obsolete forge executable target found' >&2
+  exit 1
+fi
+
 bash scripts/install.sh --help | grep -Fq 'ForgeCode installer'
 bash scripts/release-scorecard.sh --help | grep -Fq 'ForgeCode release scorecard'
 
@@ -51,3 +65,11 @@ chmod +x "$fixture/bin/curl"
 PATH="$fixture/bin:$PATH" FIXTURE_DIR="$fixture" FORGE_DEV_INSTALL_DIR="$fixture/install" \
   bash scripts/install.sh
 "$fixture/install/forge-dev" --version | grep -Fq 'forge-dev 2.10.0'
+
+# A real production binary must identify itself consistently through both
+# user-facing discovery paths.
+export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+cargo build --locked -p forge_main --bin forge-dev
+identity_bin="target/debug/forge-dev"
+"$identity_bin" --version | grep -Eq '^forge-dev [0-9]+'
+"$identity_bin" --help | grep -Fq 'Usage: forge-dev'

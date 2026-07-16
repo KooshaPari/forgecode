@@ -11,16 +11,8 @@ repository.workspace = true
 documentation.workspace = true
 
 [[bin]]
-name = "forge"
-path = "src/main.rs"
-
-[features]
-dev-binary = []
-
-[[bin]]
 name = "forge-dev"
 path = "src/main.rs"
-required-features = ["dev-binary"]
 
 [dependencies]
 thiserror = { workspace = true }

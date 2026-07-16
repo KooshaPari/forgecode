@@ -11,10 +11,10 @@ set -euo pipefail
 
 PROVIDER="${1:-github_copilot}"
 MODEL="${2:-gpt-5.5}"
-BINARY="target/debug/forge"
+BINARY="target/debug/forge-dev"
 
 echo "Building debug binary..."
-cargo build -p forge_main 2>&1 | tail -3
+cargo build -p forge_main --bin forge-dev 2>&1 | tail -3
 
 echo ""
 echo "Running: FORGE_SESSION__PROVIDER_ID=$PROVIDER FORGE_SESSION__MODEL_ID=$MODEL $BINARY -p 'Hi'"

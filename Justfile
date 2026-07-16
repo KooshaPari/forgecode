@@ -13,9 +13,9 @@ build:
 release:
     cargo build --release
 
-# Run the forge CLI
+# Run the ForgeCode CLI
 run *ARGS:
-    cargo run --bin forge -- {{ARGS}}
+    cargo run --bin forge-dev -- {{ARGS}}
 
 # Run tests (prefer nextest, fall back to cargo test)
 test:

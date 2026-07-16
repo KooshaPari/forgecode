@@ -19,7 +19,7 @@ CYAN='\033[36m'
 GRAY='\033[90m'
 
 # Configuration
-BASE_COMMAND="target/debug/forge"
+BASE_COMMAND="target/debug/forge-dev"
 THRESHOLD=""
 
 # Parse arguments
@@ -56,7 +56,7 @@ echo ""
 
 # Build step
 echo -e "${GRAY}📦 Building...${RESET}"
-cargo build 2>&1 | grep -E "Compiling|Finished" | tail -1
+cargo build -p forge_main --bin forge-dev 2>&1 | grep -E "Compiling|Finished" | tail -1
 echo ""
 
 # Show sample output

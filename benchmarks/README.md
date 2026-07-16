@@ -10,13 +10,13 @@ Before running evaluations, create a `forgee` symlink to the debug binary:
 
 ```bash
 # Create symlink in your PATH (e.g., ~/bin or /usr/local/bin)
-ln -sf /path/to/code-forge/target/debug/forge ~/forgee
+ln -sf /path/to/code-forge/target/debug/forge-dev ~/forgee
 
 # Or if ~/bin is in your PATH
-ln -sf $(pwd)/target/debug/forge ~/bin/forgee
+ln -sf $(pwd)/target/debug/forge-dev ~/bin/forgee
 ```
 
-**Why is this needed?** Tasks execute in temporary directories, so relative paths like `../../target/debug/forge` won't work. The `forgee` symlink provides a stable absolute path that works from any directory.
+**Why is this needed?** Tasks execute in temporary directories, so relative paths like `../../target/debug/forge-dev` won't work. The `forgee` symlink provides a stable absolute path that works from any directory.
 
 ### Running Evaluations
 

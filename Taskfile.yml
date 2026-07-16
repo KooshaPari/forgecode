@@ -1,4 +1,4 @@
-# HeliosLite (forgecode-derivative) developer Taskfile.
+# ForgeCode developer Taskfile.
 #
 # Cross-project contract: every project in the KooshaPari/phenotype
 # family shares the same canonical task names so that operators don't
@@ -26,8 +26,8 @@
 version: "3"
 
 env:
-  HELIOSLITE_REPO: "{{.GITEA_REPOSITORY | default \"KooshaPari/heliosLite\"}}"
-  HELIOSLITE_CARGO_PROFILE:
+  FORGECODE_REPO: "{{.GITEA_REPOSITORY | default \"KooshaPari/forgecode\"}}"
+  FORGECODE_CARGO_PROFILE:
     sh: 'cargo info --quiet 2>/dev/null && echo dev || echo release'
 
 vars:
@@ -61,11 +61,9 @@ tasks:
       - cargo test --workspace --all-features --quiet
 
   doctor:
-    desc: smoke-check the workspace builds and the renamed binary resolves
+    desc: smoke-check the workspace builds and the canonical binary resolves
     cmds:
-      - cargo build -p forge_main --bin helioslite  --release
       - cargo build -p forge_main --bin forge-dev  --release
-      - ./target/release/helioslite --version
       - ./target/release/forge-dev --version
 
   serve:
@@ -75,7 +73,7 @@ tasks:
       ENV:  '{{.ENV  | default "local"}}'
     cmds:
       - 'echo "[task:serve] mode={{.MODE}} env={{.ENV}}"'
-      - cargo run -p forge_main --bin helioslite --
+      - cargo run -p forge_main --bin forge-dev --
 
   deploy:
     desc: build a tagged dry-run release; gate is human-only
@@ -83,7 +81,7 @@ tasks:
       ENV: '{{.ENV | default "local"}}'
     cmds:
       - 'echo "[task:deploy] env={{.ENV}} — dry-run only, never actually publishes"'
-      - cargo build --release -p forge_main --bin helioslite
+      - cargo build --release -p forge_main --bin forge-dev
 
   start:
     desc: start the dev process under tmux/local
@@ -102,8 +100,8 @@ tasks:
       - git --no-pager log -n1 --oneline
       - cargo --version
       - cargo fmt --all -- --check || echo "fmt drift"
-      - cargo build -p forge_main --bin helioslite --release
-      - ./target/release/helioslite --version
+      - cargo build -p forge_main --bin forge-dev --release
+      - ./target/release/forge-dev --version
 
   help:
     desc: print canonical task list with descriptions
