@@ -1,649 +1,617 @@
-//! Shared daemon: UDS listener, JSON-RPC dispatch, agent registry, drift store.
+//! Daemon: UDS listener + JSON-RPC dispatcher.
 //!
-//! [`Server`] is the top-level long-running process. It owns:
+//! `Server` binds a Unix-domain socket at `<runtime_dir>/forge3/daemon.sock`,
+//! accepts connections in a loop, and dispatches JSON-RPC 2.0 envelopes to
+//! the in-process [`crate::registry::Registry`].
 //!
-//! - a [`tokio::net::UnixListener`] bound to the configured socket path
-//! - an exclusive `flock` on the socket file (single-writer guard)
-//! - a PID file written at startup and removed at shutdown
-//! - an [`AgentRegistry`] (in-process, parking_lot-backed)
-//! - a [`Store`] (rusqlite, opened in WAL mode)
-//! - a `tokio::sync::broadcast` channel for `drift.subscribe` push notifications
+//! Concrete method surface in this PR-6 MVP:
 //!
-//! Per the spec every public method here is async and the file stays under
-//! 450 lines by leaning on `Server::dispatch` rather than per-method handlers.
+//! - `ping`                    → `{"ok": true}`
+//! - `agent.register`          → upsert + return [`crate::registry::AgentInfo`]
+//! - `agent.heartbeat`         → renew lease
+//! - `agent.deregister`        → remove
+//! - `agent.list`              → JSON array of active agents
+//!
+//! Drift, similarity, and alert methods land in PR-9+. The dispatcher
+//! returns a stable JSON-RPC error code for unknown methods so clients
+//! fail gracefully rather than panicking on a schema mismatch.
+//!
+//! Concurrency model:
+//!
+//! - One [`Registry`] is shared via `Arc<Registry>` — all dispatch paths
+//!   read or mutate it under a short critical section.
+//! - The socket accepts in a `while let Some(stream) = listener.accept().await`,
+//!   spawning a `tokio::spawn` per connection. Each task owns its stream
+//!   and reads requests until the peer hangs up.
+//! - On read error or EOF we drop the connection silently. We never call
+//!   `exit()` from inside the server; the daemon's supervisor owns lifecycle.
+//!
+//! Time source:
+//!
+//! - `Server::now_unix_ms` is a `Fn() -> i64` closure injected at
+//!   construction. Tests use a fixed clock; production passes
+//!   `|| chrono::Utc::now().timestamp_millis()`. Heartbeats are monotonic
+//!   from the daemon's perspective, so a clock that jumps backward only ever
+//!   makes leases *appear* to last longer than reality — never expired
+//!   incorrectly.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
-use fs2::FileExt;
-use parking_lot::Mutex;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{broadcast, Notify};
-use tokio::task::JoinHandle;
+use serde::Deserialize;
+use serde_json::{json, Value};
+use tokio::io::AsyncReadExt;
+use tokio::net::UnixListener;
 use tracing::{debug, error, info, warn};
 
-use crate::config::ForgeConfig;
-use crate::ipc::{
-    write_frame, JsonRpcRequest, JsonRpcResponse, RpcError, RpcErrorCode, FRAME_HEADER_LEN,
-};
-use crate::registry::{AgentRegistry, RegistryError};
-use crate::store::{DriftEvent, DriftOverrideInput, Store, StoreError};
+use crate::error::{Forge3Error, Result};
+use crate::pidfile::PidFile;
+use crate::protocol;
+use forge_drift::{DriftDetector, DriftConfig, OverrideReason};
 
-/// Per-connection handler: one task per accepted UDS stream.
-type ConnHandle = JoinHandle<()>;
+use crate::registry::{AgentId, AgentInfo, Lane, Registry, LEASE_MS};
 
-/// The shared daemon.
-///
-/// Cloning is `Arc`-based and cheap; pass clones around freely.
-#[derive(Clone)]
-pub struct Server {
-    inner: Arc<Inner>,
+/// Default relative path of the UDS socket inside the runtime dir.
+pub const DEFAULT_RUNTIME_SUBDIR: &str = "forge3";
+pub const DEFAULT_SOCKET_BASENAME: &str = "daemon.sock";
+/// Default ancestor dir from `$XDG_RUNTIME_DIR` for the daemon's runtime files.
+pub const DEFAULT_PARENT: &str = ".forge";
+
+/// Clock function injected into the server so tests can freeze "now".
+pub type Clock = Arc<dyn Fn() -> i64 + Send + Sync + 'static>;
+
+/// Construct a real (chrono) clock.
+pub fn system_clock() -> Clock {
+    Arc::new(|| chrono::Utc::now().timestamp_millis())
 }
 
-struct Inner {
-    cfg: ForgeConfig,
-    registry: AgentRegistry,
-    store: Arc<Store>,
-    broadcast: broadcast::Sender<DriftEvent>,
-    /// Notified when an observer wants the next drift event pushed to it.
-    subscriber_notify: Notify,
-    /// Optional join handles for the GC task and shutdown barrier.
-    shutdown: Mutex<Option<ShutdownHandles>>,
-    /// PID file path (for cleanup).
-    pid_path: PathBuf,
-    /// Lock-file guard (held for the daemon's lifetime).
-    _lock_file: Arc<Mutex<Option<std::fs::File>>>,
+/// Construct a fixed-clock for tests.
+pub fn fixed_clock(unix_ms: i64) -> Clock {
+    Arc::new(move || unix_ms)
 }
 
-struct ShutdownHandles {
-    /// Task that periodically reaps expired leases.
-    gc: JoinHandle<()>,
-    /// File lock guard — held until shutdown.
-    lock_file: std::fs::File,
-    /// PID file contents — kept open to "hold" the inode.
-    pid_file: std::fs::File,
-}
-
-/// Outcome of a successful `Server::start`.
-pub struct StartedServer {
-    /// A cloneable handle to the running server.
-    pub server: Server,
-    /// The socket path actually used (resolved from config).
+/// Resolved on-disk paths for the daemon.
+#[derive(Debug, Clone)]
+pub struct Sockets {
+    pub runtime_dir: PathBuf,
     pub socket_path: PathBuf,
-    /// Path to the PID file written at startup.
-    pub pid_path: PathBuf,
-    /// Sender to broadcast `Server::shutdown` from any clone.
-    pub shutdown_tx: tokio::sync::oneshot::Sender<()>,
 }
 
-/// RPC method names — kept here so tests and dispatch can't drift.
-pub mod method {
-    pub const AGENT_REGISTER: &str = "agent.register";
-    pub const AGENT_HEARTBEAT: &str = "agent.heartbeat";
-    pub const AGENT_DEREGISTER: &str = "agent.deregister";
-    pub const AGENT_LIST: &str = "agent.list";
-    pub const DRIFT_OBSERVE: &str = "drift.observe";
-    pub const DRIFT_LIST_ALERTS: &str = "drift.list_alerts";
-    pub const DRIFT_OVERRIDE: &str = "drift.override";
-    pub const DRIFT_SUBSCRIBE: &str = "drift.subscribe";
+impl Sockets {
+    /// Resolve runtime dir from `$XDG_RUNTIME_DIR` (falling back to
+    /// `/tmp` and finally `~/.forge`).
+    pub fn resolve_default() -> Self {
+        let runtime = std::env::var("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .ok()
+            .filter(|p| p.is_absolute() && p.is_dir())
+            .or_else(|| {
+                let tmp = PathBuf::from("/tmp");
+                if tmp.is_dir() {
+                    Some(tmp)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                dirs_home().map(|h| h.join(DEFAULT_PARENT))
+            })
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
+        Self::resolve_in(runtime)
+    }
+
+    /// Build sockets inside a specific parent dir.
+    pub fn resolve_in(parent: PathBuf) -> Self {
+        let runtime_dir = parent.join(DEFAULT_RUNTIME_SUBDIR);
+        let socket_path = runtime_dir.join(DEFAULT_SOCKET_BASENAME);
+        Self {
+            runtime_dir,
+            socket_path,
+        }
+    }
+}
+
+fn dirs_home() -> Option<PathBuf> {
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() {
+            return Some(PathBuf::from(home));
+        }
+    }
+    None
+}
+
+/// The daemon. Holds everything needed to run a JSON-RPC server over UDS.
+pub struct Server {
+    registry: Arc<Registry>,
+    sockets: Sockets,
+    pidfile: Option<PidFile>,
+    clock: Clock,
+    drift_detector: Option<Arc<DriftDetector>>,
 }
 
 impl Server {
-    /// Build the server from config and start the listener loop.
-    ///
-    /// Acquires an exclusive `flock` on the socket path (fails fast if
-    /// another daemon is already running), writes a PID file, opens the
-    /// SQLite store, spawns a GC task, and begins accepting connections.
-    pub async fn start(cfg: ForgeConfig) -> Result<StartedServer, ServerError> {
-        let socket_path = cfg.resolved_socket_path();
-        let pid_path = cfg.resolved_pid_path();
-
-        // Refuse to start if socket dir cannot be created.
-        if let Some(parent) = socket_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| ServerError::Io {
-                path: parent.to_path_buf(),
-                source: e,
-            })?;
-        }
-
-        // Single-writer guard via flock(LOCK_EX | LOCK_NB).
-        let lock_file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&socket_path)
-            .map_err(|e| ServerError::Io {
-                path: socket_path.clone(),
-                source: e,
-            })?;
-        lock_file
-            .try_lock_exclusive()
-            .map_err(|e| ServerError::AlreadyRunning {
-                path: socket_path.clone(),
-                source: e,
-            })?;
-
-        // Remove any stale socket file from a previous daemon.
-        let _ = std::fs::remove_file(&socket_path);
-
-        let listener = UnixListener::bind(&socket_path).map_err(|e| ServerError::Io {
-            path: socket_path.clone(),
-            source: e,
-        })?;
-
-        // PID file (best-effort: warning, not error).
-        if let Err(e) = std::fs::create_dir_all(pid_path.parent().unwrap_or(std::path::Path::new("/tmp"))) {
-            warn!(error = %e, "could not create pid dir");
-        }
-        let pid_file = match std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&pid_path)
-        {
-            Ok(f) => f,
-            Err(e) => {
-                warn!(error = %e, path = %pid_path, "could not open pid file");
-                // fabricate an empty handle so Drop doesn't fire on None
-                std::fs::File::create("/dev/null").unwrap()
-            }
-        };
-        let pid = std::process::id();
-        use std::io::Write as _;
-        if let Err(e) = writeln!(&pid_file, "{pid}") {
-            warn!(error = %e, "could not write pid");
-        }
-
-        // SQLite store.
-        let store = Arc::new(Store::open(&cfg.resolved_db_path())?);
-        let registry = AgentRegistry::new(cfg.lease_ttl());
-
-        let (broadcast_tx, _) = broadcast::channel(1024);
-        let subscriber_notify = Notify::new();
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-        // Spawn the lease-GC task.
-        let gc_registry = registry.clone();
-        let gc_handle = tokio::spawn(async move {
-            let mut rx = shutdown_rx;
-            loop {
-                tokio::select! {
-                    _ = &mut rx => break,
-                    _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                        gc_registry.gc_expired();
-                    }
-                }
-            }
-        });
-
-        let inner = Inner {
-            cfg: cfg.clone(),
+    /// Build a server with no PID guard; useful for in-process tests.
+    pub fn new(registry: Arc<Registry>, sockets: Sockets, clock: Clock) -> Self {
+        Self {
             registry,
-            store: Arc::clone(&store),
-            broadcast: broadcast_tx.clone(),
-            subscriber_notify,
-            shutdown: Mutex::new(Some(ShutdownHandles {
-                gc: gc_handle,
-                lock_file,
-                pid_file,
-            })),
-            pid_path: pid_path.clone(),
-            _lock_file: Arc::new(Mutex::new(None)),
-        };
-
-        let server = Server { inner: Arc::new(inner) };
-
-        // Accept loop (in its own task; we don't await it).
-        let accept_server = server.clone();
-        tokio::spawn(async move {
-            accept_server.accept_loop(listener).await;
-        });
-
-        info!(socket = %socket_path.display(), pid, "forge3d started");
-
-        Ok(StartedServer {
-            server,
-            socket_path,
-            pid_path,
-            shutdown_tx,
-        })
-    }
-
-    /// Block until `shutdown_tx` is signalled, then tear everything down.
-    pub async fn run_until_shutdown(self, shutdown_tx: tokio::sync::oneshot::Receiver<()>) {
-        let _ = shutdown_tx.await;
-        self.shutdown().await;
-    }
-
-    /// Stop the daemon: cancel the GC task, remove socket + PID files.
-    pub async fn shutdown(&self) {
-        let mut slot = self.inner.shutdown.lock();
-        if let Some(handles) = slot.take() {
-            handles.gc.abort();
-            let _ = handles.gc.await;
-            // Drop the flock explicitly by closing the file handle.
-            let _ = handles.lock_file.unlock();
-            drop(handles.lock_file);
-            drop(handles.pid_file);
-        }
-        let _ = std::fs::remove_file(&self.inner.cfg.resolved_socket_path());
-        let _ = std::fs::remove_file(&self.inner.pid_path);
-        info!("forge3d shut down");
-    }
-
-    /// Read-only view of the in-process config.
-    pub fn config(&self) -> &ForgeConfig {
-        &self.inner.cfg
-    }
-
-    /// Broadcast a drift event to all `drift.subscribe` listeners.
-    pub fn broadcast_event(&self, ev: DriftEvent) {
-        // Ignore send errors — that's "no subscribers", which is fine.
-        let _ = self.inner.broadcast.send(ev);
-    }
-
-    /// Receiver for direct subscription (rarely used; prefer `drift.subscribe`).
-    pub fn subscribe(&self) -> broadcast::Receiver<DriftEvent> {
-        self.inner.broadcast.subscribe()
-    }
-
-    /// Dispatch a JSON-RPC request to the appropriate handler.
-    ///
-    /// Async signature is required for the `notify` channel and any future
-    /// handler that needs `tokio::sync::Notify`. `spawn_blocking` is used
-    /// internally for SQLite calls.
-    pub async fn dispatch(&self, req: JsonRpcRequest) -> JsonRpcResponse {
-        match req.method.as_str() {
-            method::AGENT_REGISTER => self.handle_agent_register(req).await,
-            method::AGENT_HEARTBEAT => self.handle_agent_heartbeat(req).await,
-            method::AGENT_DEREGISTER => self.handle_agent_deregister(req).await,
-            method::AGENT_LIST => self.handle_agent_list(req).await,
-            method::DRIFT_OBSERVE => self.handle_drift_observe(req).await,
-            method::DRIFT_LIST_ALERTS => self.handle_drift_list_alerts(req).await,
-            method::DRIFT_OVERRIDE => self.handle_drift_override(req).await,
-            method::DRIFT_SUBSCRIBE => self.handle_drift_subscribe(req).await,
-            other => req.error_response(RpcError::new(
-                RpcErrorCode::MethodNotFound,
-                format!("unknown method: {other}"),
-                None,
-            )),
+            sockets,
+            pidfile: None,
+            clock,
+            drift_detector: None,
         }
     }
 
-    // -- agent.* -----------------------------------------------------------
-
-    async fn handle_agent_register(&self, req: JsonRpcRequest) -> JsonRpcResponse {
-        let params: serde_json::Value = req.params.clone().unwrap_or_default();
-        let agent_id = match params.get("agent_id").and_then(|v| v.as_str()) {
-            Some(s) => s.to_string(),
-            None => return req.error_response(RpcError::new(
-                RpcErrorCode::InvalidParams,
-                "agent_id is required".into(),
-                None,
-            )),
-        };
-        let pid = match params.get("pid").and_then(|v| v.as_i64()) {
-            Some(p) => p,
-            None => return req.error_response(RpcError::new(
-                RpcErrorCode::InvalidParams,
-                "pid is required".into(),
-                None,
-            )),
-        };
-        let label = params
-            .get("label")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let lane = params
-            .get("lane")
-            .and_then(|v| v.as_str())
-            .unwrap_or("default")
-            .to_string();
-
-        let lease = self.inner.registry.register(agent_id.clone(), pid, label, lane);
-
-        match req.id {
-            Some(id) => JsonRpcResponse::success(id, serde_json::to_value(&lease).unwrap()),
-            None => JsonRpcResponse::notification(),
-        }
+    /// Acquire a PID file at `pidfile_dir` so a second instance fails fast.
+    pub fn with_pidfile(mut self, pidfile_dir: &Path) -> Result<Self> {
+        let pid = std::process::id();
+        let guard = PidFile::acquire(pidfile_dir, pid)?;
+        self.pidfile = Some(guard);
+        Ok(self)
     }
 
-    async fn handle_agent_heartbeat(&self, req: JsonRpcRequest) -> JsonRpcResponse {
-        let params: serde_json::Value = req.params.clone().unwrap_or_default();
-        let agent_id = match params.get("agent_id").and_then(|v| v.as_str()) {
-            Some(s) => s.to_string(),
-            None => return req.error_response(RpcError::new(
-                RpcErrorCode::InvalidParams,
-                "agent_id is required".into(),
-                None,
-            )),
-        };
-
-        match self.inner.registry.heartbeat(&agent_id) {
-            Ok(()) => match req.id {
-                Some(id) => JsonRpcResponse::success(id, serde_json::json!({"ok": true})),
-                None => JsonRpcResponse::notification(),
-            },
-            Err(RegistryError::UnknownAgent(id)) => req.error_response(RpcError::new(
-                RpcErrorCode::InvalidParams,
-                format!("unknown agent: {id}"),
-                None,
-            )),
-            Err(e) => req.error_response(rpc_internal_error(e)),
-        }
+    /// Attach a drift detector for cross-agent overlap detection.
+    pub fn with_drift_detector(mut self, detector: DriftDetector) -> Self {
+        self.drift_detector = Some(Arc::new(detector));
+        self
     }
 
-    async fn handle_agent_deregister(&self, req: JsonRpcRequest) -> JsonRpcResponse {
-        let params: serde_json::Value = req.params.clone().unwrap_or_default();
-        let agent_id = match params.get("agent_id").and_then(|v| v.as_str()) {
-            Some(s) => s.to_string(),
-            None => return req.error_response(RpcError::new(
-                RpcErrorCode::InvalidParams,
-                "agent_id is required".into(),
-                None,
-            )),
-        };
-
-        self.inner.registry.deregister(&agent_id);
-        match req.id {
-            Some(id) => JsonRpcResponse::success(id, serde_json::json!({"ok": true})),
-            None => JsonRpcResponse::notification(),
-        }
+    /// Socket path (for tests / client constructors).
+    pub fn socket_path(&self) -> &Path {
+        &self.sockets.socket_path
     }
 
-    async fn handle_agent_list(&self, req: JsonRpcRequest) -> JsonRpcResponse {
-        let entries = self.inner.registry.list_active();
-        match req.id {
-            Some(id) => JsonRpcResponse::success(id, serde_json::to_value(&entries).unwrap()),
-            None => JsonRpcResponse::notification(),
+    /// Listen on the UDS socket and run forever.
+    /// Returns only on bind error or join failure.
+    pub async fn serve(&self) -> Result<()> {
+        if let Some(parent) = self.sockets.socket_path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
-    }
-
-    // -- drift.* -----------------------------------------------------------
-
-    async fn handle_drift_observe(&self, req: JsonRpcRequest) -> JsonRpcResponse {
-        let params: serde_json::Value = req.params.clone().unwrap_or_default();
-        let source_agent = params
-            .get("source_agent")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let target_agent = params
-            .get("target_agent")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let lane = params
-            .get("lane")
-            .and_then(|v| v.as_str())
-            .unwrap_or("default")
-            .to_string();
-        let prompt_excerpt = params
-            .get("prompt_excerpt")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        // PR-6: similarity provider absent; store 0.0 as placeholder.
-        let similarity = params
-            .get("similarity")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-
-        let ev = DriftEvent {
-            id: 0, // assigned by SQLite
-            source_agent,
-            target_agent,
-            similarity,
-            lane,
-            prompt_excerpt,
-            created_at_unix_ms: now_unix_ms(),
-            resolved_at_unix_ms: None,
-        };
-
-        let store = Arc::clone(&self.inner.store);
-        let broadcast = self.inner.broadcast.clone();
-        let stored = match tokio::task::spawn_blocking(move || store.record_event(&ev)).await {
-            Ok(Ok(e)) => e,
-            Ok(Err(e)) => return req.error_response(rpc_store_error(e)),
-            Err(e) => {
-                return req.error_response(RpcError::new(
-                    RpcErrorCode::InternalError,
-                    format!("join error: {e}"),
-                    None,
-                ));
-            }
-        };
-
-        // Push to subscribers (best-effort).
-        let _ = broadcast.send(stored.clone());
-
-        match req.id {
-            Some(id) => JsonRpcResponse::success(id, serde_json::to_value(&stored).unwrap()),
-            None => JsonRpcResponse::notification(),
+        // Best-effort cleanup: if the socket was left over from a crashed
+        // previous run, unlink it so bind() succeeds. If unlink fails for
+        // any reason other than NotFound, fall back to surface the error.
+        match std::fs::remove_file(&self.sockets.socket_path) {
+            Ok(()) => info!(path = %self.sockets.socket_path.display(), "removed stale socket"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => warn!(error = %e, "could not remove stale socket"),
         }
-    }
 
-    async fn handle_drift_list_alerts(&self, req: JsonRpcRequest) -> JsonRpcResponse {
-        let params: serde_json::Value = req.params.clone().unwrap_or_default();
-        let limit = params.get("limit").and_then(|v| as_i64(v)).unwrap_or(100).max(1);
-
-        let store = Arc::clone(&self.inner.store);
-        let alerts = match tokio::task::spawn_blocking(move || store.list_recent_alerts(limit)).await {
-            Ok(Ok(a)) => a,
-            Ok(Err(e)) => return req.error_response(rpc_store_error(e)),
-            Err(e) => {
-                return req.error_response(RpcError::new(
-                    RpcErrorCode::InternalError,
-                    format!("join error: {e}"),
-                    None,
-                ));
-            }
-        };
-
-        match req.id {
-            Some(id) => JsonRpcResponse::success(id, serde_json::to_value(&alerts).unwrap()),
-            None => JsonRpcResponse::notification(),
-        }
-    }
-
-    async fn handle_drift_override(&self, req: JsonRpcRequest) -> JsonRpcResponse {
-        let params: serde_json::Value = req.params.clone().unwrap_or_default();
-        let alert_id = match params.get("alert_id").and_then(|v| as_i64(v)) {
-            Some(n) => n,
-            None => {
-                return req.error_response(RpcError::new(
-                    RpcErrorCode::InvalidParams,
-                    "alert_id is required".into(),
-                    None,
-                ));
-            }
-        };
-        let reason = params
-            .get("reason")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let actor = params
-            .get("actor")
-            .and_then(|v| v.as_str())
-            .unwrap_or("system")
-            .to_string();
-
-        let input = DriftOverrideInput {
-            alert_id,
-            reason,
-            actor,
-        };
-        let store = Arc::clone(&self.inner.store);
-        let result = match tokio::task::spawn_blocking(move || store.apply_override(&input)).await {
-            Ok(Ok(())) => serde_json::json!({"ok": true, "alert_id": alert_id}),
-            Ok(Err(StoreError::AlertNotFound(id))) => {
-                return req.error_response(RpcError::new(
-                    RpcErrorCode::InvalidParams,
-                    format!("alert_id not found: {id}"),
-                    None,
-                ));
-            }
-            Ok(Err(e)) => return req.error_response(rpc_store_error(e)),
-            Err(e) => {
-                return req.error_response(RpcError::new(
-                    RpcErrorCode::InternalError,
-                    format!("join error: {e}"),
-                    None,
-                ));
-            }
-        };
-
-        match req.id {
-            Some(id) => JsonRpcResponse::success(id, result),
-            None => JsonRpcResponse::notification(),
-        }
-    }
-
-    async fn handle_drift_subscribe(&self, req: JsonRpcRequest) -> JsonRpcResponse {
-        // Subscribe gives the caller a broadcast receiver id (opaque integer).
-        // Subsequent events arrive as `drift.notify` server-pushed JSON-RPC
-        // frames; for PR-6 we just hand back the subscription_id and let
-        // higher-level orchestrators do the loop.
-        let sub_id: u64 = {
-            let mut counter = self.inner.subscriber_notify_counter();
-            counter.0 += 1;
-            counter.0
-        };
-        match req.id {
-            Some(id) => JsonRpcResponse::success(
-                id,
-                serde_json::json!({"subscription_id": sub_id, "note": "PR-6: streaming hook only"}),
-            ),
-            None => JsonRpcResponse::notification(),
-        }
-    }
-
-    // -- listener loop -----------------------------------------------------
-
-    async fn accept_loop(self, listener: UnixListener) {
-        let mut conns: Vec<ConnHandle> = Vec::new();
+        let listener = UnixListener::bind(&self.sockets.socket_path)?;
+        info!(path = %self.sockets.socket_path.display(), "listening");
         loop {
             match listener.accept().await {
                 Ok((stream, _addr)) => {
-                    let server = self.clone();
-                    let handle = tokio::spawn(async move {
-                        if let Err(e) = server.handle_connection(stream).await {
-                            debug!(error = %e, "connection terminated");
+                    let registry = Arc::clone(&self.registry);
+                    let clock = Arc::clone(&self.clock);
+                    let drift_detector = self.drift_detector.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_connection(stream, registry, clock, drift_detector).await {
+                            debug!(error = %e, "connection ended with error");
                         }
                     });
-                    conns.push(handle);
-                    // Garbage-collect finished handles to avoid unbounded growth.
-                    conns.retain(|h| !h.is_finished());
                 }
                 Err(e) => {
-                    error!(error = %e, "accept failed");
-                    break;
+                    warn!(error = %e, "accept failed; continuing");
                 }
             }
         }
     }
+}
 
-    async fn handle_connection(&self, mut stream: UnixStream) -> std::io::Result<()> {
-        loop {
-            let mut header = [0u8; FRAME_HEADER_LEN];
-            match stream.read_exact(&mut header).await {
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
-                Err(e) => return Err(e),
+async fn handle_connection(
+    mut stream: tokio::net::UnixStream,
+    registry: Arc<Registry>,
+    clock: Clock,
+    drift_detector: Option<Arc<DriftDetector>>,
+) -> Result<()> {
+    loop {
+        let payload = match protocol::decode_frame(&mut stream).await? {
+            Some(bytes) => bytes,
+            None => return Ok(()), // peer hung up
+        };
+        let req = match protocol::parse_request(&payload) {
+            Ok(r) => r,
+            Err(e) => {
+                let resp = error_envelope(
+                    json!(0),
+                    e.code(),
+                    e.to_string(),
+                );
+                protocol::write_frame(&mut stream, &serialise(&resp)).await?;
+                continue;
             }
-            let len = u32::from_be_bytes(header) as usize;
-            let mut body = vec![0u8; len];
-            stream.read_exact(&mut body).await?;
+        };
 
-            let req: JsonRpcRequest = match serde_json::from_slice(&body) {
-                Ok(r) => r,
-                Err(e) => {
-                    let resp = JsonRpcResponse::error(
-                        None,
-                        RpcError::new(
-                            RpcErrorCode::ParseError,
-                            format!("parse: {e}"),
-                            None,
-                        ),
-                    );
-                    write_frame(&mut stream, &serde_json::to_vec(&resp).unwrap()).await?;
-                    continue;
-                }
+        if let Some(id) = req.id.clone() {
+            // request -> respond
+            let resp = dispatch(&req.method, req.params.clone(), &registry, &clock, &drift_detector).await;
+            let envelope = match resp {
+                Ok(value) => json!({
+                    "jsonrpc": "2.0",
+                    "result": value,
+                    "id": id,
+                }),
+                Err(e) => error_envelope(id, e.code(), e.to_string()),
             };
-
-            let resp = self.dispatch(req).await;
-            if resp.id.is_some() {
-                let bytes = serde_json::to_vec(&resp).unwrap_or_default();
-                write_frame(&mut stream, &bytes).await?;
-            } else {
-                // Pure notification — close stream politely.
-                stream.shutdown().await.ok();
-                return Ok(());
-            }
+            protocol::write_frame(&mut stream, &serialise(&envelope)).await?;
         }
+        // notifications (id == None) get no response
     }
 }
 
-// -- helpers & glue -------------------------------------------------------
-
-impl Inner {
-    fn subscriber_notify_counter(&self) -> parking_lot::MutexGuard<'_, Counter> {
-        // Reuse a static counter stored on the Inner; if you need more
-        // granularity, swap to AtomicU64 later. Held behind parking_lot
-        // to keep things simple and zero-dep.
-        static COUNTER: parking_lot::Mutex<Counter> =
-            parking_lot::Mutex::new(Counter(0));
-        COUNTER.lock()
+/// Tasks completed (or refused) by the dispatcher. Anything not in this
+/// table returns `-32601 Method not found`.
+async fn dispatch(
+    method: &str,
+    params: Value,
+    registry: &Registry,
+    clock: &Clock,
+    drift_detector: &Option<Arc<DriftDetector>>,
+) -> Result<Value> {
+    let now = clock();
+    match method {
+        "ping" => Ok(json!({ "ok": true, "now_unix_ms": now })),
+        "agent.register" => {
+            let args: RegisterArgs = serde_json::from_value(params)
+                .map_err(|e| Forge3Error::Protocol(format!("agent.register: {e}")))?;
+            let info = registry.upsert_with_excerpt(
+                &args.agent_id,
+                args.pid,
+                &args.lane,
+                cap_excerpt(args.prompt_excerpt),
+                now,
+            );
+            Ok(agent_info_to_value(&info))
+        }
+        "agent.heartbeat" => {
+            let args: HeartbeatArgs = serde_json::from_value(params)
+                .map_err(|e| Forge3Error::Protocol(format!("agent.heartbeat: {e}")))?;
+            let info = registry
+                .heartbeat(&args.agent_id, now)
+                .ok_or_else(|| Forge3Error::UnknownAgent(args.agent_id.clone()))?;
+            Ok(agent_info_to_value(&info))
+        }
+        "agent.deregister" => {
+            let args: DeregisterArgs = serde_json::from_value(params)
+                .map_err(|e| Forge3Error::Protocol(format!("agent.deregister: {e}")))?;
+            if !registry.deregister(&args.agent_id) {
+                return Err(Forge3Error::UnknownAgent(args.agent_id));
+            }
+            Ok(json!({ "ok": true }))
+        }
+        "agent.list" => {
+            let active = registry.list_active(now);
+            let payload: Vec<Value> = active.iter().map(agent_info_to_value).collect();
+            Ok(json!(payload))
+        }
+        "drift.observe" => {
+            let detector = drift_detector.as_ref().ok_or_else(|| {
+                Forge3Error::Protocol("drift detector not configured".into())
+            })?;
+            let args: DriftObserveArgs = serde_json::from_value(params)
+                .map_err(|e| Forge3Error::Protocol(format!("drift.observe: {e}")))?;
+            let event = detector.observe(
+                &args.agent_id,
+                &args.prompt,
+                &args.lane,
+                now,
+            ).await;
+            Ok(match event {
+                Some(e) => json!(e),
+                None => Value::Null,
+            })
+        }
+        "drift.override" => {
+            let detector = drift_detector.as_ref().ok_or_else(|| {
+                Forge3Error::Protocol("drift detector not configured".into())
+            })?;
+            let args: DriftOverrideArgs = serde_json::from_value(params)
+                .map_err(|e| Forge3Error::Protocol(format!("drift.override: {e}")))?;
+            let reason = match args.reason.as_str() {
+                "same_intent" => OverrideReason::SameIntent,
+                "coordinated" => OverrideReason::Coordinated,
+                "user_directed" => OverrideReason::UserDirected,
+                other => return Err(Forge3Error::Protocol(
+                    format!("drift.override: unknown reason '{other}'")
+                )),
+            };
+            detector.override_alert(args.alert_id.clone(), reason);
+            Ok(json!({ "ok": true }))
+        }
+        _ => Err(Forge3Error::Protocol(format!(
+            "unknown method: {method}"
+        ))),
     }
 }
 
-#[derive(Default)]
-struct Counter(u64);
-
-#[derive(Debug, thiserror::Error)]
-pub enum ServerError {
-    #[error("io error on {path}: {source}")]
-    Io {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("another forge3d already running on {path}: {source}")]
-    AlreadyRunning {
-        path: PathBuf,
-        #[source]
-        source: std::io::Error,
-    },
-    #[error("store error: {0}")]
-    Store(#[from] StoreError),
+fn agent_info_to_value(info: &AgentInfo) -> Value {
+    json!({
+        "agent_id": info.agent_id,
+        "pid": info.pid,
+        "lane": info.lane,
+        "prompt_excerpt": info.prompt_excerpt,
+        "registered_at_unix_ms": info.registered_at_unix_ms,
+        "last_heartbeat_unix_ms": info.last_heartbeat_unix_ms,
+    })
 }
 
-fn rpc_store_error(e: StoreError) -> RpcError {
-    match e {
-        StoreError::AlertNotFound(id) => RpcError::new(
-            RpcErrorCode::InvalidParams,
-            format!("alert_id not found: {id}"),
-            None,
-        ),
-        other => RpcError::new(RpcErrorCode::InternalError, format!("{other}"), None),
+fn error_envelope(id: Value, code: i32, message: String) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "error": {
+            "code": code,
+            "message": message,
+        },
+        "id": id,
+    })
+}
+
+fn serialise(v: &Value) -> Vec<u8> {
+    serde_json::to_vec(v).expect("always serializable")
+}
+
+fn cap_excerpt(s: Option<String>) -> Option<String> {
+    s.and_then(|x| {
+        const MAX: usize = 256;
+        if x.len() <= MAX {
+            Some(x)
+        } else {
+            // best-effort: take first MAX bytes on a char boundary
+            let mut end = MAX;
+            while !x.is_char_boundary(end) {
+                end -= 1;
+            }
+            Some(x[..end].to_string())
+        }
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct RegisterArgs {
+    agent_id: String,
+    pid: u32,
+    lane: String,
+    #[serde(default)]
+    prompt_excerpt: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HeartbeatArgs {
+    agent_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeregisterArgs {
+    agent_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DriftObserveArgs {
+    agent_id: String,
+    prompt: String,
+    lane: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DriftOverrideArgs {
+    alert_id: String,
+    reason: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::UnixStream;
+
+    async fn round_trip(
+        socket: &Path,
+        frames: Vec<Vec<u8>>,
+    ) -> Vec<Value> {
+        let mut stream = UnixStream::connect(socket).await.expect("connect");
+        for f in &frames {
+            protocol::write_frame(&mut stream, f).await.expect("write");
+        }
+        stream.shutdown().await.ok();
+        let mut responses = Vec::new();
+        loop {
+            let payload = match protocol::decode_frame(&mut stream).await {
+                Ok(Some(b)) => b,
+                Ok(None) => break,
+                Err(e) => panic!("decode: {e}"),
+            };
+            responses.push(serde_json::from_slice(&payload).expect("json"));
+        }
+        responses
     }
-}
 
-fn rpc_internal_error(e: impl std::fmt::Display) -> RpcError {
-    RpcError::new(RpcErrorCode::InternalError, format!("{e}"), None)
-}
+    fn request(method: &str, id: u64, params: Value) -> Vec<u8> {
+        let env = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "id": id,
+            "params": params,
+        });
+        serde_json::to_vec(&env).unwrap()
+    }
 
-fn now_unix_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
+    #[tokio::test]
+    async fn ping_roundtrip() {
+        let td = tempfile::tempdir().unwrap();
+        let sockets = Sockets::resolve_in(td.path().to_path_buf());
+        let registry = Arc::new(Registry::new());
+        let server = Server::new(registry, sockets.clone(), fixed_clock(1000));
 
-fn as_i64(v: &serde_json::Value) -> Option<i64> {
-    v.as_i64().or_else(|| v.as_u64().map(|n| n as i64))
+        // Spawn the listener.
+        let s_sockets = sockets.clone();
+        let server_for_task = Server::new(Arc::new(Registry::new()), s_sockets, fixed_clock(1000));
+        // We can't run two arbitrary Server instances against the same socket;
+        // instead run serve() in a background task using *one* of these and let
+        // the test connect to it.
+        drop(server); // avoid moving into a task with a duplicate socket path
+
+        let listener_task = tokio::spawn(async move {
+            // suppress: the `Server::serve` loop never returns Ok
+            let _ = server_for_task.serve().await;
+        });
+
+        // give the listener time to bind
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let resp = round_trip(
+            &sockets.socket_path,
+            vec![request("ping", 1, json!({}))],
+        )
+        .await;
+
+        assert_eq!(resp.len(), 1);
+        assert_eq!(resp[0]["result"]["ok"], json!(true));
+        assert_eq!(resp[0]["id"], json!(1));
+
+        // tear down
+        drop(listener_task);
+    }
+
+    #[tokio::test]
+    async fn register_then_list() {
+        let td = tempfile::tempdir().unwrap();
+        let sockets = Sockets::resolve_in(td.path().to_path_buf());
+        let shared_registry = Arc::new(Registry::new());
+        let server = Server::new(
+            Arc::clone(&shared_registry),
+            sockets.clone(),
+            fixed_clock(5000),
+        );
+
+        let listener_task = tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let frames = vec![
+            request(
+                "agent.register",
+                1,
+                json!({
+                    "agent_id": "alpha",
+                    "pid": 999,
+                    "lane": Lane::BUILDING,
+                    "prompt_excerpt": "drift detection prototype",
+                }),
+            ),
+            request("agent.list", 2, json!({})),
+        ];
+
+        let responses = round_trip(&sockets.socket_path, frames).await;
+        assert_eq!(responses.len(), 2, "expected 2 responses got {responses:?}");
+
+        let reg = &responses[0];
+        assert_eq!(reg["result"]["agent_id"], "alpha");
+        assert_eq!(reg["result"]["pid"], 999);
+        assert_eq!(reg["result"]["lane"], Lane::BUILDING);
+        assert_eq!(reg["result"]["prompt_excerpt"], "drift detection prototype");
+
+        let list = &responses[1];
+        let arr = list["result"].as_array().expect("array");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["agent_id"], "alpha");
+
+        drop(listener_task);
+    }
+
+    #[tokio::test]
+    async fn drift_observe_without_detector_returns_error() {
+        let td = tempfile::tempdir().unwrap();
+        let sockets = Sockets::resolve_in(td.path().to_path_buf());
+        let server = Server::new(Arc::new(Registry::new()), sockets.clone(), fixed_clock(0));
+
+        let listener_task = tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let resp = round_trip(
+            &sockets.socket_path,
+            vec![request("drift.observe", 9, json!({"agent_id":"a","prompt":"hello","lane":"building"}))],
+        )
+        .await;
+        assert_eq!(resp.len(), 1);
+        assert!(resp[0]["error"].is_object());
+        // Should say "drift detector not configured" — protocol error, not "unknown method"
+        let code = resp[0]["error"]["code"].as_i64().unwrap();
+        assert_eq!(code, -32600);
+        let msg = resp[0]["error"]["message"].as_str().unwrap();
+        assert!(msg.contains("not configured"));
+        drop(listener_task);
+    }
+
+    #[tokio::test]
+    async fn unknown_method_returns_envelope_error() {
+        let td = tempfile::tempdir().unwrap();
+        let sockets = Sockets::resolve_in(td.path().to_path_buf());
+        let server = Server::new(Arc::new(Registry::new()), sockets.clone(), fixed_clock(0));
+
+        let listener_task = tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let resp = round_trip(
+            &sockets.socket_path,
+            vec![request("totally.bogus", 9, json!({}))],
+        )
+        .await;
+        assert_eq!(resp.len(), 1);
+        assert!(resp[0]["error"].is_object());
+        // Should be -32600 (Protocol) for "unknown method: totally.bogus"
+        let code = resp[0]["error"]["code"].as_i64().unwrap();
+        assert!(code != 0);
+        drop(listener_task);
+    }
+
+    #[tokio::test]
+    async fn heartbeat_unknown_agent_errors() {
+        let td = tempfile::tempdir().unwrap();
+        let sockets = Sockets::resolve_in(td.path().to_path_buf());
+        let server = Server::new(Arc::new(Registry::new()), sockets.clone(), fixed_clock(0));
+
+        let listener_task = tokio::spawn(async move {
+            let _ = server.serve().await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let resp = round_trip(
+            &sockets.socket_path,
+            vec![request("agent.heartbeat", 1, json!({"agent_id": "ghost"}))],
+        )
+        .await;
+        assert_eq!(resp.len(), 1);
+        assert_eq!(resp[0]["error"]["code"], Forge3Error::UnknownAgent("ghost".into()).code());
+        drop(listener_task);
+    }
+
+    #[test]
+    fn cap_excerpt_truncates_on_char_boundary() {
+        // ASCII -> easy truncation
+        let long = "x".repeat(300);
+        let out = cap_excerpt(Some(long)).unwrap();
+        assert_eq!(out.len(), 256);
+
+        // Multi-byte boundary preservation — "á" is 2 bytes in UTF-8.
+        let mut s = String::new();
+        while s.len() < 255 {
+            s.push('á');
+        }
+        s.push('z');
+        let out = cap_excerpt(Some(s.clone())).unwrap();
+        assert!(out.len() <= 256);
+        // Must round-trip the prefix as valid UTF-8 (no mid-codepoint cut).
+        assert!(out == s[..256].to_string() || out == s[..255].to_string());
+    }
+
+    #[test]
+    fn sockets_resolve_in_uses_subdir() {
+        let s = Sockets::resolve_in(PathBuf::from("/var/run/myapp"));
+        assert!(s.socket_path.ends_with("forge3/daemon.sock"));
+        assert!(s.runtime_dir.ends_with("myapp/forge3"));
+    }
 }

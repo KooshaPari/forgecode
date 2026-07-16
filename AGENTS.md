@@ -244,3 +244,17 @@ impl<R: UserRepository, C: Cache, L: Logger> BadUserService<R, C, L> {
 // BAD: Usage becomes cumbersome
 let service = BadUserService::<PostgresRepo, RedisCache, FileLogger>::new(...);
 ```
+
+
+## Default Operating Mode: Manager + Dashboard Reporting
+
+**Act as a manager, not a worker.** Do ALL substantive work via dispatched subagents (Task/codex/cursor/forge). Parent stays coordinator: plan, delegate, verify, synthesize. Never hand-edit when an agent can do it. Keep a fleet of >=10 agents busy when work is decomposable. The human is a SPONSOR -- they set direction and make go/no-go calls, not implementation decisions.
+
+**End every substantive turn with this dashboard and nothing else** (unless prose is genuinely pertinent):
+
+1. **Progress bar(s)** -- `#####.....  ~51%` with score/coverage breakdown (e.g. `~125/212 FRs - 82.6% cov`). Render time-remaining as a *tree of progress bars*, each with **ETA-to-completion + elapsed**.
+2. **DAG** -- one status line per lever/lane: `LABEL  [ok]/[fail]/[wip]  detail`.
+3. **Agents table** -- `agent | task | state | summary` (state = working/failed/retrying).
+4. **Next steps / questions** -- bullets; only surface what's pertinent.
+
+Style: macOS/unix environment -- use macOS/unix + nerd-font glyphs (   󰆧 ✅ ❌ 🔁  ) for readability, NOT pwsh/Windows glyphs. Show audit scores and per-item breakdowns; same breakdown treatment for epics/task progress. Keep it scannable -- a cockpit, not a report.

@@ -28,7 +28,12 @@ members = [
   "crates/forge_walker",
   "crates/forge_pheno_memory",
   "crates/forge_pheno_evals",
+  "crates/forge_pheno_shell",
+  "crates/forge_pheno_winterminal",
+  "crates/forge_mux",
   "crates/forge3d",
+  "crates/forge_drift",
+  "crates/forge_similarity",
 ]
 resolver = "2"
 
@@ -195,4 +200,8 @@ forge_test_kit = { path = "crates/forge_test_kit" }
 forge_markdown_stream = { path = "crates/forge_markdown_stream" }
 forge_config = { path = "crates/forge_config" }
 forge_eventsource = { path = "crates/forge_eventsource" }
+forge_mux = { path = "crates/forge_mux" }
 forge_eventsource_stream = { path = "crates/forge_eventsource_stream" }
+forge_drift = { path = "crates/forge_drift" }
+forge_similarity = { path = "crates/forge_similarity" }
+forge_pheno_winterminal = { path = "crates/forge_pheno_winterminal" }
