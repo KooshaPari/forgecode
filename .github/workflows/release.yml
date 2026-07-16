@@ -48,6 +48,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install pinned Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
