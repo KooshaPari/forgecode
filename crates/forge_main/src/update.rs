@@ -123,10 +123,7 @@ pub async fn on_update(api: Arc<impl API>, update: Option<&Update>) {
     let informer = update_informer::new(registry::GitHub, repository.as_str(), VERSION)
         .interval(frequency.into());
 
-    if let Some(version) = informer
-        .check_version()
-        .ok()
-        .flatten()
+    if let Some(version) = informer.check_version().ok().flatten()
         && (auto_update || confirm_update(version).await)
     {
         execute_update_command(api, auto_update).await;
