@@ -1,0 +1,20 @@
+{
+  "moved_at": "2026-07-15_14-52-00",
+  "source": "C:\\Users\\koosh\\codeprojects\\ownership_absorption_staging\\no_remote\\forge",
+  "target_path": "D:\\codeprojects\\incoming\\integrated\\no_remote\\\\c_users_koosh_ownership_absorption_no_remote_forge",
+  "backup": "D:\\codeprojects_backups\\reorg_2026-07-15_14-52-00\\c_users_koosh_ownership_absorption_no_remote_forge",
+  "status": "no_remote",
+  "note": "Absorbed c_users_koosh_forge as snapshot commit; source removed after copy",
+  "copy_exit": 1,
+  "move_exit": 1,
+  "source_removed": true,
+  "file_count": 7816,
+  "status_code": "managed_remote_pushed",
+  "managed_remote": "D:\\codeprojects_backups\\managed_remotes\\C__Users_koosh_ownership_absorption_no_remote_forge_reorg_2026-07-15_14-52-00.git",
+  "pushed_at": "2026-07-15_14-58-00",
+  "pushed_by": "codex-ownership-reorg",
+  "absorbed_no_remote_name": "c_users_koosh_forge",
+  "absorbed_source_deleted": true,
+  "absorbed_at": "2026-07-15_19-43-41",
+  "last_pushed": "2026-07-15_19-45-10"
+}

@@ -1,0 +1,12 @@
+[session]
+provider_id = "nvidia"
+model_id    = "minimaxai/minimax-m3"
+
+[reasoning]
+enabled = false
+
+[[agents]]
+id        = "forge"
+provider  = "nvidia"
+model     = "minimaxai/minimax-m3"
+reasoning = { enabled = false }

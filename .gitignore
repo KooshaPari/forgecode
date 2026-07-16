@@ -2,3 +2,9 @@
 Cargo.lock
 *.bak
 .forge/
+# forge artifacts
+.forge.db.forge.db-shm.forge.db-wal.forge.db.pre-*.forge.db.pre-merge-*
+
+
+# ignored during ownership absorption
+.forge.db*
