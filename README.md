@@ -39,7 +39,7 @@ crates/
   forge_infra/       — infrastructure adapters (env, fs, process, http)
   forge_repo/        — persistence + provider repositories (OpenAI, Anthropic, …)
   forge_dbd/         — SQLite session daemon (WIP) over a Unix socket
-  forge_main/        — the `forge` binary (CLI/TUI entrypoint)
+  forge_main/        — the `forge-dev` binary (CLI/TUI entrypoint)
   forge_stream/ forge_eventsource/ forge_markdown_stream/ — streaming/SSE
   forge_walker/ forge_fs/ forge_similarity/ forge_drift/ forge_json_repair/ — utilities
   forge_template/ forge_select/ forge_spinner/ forge_display/ forge_snaps/ — TUI/render
@@ -65,14 +65,14 @@ x86_64/ARM64 and installs it to `~/.local/bin/forge-dev` by default. Set
 choose another destination.
 
 > **Source builds:** To build from source instead, use `cargo build --release
-> --features dev-binary --bin forge-dev`. The `forge-dev` binary is the
+> --bin forge-dev`. The `forge-dev` binary is the
 > fork-specific build of the CLI with Phenotype enhancements.
 
 ## Quick Start
 
 ```sh
 # Run the CLI
-cargo run --bin forge-dev --features dev-binary
+cargo run --bin forge-dev
 
 # Tests (prefers cargo-nextest; falls back to cargo test)
 cargo nextest run    # or: cargo test
@@ -365,10 +365,10 @@ Configure the ZSH plugin behavior:
 
 ```bash
 # .env
-FORGE_BIN=forge                    # Command to use for forge operations (default: "forge")
+FORGE_BIN=forge-dev                # Command to use for ForgeCode operations (default: "forge-dev")
 ```
 
-The `FORGE_BIN` environment variable allows you to customize the command used by the ZSH plugin when transforming `:` prefixed commands. If not set, it defaults to `"forge"`.
+The `FORGE_BIN` environment variable allows you to customize the command used by the ZSH plugin when transforming `:` prefixed commands. If not set, it defaults to `"forge-dev"`.
 
 </details>
 

@@ -1,5 +1,5 @@
 {
-  description = "forge: AI enabled pair programmer for Claude, GPT, O Series, Grok, Deepseek, Gemini and 300+ models";
+  description = "ForgeCode: AI enabled pair programmer for Claude, GPT, O Series, Grok, Deepseek, Gemini and 300+ models";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -34,8 +34,8 @@
               && baseNameOf path != "target"
               && baseNameOf path != "result";
           };
-          forge = pkgs.rustPlatform.buildRustPackage {
-            pname = "forge";
+          forgeDev = pkgs.rustPlatform.buildRustPackage {
+            pname = "forge-dev";
             version = "0.1.0-dev";
             inherit src;
 
@@ -48,13 +48,13 @@
               "-p"
               "forge_main"
               "--bin"
-              "forge"
+              "forge-dev"
             ];
             cargoInstallFlags = [
               "-p"
               "forge_main"
               "--bin"
-              "forge"
+              "forge-dev"
             ];
 
             nativeBuildInputs = [
@@ -87,28 +87,28 @@
             doCheck = false;
 
             meta = {
-              description = "forge: AI enabled pair programmer for Claude, GPT, O Series, Grok, Deepseek, Gemini and 300+ models";
+              description = "ForgeCode: AI enabled pair programmer for Claude, GPT, O Series, Grok, Deepseek, Gemini and 300+ models";
               homepage = "https://forgecode.dev";
               license = lib.licenses.mit;
-              mainProgram = "forge";
+              mainProgram = "forge-dev";
               platforms = lib.platforms.unix;
             };
           };
         in
         {
-          default = forge;
-          forge = forge;
+          default = forgeDev;
+          "forge-dev" = forgeDev;
         }
       );
 
       apps = forAllSystems (system: {
         default = {
           type = "app";
-          program = "${self.packages.${system}.default}/bin/forge";
+          program = "${self.packages.${system}.default}/bin/forge-dev";
         };
-        forge = {
+        "forge-dev" = {
           type = "app";
-          program = "${self.packages.${system}.forge}/bin/forge";
+          program = "${self.packages.${system}.\"forge-dev\"}/bin/forge-dev";
         };
       });
 

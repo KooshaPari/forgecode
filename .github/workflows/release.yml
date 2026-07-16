@@ -47,7 +47,7 @@ jobs:
         with:
           target: ${{ matrix.target }}
       - name: Build forge-dev
-        run: cargo build --locked --features dev-binary --release --target ${{ matrix.target }} --bin forge-dev
+        run: cargo build --locked --release --target ${{ matrix.target }} --bin forge-dev
       - name: Package archive
         shell: bash
         run: |

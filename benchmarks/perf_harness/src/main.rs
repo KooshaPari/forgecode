@@ -145,8 +145,8 @@ async fn main() -> Result<()> {
 
     let out_path: Option<PathBuf> = flag_value(&args, "--out").map(PathBuf::from);
 
-    // The forge_main binary lives at target/release/forge (after release build)
-    // or target/debug/forge (after debug build).  Prefer release.
+    // The canonical forge_main binary lives at target/release/forge-dev (after
+    // release build) or target/debug/forge-dev (after debug build). Prefer release.
     let forge_bin = locate_forge_main(&project).context("locate forge_main binary")?;
     eprintln!("[perf_harness] using forge_bin = {}", forge_bin.display());
 
@@ -205,8 +205,8 @@ fn flag_value(args: &[String], name: &str) -> Option<String> {
 
 fn locate_forge_main(project: &Path) -> Option<PathBuf> {
     let candidates = [
-        project.join("target/release/forge"),
-        project.join("target/debug/forge"),
+        project.join("target/release/forge-dev"),
+        project.join("target/debug/forge-dev"),
     ];
     candidates.into_iter().find(|p| p.exists())
 }

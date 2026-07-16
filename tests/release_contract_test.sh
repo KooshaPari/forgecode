@@ -20,6 +20,20 @@ test "$(rg -c '^name = "forge-dev"$' crates/forge_main/Cargo.toml)" -eq 1
 ! rg -q '^name = "forge"$' crates/forge_main/Cargo.toml
 rg -Fq '#[command(name = "forge-dev", version = "v2.10.0")]' crates/forge_main/src/cli.rs
 
+# The public executable has one canonical identity.  Do not restore the
+# historical `forge` or HeliosLite aliases as release/build targets.
+grep -Fq 'name = "forge-dev"' crates/forge_main/Cargo.toml
+if rg -Pq '^name = "forge"$|helioslite' crates/forge_main/Cargo.toml \
+  .github/workflows scripts install.sh install.ps1 Justfile flake.nix Taskfile.yml; then
+  echo 'obsolete executable identity found' >&2
+  exit 1
+fi
+if rg -Pq -- '--bin forge($| )|target/(debug|release)/forge($|[^[:alnum:]-])' \
+  .github/workflows scripts install.sh install.ps1 Justfile flake.nix Taskfile.yml; then
+  echo 'obsolete forge executable target found' >&2
+  exit 1
+fi
+
 bash scripts/install.sh --help | grep -Fq 'ForgeCode installer'
 bash scripts/release-scorecard.sh --help | grep -Fq 'ForgeCode release scorecard'
 
@@ -37,7 +51,7 @@ case "$(uname -s)" in
 esac
 
 mkdir -p "$fixture/archive" "$fixture/bin" "$fixture/install"
-printf '#!/usr/bin/env bash\necho forge-dev 2.10.0\n' > "$fixture/archive/forge-dev"
+printf '#!/usr/bin/env bash\necho forge-dev v2.10.0\n' > "$fixture/archive/forge-dev"
 chmod +x "$fixture/archive/forge-dev"
 tar -czf "$fixture/forge-dev-${target}.tar.gz" -C "$fixture/archive" forge-dev
 (cd "$fixture" && shasum -a 256 "forge-dev-${target}.tar.gz") > "$fixture/SHA256SUMS"
@@ -56,4 +70,12 @@ EOF
 chmod +x "$fixture/bin/curl"
 PATH="$fixture/bin:$PATH" FIXTURE_DIR="$fixture" FORGE_DEV_INSTALL_DIR="$fixture/install" \
   bash scripts/install.sh
-"$fixture/install/forge-dev" --version | grep -Fq 'forge-dev 2.10.0'
+"$fixture/install/forge-dev" --version | grep -Fqx 'forge-dev v2.10.0'
+
+# A real production binary must identify itself consistently through both
+# user-facing discovery paths.
+export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:$PATH"
+cargo build --locked -p forge_main --bin forge-dev
+identity_bin="target/debug/forge-dev"
+"$identity_bin" --version | grep -Fqx 'forge-dev v2.10.0'
+"$identity_bin" --help | grep -Fq 'Usage: forge-dev'

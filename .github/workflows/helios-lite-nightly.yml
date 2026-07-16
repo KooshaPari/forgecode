@@ -1,4 +1,4 @@
-# helios-lite-nightly — Gate 5b
+# forge-dev-nightly — canonical binary validation
 #
 # Coordinates the nightly reset/dev-publish path on the renamed-binary
 # surface. Runs every day at 06:30 UTC after the Omniroute nightly
@@ -7,7 +7,7 @@
 # Cron:
 #   cron: '30 6 * * *'
 
-name: helios-lite-nightly
+name: forge-dev-nightly
 
 on:
   schedule:
@@ -22,8 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      HELIOSLITE_REPO: ${{ github.repository }}
-      HELIOSLITE_RELEASES_BACKEND: "github"
+      FORGECODE_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,7 +40,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: helios-nightly-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          key: forge-dev-nightly-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: cargo fmt + clippy
         run: |
@@ -52,20 +51,18 @@ jobs:
         run: |
           cargo test --workspace --all-features --quiet
 
-      - name: Build renamed binary
+      - name: Build canonical binary
         run: |
-          cargo build --release -p forge_main --bin helioslite
           cargo build --release -p forge_main --bin forge-dev
 
-      - name: Smoke-test renamed binary
-        run: ./target/release/helioslite --version
+      - name: Smoke-test canonical binary
+        run: ./target/release/forge-dev --version
 
       - name: Upload named artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: helioslite-nightly-${{ github.run_number }}
+          name: forge-dev-nightly-${{ github.run_number }}
           path: |
-            target/release/helioslite
             target/release/forge-dev
 
   notify-track:
@@ -75,5 +72,5 @@ jobs:
     steps:
       - name: Emit GitHub event
         run: |
-          echo "helios-lite-nightly: ${{ needs.rebuild-nightly-container.result }}"
-          echo "ship-to-tracker: phenomonitor://nightly?project=helioslite&date=$(date -u +%Y-%m-%d)"
+          echo "forge-dev-nightly: ${{ needs.rebuild-nightly-container.result }}"
+          echo "ship-to-tracker: phenomonitor://nightly?project=forgecode&date=$(date -u +%Y-%m-%d)"
