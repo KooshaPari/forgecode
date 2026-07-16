@@ -6,7 +6,6 @@ use std::ops::Deref;
 
 use derive_more::{Deref, Display, From};
 use derive_setters::Setters;
-use merge::Merge;
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display as StrumDisplay, EnumIter, EnumString};
 
@@ -266,12 +265,17 @@ pub struct McpOAuthConfig {
 )]
 pub struct ServerName(String);
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Hash, Merge)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Hash)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct McpConfig {
-    #[merge(strategy = std::collections::BTreeMap::extend)]
     #[serde(default)]
     pub mcp_servers: BTreeMap<ServerName, McpServerConfig>,
+}
+
+impl crate::Merge for McpConfig {
+    fn merge(&mut self, other: Self) {
+        self.mcp_servers.extend(other.mcp_servers);
+    }
 }
 
 impl Deref for McpConfig {

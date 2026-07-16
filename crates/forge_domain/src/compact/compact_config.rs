@@ -1,5 +1,4 @@
 use derive_setters::Setters;
-use merge::Merge;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -38,14 +37,13 @@ fn default_summary_timeout() -> u64 {
 }
 
 /// Configuration for automatic context compaction
-#[derive(Debug, Clone, Serialize, Deserialize, Merge, Setters, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Setters, JsonSchema, PartialEq)]
 #[setters(strip_option, into)]
 pub struct Compact {
     /// Number of most recent messages to preserve during compaction.
     /// These messages won't be considered for summarization. Works alongside
     /// eviction_window - the more conservative limit (fewer messages to
     /// compact) takes precedence.
-    #[merge(strategy = crate::merge::std::overwrite)]
     #[serde(default)]
     pub retention_window: usize,
 
@@ -54,19 +52,16 @@ pub struct Compact {
     /// compaction and 1.0 allows summarizing all messages. Works alongside
     /// retention_window - the more conservative limit (fewer messages to
     /// compact) takes precedence.
-    #[merge(strategy = crate::merge::std::overwrite)]
     #[serde(default, deserialize_with = "deserialize_percentage")]
     pub eviction_window: f64,
 
     /// Maximum number of tokens to keep after compaction
-    #[merge(strategy = crate::merge::option)]
     pub max_tokens: Option<usize>,
 
     /// Maximum number of tokens before triggering compaction. This acts as an
     /// absolute cap and is combined with
     /// `token_threshold_percentage` by taking the lower value.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[merge(strategy = crate::merge::option)]
     pub token_threshold: Option<usize>,
 
     /// Maximum percentage of the model context window used to derive the token
@@ -77,72 +72,99 @@ pub struct Compact {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "deserialize_optional_percentage"
     )]
-    #[merge(strategy = crate::merge::option)]
     pub token_threshold_percentage: Option<f64>,
 
     /// Maximum number of conversation turns before triggering compaction
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[merge(strategy = crate::merge::option)]
     pub turn_threshold: Option<usize>,
 
     /// Maximum number of messages before triggering compaction
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[merge(strategy = crate::merge::option)]
     pub message_threshold: Option<usize>,
 
     /// Model ID to use for compaction, useful when compacting with a
     /// cheaper/faster model. If not specified, the root level model will be
     /// used.
-    #[merge(strategy = crate::merge::option)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelId>,
     /// Whether to trigger compaction when the last message is from a user
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[merge(strategy = crate::merge::option)]
     pub on_turn_end: Option<bool>,
 
     /// Strategy for generating summaries during compaction.
     /// - `extract`: Pure structural extraction (default, fast, no API cost)
     /// - `llm`: Full LLM summarization (higher quality, requires API)
     /// - `hybrid`: Extract + LLM refinement (balanced)
-    #[merge(strategy = crate::merge::std::overwrite)]
     #[serde(default)]
     pub summarization_strategy: SummarizationStrategy,
 
     /// Model ID to use for LLM-based summarization. If not specified,
     /// falls back to `model` or the root level model.
-    #[merge(strategy = crate::merge::option)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary_model: Option<ModelId>,
 
     /// Maximum tokens in generated summary. Helps control output size.
-    #[merge(strategy = crate::merge::option)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary_max_tokens: Option<usize>,
 
     /// Timeout for LLM summarization in seconds. If exceeded, falls back
     /// to structural extraction.
-    #[merge(strategy = crate::merge::std::overwrite)]
     #[serde(default = "default_summary_timeout")]
     pub summary_timeout_secs: u64,
 
     /// Enable pre-compaction filtering to remove noise before summarization.
     /// Removes short tool results, debug output, and duplicate operations.
-    #[merge(strategy = crate::merge::std::overwrite)]
     #[serde(default)]
     pub enable_prefilter: bool,
 
     /// Enable adaptive eviction window that adjusts based on context ratio.
     /// More aggressive eviction when approaching token threshold.
-    #[merge(strategy = crate::merge::std::overwrite)]
     #[serde(default)]
     pub enable_adaptive_eviction: bool,
 
     /// Enable importance-based message preservation during eviction.
     /// High-importance messages (tool calls, errors, decisions) are protected.
-    #[merge(strategy = crate::merge::std::overwrite)]
     #[serde(default)]
     pub enable_importance_scoring: bool,
+}
+
+impl crate::Merge for Compact {
+    fn merge(&mut self, other: Self) {
+        self.retention_window = other.retention_window;
+        self.eviction_window = other.eviction_window;
+        if other.max_tokens.is_some() {
+            self.max_tokens = other.max_tokens;
+        }
+        if other.token_threshold.is_some() {
+            self.token_threshold = other.token_threshold;
+        }
+        if other.token_threshold_percentage.is_some() {
+            self.token_threshold_percentage = other.token_threshold_percentage;
+        }
+        if other.turn_threshold.is_some() {
+            self.turn_threshold = other.turn_threshold;
+        }
+        if other.message_threshold.is_some() {
+            self.message_threshold = other.message_threshold;
+        }
+        if other.model.is_some() {
+            self.model = other.model;
+        }
+        if other.on_turn_end.is_some() {
+            self.on_turn_end = other.on_turn_end;
+        }
+        self.summarization_strategy = other.summarization_strategy;
+        if other.summary_model.is_some() {
+            self.summary_model = other.summary_model;
+        }
+        if other.summary_max_tokens.is_some() {
+            self.summary_max_tokens = other.summary_max_tokens;
+        }
+        self.summary_timeout_secs = other.summary_timeout_secs;
+        self.enable_prefilter = other.enable_prefilter;
+        self.enable_adaptive_eviction = other.enable_adaptive_eviction;
+        self.enable_importance_scoring = other.enable_importance_scoring;
+    }
 }
 fn deserialize_percentage<'de, D>(deserializer: D) -> Result<f64, D::Error>
 where

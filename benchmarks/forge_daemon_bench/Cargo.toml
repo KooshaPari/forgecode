@@ -9,7 +9,7 @@ name = "forge_daemon_bench"
 path = "src/main.rs"
 
 [dependencies]
-forge_daemon = { path = "../../crates/forge_daemon" }
+forge_daemon = { version = "=0.1.0", path = "../../crates/forge_daemon" }
 anyhow.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "process"] }
 tracing.workspace = true

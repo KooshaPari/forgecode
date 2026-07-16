@@ -40,7 +40,6 @@ strum.workspace = true
 bytes.workspace = true
 serde_yml.workspace = true
 gray_matter.workspace = true
-merge.workspace = true
 strip-ansi-escapes.workspace = true
 bstr.workspace = true
 forge_app.workspace = true
@@ -62,5 +61,4 @@ pretty_assertions.workspace = true
 tempfile.workspace = true
 fake = { version = "5.1.0", features = ["derive"] }
 forge_test_kit.workspace = true
-
 

@@ -2,7 +2,6 @@ use std::borrow::Cow;
 
 use derive_more::derive::Display;
 use derive_setters::Setters;
-use merge::Merge;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display as StrumDisplay, EnumString};
@@ -45,9 +44,8 @@ impl Default for AgentId {
     }
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize, Merge, Setters, JsonSchema, PartialEq)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, Setters, JsonSchema, PartialEq)]
 #[setters(strip_option)]
-#[merge(strategy = merge::option::overwrite_none)]
 pub struct ReasoningConfig {
     /// Controls the effort level of the agent's reasoning
     /// supported by openrouter and forge provider
@@ -69,6 +67,23 @@ pub struct ReasoningConfig {
     /// supported by openrouter, anthropic and forge provider
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+}
+
+impl crate::Merge for ReasoningConfig {
+    fn merge(&mut self, other: Self) {
+        if self.effort.is_none() {
+            self.effort = other.effort;
+        }
+        if self.max_tokens.is_none() {
+            self.max_tokens = other.max_tokens;
+        }
+        if self.exclude.is_none() {
+            self.exclude = other.exclude;
+        }
+        if self.enabled.is_none() {
+            self.enabled = other.enabled;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, StrumDisplay, EnumString)]

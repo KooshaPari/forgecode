@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use derive_setters::Setters;
-use merge::Merge;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -26,9 +25,19 @@ impl From<UpdateFrequency> for Duration {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Merge, Default, JsonSchema, Setters, PartialEq)]
-#[merge(strategy = merge::option::overwrite_none)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema, Setters, PartialEq)]
 pub struct Update {
     pub frequency: Option<UpdateFrequency>,
     pub auto_update: Option<bool>,
+}
+
+impl crate::Merge for Update {
+    fn merge(&mut self, other: Self) {
+        if self.frequency.is_none() {
+            self.frequency = other.frequency;
+        }
+        if self.auto_update.is_none() {
+            self.auto_update = other.auto_update;
+        }
+    }
 }

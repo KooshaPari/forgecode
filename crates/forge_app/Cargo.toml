@@ -32,7 +32,6 @@ tempfile.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
 forge_template.workspace = true
-merge.workspace = true
 convert_case.workspace = true
 backon.workspace = true
 sha2.workspace = true
@@ -58,4 +57,4 @@ pretty_assertions.workspace = true
 insta.workspace = true
 tokio-stream.workspace = true
 fake = { version = "5.1.0", features = ["derive"] }
-forge_domain = { path = "../forge_domain" }
+forge_domain = { version = "=0.1.1", path = "../forge_domain" }
