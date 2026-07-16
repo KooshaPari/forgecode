@@ -14,6 +14,12 @@ grep -Fq "matrix.target == 'aarch64-unknown-linux-gnu'" .github/workflows/releas
 grep -Fq 'ForgeCode / KooshaPari/forgecode / forge-dev /' README.md
 grep -Fq '> v2.10.0.' README.md
 
+# Cargo requires a bare SemVer package version, but every user-visible release
+# boundary must identify the sole production executable and its release tag.
+test "$(rg -c '^name = "forge-dev"$' crates/forge_main/Cargo.toml)" -eq 1
+! rg -q '^name = "forge"$' crates/forge_main/Cargo.toml
+rg -Fq '#[command(name = "forge-dev", version = "v2.10.0")]' crates/forge_main/src/cli.rs
+
 bash scripts/install.sh --help | grep -Fq 'ForgeCode installer'
 bash scripts/release-scorecard.sh --help | grep -Fq 'ForgeCode release scorecard'
 
