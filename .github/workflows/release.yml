@@ -37,6 +37,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - name: Install pinned Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - name: Export pinned Zig for forge-daemon builds
+        shell: bash
+        run: echo "FORGE_ZIG=$(command -v zig)" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}

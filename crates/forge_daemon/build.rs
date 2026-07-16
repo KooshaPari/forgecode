@@ -19,20 +19,40 @@ fn main() {
         "cargo:rerun-if-changed={}",
         zig_dir.join("build.zig").display()
     );
+    println!("cargo:rerun-if-env-changed=FORGE_ZIG");
 
     // Detect target; map Cargo triple → Zig target.
     let zig_target = zig_target_from_cargo();
 
-    // Run: zig build -Dtarget=<zig-target> -Doptimize=ReleaseSafe
-    let status = Command::new("zig")
+    let zig = env::var_os("FORGE_ZIG").map_or_else(
+        || "zig".into(),
+        |path| {
+            let path = PathBuf::from(path);
+            if !path.is_file() {
+                panic!("FORGE_ZIG points to a non-file: {}", path.display());
+            }
+            path.into_os_string()
+        },
+    );
+
+    // CI and release workflows install the pinned compiler. Local builds may
+    // still use PATH, but an explicit FORGE_ZIG always takes precedence.
+    let status = Command::new(&zig)
         .current_dir(&zig_dir)
         .args(["build", "-Doptimize=ReleaseSafe"])
         .args(zig_target.iter().flat_map(|t| ["-Dtarget", t.as_str()]))
         .status()
-        .expect("zig build failed — is zig installed and in PATH?");
+        .unwrap_or_else(|error| {
+            panic!(
+                "failed to start Zig compiler {zig:?}: {error}. Set FORGE_ZIG to a working Zig 0.16 executable."
+            )
+        });
 
     if !status.success() {
-        panic!("zig build exited with non-zero status: {status}");
+        panic!(
+            "Zig compiler {zig:?} exited with non-zero status {status}. \
+             CI/release builds must use the pinned FORGE_ZIG toolchain."
+        );
     }
 
     // libforge_daemon_core.a lives under zig-out/lib/

@@ -42,6 +42,10 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
+    - name: Install pinned Zig
+      uses: mlugg/setup-zig@v2
+      with:
+        version: 0.16.0
     - name: Setup Protobuf Compiler
       uses: arduino/setup-protoc@v3
       with:
@@ -62,6 +66,10 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
+    - name: Install pinned Zig
+      uses: mlugg/setup-zig@v2
+      with:
+        version: 0.16.0
     - name: Setup Protobuf Compiler
       uses: arduino/setup-protoc@v3
       with:
