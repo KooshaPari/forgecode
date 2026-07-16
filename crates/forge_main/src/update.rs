@@ -7,28 +7,21 @@ use forge_select::ForgeWidget;
 use forge_tracker::VERSION;
 use update_informer::{Check, Version, registry};
 
-/// Runs the official installation script to update Forge, failing silently.
+const DEFAULT_UPDATE_REPOSITORY: &str = "KooshaPari/forgecode";
+const DEFAULT_UPDATE_INSTALL_URL: &str =
+    "https://github.com/KooshaPari/forgecode/releases/latest/download/install.sh";
+
+/// Runs the official ForgeCode GitHub Release installer, failing silently.
 /// When `auto_update` is true, exits immediately after a successful update
 /// without prompting the user.
 ///
-/// Phenotype rename: by default we hit `helioslite.dev/cli`; if that
-/// endpoint is unreachable we fall back to the upstream `forgecode.dev/cli`
-/// URL so users running pre-rename builds keep working.
 async fn execute_update_command(api: Arc<impl API>, auto_update: bool) {
-    let primary = std::env::var("HELIOSLITE_UPDATE_URL")
-        .unwrap_or_else(|_| "https://helioslite.dev/cli".to_string());
-    let fallback = "https://forgecode.dev/cli";
+    let install_url = std::env::var("FORGE_DEV_UPDATE_URL")
+        .unwrap_or_else(|_| DEFAULT_UPDATE_INSTALL_URL.to_string());
 
-    let output = match api
-        .execute_shell_command_raw(&format!("curl -fsSL {primary} | sh"))
-        .await
-    {
-        Ok(o) => o,
-        Err(_) => api
-            .execute_shell_command_raw(&format!("curl -fsSL {fallback} | sh"))
-            .await
-            .unwrap_or_else(|e| e),
-    };
+    let output = api
+        .execute_shell_command_raw(&format!("curl -fsSL {install_url} | sh"))
+        .await;
 
     match output {
         Err(err) => {
@@ -125,30 +118,15 @@ pub async fn on_update(api: Arc<impl API>, update: Option<&Update>) {
         return;
     }
 
-    // Phenotype rename: prefer the renamed-binary GitHub repo (`KooshaPari/heliosLite`).
-    // In flight, the `KooshaPari/forgecode` releases are kept as the canonical
-    // source for both name chains; `HELIOSLITE_REPO` overrides the lookup so
-    // nightlies can target a third-party fork without recompiling.
-    //
-    // Tombstone: until the rename is pushed to remote (Gate 4b), `KooshaPari/heliosLite`
-    // doesn't exist and the lookup 404s. We swallow that case and try the
-    // legacy `KooshaPari/forgecode` releases so users on pre-rename builds
-    // keep getting notified. This branch will be removed once the rename is
-    // permanent.
-    let primary_repo =
-        std::env::var("HELIOSLITE_REPO").unwrap_or_else(|_| "KooshaPari/heliosLite".to_string());
-    let legacy_repo = "KooshaPari/forgecode";
-    let informer_primary =
-        update_informer::new(registry::GitHub, primary_repo.as_str(), VERSION)
-            .interval(frequency.into());
-    let informer_legacy = update_informer::new(registry::GitHub, legacy_repo, VERSION)
+    let repository = std::env::var("FORGE_DEV_UPDATE_REPOSITORY")
+        .unwrap_or_else(|_| DEFAULT_UPDATE_REPOSITORY.to_string());
+    let informer = update_informer::new(registry::GitHub, repository.as_str(), VERSION)
         .interval(frequency.into());
 
-    if let Some(version) = informer_primary
+    if let Some(version) = informer
         .check_version()
         .ok()
         .flatten()
-        .or_else(|| informer_legacy.check_version().ok().flatten())
         && (auto_update || confirm_update(version).await)
     {
         execute_update_command(api, auto_update).await;
@@ -175,6 +153,17 @@ mod tests {
         let actual = should_check_for_updates(&fixture);
 
         let expected = false;
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_release_update_defaults_target_the_owned_fork() {
+        let actual = (DEFAULT_UPDATE_REPOSITORY, DEFAULT_UPDATE_INSTALL_URL);
+
+        let expected = (
+            "KooshaPari/forgecode",
+            "https://github.com/KooshaPari/forgecode/releases/latest/download/install.sh",
+        );
         assert_eq!(actual, expected);
     }
 }

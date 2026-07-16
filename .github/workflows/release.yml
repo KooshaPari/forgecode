@@ -1,11 +1,4 @@
-# -------------------------------------------------------------------
-# Release forge-dev — cargo-dist-style publish pipeline
-#
-# Triggered by tag push (v*), builds the CLI for mac/linux/windows,
-# generates install.sh + shell installers, attaches to a GitHub Release.
-# -------------------------------------------------------------------
-
-name: Release forge-dev
+name: Release ForgeCode
 
 on:
   push:
@@ -17,12 +10,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  APP_VERSION: ${{ github.ref_name }}
 
 jobs:
-  # ── Build binaries for each platform ────────────────────────────
   build:
-    name: ${{ matrix.target }}
+    name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -30,201 +21,87 @@ jobs:
         include:
           - target: x86_64-apple-darwin
             os: macos-latest
-            ext: ""
+            extension: tar.gz
           - target: aarch64-apple-darwin
             os: macos-latest
-            ext: ""
+            extension: tar.gz
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            ext: ""
+            extension: tar.gz
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            ext: ""
+            extension: tar.gz
           - target: x86_64-pc-windows-msvc
             os: windows-latest
-            ext: ".exe"
+            extension: zip
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Install protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install cross-compilation toolchain (Linux aarch64)
+      - uses: arduino/setup-protoc@v3
+      - name: Install Linux ARM64 cross-compilation toolchain
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         uses: taiki-e/setup-cross-toolchain-action@v1
         with:
           target: ${{ matrix.target }}
-
-      - name: Build forge-dev (${{ matrix.target }})
-        run: cargo build --features dev-binary --release --target ${{ matrix.target }} --bin forge-dev
-        env:
-          RUSTFLAGS: ${{ contains(matrix.target, 'windows') && '-C target-feature=+crt-static' || '' }}
-
-      - name: Package binary
+      - name: Build forge-dev
+        run: cargo build --locked --features dev-binary --release --target ${{ matrix.target }} --bin forge-dev
+      - name: Package archive
         shell: bash
         run: |
           set -euo pipefail
-          BINARY="forge-dev${{ matrix.ext }}"
-          SRC="target/${{ matrix.target }}/release/$BINARY"
-          DIST_NAME="forge-dev-${{ matrix.target }}"
-          mkdir -p dist
-
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp "$SRC" "$BINARY"
-            7z a "${DIST_NAME}.zip" "$BINARY"
+          mkdir -p dist/package
+          if [[ "${{ matrix.extension }}" == "zip" ]]; then
+            cp "target/${{ matrix.target }}/release/forge-dev.exe" dist/package/forge-dev.exe
+            (cd dist/package && 7z a "../forge-dev-${{ matrix.target }}.zip" forge-dev.exe)
           else
-            cp "$SRC" "dist/$BINARY"
-            tar czf "${DIST_NAME}.tar.gz" -C dist "$BINARY"
+            cp "target/${{ matrix.target }}/release/forge-dev" dist/package/forge-dev
+            tar -czf "dist/forge-dev-${{ matrix.target }}.tar.gz" -C dist/package forge-dev
           fi
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: forge-dev-${{ matrix.target }}
-          path: forge-dev-${{ matrix.target }}.*
+          path: dist/forge-dev-${{ matrix.target }}.${{ matrix.extension }}
           if-no-files-found: error
 
-  # ── Generate installer scripts ─────────────────────────────────
-  installer:
-    name: Generate installers
-    needs: [build]
+  assemble:
+    name: Assemble release assets
+    needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          path: artifacts
-          merge-multiple: false
-
-      - name: Generate install.sh
-        run: |
-          cat > install.sh << 'SCRIPT'
-#!/usr/bin/env sh
-# forge-dev — one-line install script
-# Usage: curl -sSfL https://github.com/KooshaPari/forgecode/releases/latest/download/install.sh | sh
-set -eu
-
-APP="forge-dev"
-REPO="KooshaPari/forgecode"
-VERSION="${VERSION:-latest}"
-
-# Detect platform arch and OS
-ARCH=$(uname -m)
-OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-
-# Normalize arch
-case "$ARCH" in
-  x86_64|amd64) ARCH="x86_64"  ;;
-  aarch64|arm64) ARCH="aarch64" ;;
-  *) printf "Unsupported architecture: %s\n" "$ARCH"; exit 1 ;;
-esac
-
-# Normalize OS and set target triple
-case "$OS" in
-  linux)
-    TARGET="${ARCH}-unknown-linux-gnu"
-    PKG_EXT=".tar.gz"
-    ;;
-  darwin)
-    TARGET="${ARCH}-apple-darwin"
-    PKG_EXT=".tar.gz"
-    ;;
-  mingw*|msys*|cygwin*)
-    TARGET="${ARCH}-pc-windows-msvc"
-    PKG_EXT=".zip"
-    ;;
-  *)
-    printf "Unsupported OS: %s\n" "$OS"
-    exit 1
-    ;;
-esac
-
-printf "Downloading %s for %s...\n" "$APP" "$TARGET"
-
-if [ "$VERSION" = "latest" ]; then
-  URL="https://github.com/${REPO}/releases/latest/download/${APP}-${TARGET}${PKG_EXT}"
-else
-  URL="https://github.com/${REPO}/releases/download/${VERSION}/${APP}-${TARGET}${PKG_EXT}"
-fi
-
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
-
-if command -v curl >/dev/null 2>&1; then
-  curl -sSfL "$URL" -o "$TMPDIR/${APP}${PKG_EXT}"
-elif command -v wget >/dev/null 2>&1; then
-  wget -q "$URL" -O "$TMPDIR/${APP}${PKG_EXT}"
-else
-  printf "Error: need curl or wget to download\n"
-  exit 1
-fi
-
-# Extract
-if [ "$PKG_EXT" = ".zip" ]; then
-  unzip -qo "$TMPDIR/${APP}${PKG_EXT}" -d "$TMPDIR"
-else
-  tar xzf "$TMPDIR/${APP}${PKG_EXT}" -C "$TMPDIR"
-fi
-
-# Install
-if [ -w "/usr/local/bin" ]; then
-  DEST="/usr/local/bin/${APP}"
-else
-  DEST="${HOME}/.local/bin/${APP}"
-  mkdir -p "${HOME}/.local/bin"
-fi
-
-cp "$TMPDIR/${APP}" "$DEST"
-chmod +x "$DEST"
-
-printf "\n  ✓ %s installed to %s\n" "$APP" "$DEST"
-printf "  Run '%s --help' to get started.\n" "$APP"
-SCRIPT
-          chmod +x install.sh
-
-      - name: Upload installers
-        uses: actions/upload-artifact@v4
-        with:
-          name: installers
-          path: install.sh
-          if-no-files-found: error
-
-  # ── Create GitHub Release ──────────────────────────────────────
-  release:
-    name: Create Release
-    needs: [installer]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
+          path: release
           merge-multiple: true
-
-      - name: List artifacts
-        run: ls -lh artifacts/
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - name: Add installer and checksums
+        run: |
+          set -euo pipefail
+          cp scripts/install.sh release/install.sh
+          chmod 0755 release/install.sh
+          (cd release && sha256sum forge-dev-* > SHA256SUMS)
+      - name: Validate A+ release contract
+        run: scripts/release-scorecard.sh --release-dir release --version "${{ github.ref_name }}"
+      - uses: actions/upload-artifact@v4
         with:
-          files: |
-            artifacts/forge-dev-*
-            artifacts/install.sh
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          generate_release_notes: true
+          name: forgecode-release-assets
+          path: release/
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: assemble
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: forgecode-release-assets
+          path: release
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
           fail_on_unmatched_files: true
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

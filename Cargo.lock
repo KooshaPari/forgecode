@@ -2566,7 +2566,7 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
 name = "forge3d"
-version = "2.9.9"
+version = "2.10.0"
 dependencies = [
  "chrono",
  "clap",
@@ -2723,7 +2723,7 @@ dependencies = [
 
 [[package]]
 name = "forge_dbd"
-version = "2.9.9"
+version = "2.10.0"
 dependencies = [
  "anyhow",
  "bincode",
@@ -3051,7 +3051,7 @@ dependencies = [
 
 [[package]]
 name = "forge_pheno_winterminal"
-version = "2.9.9"
+version = "2.10.0"
 dependencies = [
  "dirs",
  "regex",
@@ -3341,7 +3341,7 @@ dependencies = [
 
 [[package]]
 name = "forge_tui"
-version = "2.9.9"
+version = "2.10.0"
 dependencies = [
  "anyhow",
  "forge3d",

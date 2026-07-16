@@ -1,8 +1,5 @@
 [workspace]
-# HeliosLite (formerly Forgecode) — additive rename policy (Gate 1b).
-# Crate paths and internal identifiers are preserved verbatim for upstream-merge
-# safety. Publish-surface aliases are added below; canonical renames land in
-# later gates. See docs/RENAMES-STRATEGY.md.
+# ForgeCode is the maintained KooshaPari fork of tailcallhq/forgecode.
 
 members = [
   "crates/forge_api",
@@ -48,21 +45,16 @@ resolver = "2"
 
 [workspace.package]
 license = "MIT"
-# HeliosLite version. We co-version with upstream Forgecode (2.9.9) for now;
-# the first HeliosLite-only tag will be 3.0.0 at GA. See docs/RENAMES-STRATEGY.md.
-version = "2.9.9"
+version = "2.10.0"
 rust-version = "1.92"
 edition = "2024"
-# Publish surface flip — the canonical crate *name* (helioslite) is published
-# under the [package] section of the binary crate (crates/forge_main/Cargo.toml).
-# The forge_* internal crate names remain in place for upstream-merge safety.
 authors = ["KooshaPari / Phenotype."]
-description = "HeliosLite (formerly Forgecode) — AI agentic coding CLI."
-homepage = "https://helioslite.phenotype.space"
-repository = "https://github.com/KooshaPari/heliosLite"
-documentation = "https://helioslite.phenotype.space/docs"
+description = "ForgeCode — AI agentic coding CLI."
+homepage = "https://github.com/KooshaPari/forgecode"
+repository = "https://github.com/KooshaPari/forgecode"
+documentation = "https://github.com/KooshaPari/forgecode#readme"
 readme = "README.md"
-keywords = ["ai", "agent", "cli", "helios", "phenotype"]
+keywords = ["ai", "agent", "cli", "forgecode", "phenotype"]
 categories = ["command-line-utilities", "development-tools"]
 
 [profile.release]

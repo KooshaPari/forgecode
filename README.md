@@ -1,4 +1,4 @@
-# helioslite (formerly `forgecode` / `forge-dev`)
+# ForgeCode
 
 <p align="center">
   <a href="assets/brand/forgecode-icon.svg"><img src="assets/brand/forgecode-icon.svg" alt="forgecode" width="160" height="160"></a>
@@ -10,33 +10,9 @@
 
 An AI-enhanced terminal development environment — an agentic coding CLI/TUI with ZSH plugin support, built in Rust.
 
-> **📣 This project is now distributed as `helioslite`.**
->
-> `Forgecode` is the upstream (`tailcallhq/forgecode`, MIT/Apache-2.0). This
-> fork (`KooshaPari/forgecode`) is published under the new name
-> **`helioslite`** on crates.io / npm and the **`KooshaPari/heliosLite`**
-> GitHub repo. The internal crate identifier `forgecode` and binary name
-> `forge-dev` are preserved as deprecated aliases for upstream-merge safety;
-> new installs should use `helioslite`.
->
-> |  | old (deprecated) | new (canonical) |
-> |--|------------------|-----------------|
-> | binary | `forge-dev`, `forge` | `helioslite` (alias kept) |
-> | crates | `forgecode` workspace | `helioslite` workspace |
-> | env vars | `FORGE_*`, `FORGE_DEV_*` | `HELIOSLITE_*` (legacy aliased) |
-> | repo | `KooshaPari/forgecode` | `KooshaPari/heliosLite` |
-> | install URL | `forgecode.dev/cli` | `helioslite.dev/cli` (legacy alias kept) |
->
-> ```bash
-> # Migrate in 30 seconds
-> cargo install helioslite --locked
-> helioslite --version          # canonical
-> FORGE_LEGACY=1 forge-dev --version   # legacy alias still works
-> ```
->
-> Removal window for the legacy aliases is **6 months** after `helioslite` is
-> published as `latest` on crates.io. See `docs/RENAMES-STRATEGY.md` for the
-> full migration matrix and `docs/FORK.md` for fork attribution.
+> **Distribution contract:** ForgeCode / KooshaPari/forgecode / forge-dev /
+> v2.10.0. Releases are GitHub Release assets from this repository; ForgeCode
+> does not claim npm, crates.io, Homebrew, Chocolatey, or winget distribution.
 
 > **Fork of [tailcallhq/forgecode](https://github.com/tailcallhq/forgecode).** This fork (`forge-dev`) adds Phenotype-specific features (SQLite session store with WAL checkpointing + zstd compression, conversation FTS/vector search, subagent breadcrumbs) on top of upstream.
 
@@ -46,7 +22,7 @@ An AI-enhanced terminal development environment — an agentic coding CLI/TUI wi
 |-------|-------|
 | Default branch | `main` |
 | Language | Rust (2021 edition) |
-| Binary | `forge` (from `crates/forge_main`) |
+| Binary | `forge-dev` (from `crates/forge_main`) |
 | Version | 2.10.0 |
 | License | MIT / Apache-2.0 |
 
@@ -83,10 +59,10 @@ Grab the latest `forge-dev` binary for your platform:
 curl -sSfL https://github.com/KooshaPari/forgecode/releases/latest/download/install.sh | sh
 ```
 
-This downloads the correct binary for your OS and architecture (macOS ARM/Intel,
-Linux x86_64/ARM64, Windows x86_64), installs it to `/usr/local/bin/forge-dev`
-(or `~/.local/bin/forge-dev` if `/usr/local/bin` is not writable), and makes it
-executable.
+This downloads a checksum-verified binary for macOS ARM/Intel or Linux
+x86_64/ARM64 and installs it to `~/.local/bin/forge-dev` by default. Set
+`FORGE_DEV_VERSION=v2.10.0` to pin a release or `FORGE_DEV_INSTALL_DIR` to
+choose another destination.
 
 > **Source builds:** To build from source instead, use `cargo build --release
 > --features dev-binary --bin forge-dev`. The `forge-dev` binary is the
@@ -654,11 +630,7 @@ For comprehensive documentation on all features and capabilities, please visit t
 ## Installation
 
 ```bash
-# YOLO
-curl -fsSL https://forgecode.dev/cli | sh
-
-# Package managers
-nix run github:tailcallhq/forgecode # for latest dev branch
+curl -fsSL https://github.com/KooshaPari/forgecode/releases/latest/download/install.sh | bash
 ```
 
 ---
