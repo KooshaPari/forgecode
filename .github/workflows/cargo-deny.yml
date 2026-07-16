@@ -17,6 +17,6 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.20.2
       - name: Check
-        run: cargo deny check --log-level error
+        run: cargo deny --log-level error check

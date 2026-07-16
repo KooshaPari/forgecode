@@ -28,18 +28,10 @@ pub fn init_tracing(log_path: PathBuf, tracker: Tracker) -> anyhow::Result<Guard
         .with_writer(writer)
         .with_filter(filter);
 
+    let forge_dev_log = std::env::var("FORGE_DEV_LOG").ok();
+
     tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::EnvFilter::try_from_env(
-                // Additive rename: HELIOSLITE_LOG wins, falls back to FORGE_LOG
-                // (which is the upstream / pre-rename env name).
-                std::env::var("HELIOSLITE_LOG")
-                    .or_else(|_| std::env::var("FORGE_LOG"))
-                    .ok()
-                    .as_deref(),
-            )
-            .unwrap_or(level),
-        )
+        .with(resolve_log_filter(forge_dev_log.as_deref(), level))
         .with(fmt_layer)
         .init();
 
@@ -68,6 +60,15 @@ fn prepare_writer(
         )
     };
     (non_blocking, guard, env)
+}
+
+fn resolve_log_filter(
+    forge_dev_log: Option<&str>,
+    default: tracing_subscriber::EnvFilter,
+) -> tracing_subscriber::EnvFilter {
+    forge_dev_log
+        .and_then(|filter| tracing_subscriber::EnvFilter::try_new(filter).ok())
+        .unwrap_or(default)
 }
 
 pub struct Guard(#[allow(dead_code)] WorkerGuard);
@@ -100,5 +101,23 @@ impl std::io::Write for PostHogWriter {
 
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+    use tracing_subscriber::EnvFilter;
+
+    use super::resolve_log_filter;
+
+    #[test]
+    fn uses_forge_dev_log_filter() {
+        let fixture_default = EnvFilter::new("forge=debug");
+
+        let actual = resolve_log_filter(Some("forge=trace"), fixture_default);
+
+        let expected = "forge=trace";
+        assert_eq!(actual.to_string(), expected);
     }
 }
