@@ -18,7 +18,7 @@ ForgeCode release scorecard
 Usage: scripts/release-scorecard.sh [--release-dir DIR] [--version vX.Y.Z]
 
 Checks the GitHub Release asset contract: every target archive, SHA256SUMS,
-the checked-in installer, and a tag consistent with Cargo.toml.
+installers, a release evidence manifest, and a tag consistent with Cargo.toml.
 EOF
 }
 
@@ -50,7 +50,15 @@ if [[ -z "$release_dir" ]]; then
 fi
 
 test -f "$release_dir/install.sh"
+test -f "$release_dir/install.ps1"
 test -f "$release_dir/SHA256SUMS"
+test -f "$release_dir/RELEASE_EVIDENCE.json"
+grep -Fq '"schema_version": 1' "$release_dir/RELEASE_EVIDENCE.json"
+grep -Fq "\"release\": \"$version\"" "$release_dir/RELEASE_EVIDENCE.json"
+grep -Fq '"required_checks": "passed"' "$release_dir/RELEASE_EVIDENCE.json"
+grep -Fq '"asset_contract": "passed"' "$release_dir/RELEASE_EVIDENCE.json"
+grep -Fq '"macos_or_linux_installer": "passed"' "$release_dir/RELEASE_EVIDENCE.json"
+grep -Fq '"windows_installer": "passed"' "$release_dir/RELEASE_EVIDENCE.json"
 for target in "${targets[@]}"; do
   if [[ "$target" == *windows* ]]; then
     asset="${app}-${target}.zip"

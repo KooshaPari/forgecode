@@ -9,10 +9,19 @@ grep -Fq 'repository = "https://github.com/KooshaPari/forgecode"' Cargo.toml
 grep -Fq 'name: Release ForgeCode' .github/workflows/release.yml
 grep -Fq 'scripts/install.sh' .github/workflows/release.yml
 grep -Fq 'SHA256SUMS' .github/workflows/release.yml
-grep -Fq 'taiki-e/setup-cross-toolchain-action@v1' .github/workflows/release.yml
+grep -Fq 'RELEASE_EVIDENCE.json' .github/workflows/release.yml
+grep -Fq 'install.ps1' .github/workflows/release.yml
+grep -Fq 'taiki-e/setup-cross-toolchain-action@3d9770ce98eb7dbcf378563182a5e8031165f75b' .github/workflows/release.yml
 grep -Fq "matrix.target == 'aarch64-unknown-linux-gnu'" .github/workflows/release.yml
 grep -Fq 'ForgeCode / KooshaPari/forgecode / forge-dev /' README.md
 grep -Fq '> v2.10.0.' README.md
+
+# Tags publish through release.yml only.  The generated CI workflow must never
+# upload raw legacy `forge` binaries or create a competing draft release.
+! rg -q 'upload-to-github-release|release-drafter|build_release' .github/workflows/ci.yml
+for required_job in build format clippy nextest cargo_deny trufflehog sast zsh_rprompt_perf; do
+  grep -Fq "  ${required_job}:" .github/workflows/ci.yml
+done
 
 # Cargo requires a bare SemVer package version, but every user-visible release
 # boundary must identify the sole production executable and its release tag.
@@ -57,6 +66,16 @@ printf '#!/usr/bin/env bash\necho forge-dev v2.10.0\n' > "$fixture/archive/forge
 chmod +x "$fixture/archive/forge-dev"
 tar -czf "$fixture/forge-dev-${target}.tar.gz" -C "$fixture/archive" forge-dev
 (cd "$fixture" && shasum -a 256 "forge-dev-${target}.tar.gz") > "$fixture/SHA256SUMS"
+cat > "$fixture/RELEASE_EVIDENCE.json" <<EOF
+{
+  "schema_version": 1,
+  "release": "v2.10.0",
+  "commit": "test-fixture",
+  "ci": { "required_checks": "passed" },
+  "release_workflow": { "asset_contract": "passed" },
+  "smoke": { "macos_or_linux_installer": "passed", "windows_installer": "passed" }
+}
+EOF
 cat > "$fixture/bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
