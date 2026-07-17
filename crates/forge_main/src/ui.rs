@@ -2023,10 +2023,11 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
         // Stream the diagnostic output in real-time
         crate::zsh::run_zsh_doctor()?;
 
-        let repo = std::env::var("FORGECODE_REPO")
-            .unwrap_or_else(|_| "KooshaPari/forgecode".to_string());
+        let repo =
+            std::env::var("FORGECODE_REPO").unwrap_or_else(|_| "KooshaPari/forgecode".to_string());
         let update_url = std::env::var("FORGECODE_UPDATE_URL").unwrap_or_else(|_| {
-            "https://github.com/KooshaPari/forgecode/releases/latest/download/install.sh".to_string()
+            "https://github.com/KooshaPari/forgecode/releases/latest/download/install.sh"
+                .to_string()
         });
         let release_banner = format!("ForgeCode release channel → repo={repo} update={update_url}");
         self.writeln_title(TitleFormat::info(&release_banner))?;

@@ -220,7 +220,7 @@ forge_test_kit = { version = "=0.1.1", path = "crates/forge_test_kit" }
 forge_tool_macros = { version = "=0.1.1", path = "crates/forge_tool_macros" }
 forge_tracker = { version = "=0.1.1", path = "crates/forge_tracker" }
 forge_walker = { version = "=0.1.1", path = "crates/forge_walker" }
-forge3d = { version = "=2.9.9", path = "crates/forge3d" }
+forge3d = { version = "=2.10.0", path = "crates/forge3d" }
 forge_drift = { version = "=0.1.0", path = "crates/forge_drift" }
 forge_eventsource = { version = "=0.1.1", path = "crates/forge_eventsource" }
 forge_eventsource_stream = { version = "=0.1.1", path = "crates/forge_eventsource_stream" }
