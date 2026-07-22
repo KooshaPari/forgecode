@@ -111,87 +111,87 @@ jobs:
       - name: Generate install.sh
         run: |
           cat > install.sh << 'SCRIPT'
-#!/usr/bin/env sh
-# forge-dev — one-line install script
-# Usage: curl -sSfL https://github.com/KooshaPari/forgecode/releases/latest/download/install.sh | sh
-set -eu
+          #!/usr/bin/env sh
+          # forge-dev — one-line install script
+          # Usage: curl -sSfL https://github.com/KooshaPari/forgecode/releases/latest/download/install.sh | sh
+          set -eu
 
-APP="forge-dev"
-REPO="KooshaPari/forgecode"
-VERSION="${VERSION:-latest}"
+          APP="forge-dev"
+          REPO="KooshaPari/forgecode"
+          VERSION="${VERSION:-latest}"
 
-# Detect platform arch and OS
-ARCH=$(uname -m)
-OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          # Detect platform arch and OS
+          ARCH=$(uname -m)
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 
-# Normalize arch
-case "$ARCH" in
-  x86_64|amd64) ARCH="x86_64"  ;;
-  aarch64|arm64) ARCH="aarch64" ;;
-  *) printf "Unsupported architecture: %s\n" "$ARCH"; exit 1 ;;
-esac
+          # Normalize arch
+          case "$ARCH" in
+            x86_64|amd64) ARCH="x86_64"  ;;
+            aarch64|arm64) ARCH="aarch64" ;;
+            *) printf "Unsupported architecture: %s\n" "$ARCH"; exit 1 ;;
+          esac
 
-# Normalize OS and set target triple
-case "$OS" in
-  linux)
-    TARGET="${ARCH}-unknown-linux-gnu"
-    PKG_EXT=".tar.gz"
-    ;;
-  darwin)
-    TARGET="${ARCH}-apple-darwin"
-    PKG_EXT=".tar.gz"
-    ;;
-  mingw*|msys*|cygwin*)
-    TARGET="${ARCH}-pc-windows-msvc"
-    PKG_EXT=".zip"
-    ;;
-  *)
-    printf "Unsupported OS: %s\n" "$OS"
-    exit 1
-    ;;
-esac
+          # Normalize OS and set target triple
+          case "$OS" in
+            linux)
+              TARGET="${ARCH}-unknown-linux-gnu"
+              PKG_EXT=".tar.gz"
+              ;;
+            darwin)
+              TARGET="${ARCH}-apple-darwin"
+              PKG_EXT=".tar.gz"
+              ;;
+            mingw*|msys*|cygwin*)
+              TARGET="${ARCH}-pc-windows-msvc"
+              PKG_EXT=".zip"
+              ;;
+            *)
+              printf "Unsupported OS: %s\n" "$OS"
+              exit 1
+              ;;
+          esac
 
-printf "Downloading %s for %s...\n" "$APP" "$TARGET"
+          printf "Downloading %s for %s...\n" "$APP" "$TARGET"
 
-if [ "$VERSION" = "latest" ]; then
-  URL="https://github.com/${REPO}/releases/latest/download/${APP}-${TARGET}${PKG_EXT}"
-else
-  URL="https://github.com/${REPO}/releases/download/${VERSION}/${APP}-${TARGET}${PKG_EXT}"
-fi
+          if [ "$VERSION" = "latest" ]; then
+            URL="https://github.com/${REPO}/releases/latest/download/${APP}-${TARGET}${PKG_EXT}"
+          else
+            URL="https://github.com/${REPO}/releases/download/${VERSION}/${APP}-${TARGET}${PKG_EXT}"
+          fi
 
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+          TMPDIR=$(mktemp -d)
+          trap 'rm -rf "$TMPDIR"' EXIT
 
-if command -v curl >/dev/null 2>&1; then
-  curl -sSfL "$URL" -o "$TMPDIR/${APP}${PKG_EXT}"
-elif command -v wget >/dev/null 2>&1; then
-  wget -q "$URL" -O "$TMPDIR/${APP}${PKG_EXT}"
-else
-  printf "Error: need curl or wget to download\n"
-  exit 1
-fi
+          if command -v curl >/dev/null 2>&1; then
+            curl -sSfL "$URL" -o "$TMPDIR/${APP}${PKG_EXT}"
+          elif command -v wget >/dev/null 2>&1; then
+            wget -q "$URL" -O "$TMPDIR/${APP}${PKG_EXT}"
+          else
+            printf "Error: need curl or wget to download\n"
+            exit 1
+          fi
 
-# Extract
-if [ "$PKG_EXT" = ".zip" ]; then
-  unzip -qo "$TMPDIR/${APP}${PKG_EXT}" -d "$TMPDIR"
-else
-  tar xzf "$TMPDIR/${APP}${PKG_EXT}" -C "$TMPDIR"
-fi
+          # Extract
+          if [ "$PKG_EXT" = ".zip" ]; then
+            unzip -qo "$TMPDIR/${APP}${PKG_EXT}" -d "$TMPDIR"
+          else
+            tar xzf "$TMPDIR/${APP}${PKG_EXT}" -C "$TMPDIR"
+          fi
 
-# Install
-if [ -w "/usr/local/bin" ]; then
-  DEST="/usr/local/bin/${APP}"
-else
-  DEST="${HOME}/.local/bin/${APP}"
-  mkdir -p "${HOME}/.local/bin"
-fi
+          # Install
+          if [ -w "/usr/local/bin" ]; then
+            DEST="/usr/local/bin/${APP}"
+          else
+            DEST="${HOME}/.local/bin/${APP}"
+            mkdir -p "${HOME}/.local/bin"
+          fi
 
-cp "$TMPDIR/${APP}" "$DEST"
-chmod +x "$DEST"
+          cp "$TMPDIR/${APP}" "$DEST"
+          chmod +x "$DEST"
 
-printf "\n  ✓ %s installed to %s\n" "$APP" "$DEST"
-printf "  Run '%s --help' to get started.\n" "$APP"
-SCRIPT
+          printf "\n  ✓ %s installed to %s\n" "$APP" "$DEST"
+          printf "  Run '%s --help' to get started.\n" "$APP"
+          SCRIPT
           chmod +x install.sh
 
       - name: Upload installers
