@@ -20,12 +20,12 @@ pub fn generate_release_drafter_workflow() {
                 ],
                 branches: vec!["main".to_string()],
             }),
-            ..Event::default()
+                ..Event::default()
         })
         .permissions(
             Permissions::default()
-                .contents(Level::Write)
-                .pull_requests(Level::Write),
+                .contents(Level::Read)
+                .pull_requests(Level::Read),
         )
         .add_job("update_release_draft", draft_release_update_job());
 

@@ -11,7 +11,7 @@ pub fn generate_labels_workflow() {
             push: Some(Push { branches: vec!["main".to_string()], ..Push::default() }),
             ..Event::default()
         })
-        .permissions(Permissions::default().contents(Level::Write))
+        .permissions(Permissions::default().contents(Level::Read).issues(Level::Read))
         .add_job("label-sync", label_sync_job());
 
     Generate::new(labels_workflow)

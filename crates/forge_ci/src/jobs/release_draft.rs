@@ -15,9 +15,9 @@ pub fn create_draft_release_job(build_job_id: &str) -> Job {
                 .contents(Level::Write)
                 .pull_requests(Level::Write),
         )
-        .add_step(Step::new("Checkout Code").uses("actions", "checkout", "v6"))
+        .add_step(Step::new("Checkout Code").uses("actions", "checkout", "d23441a48e516b6c34aea4fa41551a30e30af803"))
         .add_step(
-            Step::new("Draft Release").uses("release-drafter", "release-drafter", "v7")
+            Step::new("Draft Release").uses("release-drafter", "release-drafter", "5a60cd8ddda6dc14fce77159675b8fd2cdca4007")
                 .id("create_release")
                 .env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}"))
                 .with(("config-name", "release-drafter.yml")),

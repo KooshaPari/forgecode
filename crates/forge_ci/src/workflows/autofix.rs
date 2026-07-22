@@ -1,5 +1,4 @@
 use gh_workflow::generate::Generate;
-use gh_workflow::toolchain::Component;
 use gh_workflow::*;
 
 use crate::jobs;
@@ -9,14 +8,18 @@ use crate::steps::setup_protoc;
 pub fn generate_autofix_workflow() {
     let lint_fix_job = Job::new("Lint Fix")
         .permissions(Permissions::default().contents(Level::Read))
-        .add_step(Step::new("Checkout Code").uses("actions", "checkout", "v6"))
+        .add_step(Step::new("Checkout Code").uses("actions", "checkout", "d23441a48e516b6c34aea4fa41551a30e30af803"))
         .add_step(Step::new("Install SQLite").run("sudo apt-get install -y libsqlite3-dev"))
         .add_step(setup_protoc())
         .add_step(
-            Step::toolchain()
-                .add_nightly()
-                .add_component(Component::Clippy)
-                .add_component(Component::Rustfmt),
+            Step::new("Setup Rust Toolchain")
+                .uses(
+                    "actions-rust-lang",
+                    "setup-rust-toolchain",
+                    "166cdcfd11aee3cb47222f9ddb555ce30ddb9659",
+                )
+                .with(("toolchain", "nightly"))
+                .with(("components", "clippy, rustfmt")),
         )
         .add_step(Step::new("Cargo Fmt").run(jobs::fmt_cmd(true)))
         .add_step(Step::new("Cargo Clippy").run(jobs::clippy_cmd(true)))
@@ -43,6 +46,7 @@ pub fn generate_autofix_workflow() {
         .name("autofix.ci")
         .add_env(RustFlags::deny("warnings"))
         .on(events)
+        .permissions(Permissions::default().contents(Level::Read))
         .concurrency(
             Concurrency::default()
                 .group("autofix-${{github.ref}}")

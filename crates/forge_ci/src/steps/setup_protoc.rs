@@ -6,6 +6,6 @@ use gh_workflow::*;
 /// compilation.
 pub fn setup_protoc() -> Step<Use> {
     Step::new("Setup Protobuf Compiler")
-        .uses("arduino", "setup-protoc", "v3")
+        .uses("arduino", "setup-protoc", "c65c819552d16ad3c9b72d9dfd5ba5237b9c906b")
         .with(("repo-token", "${{ secrets.GITHUB_TOKEN }}"))
 }

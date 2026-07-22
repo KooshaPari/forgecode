@@ -29,6 +29,8 @@ env:
   push:
     branches:
     - main
+permissions:
+  contents: read
 jobs:
   lint:
     name: Lint Fix
@@ -37,17 +39,16 @@ jobs:
       contents: read
     steps:
     - name: Checkout Code
-      uses: actions/checkout@v6
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
     - name: Install SQLite
       run: sudo apt-get install -y libsqlite3-dev
     - name: Setup Protobuf Compiler
-      uses: arduino/setup-protoc@v3
+      uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
     - name: Setup Rust Toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@v1
+      uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
       with:
-        toolchain: nightly
         components: clippy, rustfmt
     - name: Cargo Fmt
       run: cargo +nightly fmt --all

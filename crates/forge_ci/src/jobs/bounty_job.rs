@@ -14,11 +14,11 @@
 use gh_workflow::*;
 
 const SCRIPTS_DIR: &str = ".github/scripts/bounty/src";
-const TSX: &str = "npx tsx";
+const TSX: &str = "npx -y tsx@4.20.6";
 
 /// Returns a checkout step — required before script invocation.
 fn checkout_step() -> Step<Use> {
-    Step::new("Checkout").uses("actions", "checkout", "v6")
+    Step::new("Checkout").uses("actions", "checkout", "d23441a48e516b6c34aea4fa41551a30e30af803")
 }
 
 /// Builds a three-step job: checkout + npm install + a single script
@@ -27,7 +27,9 @@ fn sync_job(job_name: &str, script: &str, args: String) -> Job {
     let cmd = format!("{TSX} {SCRIPTS_DIR}/{script} {args}");
     Job::new(job_name)
         .add_step(checkout_step())
-        .add_step(Step::new("Install npm packages").run("npm install"))
+        .add_step(
+            Step::new("Install npm packages").run("npm ci --ignore-scripts --no-audit --no-fund"),
+        )
         .add_step(Step::new("Sync bounty labels").run(cmd))
 }
 
@@ -47,7 +49,9 @@ pub fn sync_all_issues_job() -> Job {
     );
     Job::new("Sync all bounty issues")
         .add_step(checkout_step())
-        .add_step(Step::new("Install npm packages").run("npm install"))
+        .add_step(
+            Step::new("Install npm packages").run("npm ci --ignore-scripts --no-audit --no-fund"),
+        )
         .add_step(Step::new("Sync all bounty labels").run(cmd))
         .permissions(Permissions::default().issues(Level::Write))
 }

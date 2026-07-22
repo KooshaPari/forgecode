@@ -4,7 +4,7 @@ use gh_workflow::*;
 pub fn release_homebrew_job() -> Job {
     Job::new("homebrew_release")
         .add_step(
-            Step::new("Checkout Code").uses("actions", "checkout", "v6")
+            Step::new("Checkout Code").uses("actions", "checkout", "d23441a48e516b6c34aea4fa41551a30e30af803")
                 .add_with(("repository", "antinomyhq/homebrew-code-forge"))
                 .add_with(("ref", "main"))
                 .add_with(("token", "${{ secrets.HOMEBREW_ACCESS }}")),
