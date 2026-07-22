@@ -466,12 +466,11 @@ fn parse_cpu_field(stat: &str, one_based: usize) -> f64 {
     };
     // Convert to a rough percent of one CPU using clock_tick (typically 100).
     let clock_tick: f64 = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
-    let pct = if clock_tick > 0.0 {
+    if clock_tick > 0.0 {
         (ticks as f64 / clock_tick) * 100.0
     } else {
         0.0
-    };
-    pct
+    }
 }
 
 #[cfg(target_os = "linux")]
