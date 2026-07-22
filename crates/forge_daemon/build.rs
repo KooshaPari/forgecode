@@ -20,6 +20,14 @@ fn main() {
         zig_dir.join("build.zig").display()
     );
 
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os != "macos" {
+        println!(
+            "cargo:warning=skipping forge-daemon Zig core build for unsupported target_os={target_os}"
+        );
+        return;
+    }
+
     // Detect target; map Cargo triple → Zig target.
     let zig_target = zig_target_from_cargo();
 

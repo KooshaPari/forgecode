@@ -2,6 +2,7 @@
 name = "forge_drift"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 description = "drift detection — hash + Jaccard word-set similarity for multi-agent overlap"
 
 [dependencies]

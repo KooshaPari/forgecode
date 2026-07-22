@@ -18,7 +18,6 @@
 // single-machine use.  Mode 2 supports the warm-pool long-running daemon
 // model that eliminates dyld+tokio init cost across multiple callers.
 
-use std::ffi::CString;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -31,6 +30,7 @@ use tracing::{debug, info, warn};
 // FFI bindings to libforge_daemon_core.a
 // ---------------------------------------------------------------------------
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" {
     /// Start the daemon (bind socket, init kqueue).
     /// socket_path: NUL-terminated C string; null → /tmp/forge-daemon-<uid>.sock
@@ -73,12 +73,15 @@ pub struct DaemonDispatch;
 
 impl DaemonDispatch {
     /// Dispatch a single forge task and return its stdout output + exit code.
+    #[cfg(target_os = "macos")]
     pub fn dispatch(
         forge_bin: &str,
         prompt: &str,
         model: &str,
         cwd: &Path,
     ) -> Result<(i32, Vec<u8>)> {
+        use std::ffi::CString;
+
         let forge_bin_c = CString::new(forge_bin).context("forge_bin NUL")?;
         let prompt_c = CString::new(prompt).context("prompt NUL")?;
         let model_c = CString::new(model).context("model NUL")?;
@@ -109,6 +112,19 @@ impl DaemonDispatch {
             "forge_daemon_dispatch returned"
         );
         Ok((exit_code, result_buf))
+    }
+
+    /// The Zig daemon core uses macOS kqueue/posix_spawn internals and is not
+    /// linked into non-macOS builds. Keep workspace checks green while making
+    /// platform support explicit at the call boundary.
+    #[cfg(not(target_os = "macos"))]
+    pub fn dispatch(
+        _forge_bin: &str,
+        _prompt: &str,
+        _model: &str,
+        _cwd: &Path,
+    ) -> Result<(i32, Vec<u8>)> {
+        anyhow::bail!("forge daemon dispatch is only supported on macOS")
     }
 }
 
@@ -294,7 +310,7 @@ fn libc_getuid() -> u32 {
 // Tests
 // ---------------------------------------------------------------------------
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 
