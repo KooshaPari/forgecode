@@ -18,16 +18,11 @@ pub fn generate_autofix_workflow() {
                 .add_component(Component::Clippy)
                 .add_component(Component::Rustfmt),
         )
-        .add_step(Step::new("Cargo Fmt").run(jobs::fmt_cmd(true)))
-        .add_step(Step::new("Cargo Clippy").run(jobs::clippy_cmd(true)))
+        .add_step(Step::new("Cargo Fmt").run(jobs::fmt_cmd(false)))
+        .add_step(Step::new("Cargo Clippy").run(jobs::clippy_cmd(false)))
         .add_step(
             Step::new("Cargo Clippy String Safety").run(jobs::clippy_string_safety_cmd(false)),
-        )
-        .add_step(Step::new("Autofix").uses(
-            "autofix-ci",
-            "action",
-            "7a166d7532b277f34e16238930461bf77f9d7ed8",
-        ));
+        );
 
     let events = Event::default()
         .push(Push::default().add_branch("main"))
