@@ -1,4 +1,6 @@
 name: test
+permissions:
+  contents: read
 
 on:
   pull_request:
@@ -16,21 +18,21 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Install system deps
         run: sudo apt-get update -q && sudo apt-get install -y libsqlite3-dev protobuf-compiler
 
       - name: Setup Rust toolchain (stable)
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
         with:
           toolchain: stable
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@cargo-nextest
+        uses: taiki-e/install-action@67f610471443ab8d079e8f323cbdbccf2d406b67
 
       - name: cargo nextest run
         env:

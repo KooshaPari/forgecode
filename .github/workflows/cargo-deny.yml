@@ -1,4 +1,6 @@
 name: Cargo Deny
+permissions:
+  contents: read
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -13,10 +15,12 @@ on:
 jobs:
   cargo-deny:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
           tool: cargo-deny
       - name: Check
-        run: cargo deny check --log-level error
+        run: cargo deny --log-level error check

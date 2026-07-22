@@ -31,22 +31,24 @@ name: Release Drafter
     branches:
     - main
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 jobs:
   update_release_draft:
     name: update_release_draft
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
     - name: Auto Labeler
       if: github.event_name == 'pull_request_target'
-      uses: release-drafter/release-drafter/autolabeler@v7
+      uses: release-drafter/release-drafter/autolabeler@5a60cd8ddda6dc14fce77159675b8fd2cdca4007
       with:
         config-name: release-drafter.yml
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - name: Release Drafter
-      uses: release-drafter/release-drafter@v7
+      uses: release-drafter/release-drafter@5a60cd8ddda6dc14fce77159675b8fd2cdca4007
       with:
         config-name: release-drafter.yml
       env:

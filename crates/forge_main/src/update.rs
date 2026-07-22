@@ -138,11 +138,10 @@ pub async fn on_update(api: Arc<impl API>, update: Option<&Update>) {
     let primary_repo =
         std::env::var("HELIOSLITE_REPO").unwrap_or_else(|_| "KooshaPari/heliosLite".to_string());
     let legacy_repo = "KooshaPari/forgecode";
-    let informer_primary =
-        update_informer::new(registry::GitHub, primary_repo.as_str(), VERSION)
-            .interval(frequency.into());
-    let informer_legacy = update_informer::new(registry::GitHub, legacy_repo, VERSION)
+    let informer_primary = update_informer::new(registry::GitHub, primary_repo.as_str(), VERSION)
         .interval(frequency.into());
+    let informer_legacy =
+        update_informer::new(registry::GitHub, legacy_repo, VERSION).interval(frequency.into());
 
     if let Some(version) = informer_primary
         .check_version()

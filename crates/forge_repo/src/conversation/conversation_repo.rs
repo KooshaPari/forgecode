@@ -816,10 +816,10 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 #[diesel(column_name = "COUNT(*)")]
                 count: i64,
             }
-            if let Ok(rows) = diesel::sql_query(null_sql).load::<CountRow>(connection) {
-                if let Some(r) = rows.first() {
-                    skipped_count = r.count as usize;
-                }
+            if let Ok(rows) = diesel::sql_query(null_sql).load::<CountRow>(connection)
+                && let Some(r) = rows.first()
+            {
+                skipped_count = r.count as usize;
             }
 
             Ok((compressed_count, skipped_count, error_count))
