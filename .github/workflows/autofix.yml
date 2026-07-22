@@ -55,6 +55,10 @@ jobs:
       with:
         toolchain: nightly
         components: clippy, rustfmt
+    - name: Setup Zig
+      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+      with:
+        version: 0.16.0
     - name: Cargo Fmt
       run: cargo +nightly fmt --all
     - name: Cargo Clippy

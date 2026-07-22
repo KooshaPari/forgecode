@@ -46,6 +46,11 @@ jobs:
           toolchain: stable
           components: clippy
 
+      - name: Setup Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+        with:
+          version: 0.16.0
+
       - name: Rust cache
         uses: Swatinem/rust-cache@7e35be21c2b94d972b1143087fabc27d7dc881ef
 
