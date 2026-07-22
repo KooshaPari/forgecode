@@ -1,18 +1,20 @@
-// forge_daemon — Rust orchestration layer over the Zig kqueue+posix_spawn daemon.
+// forge_daemon — Rust orchestration layer over the Zig kqueue+posix_spawn
+// daemon.
 #![allow(dead_code)] // FFI symbols are used by tests and external callers
 //
-// Split: Zig = hot core (kqueue/posix_spawn/socket), Rust = config/IPC/observability.
-// The Zig core is compiled to libforge_daemon_core.a (C ABI) by build.rs.
+// Split: Zig = hot core (kqueue/posix_spawn/socket), Rust =
+// config/IPC/observability. The Zig core is compiled to libforge_daemon_core.a
+// (C ABI) by build.rs.
 //
 // Two usage modes:
 //
-//   1. In-process C-ABI dispatch (DaemonDispatch):
-//      Calls forge_daemon_dispatch() directly from the same process — the Zig
-//      core handles posix_spawn, pipe, waitpid.  No daemon socket needed.
+//   1. In-process C-ABI dispatch (DaemonDispatch): Calls
+//      forge_daemon_dispatch() directly from the same process — the Zig core
+//      handles posix_spawn, pipe, waitpid.  No daemon socket needed.
 //
-//   2. Socket-based client (DaemonClient):
-//      Connects to a running forge-daemon process over a Unix socket.
-//      Sends JSON requests, receives JSON responses.
+//   2. Socket-based client (DaemonClient): Connects to a running forge-daemon
+//      process over a Unix socket. Sends JSON requests, receives JSON
+//      responses.
 //
 // The Rust side of forge_main can use either mode; mode 1 is simpler for
 // single-machine use.  Mode 2 supports the warm-pool long-running daemon
@@ -35,8 +37,8 @@ use tracing::{info, warn};
 #[cfg(forge_daemon_zig_core)]
 unsafe extern "C" {
     /// Start the daemon (bind socket, init kqueue).
-    /// socket_path: NUL-terminated C string; null → /tmp/forge-daemon-<uid>.sock
-    /// Returns 0 on success, -1 on error.
+    /// socket_path: NUL-terminated C string; null →
+    /// /tmp/forge-daemon-<uid>.sock Returns 0 on success, -1 on error.
     fn forge_daemon_start(socket_path: *const std::os::raw::c_char) -> std::os::raw::c_int;
 
     /// Stop the daemon (close socket, kill workers).
@@ -45,8 +47,9 @@ unsafe extern "C" {
     /// Returns 1 if daemon is running, 0 otherwise.
     fn forge_daemon_is_running() -> std::os::raw::c_int;
 
-    /// Write the active socket path into `out` (capacity `cap`, NUL-terminated).
-    /// Returns bytes written (excl. NUL), or -1 if not started.
+    /// Write the active socket path into `out` (capacity `cap`,
+    /// NUL-terminated). Returns bytes written (excl. NUL), or -1 if not
+    /// started.
     fn forge_daemon_socket_path(out: *mut std::os::raw::c_char, cap: usize) -> std::os::raw::c_int;
 
     /// Dispatch one forge task via posix_spawn (hot path).
@@ -170,7 +173,8 @@ impl DaemonClient {
         Self { socket_path: socket_path.into(), next_id: 1 }
     }
 
-    /// Create a client using the default socket path (/tmp/forge-daemon-<uid>.sock).
+    /// Create a client using the default socket path
+    /// (/tmp/forge-daemon-<uid>.sock).
     pub fn default_path() -> Self {
         let uid = libc_getuid();
         Self::new(format!("/tmp/forge-daemon-{uid}.sock"))
@@ -266,7 +270,8 @@ pub struct DaemonGuard {
 }
 
 impl DaemonGuard {
-    /// Launch the standalone forge-daemon binary; wait until the socket appears.
+    /// Launch the standalone forge-daemon binary; wait until the socket
+    /// appears.
     pub async fn start(daemon_bin: &Path, forge_bin: &Path) -> Result<Self> {
         let socket_path = format!("/tmp/forge-daemon-{}.sock", libc_getuid());
 

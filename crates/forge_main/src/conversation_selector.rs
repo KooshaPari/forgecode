@@ -74,8 +74,9 @@ impl ConversationSelector {
     /// `forge conversation show` to display the selected conversation's
     /// metadata and last message side-by-side with the picker list.
     ///
-    /// The `query` parameter filters/searches conversations if provided (enables FTS).
-    /// The `sort` parameter controls the display order (updated, created, turns, title, cwd).
+    /// The `query` parameter filters/searches conversations if provided
+    /// (enables FTS). The `sort` parameter controls the display order
+    /// (updated, created, turns, title, cwd).
     ///
     /// Returns the selected conversation ID, or None if the user cancelled.
     /// The caller should use `ForgeAPI::conversation()` to load the full

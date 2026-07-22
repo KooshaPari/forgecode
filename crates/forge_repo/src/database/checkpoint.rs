@@ -1,26 +1,27 @@
-//! Phenotype-org addition for WAL contention control and incremental vacuum in a shared `.forge.db`.
+//! Phenotype-org addition for WAL contention control and incremental vacuum in
+//! a shared `.forge.db`.
 //!
-//! Many forge processes can point at the same SQLite database file. Per-connection
-//! passive autocheckpointing tends to no-op under contention because readers or
-//! writers often keep frames pinned, but every writer still pays the checkpoint
-//! attempt cost. This module dedicates one background thread per process to
-//! periodically probe the WAL and truncate it when it is large enough to matter.
+//! Many forge processes can point at the same SQLite database file.
+//! Per-connection passive autocheckpointing tends to no-op under contention
+//! because readers or writers often keep frames pinned, but every writer still
+//! pays the checkpoint attempt cost. This module dedicates one background
+//! thread per process to periodically probe the WAL and truncate it when it is
+//! large enough to matter.
 //!
-//! After each checkpoint, if enabled via `FORGE_INCREMENTAL_VACUUM` (default: enabled),
-//! it also runs `PRAGMA incremental_vacuum` to return freed pages (from P4 prune, zstd
-//! compression, deletes) to the OS without an exclusive-lock full VACUUM.
+//! After each checkpoint, if enabled via `FORGE_INCREMENTAL_VACUUM` (default:
+//! enabled), it also runs `PRAGMA incremental_vacuum` to return freed pages
+//! (from P4 prune, zstd compression, deletes) to the OS without an
+//! exclusive-lock full VACUUM.
 //!
-//! SQLite serialises checkpoints and vacuums across processes, so only one process will
-//! successfully truncate/vacuum at a time while the others observe `busy` and skip.
-//! That means we do not need process-wide election or coordination: each process
-//! can own one best-effort checkpointer, and the database file will still be
-//! reclaimed safely.
+//! SQLite serialises checkpoints and vacuums across processes, so only one
+//! process will successfully truncate/vacuum at a time while the others observe
+//! `busy` and skip. That means we do not need process-wide election or
+//! coordination: each process can own one best-effort checkpointer, and the
+//! database file will still be reclaimed safely.
 
 use std::path::PathBuf;
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 

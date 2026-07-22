@@ -155,7 +155,8 @@ pub trait ConversationRepository: Send + Sync {
         limit: Option<usize>,
     ) -> Result<Option<Vec<ConversationSummary>>>;
 
-    /// Retrieves conversations by source (e.g., "interactive", "headless", "forge-p")
+    /// Retrieves conversations by source (e.g., "interactive", "headless",
+    /// "forge-p")
     ///
     /// # Arguments
     /// * `source` - The source to filter by
@@ -278,7 +279,8 @@ pub trait ConversationRepository: Send + Sync {
         limit: Option<usize>,
     ) -> Result<Option<Vec<Conversation>>>;
 
-    /// Updates the intent_state of a conversation with state machine enforcement.
+    /// Updates the intent_state of a conversation with state machine
+    /// enforcement.
     ///
     /// ADR-103: Intent-gated semantic pruning. Validates that the transition
     /// from the current state to the new state is allowed before updating.
@@ -286,7 +288,8 @@ pub trait ConversationRepository: Send + Sync {
     ///
     /// # Arguments
     /// * `conversation_id` - The conversation to update
-    /// * `new_state` - The target intent state (as string: "pending", "extracting", etc.)
+    /// * `new_state` - The target intent state (as string: "pending",
+    ///   "extracting", etc.)
     ///
     /// # Errors
     /// Returns an error if:
@@ -305,7 +308,8 @@ pub trait ConversationRepository: Send + Sync {
     /// to maximize space reclaimed. Used by the pruning batch operator.
     ///
     /// # Arguments
-    /// * `workspace_id` - Filter by workspace (optional; if provided, scopes search)
+    /// * `workspace_id` - Filter by workspace (optional; if provided, scopes
+    ///   search)
     /// * `limit` - Maximum number of rows to return
     ///
     /// # Errors
@@ -348,10 +352,10 @@ pub trait ConversationRepository: Send + Sync {
     /// * `conversation_id` - The conversation to rewind.
     ///
     /// # Returns
-    /// * `Ok(Some(Conversation))` with the restored conversation if an
-    ///   anchor exists.
-    /// * `Ok(None)` if no anchor has ever been recorded (rewind is a
-    ///   no-op in that case).
+    /// * `Ok(Some(Conversation))` with the restored conversation if an anchor
+    ///   exists.
+    /// * `Ok(None)` if no anchor has ever been recorded (rewind is a no-op in
+    ///   that case).
     ///
     /// # Errors
     /// Returns an error if the anchor read or the conversation update

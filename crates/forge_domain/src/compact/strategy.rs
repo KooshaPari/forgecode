@@ -1,6 +1,5 @@
-use crate::{Context, Role};
-
 use super::importance::{ImportanceEvictionStrategy, MessageImportance};
+use crate::{Context, Role};
 
 /// Strategy for context compaction that unifies different compaction approaches
 #[derive(Debug, Clone)]
@@ -78,17 +77,19 @@ impl CompactionStrategy {
 
     /// Find the eviction range considering message importance.
     ///
-    /// High-importance messages (errors, file changes, etc.) are protected from eviction.
-    /// This method first finds the base eviction range, then adjusts it to protect
-    /// high-importance messages.
+    /// High-importance messages (errors, file changes, etc.) are protected from
+    /// eviction. This method first finds the base eviction range, then
+    /// adjusts it to protect high-importance messages.
     ///
     /// # Arguments
     /// * `context` - The context to find eviction range in
-    /// * `importance_strategy` - Strategy for determining which messages are important
+    /// * `importance_strategy` - Strategy for determining which messages are
+    ///   important
     ///
     /// # Returns
     /// * `Some((start, end))` if there's a valid eviction range
-    /// * `None` if no eviction should happen (either no range found, or everything is protected)
+    /// * `None` if no eviction should happen (either no range found, or
+    ///   everything is protected)
     pub fn eviction_range_with_importance(
         &self,
         context: &Context,
@@ -487,7 +488,8 @@ mod tests {
 
     #[test]
     fn test_eviction_range_with_importance_disabled() {
-        // When importance strategy is disabled, should return same as regular eviction_range
+        // When importance strategy is disabled, should return same as regular
+        // eviction_range
         let context = context_from_pattern("uaua");
         let strategy = CompactionStrategy::retain(1);
         let importance_strategy = ImportanceEvictionStrategy::default();

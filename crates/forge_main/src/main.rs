@@ -3,10 +3,11 @@ use std::panic;
 use std::path::PathBuf;
 
 // Allocator selection per OS:
-//   Linux  — jemalloc (lower fragmentation, higher throughput for long-running streaming).
-//   macOS  — mimalloc (comparable fragmentation wins; jemalloc bug #2532 causes 20x
-//             cold-init regression on ARM64: HPA probes every 4KB page → 14s vs 25ms).
-//   Other  — system allocator (no special handling needed).
+//   Linux  — jemalloc (lower fragmentation, higher throughput for long-running
+// streaming).   macOS  — mimalloc (comparable fragmentation wins; jemalloc bug
+// #2532 causes 20x             cold-init regression on ARM64: HPA probes every
+// 4KB page → 14s vs 25ms).   Other  — system allocator (no special handling
+// needed).
 #[cfg(target_os = "linux")]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;

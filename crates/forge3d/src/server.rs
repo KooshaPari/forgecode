@@ -24,6 +24,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use forge_drift::{AlertId, DriftDetector, OverrideReason};
 use tokio::net::UnixListener;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
@@ -33,8 +34,6 @@ use crate::error::{Forge3Error, Result};
 use crate::pidfile::PidFile;
 use crate::protocol::{self, ErrorBody, ErrorResponse, Request, Response, SuccessResponse};
 use crate::registry::Registry;
-
-use forge_drift::{AlertId, DriftDetector, OverrideReason};
 
 // ---------------------------------------------------------------------------
 // Clock
@@ -416,8 +415,9 @@ async fn handle_connection(server: &Server, stream: tokio::net::UnixStream) -> R
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     // ------------------------------------------------------------------
     // Clock tests

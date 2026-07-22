@@ -6,10 +6,11 @@ use forge_domain::{
     AuthContextRequest, AuthContextResponse, AuthMethod, Provider, ProviderId, ProviderRepository,
 };
 
-/// Default lead window before token expiry at which a proactive OAuth refresh is triggered.
-/// Matches the cross-repo contract default (300 s): OmniRoute `TOKEN_EXPIRY_BUFFER = 5*60*1000`,
-/// cliproxy `5 * time.Minute` for most providers.
-/// See: docs/contracts/provider-models/oauth-refresh-policy.schema.json
+/// Default lead window before token expiry at which a proactive OAuth refresh
+/// is triggered. Matches the cross-repo contract default (300 s): OmniRoute
+/// `TOKEN_EXPIRY_BUFFER = 5*60*1000`, cliproxy `5 * time.Minute` for most
+/// providers. See: docs/contracts/provider-models/oauth-refresh-policy.schema.
+/// json
 const OAUTH_REFRESH_LEAD: chrono::Duration = chrono::Duration::minutes(5);
 
 /// Forge Provider Authentication Service

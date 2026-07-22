@@ -4,8 +4,10 @@
 //! Three strategies via [`BackoffStrategy`]:
 //!
 //! - [`Fixed`](BackoffStrategy::Fixed): constant delay regardless of attempt.
-//! - [`Linear`](BackoffStrategy::Linear): `base * (attempt + 1)` — grows from attempt 0.
-//! - [`Exponential`](BackoffStrategy::Exponential): `base * 2^attempt` — doubles.
+//! - [`Linear`](BackoffStrategy::Linear): `base * (attempt + 1)` — grows from
+//!   attempt 0.
+//! - [`Exponential`](BackoffStrategy::Exponential): `base * 2^attempt` —
+//!   doubles.
 //!
 //! All strategies are capped at `max` so an unbounded exponential cannot
 //! stall the caller. Saturating arithmetic prevents overflow at extreme

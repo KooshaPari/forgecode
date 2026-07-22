@@ -130,7 +130,8 @@ impl PreCompactionFilter {
         });
     }
 
-    /// Collapse duplicate consecutive operations (e.g., multiple reads of same file)
+    /// Collapse duplicate consecutive operations (e.g., multiple reads of same
+    /// file)
     fn collapse_duplicate_operations(&self, context: &mut Context) {
         let mut result: Vec<MessageEntry> = Vec::new();
         let mut seen_tools: HashSet<String> = HashSet::new();

@@ -1,6 +1,7 @@
+use std::collections::{HashMap, HashSet};
+
 use parking_lot::RwLock;
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
 
 /// Thread-safe index mapping agent ids → their prompt hashes and word-sets.
 pub struct DriftIndex {
@@ -34,7 +35,8 @@ impl DriftIndex {
         );
     }
 
-    /// Compute Jaccard similarity between an incoming prompt and a stored agent's prompt.
+    /// Compute Jaccard similarity between an incoming prompt and a stored
+    /// agent's prompt.
     ///
     /// Returns `None` if the agent does not exist in the index.
     pub fn jaccard(&self, agent_id: &str, prompt: &str) -> Option<f64> {
@@ -49,7 +51,8 @@ impl DriftIndex {
         Some(intersection as f64 / union as f64)
     }
 
-    /// True if the SHA-256 of `prompt` exactly matches the stored hash for `agent_id`.
+    /// True if the SHA-256 of `prompt` exactly matches the stored hash for
+    /// `agent_id`.
     pub fn is_exact_match(&self, agent_id: &str, prompt: &str) -> bool {
         let r = self.inner.read();
         match r.get(agent_id) {

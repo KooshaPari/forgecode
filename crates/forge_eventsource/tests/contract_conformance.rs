@@ -61,8 +61,8 @@ fn contract_sse_non_terminal_partial_done() {
 
 // ---------------------------------------------------------------------------
 // OAuth refresh-lead conformance
-// Schema: oauth-refresh-policy.schema.json → default_refresh_lead_seconds == 300
-// Reference impl: forge_services::provider_auth::OAUTH_REFRESH_LEAD
+// Schema: oauth-refresh-policy.schema.json → default_refresh_lead_seconds ==
+// 300 Reference impl: forge_services::provider_auth::OAUTH_REFRESH_LEAD
 //   = chrono::Duration::minutes(5) = 300 s
 // ---------------------------------------------------------------------------
 
@@ -82,14 +82,16 @@ fn contract_oauth_refresh_lead_is_300s() {
 // ---------------------------------------------------------------------------
 // Retryable HTTP status code conformance
 // Schema: resilience-policy.schema.json → retryable_error_taxonomy
-//         → retryable_http_status_codes default: [408,429,500,502,503,504,520,522,524,529]
-// Reference impl: forge_config::RetryConfig default status_codes
+//         → retryable_http_status_codes default:
+// [408,429,500,502,503,504,520,522,524,529] Reference impl:
+// forge_config::RetryConfig default status_codes
 // ---------------------------------------------------------------------------
 
 #[test]
 fn contract_retryable_status_codes_match_schema() {
     // resilience-policy.schema.json retryable_http_status_codes default
-    // Must match forge_config::RetryConfig.status_codes default exactly (order-independent).
+    // Must match forge_config::RetryConfig.status_codes default exactly
+    // (order-independent).
     let schema_codes: std::collections::HashSet<u16> =
         [408, 429, 500, 502, 503, 504, 520, 522, 524, 529]
             .into_iter()
@@ -111,8 +113,8 @@ fn contract_retryable_status_codes_match_schema() {
 
 #[test]
 fn contract_non_retryable_4xx_not_in_retryable_set() {
-    // resilience-policy.schema.json non_retryable_http_status_codes includes 400,401,403,404,422
-    // None of these should appear in the retryable set.
+    // resilience-policy.schema.json non_retryable_http_status_codes includes
+    // 400,401,403,404,422 None of these should appear in the retryable set.
     let retryable: std::collections::HashSet<u16> =
         [408, 429, 500, 502, 503, 504, 520, 522, 524, 529]
             .into_iter()

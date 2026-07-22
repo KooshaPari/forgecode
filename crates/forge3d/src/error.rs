@@ -60,12 +60,14 @@ pub type Result<T> = std::result::Result<T, Forge3Error>;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    /// Monotonic counter used to assign unique alert ids without coordinating with
-    /// SQLite. The actual uniqueness is enforced by the `alerts.id PRIMARY KEY`
-    /// constraint; collisions are detected and re-keyed at insert time.
+    use super::*;
+
+    /// Monotonic counter used to assign unique alert ids without coordinating
+    /// with SQLite. The actual uniqueness is enforced by the `alerts.id
+    /// PRIMARY KEY` constraint; collisions are detected and re-keyed at
+    /// insert time.
     #[derive(Debug, Default)]
     struct AlertCounter(AtomicU64);
 

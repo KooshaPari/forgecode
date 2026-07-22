@@ -10,7 +10,8 @@ use crate::types::{FileSymbols, Symbol, SymbolKind};
 /// extract top-level symbols, and file-extension matchers.
 struct LangDef {
     language: Language,
-    /// Queries that each extract one or more `(capture_name, SymbolKind)` pairs.
+    /// Queries that each extract one or more `(capture_name, SymbolKind)`
+    /// pairs.
     queries: Vec<(String, SymbolKind)>,
 }
 

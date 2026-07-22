@@ -1,21 +1,25 @@
 //! # forge_pheno_shell
 //!
-//! Shell abstraction layer for forgecode (per ADR-101 §4.1, ADR-096 fleet pattern).
+//! Shell abstraction layer for forgecode (per ADR-101 §4.1, ADR-096 fleet
+//! pattern).
 //!
-//! Detects the user's shell, emits shell-specific completion scripts, and routes
-//! environment setup per shell. Supports:
+//! Detects the user's shell, emits shell-specific completion scripts, and
+//! routes environment setup per shell. Supports:
 //!
 //! - **POSIX**: ZSH, Bash, Fish, Tcsh, Oil, Elvish, Nushell
-//! - **Windows-native**: PowerShell (Windows), PowerShell Core (cross-platform), Cmd
+//! - **Windows-native**: PowerShell (Windows), PowerShell Core
+//!   (cross-platform), Cmd
 //! - **Emulator shells**: WSL Bash (Windows -> Linux), Git Bash (Windows)
 //!
-//! This crate is intentionally **zero dependency on `forge_domain`** (ADR-097 decoupling
-//! pattern). It is pure-Rust, framework-agnostic, and consumable from any forgecode crate.
+//! This crate is intentionally **zero dependency on `forge_domain`** (ADR-097
+//! decoupling pattern). It is pure-Rust, framework-agnostic, and consumable
+//! from any forgecode crate.
 
 #![warn(missing_docs)]
 
-use serde::{Deserialize, Serialize};
 use std::fmt;
+
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// All shells forgecode knows how to detect and emit completions for.
@@ -169,7 +173,8 @@ pub struct ShellDetection {
     pub kind: ShellKind,
     /// Source of detection (for debugging + telemetry).
     pub source: DetectionSource,
-    /// Raw value that triggered detection (e.g. `$SHELL`, `$PSVersionTable.PSEdition`).
+    /// Raw value that triggered detection (e.g. `$SHELL`,
+    /// `$PSVersionTable.PSEdition`).
     pub raw: String,
 }
 
@@ -206,7 +211,8 @@ pub enum ShellError {
         "could not detect shell from environment (tried PHENO_SHELL_KIND, argv[0], $PSEdition, COMSPEC)"
     )]
     DetectionFailed,
-    /// Requested a completion for a shell that doesn't support completion emission.
+    /// Requested a completion for a shell that doesn't support completion
+    /// emission.
     #[error("shell {kind} does not support completion emission")]
     CompletionUnsupported {
         /// The shell kind that does not support completion emission.
@@ -238,7 +244,8 @@ pub struct ShellVars {
     pub home_var: String,
     /// Env var holding the editor.
     pub editor_var: String,
-    /// Line continuation char (`\` on POSIX, `` ` `` on Cmd, `` ` `` on PowerShell).
+    /// Line continuation char (`\` on POSIX, `` ` `` on Cmd, `` ` `` on
+    /// PowerShell).
     pub line_continuation: String,
 }
 
@@ -356,7 +363,8 @@ pub fn detect_shell(
 }
 
 fn detect_from_argv0(arg0: &str) -> Option<ShellKind> {
-    // Try POSIX path separator first, then Windows backslash (for cross-platform parsing)
+    // Try POSIX path separator first, then Windows backslash (for cross-platform
+    // parsing)
     let base = if let Some((_, tail)) = arg0.rsplit_once('\\') {
         tail
     } else {

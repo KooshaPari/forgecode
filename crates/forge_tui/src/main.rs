@@ -1,8 +1,9 @@
-use serde_json::Value;
 use std::io::{BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+use serde_json::Value;
 
 fn socket_path() -> PathBuf {
     if let Ok(s) = std::env::var("FORGE3D_SOCKET") {

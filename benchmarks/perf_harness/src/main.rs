@@ -3,19 +3,17 @@
 // Measures three axes the perf/resource-pooling work item cares about:
 //
 //   1. per_agent_rss_kib      post-init RSS of the forge_main binary, sampled
-//                             after `--help` exits.  Proxy for the cold-start
-//                             memory footprint each "agent" pays before any
-//                             work happens.  (The actual per-task agent is the
-//                             Zig daemon; this is the upper bound.)
+//      after `--help` exits.  Proxy for the cold-start memory footprint each
+//      "agent" pays before any work happens.  (The actual per-task agent is the
+//      Zig daemon; this is the upper bound.)
 //
 //   2. idle_cpu_pct           Average user+system CPU fraction while idle for
-//                             1s.  Should be ~0%; anything above 1% means
-//                             background timers or busy-polling are alive.
+//      1s.  Should be ~0%; anything above 1% means background timers or
+//      busy-polling are alive.
 //
 //   3. system_pool_count      Number of distinct kernel resources held by the
-//                             harness while idle: threads (proc/<pid>/task
-//                             count), file descriptors (fdinfo count), and
-//                             tokio worker threads (TOKIO_WORKER_THREADS).
+//      harness while idle: threads (proc/<pid>/task count), file descriptors
+//      (fdinfo count), and tokio worker threads (TOKIO_WORKER_THREADS).
 //
 // Usage:
 //   perf_harness run --project . --regimes warmup,sustained,burst
@@ -24,11 +22,9 @@
 // The scorecard is emitted as JSON to stdout (or `--out` if provided) for
 // the perf/resource-pooling pipeline to consume.
 
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-    time::{Duration, Instant},
-};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use forge_daemon::DaemonDispatch;

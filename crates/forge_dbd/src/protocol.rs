@@ -1,6 +1,7 @@
+use std::io;
+
 use forge_domain::{Conversation, ConversationId};
 use serde::{Deserialize, Serialize};
-use std::io;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,7 +47,8 @@ pub enum Response {
     Health(HealthStatus),
 }
 
-/// Async length-prefixed frame writer: writes u32 length prefix + serialized data
+/// Async length-prefixed frame writer: writes u32 length prefix + serialized
+/// data
 pub async fn write_frame<W: AsyncWrite + Unpin, T: Serialize>(
     writer: &mut W,
     value: &T,
@@ -59,7 +61,8 @@ pub async fn write_frame<W: AsyncWrite + Unpin, T: Serialize>(
     Ok(())
 }
 
-/// Async length-prefixed frame reader: reads u32 length prefix + deserializes data
+/// Async length-prefixed frame reader: reads u32 length prefix + deserializes
+/// data
 pub async fn read_frame<R: AsyncRead + Unpin, T: for<'de> Deserialize<'de>>(
     reader: &mut R,
 ) -> io::Result<T> {

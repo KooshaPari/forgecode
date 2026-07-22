@@ -39,7 +39,8 @@ pub fn crc16_ccitt(data: &[u8], init: u16) -> u16 {
     crc
 }
 
-/// CRC-32-IEEE (polynomial 0xEDB88320, init 0xFFFFFFFF, finalize XOR 0xFFFFFFFF).
+/// CRC-32-IEEE (polynomial 0xEDB88320, init 0xFFFFFFFF, finalize XOR
+/// 0xFFFFFFFF).
 pub fn crc32_ieee(data: &[u8]) -> u32 {
     let mut crc: u32 = 0xFFFF_FFFF;
     for &b in data {

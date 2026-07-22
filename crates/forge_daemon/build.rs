@@ -3,7 +3,9 @@
 // The Zig core lives in ../../forge-daemon/ relative to this crate.  We run
 // `zig build` there, then tell Cargo where the .a lives and which linker
 // flags to pass.  Only re-runs when Zig source files change.
-use std::{env, path::PathBuf, process::Command};
+use std::env;
+use std::path::PathBuf;
+use std::process::Command;
 
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(forge_daemon_zig_core)");

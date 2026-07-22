@@ -4,10 +4,11 @@
 //! flags) to enumerate active sessions and their windows.  All commands
 //! are driven through [`tokio::process::Command`].
 
-use crate::{MuxBridge, MuxError, MuxSession, MuxWindow};
 use bstr::ByteSlice;
 use futures::future::try_join_all;
 use tokio::process::Command;
+
+use crate::{MuxBridge, MuxError, MuxSession, MuxWindow};
 
 /// Bridge that shells out to the `tmux` binary.
 ///

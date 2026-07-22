@@ -29,9 +29,8 @@ mod update;
 
 use std::sync::LazyLock;
 
-use forge_domain::{AgentId, Effort};
-
 pub use cli::{Cli, ListCommand, ListCommandGroup, TopLevelCommand};
+use forge_domain::{AgentId, Effort};
 pub use sandbox::Sandbox;
 pub use title_display::*;
 pub use ui::UI;
