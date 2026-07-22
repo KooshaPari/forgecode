@@ -6,6 +6,8 @@
 use std::{env, path::PathBuf, process::Command};
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(forge_daemon_zig_core)");
+
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     // forge-daemon/ is two levels up from crates/forge_daemon/
     let zig_dir = manifest_dir
@@ -20,6 +22,14 @@ fn main() {
         zig_dir.join("build.zig").display()
     );
 
+    let build_zig_core = env::var("FORGE_DAEMON_BUILD_ZIG_CORE").as_deref() == Ok("1");
+    if !build_zig_core {
+        println!(
+            "cargo:warning=skipping forge-daemon Zig core build; set FORGE_DAEMON_BUILD_ZIG_CORE=1 to enable"
+        );
+        return;
+    }
+
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os != "macos" {
         println!(
@@ -27,6 +37,8 @@ fn main() {
         );
         return;
     }
+
+    println!("cargo:rustc-cfg=forge_daemon_zig_core");
 
     // Detect target; map Cargo triple → Zig target.
     let zig_target = zig_target_from_cargo();

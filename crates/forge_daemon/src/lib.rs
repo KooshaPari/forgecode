@@ -24,13 +24,15 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
-use tracing::{debug, info, warn};
+#[cfg(forge_daemon_zig_core)]
+use tracing::debug;
+use tracing::{info, warn};
 
 // ---------------------------------------------------------------------------
 // FFI bindings to libforge_daemon_core.a
 // ---------------------------------------------------------------------------
 
-#[cfg(target_os = "macos")]
+#[cfg(forge_daemon_zig_core)]
 unsafe extern "C" {
     /// Start the daemon (bind socket, init kqueue).
     /// socket_path: NUL-terminated C string; null → /tmp/forge-daemon-<uid>.sock
@@ -73,7 +75,7 @@ pub struct DaemonDispatch;
 
 impl DaemonDispatch {
     /// Dispatch a single forge task and return its stdout output + exit code.
-    #[cfg(target_os = "macos")]
+    #[cfg(forge_daemon_zig_core)]
     pub fn dispatch(
         forge_bin: &str,
         prompt: &str,
@@ -117,14 +119,16 @@ impl DaemonDispatch {
     /// The Zig daemon core uses macOS kqueue/posix_spawn internals and is not
     /// linked into non-macOS builds. Keep workspace checks green while making
     /// platform support explicit at the call boundary.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(forge_daemon_zig_core))]
     pub fn dispatch(
         _forge_bin: &str,
         _prompt: &str,
         _model: &str,
         _cwd: &Path,
     ) -> Result<(i32, Vec<u8>)> {
-        anyhow::bail!("forge daemon dispatch is only supported on macOS")
+        anyhow::bail!(
+            "forge daemon dispatch requires FORGE_DAEMON_BUILD_ZIG_CORE=1 on supported macOS hosts"
+        )
     }
 }
 
@@ -310,7 +314,7 @@ fn libc_getuid() -> u32 {
 // Tests
 // ---------------------------------------------------------------------------
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, forge_daemon_zig_core))]
 mod tests {
     use super::*;
 

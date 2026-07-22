@@ -68,12 +68,7 @@ fn print_dashboard() {
 
     // Header
     println!("\x1B[1mforge3d \u{2014} Agent Dashboard\x1B[0m");
-    println!(
-        "{}\u{2500}{}\u{2500}{}",
-        "\u{250C}",
-        "\u{2500}".repeat(58),
-        "\u{2510}"
-    );
+    println!("\u{250C}\u{2500}{}\u{2500}\u{2510}", "\u{2500}".repeat(58),);
 
     // agents line
     if let Some(agents) = v
