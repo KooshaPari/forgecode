@@ -445,14 +445,22 @@ fn parse_cpu_field(stat: &str, one_based: usize) -> f64 {
     // /proc/<pid>/stat format: pid (comm) state ... utime stime ...
     // fields are 1-based; one_based=14 → utime, 15 → stime.
     // The comm field may contain spaces and parens, so find the LAST ')'.
-    let last_paren = stat.rfind(')')?;
+    let Some(last_paren) = stat.rfind(')') else {
+        return 0.0;
+    };
     let after = &stat[last_paren + 1..];
     let parts: Vec<&str> = after.split_whitespace().collect();
     // parts[0] is 'state' (one_based 3); utime is one_based 14 → index 11 in
     // the after-paren split.  Index = one_based - 3.
-    let idx = one_based.checked_sub(3)?;
-    let ticks_str = parts.get(idx)?;
-    let ticks: u64 = ticks_str.parse().ok()?;
+    let Some(idx) = one_based.checked_sub(3) else {
+        return 0.0;
+    };
+    let Some(ticks_str) = parts.get(idx) else {
+        return 0.0;
+    };
+    let Ok(ticks) = ticks_str.parse::<u64>() else {
+        return 0.0;
+    };
     // Convert to a rough percent of one CPU using clock_tick (typically 100).
     let clock_tick: f64 = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
     let pct = if clock_tick > 0.0 {
@@ -489,7 +497,7 @@ fn percentile(values: &mut [u64], p: f64) -> u64 {
 // libc shim — we only need sysconf on Linux for clock tick.
 #[cfg(target_os = "linux")]
 mod libc {
-    extern "C" {
+    unsafe extern "C" {
         pub fn sysconf(name: i32) -> i64;
     }
     pub const _SC_CLK_TCK: i32 = 2;
