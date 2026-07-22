@@ -244,8 +244,10 @@ pub fn parse_file(path: &str, source: &str) -> Result<FileSymbols> {
         while let Some(match_) = matches.next() {
             for capture in match_.captures.iter() {
                 let name_idx = capture.index as usize;
-                let name = query.capture_names()[name_idx];
-                if name != "name" {
+                let Some(name) = query.capture_names().get(name_idx) else {
+                    continue;
+                };
+                if *name != "name" {
                     continue;
                 }
                 let node = capture.node;

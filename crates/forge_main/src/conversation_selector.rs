@@ -26,8 +26,11 @@ impl<'a> std::fmt::Display for FastConversationRow<'a> {
 
         // Truncate title to fixed width (50 chars) with ellipsis if longer
         let max_title_width = 50;
-        let title_display = if title.len() > max_title_width {
-            format!("{}…", &title[..max_title_width])
+        let title_display = if title.chars().count() > max_title_width {
+            format!(
+                "{}…",
+                title.chars().take(max_title_width).collect::<String>()
+            )
         } else {
             title.to_string()
         };

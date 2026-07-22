@@ -850,7 +850,10 @@ fn find_last_compaction_point(context_json: &str) -> usize {
     }
     // After that user-role, look forward for the first tool_call marker.
     let after_user = last_user.unwrap() + user_marker.len();
-    if context_json[after_user..].find(tool_marker).is_some() {
+    if context_json
+        .get(after_user..)
+        .is_some_and(|tail| tail.find(tool_marker).is_some())
+    {
         // Truncate at the user-role boundary so we keep the user turn
         // but discard everything after it (including the tool call).
         return last_user.unwrap();
@@ -872,10 +875,14 @@ fn truncate_context(context_json: &str, rewind_point: usize) -> String {
     // produce a truncated object/messages array.
     let bytes = context_json.as_bytes();
     let mut cut = rewind_point.min(bytes.len());
-    while cut > 0 && bytes[cut - 1] != b',' && bytes[cut - 1] != b'[' && bytes[cut - 1] != b'{' {
+    while cut > 0
+        && bytes
+            .get(cut - 1)
+            .is_some_and(|byte| !matches!(byte, b',' | b'[' | b'{'))
+    {
         cut -= 1;
     }
-    let prefix = &context_json[..cut];
+    let prefix = context_json.get(..cut).unwrap_or_default();
     format!("{}\"rewound\":true}}", prefix.trim_end_matches([',', ' ']))
 }
 

@@ -127,7 +127,7 @@ async fn main() -> Result<()> {
         .init();
 
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 || args[1] != "run" {
+    if args.get(1).is_none_or(|arg| arg != "run") {
         anyhow::bail!("usage: perf_harness run [--project DIR] [--regimes w,s,b] [--out PATH]");
     }
 
@@ -193,12 +193,13 @@ async fn main() -> Result<()> {
 }
 
 fn flag_value(args: &[String], name: &str) -> Option<String> {
-    let mut i = 1;
-    while i < args.len() {
-        if args[i] == name && i + 1 < args.len() {
-            return Some(args[i + 1].clone());
+    let mut iter = args.iter().skip(1);
+    while let Some(flag) = iter.next() {
+        if flag == name
+            && let Some(value) = iter.next()
+        {
+            return Some(value.clone());
         }
-        i += 1;
     }
     None
 }
@@ -491,7 +492,7 @@ fn percentile(values: &mut [u64], p: f64) -> u64 {
     }
     values.sort_unstable();
     let idx = ((values.len() as f64 - 1.0) * p).floor() as usize;
-    values[idx]
+    values.get(idx).copied().unwrap_or(0)
 }
 
 // libc shim — we only need sysconf on Linux for clock tick.

@@ -4842,7 +4842,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                     if !self.state.tool_output_expanded {
                         let lines: Vec<&str> = text.lines().collect();
                         if lines.len() > 3 {
-                            let preview = lines[..3].join("\n");
+                            let preview = lines.get(..3).unwrap_or(&lines).join("\n");
                             self.writeln(preview.dimmed().to_string())?;
                             self.writeln(format!(
                                 "{} [Ctrl+O to expand]",
