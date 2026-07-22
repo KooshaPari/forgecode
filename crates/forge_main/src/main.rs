@@ -20,7 +20,9 @@ use clap::Parser;
 use forge_api::ForgeAPI;
 use forge_config::ForgeConfig;
 use forge_domain::TitleFormat;
-use forge_main::{Cli, Sandbox, TitleDisplayExt, TopLevelCommand, UI, tracker};
+use forge_main::{
+    Cli, Sandbox, TitleDisplayExt, TopLevelCommand, UI, render_static_zsh_rprompt, tracker,
+};
 use tracing::debug;
 
 /// Enables ENABLE_VIRTUAL_TERMINAL_PROCESSING on the stdout console handle.
@@ -62,8 +64,42 @@ fn enable_stdout_vt_processing() {
     }
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    if let Err(err) = maybe_render_fast_zsh_rprompt() {
+        eprintln!("{}", TitleFormat::error(format!("{err}")).display());
+        std::process::exit(1);
+    }
+
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            eprintln!(
+                "{}",
+                TitleFormat::error(format!("failed to start async runtime: {err}")).display()
+            );
+            std::process::exit(1);
+        }
+    };
+
+    runtime.block_on(async_main());
+}
+
+fn maybe_render_fast_zsh_rprompt() -> Result<()> {
+    let args: Vec<_> = std::env::args().skip(1).collect();
+    if args.as_slice() != ["zsh", "rprompt"] {
+        return Ok(());
+    }
+
+    let config =
+        ForgeConfig::read().context("Failed to read Forge configuration from .forge.toml")?;
+    println!("{}", render_static_zsh_rprompt(&config));
+    std::process::exit(0);
+}
+
+async fn async_main() {
     // Wrap run() in a ctrl_c handler for graceful shutdown.
     let app_future = run();
     tokio::pin!(app_future);
