@@ -16,11 +16,7 @@ pub fn release_publish() {
             release: Some(Release { types: vec![ReleaseType::Published] }),
             ..Event::default()
         })
-        .permissions(
-            Permissions::default()
-                .contents(Level::Write)
-                .pull_requests(Level::Write),
-        )
+        .permissions(Permissions::default().contents(Level::Read))
         .add_job("build_release", release_build_job.into_job())
         .add_job("npm_release", npm_release_job)
         .add_job("homebrew_release", homebrew_release_job);

@@ -9,7 +9,7 @@ pub fn release_npm_job() -> Job {
         .strategy(Strategy { fail_fast: None, max_parallel: None, matrix: Some(matrix) })
         .add_step(
             Step::new("Checkout Code")
-                .uses("actions", "checkout", "v6")
+                .uses("actions", "checkout", "d23441a48e516b6c34aea4fa41551a30e30af803")
                 .add_with(("repository", "${{ matrix.repository }}"))
                 .add_with(("ref", "main"))
                 .add_with(("token", "${{ secrets.NPM_ACCESS }}")),

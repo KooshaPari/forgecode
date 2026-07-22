@@ -34,8 +34,8 @@ pub fn generate_bounty_workflow() {
         .on(events)
         .permissions(
             Permissions::default()
-                .issues(Level::Write)
-                .pull_requests(Level::Write),
+                .issues(Level::Read)
+                .pull_requests(Level::Read),
         )
         .add_job("sync-all-issues", sync_all_issues_job())
         .add_job("sync-pr", sync_pr_job());

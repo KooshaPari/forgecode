@@ -26,6 +26,12 @@ impl ReleaseBuilderJob {
 
 impl From<ReleaseBuilderJob> for Job {
     fn from(value: ReleaseBuilderJob) -> Job {
+        let permissions = if value.release_id.is_some() {
+            Permissions::default().contents(Level::Write)
+        } else {
+            Permissions::default().contents(Level::Read)
+        };
+
         let mut job = Job::new("build-release")
             .strategy(Strategy {
                 fail_fast: None,
@@ -33,12 +39,8 @@ impl From<ReleaseBuilderJob> for Job {
                 matrix: Some(ReleaseMatrix::default().into()),
             })
             .runs_on("${{ matrix.os }}")
-            .permissions(
-                Permissions::default()
-                    .contents(Level::Write)
-                    .pull_requests(Level::Write),
-            )
-            .add_step(Step::new("Checkout Code").uses("actions", "checkout", "v6"))
+            .permissions(permissions)
+            .add_step(Step::new("Checkout Code").uses("actions", "checkout", "d23441a48e516b6c34aea4fa41551a30e30af803"))
             // Install protobuf compiler for non-cross builds
             // Cross builds install protoc via Cross.toml pre-build commands
             .add_step(
@@ -47,7 +49,7 @@ impl From<ReleaseBuilderJob> for Job {
             // Install Rust with cross-compilation target
             .add_step(
                 Step::new("Setup Cross Toolchain")
-                    .uses("taiki-e", "setup-cross-toolchain-action", "v1")
+                    .uses("taiki-e", "setup-cross-toolchain-action", "12b7ad4acfa95a1476779d6c06699b96ec1691f8")
                     .with(("target", "${{ matrix.target }}"))
                     .if_condition(Expression::new("${{ matrix.cross == 'false' }}")),
             )
@@ -71,7 +73,7 @@ impl From<ReleaseBuilderJob> for Job {
             // - Cross.toml pre-build commands for cross builds (apt-get install protobuf-compiler)
             .add_step(
                 Step::new("Build Binary")
-                    .uses("ClementTsang", "cargo-action", "v0.0.7")
+                    .uses("ClementTsang", "cargo-action", "2438cc5f3ba4e971289fffca2a00dedea6911f14")
                     .add_with(("command", "build --release"))
                     .add_with(("args", "--target ${{ matrix.target }}"))
                     .add_with(("use-cross", "${{ matrix.cross }}"))
@@ -91,7 +93,7 @@ impl From<ReleaseBuilderJob> for Job {
                 // Upload to the generated github release id
                 .add_step(
                     Step::new("Upload to Release")
-                        .uses("xresloader", "upload-to-github-release", "v1")
+                        .uses("xresloader", "upload-to-github-release", "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0")
                         .add_with(("release_id", release_id))
                         .add_with(("file", "${{ matrix.binary_name }}"))
                         .add_with(("overwrite", "true")),
