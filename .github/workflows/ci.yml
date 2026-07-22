@@ -91,7 +91,7 @@ jobs:
       uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
     - id: create_release
       name: Draft Release
-      uses: release-drafter/release-drafter@5a60cd8ddda6dc14fce77159675b8fd2cdca4007
+      uses: release-drafter/release-drafter@eada3c96a64734dd381cfbda23511034e328ddb0
       with:
         config-name: release-drafter.yml
       env:
