@@ -16,8 +16,6 @@
 # -------------------------------------------------------------------
 
 name: autofix.ci
-permissions:
-  contents: read
 env:
   RUSTFLAGS: '-Dwarnings'
 'on':
@@ -33,32 +31,24 @@ env:
     - main
 jobs:
   lint:
-    # Advisory-only: auto-commits style fixes via autofix.ci.
-    # Blocking gates live in lint.yml (fmt --check) and test.yml (nextest).
-    # This job must NOT block merges — it is informational.
-    name: Lint Fix (advisory)
+    name: Lint Fix
     runs-on: ubuntu-latest
-    continue-on-error: true
     permissions:
       contents: read
     steps:
     - name: Checkout Code
-      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      uses: actions/checkout@v6
     - name: Install SQLite
       run: sudo apt-get install -y libsqlite3-dev
     - name: Setup Protobuf Compiler
-      uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
+      uses: arduino/setup-protoc@v3
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
     - name: Setup Rust Toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
+      uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
         toolchain: nightly
         components: clippy, rustfmt
-    - name: Setup Zig
-      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
-      with:
-        version: 0.16.0
     - name: Cargo Fmt
       run: cargo +nightly fmt --all
     - name: Cargo Clippy

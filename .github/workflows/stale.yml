@@ -25,17 +25,15 @@ env:
   schedule:
   - cron: '0 * * * *'
 permissions:
-  contents: read
+  issues: write
+  pull-requests: write
 jobs:
   stale:
     name: Stale Issues
     runs-on: ubuntu-latest
-    permissions:
-      issues: write
-      pull-requests: write
     steps:
     - name: Mark Stale Issues
-      uses: actions/stale@1e223db275d687790206a7acac4d1a11bd6fe629
+      uses: actions/stale@v10
       with:
         stale-issue-label: 'state: inactive'
         stale-pr-label: 'state: inactive'

@@ -449,7 +449,9 @@ fn parse_cpu_field(stat: &str, one_based: usize) -> f64 {
     let Some(last_paren) = stat.rfind(')') else {
         return 0.0;
     };
-    let after = &stat[last_paren + 1..];
+    let Some(after) = stat.get(last_paren + 1..) else {
+        return 0.0;
+    };
     let parts: Vec<&str> = after.split_whitespace().collect();
     // parts[0] is 'state' (one_based 3); utime is one_based 14 → index 11 in
     // the after-paren split.  Index = one_based - 3.

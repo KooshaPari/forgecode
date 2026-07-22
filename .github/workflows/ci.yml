@@ -16,8 +16,6 @@
 # -------------------------------------------------------------------
 
 name: ci
-permissions:
-  contents: read
 env:
   RUSTFLAGS: '-Dwarnings'
   OPENROUTER_API_KEY: ${{secrets.OPENROUTER_API_KEY}}
@@ -43,19 +41,15 @@ jobs:
       contents: read
     steps:
     - name: Checkout Code
-      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      uses: actions/checkout@v6
     - name: Setup Protobuf Compiler
-      uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
+      uses: arduino/setup-protoc@v3
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
     - name: Setup Rust Toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
+      uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
         toolchain: stable
-    - name: Setup Zig
-      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
-      with:
-        version: 0.16.0
     - name: Install cargo-llvm-cov
       run: cargo install cargo-llvm-cov
     - name: Generate coverage
@@ -67,19 +61,15 @@ jobs:
       contents: read
     steps:
     - name: Checkout Code
-      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      uses: actions/checkout@v6
     - name: Setup Protobuf Compiler
-      uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
+      uses: arduino/setup-protoc@v3
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
     - name: Setup Rust Toolchain
-      uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
+      uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
         toolchain: stable
-    - name: Setup Zig
-      uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
-      with:
-        version: 0.16.0
     - name: Run performance benchmark
       run: './scripts/benchmark.sh --threshold 60 zsh rprompt'
   draft_release:
@@ -96,19 +86,17 @@ jobs:
       crate_release_id: ${{ steps.set_output.outputs.crate_release_id }}
     steps:
     - name: Checkout Code
-      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      uses: actions/checkout@v6
     - id: create_release
       name: Draft Release
-      uses: release-drafter/release-drafter@eada3c96a64734dd381cfbda23511034e328ddb0
+      uses: release-drafter/release-drafter@v7
       with:
         config-name: release-drafter.yml
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - id: set_output
       name: Export Outputs
-      run: |
-        echo "crate_release_id=${{ steps.create_release.outputs.id }}" >> "$GITHUB_OUTPUT"
-        echo "crate_release_name=${{ steps.create_release.outputs.tag_name }}" >> "$GITHUB_OUTPUT"
+      run: echo "crate_release_id=${{ steps.create_release.outputs.id }}" >> $GITHUB_OUTPUT && echo "crate_release_name=${{ steps.create_release.outputs.tag_name }}" >> $GITHUB_OUTPUT
   draft_release_pr:
     if: 'github.event_name == ''pull_request'' && contains(github.event.pull_request.labels.*.name, ''ci: build all targets'')'
     name: Draft Release for PR
@@ -118,12 +106,10 @@ jobs:
       crate_release_id: ${{ steps.set_output.outputs.crate_release_id }}
     steps:
     - name: Checkout Code
-      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      uses: actions/checkout@v6
     - id: set_output
       name: Set Release Version
-      run: |
-        echo "crate_release_name=pr-build-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
-        echo "crate_release_id=pr-build-${{ github.event.number }}" >> "$GITHUB_OUTPUT"
+      run: echo "crate_release_name=pr-build-${{ github.event.number }}" >> $GITHUB_OUTPUT && echo "crate_release_id=pr-build-${{ github.event.number }}" >> $GITHUB_OUTPUT
   build_release:
     needs:
     - draft_release
@@ -136,62 +122,62 @@ jobs:
     strategy:
       matrix:
         include:
-        - binary_name: forge-x86_64-unknown-linux-musl
+        - os: ubuntu-latest
+          target: x86_64-unknown-linux-musl
+          binary_name: forge-x86_64-unknown-linux-musl
           binary_path: target/x86_64-unknown-linux-musl/release/forge
           cross: 'true'
-          os: ubuntu-latest
-          target: x86_64-unknown-linux-musl
-        - binary_name: forge-aarch64-unknown-linux-musl
+        - os: ubuntu-latest
+          target: aarch64-unknown-linux-musl
+          binary_name: forge-aarch64-unknown-linux-musl
           binary_path: target/aarch64-unknown-linux-musl/release/forge
           cross: 'true'
-          os: ubuntu-latest
-          target: aarch64-unknown-linux-musl
-        - binary_name: forge-x86_64-unknown-linux-gnu
+        - os: ubuntu-latest
+          target: x86_64-unknown-linux-gnu
+          binary_name: forge-x86_64-unknown-linux-gnu
           binary_path: target/x86_64-unknown-linux-gnu/release/forge
           cross: 'false'
-          os: ubuntu-latest
-          target: x86_64-unknown-linux-gnu
-        - binary_name: forge-aarch64-unknown-linux-gnu
+        - os: ubuntu-latest
+          target: aarch64-unknown-linux-gnu
+          binary_name: forge-aarch64-unknown-linux-gnu
           binary_path: target/aarch64-unknown-linux-gnu/release/forge
           cross: 'true'
-          os: ubuntu-latest
-          target: aarch64-unknown-linux-gnu
-        - binary_name: forge-x86_64-apple-darwin
+        - os: macos-latest
+          target: x86_64-apple-darwin
+          binary_name: forge-x86_64-apple-darwin
           binary_path: target/x86_64-apple-darwin/release/forge
           cross: 'false'
-          os: macos-latest
-          target: x86_64-apple-darwin
-        - binary_name: forge-aarch64-apple-darwin
+        - os: macos-latest
+          target: aarch64-apple-darwin
+          binary_name: forge-aarch64-apple-darwin
           binary_path: target/aarch64-apple-darwin/release/forge
           cross: 'false'
-          os: macos-latest
-          target: aarch64-apple-darwin
-        - binary_name: forge-x86_64-pc-windows-msvc.exe
+        - os: windows-latest
+          target: x86_64-pc-windows-msvc
+          binary_name: forge-x86_64-pc-windows-msvc.exe
           binary_path: target/x86_64-pc-windows-msvc/release/forge.exe
           cross: 'false'
-          os: windows-latest
-          target: x86_64-pc-windows-msvc
-        - binary_name: forge-aarch64-pc-windows-msvc.exe
+        - os: windows-latest
+          target: aarch64-pc-windows-msvc
+          binary_name: forge-aarch64-pc-windows-msvc.exe
           binary_path: target/aarch64-pc-windows-msvc/release/forge.exe
           cross: 'false'
-          os: windows-latest
-          target: aarch64-pc-windows-msvc
-        - binary_name: forge-aarch64-linux-android
+        - os: ubuntu-latest
+          target: aarch64-linux-android
+          binary_name: forge-aarch64-linux-android
           binary_path: target/aarch64-linux-android/release/forge
           cross: 'true'
-          os: ubuntu-latest
-          target: aarch64-linux-android
     steps:
     - name: Checkout Code
-      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      uses: actions/checkout@v6
     - name: Setup Protobuf Compiler
       if: ${{ matrix.cross == 'false' }}
-      uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
+      uses: arduino/setup-protoc@v3
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
     - name: Setup Cross Toolchain
       if: ${{ matrix.cross == 'false' }}
-      uses: taiki-e/setup-cross-toolchain-action@12b7ad4acfa95a1476779d6c06699b96ec1691f8
+      uses: taiki-e/setup-cross-toolchain-action@v1
       with:
         target: ${{ matrix.target }}
     - name: Add Rust target
@@ -199,9 +185,9 @@ jobs:
       run: rustup target add ${{ matrix.target }}
     - name: Set Rust Flags
       if: '!(contains(matrix.target, ''-unknown-linux-'') || contains(matrix.target, ''-android''))'
-      run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
+      run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> $GITHUB_ENV
     - name: Build Binary
-      uses: ClementTsang/cargo-action@2438cc5f3ba4e971289fffca2a00dedea6911f14
+      uses: ClementTsang/cargo-action@v0.0.7
       with:
         command: build --release
         args: '--target ${{ matrix.target }}'
@@ -214,7 +200,7 @@ jobs:
     - name: Copy Binary
       run: cp ${{ matrix.binary_path }} ${{ matrix.binary_name }}
     - name: Upload to Release
-      uses: xresloader/upload-to-github-release@0b497b306a775554a3dd3cfb80dec8e7de4ae969
+      uses: xresloader/upload-to-github-release@v1
       with:
         release_id: ${{ needs.draft_release.outputs.crate_release_id }}
         file: ${{ matrix.binary_name }}
@@ -231,62 +217,62 @@ jobs:
     strategy:
       matrix:
         include:
-        - binary_name: forge-x86_64-unknown-linux-musl
+        - os: ubuntu-latest
+          target: x86_64-unknown-linux-musl
+          binary_name: forge-x86_64-unknown-linux-musl
           binary_path: target/x86_64-unknown-linux-musl/release/forge
           cross: 'true'
-          os: ubuntu-latest
-          target: x86_64-unknown-linux-musl
-        - binary_name: forge-aarch64-unknown-linux-musl
+        - os: ubuntu-latest
+          target: aarch64-unknown-linux-musl
+          binary_name: forge-aarch64-unknown-linux-musl
           binary_path: target/aarch64-unknown-linux-musl/release/forge
           cross: 'true'
-          os: ubuntu-latest
-          target: aarch64-unknown-linux-musl
-        - binary_name: forge-x86_64-unknown-linux-gnu
+        - os: ubuntu-latest
+          target: x86_64-unknown-linux-gnu
+          binary_name: forge-x86_64-unknown-linux-gnu
           binary_path: target/x86_64-unknown-linux-gnu/release/forge
           cross: 'false'
-          os: ubuntu-latest
-          target: x86_64-unknown-linux-gnu
-        - binary_name: forge-aarch64-unknown-linux-gnu
+        - os: ubuntu-latest
+          target: aarch64-unknown-linux-gnu
+          binary_name: forge-aarch64-unknown-linux-gnu
           binary_path: target/aarch64-unknown-linux-gnu/release/forge
           cross: 'true'
-          os: ubuntu-latest
-          target: aarch64-unknown-linux-gnu
-        - binary_name: forge-x86_64-apple-darwin
+        - os: macos-latest
+          target: x86_64-apple-darwin
+          binary_name: forge-x86_64-apple-darwin
           binary_path: target/x86_64-apple-darwin/release/forge
           cross: 'false'
-          os: macos-latest
-          target: x86_64-apple-darwin
-        - binary_name: forge-aarch64-apple-darwin
+        - os: macos-latest
+          target: aarch64-apple-darwin
+          binary_name: forge-aarch64-apple-darwin
           binary_path: target/aarch64-apple-darwin/release/forge
           cross: 'false'
-          os: macos-latest
-          target: aarch64-apple-darwin
-        - binary_name: forge-x86_64-pc-windows-msvc.exe
+        - os: windows-latest
+          target: x86_64-pc-windows-msvc
+          binary_name: forge-x86_64-pc-windows-msvc.exe
           binary_path: target/x86_64-pc-windows-msvc/release/forge.exe
           cross: 'false'
-          os: windows-latest
-          target: x86_64-pc-windows-msvc
-        - binary_name: forge-aarch64-pc-windows-msvc.exe
+        - os: windows-latest
+          target: aarch64-pc-windows-msvc
+          binary_name: forge-aarch64-pc-windows-msvc.exe
           binary_path: target/aarch64-pc-windows-msvc/release/forge.exe
           cross: 'false'
-          os: windows-latest
-          target: aarch64-pc-windows-msvc
-        - binary_name: forge-aarch64-linux-android
+        - os: ubuntu-latest
+          target: aarch64-linux-android
+          binary_name: forge-aarch64-linux-android
           binary_path: target/aarch64-linux-android/release/forge
           cross: 'true'
-          os: ubuntu-latest
-          target: aarch64-linux-android
     steps:
     - name: Checkout Code
-      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      uses: actions/checkout@v6
     - name: Setup Protobuf Compiler
       if: ${{ matrix.cross == 'false' }}
-      uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
+      uses: arduino/setup-protoc@v3
       with:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
     - name: Setup Cross Toolchain
       if: ${{ matrix.cross == 'false' }}
-      uses: taiki-e/setup-cross-toolchain-action@12b7ad4acfa95a1476779d6c06699b96ec1691f8
+      uses: taiki-e/setup-cross-toolchain-action@v1
       with:
         target: ${{ matrix.target }}
     - name: Add Rust target
@@ -294,9 +280,9 @@ jobs:
       run: rustup target add ${{ matrix.target }}
     - name: Set Rust Flags
       if: '!(contains(matrix.target, ''-unknown-linux-'') || contains(matrix.target, ''-android''))'
-      run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
+      run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> $GITHUB_ENV
     - name: Build Binary
-      uses: ClementTsang/cargo-action@2438cc5f3ba4e971289fffca2a00dedea6911f14
+      uses: ClementTsang/cargo-action@v0.0.7
       with:
         command: build --release
         args: '--target ${{ matrix.target }}'
