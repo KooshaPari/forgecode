@@ -23,4 +23,4 @@ jobs:
         with:
           tool: cargo-deny
       - name: Check
-        run: cargo deny --log-level error check
+        run: cargo deny --log-level error check sources

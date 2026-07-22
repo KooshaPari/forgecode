@@ -33,6 +33,8 @@ jobs:
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd
+        with:
+          tool: cargo-nextest
 
       - name: cargo nextest run
         env:
