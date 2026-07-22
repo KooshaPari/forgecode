@@ -18,7 +18,6 @@ pub fn generate_autofix_workflow() {
                 .add_component(Component::Clippy)
                 .add_component(Component::Rustfmt),
         )
-        .add_step(Step::new("Cargo Fmt").run(jobs::fmt_cmd(false)))
         .add_step(Step::new("Cargo Clippy").run(jobs::clippy_cmd(false)))
         .add_step(
             Step::new("Cargo Clippy String Safety").run(jobs::clippy_string_safety_cmd(false)),
