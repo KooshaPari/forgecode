@@ -42,7 +42,8 @@ pub struct BulkheadFullError {
     pub max_concurrent: usize,
 }
 
-// ── Circuit breaker ───────────────────────────────────────────────────────────
+// ── Circuit breaker
+// ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BreakerState {
@@ -189,7 +190,8 @@ impl CircuitBreaker {
     }
 }
 
-// ── Bulkhead ──────────────────────────────────────────────────────────────────
+// ── Bulkhead
+// ──────────────────────────────────────────────────────────────────
 
 /// A concurrency bulkhead backed by a bounded semaphore.
 ///
@@ -380,6 +382,7 @@ mod tests {
     #[tokio::test]
     async fn bulkhead_concurrent_calls_bounded() {
         use std::sync::Arc;
+
         use tokio::sync::Barrier;
 
         let bh = Bulkhead::new("test", 3);

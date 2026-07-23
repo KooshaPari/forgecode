@@ -4,10 +4,11 @@
 //! `forge_domain` counterparts for compile-time safety while keeping the
 //! storage layer independent from domain model changes.
 
-use crate::codec;
 use anyhow::Context as _;
 use forge_domain::{Context, ConversationId};
 use serde::{Deserialize, Serialize};
+
+use crate::codec;
 
 /// Repository-specific representation of ModelId
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1154,7 +1155,8 @@ impl TryFrom<ConversationRecord> for forge_domain::Conversation {
         let id = ConversationId::parse(conversation_id.clone())
             .with_context(|| format!("Failed to parse conversation ID: {}", conversation_id))?;
 
-        // Dual-read path: decompress if is_compressed=1, else fall back to plain context
+        // Dual-read path: decompress if is_compressed=1, else fall back to plain
+        // context
         let context_str = if record.is_compressed == 1 {
             if let Some(compressed) = record.context_zstd {
                 codec::decompress(&compressed).with_context(|| {

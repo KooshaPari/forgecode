@@ -1,8 +1,8 @@
 //! forge3d binary — daemon entry point.
 //!
-//! Starts the forge3d daemon: acquires an exclusive pidfile+flock slot, spins up
-//! the drift detector, and begins serving JSON-RPC requests over a Unix domain
-//! socket.
+//! Starts the forge3d daemon: acquires an exclusive pidfile+flock slot, spins
+//! up the drift detector, and begins serving JSON-RPC requests over a Unix
+//! domain socket.
 //!
 //! # Usage
 //!
@@ -19,15 +19,20 @@
 
 use std::path::PathBuf;
 use std::process;
+#[cfg(unix)]
 use std::sync::Arc;
 
 use clap::Parser;
-use tokio::signal::unix::{SignalKind, signal};
-use tokio_util::sync::CancellationToken;
-
+#[cfg(unix)]
 use forge_drift::{DriftConfig, DriftDetector, DriftIndex};
+#[cfg(unix)]
 use forge3d::pidfile::PidFile;
+#[cfg(unix)]
 use forge3d::server::Server;
+#[cfg(unix)]
+use tokio::signal::unix::{SignalKind, signal};
+#[cfg(unix)]
+use tokio_util::sync::CancellationToken;
 
 /// Forge3 daemon — agent registry and drift detection over UDS.
 ///
@@ -89,11 +94,26 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
+    #[cfg(not(unix))]
+    {
+        let _args = Args::parse();
+        eprintln!("forge3d is only supported on Unix platforms");
+        process::exit(1);
+    }
+
+    #[cfg(unix)]
+    {
+        let args = Args::parse();
+        run_unix(args).await;
+    }
+}
+
+#[cfg(unix)]
+async fn run_unix(args: Args) {
     // Initialise a minimal tracing subscriber so the daemon's own log
     // messages (from `server.rs`, `pidfile.rs`, etc.) are visible.
     tracing_subscriber::fmt::init();
 
-    let args = Args::parse();
     let pid = process::id();
 
     // ------------------------------------------------------------------
@@ -149,8 +169,8 @@ async fn main() {
     let shutdown = CancellationToken::new();
 
     // ------------------------------------------------------------------
-    // 4. Spawn the serve loop in a background task so we can listen for
-    //    shutdown signals concurrently.
+    // 4. Spawn the serve loop in a background task so we can listen for shutdown
+    //    signals concurrently.
     // ------------------------------------------------------------------
     let serve_handle = {
         let server = server.clone();

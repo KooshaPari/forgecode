@@ -507,15 +507,16 @@ impl<S: AgentService + EnvironmentInfra<Config = forge_config::ForgeConfig>> Orc
         self.agent.model.clone()
     }
 
-    /// Mark the conversation as dirty so the next `flush_if_dirty` will persist.
-    /// Cheap (no I/O) — call whenever the conversation changes.
+    /// Mark the conversation as dirty so the next `flush_if_dirty` will
+    /// persist. Cheap (no I/O) — call whenever the conversation changes.
     fn mark_dirty(&mut self) {
         self.dirty = true;
     }
 
     /// Persist the conversation if `dirty` is set, then clear the flag. This is
-    /// the single chokepoint where `services.update` is called from `run`, paired
-    /// with `OrchestratorDropGuard` for crash-safety on panic/cancellation.
+    /// the single chokepoint where `services.update` is called from `run`,
+    /// paired with `OrchestratorDropGuard` for crash-safety on
+    /// panic/cancellation.
     async fn flush_if_dirty(&mut self) -> anyhow::Result<()> {
         if self.dirty {
             self.services.update(self.conversation.clone()).await?;

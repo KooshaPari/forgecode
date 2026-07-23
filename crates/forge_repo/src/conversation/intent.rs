@@ -4,9 +4,11 @@
 //! pending → extracting → extracted → verified → pruned
 //!
 //! Key invariants:
-//! - A conversation can only transition to 'pruned' if current state is 'verified'
+//! - A conversation can only transition to 'pruned' if current state is
+//!   'verified'
 //! - All transitions are recorded in audit trail
-//! - No backtracking to earlier states (except manual override with operator approval)
+//! - No backtracking to earlier states (except manual override with operator
+//!   approval)
 
 use std::str::FromStr;
 
@@ -40,7 +42,8 @@ impl IntentState {
     /// Check if a transition from this state to `next` is allowed
     ///
     /// Enforces the forward-only DAG:
-    /// - pending → extracting, extracted (skip extraction if needed), verified (manual override)
+    /// - pending → extracting, extracted (skip extraction if needed), verified
+    ///   (manual override)
     /// - extracting → extracted, pending (revert on failure)
     /// - extracted → verified, pending (revert on failure)
     /// - verified → pruned, pending (manual revert only)

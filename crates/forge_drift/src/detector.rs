@@ -1,10 +1,11 @@
 use std::sync::Arc;
+
+use forge_similarity::SimilarityProvider;
 use tokio::sync::broadcast;
 
 use crate::config::{ApprovalMode, DriftConfig, Tier};
 use crate::event::{AlertId, DriftEvent, OverrideReason};
 use crate::index::DriftIndex;
-use forge_similarity::SimilarityProvider;
 
 /// High-level drift detector that wraps a `DriftIndex` and an optional
 /// `SimilarityProvider`.  T0–T3 tiers degrade gracefully.

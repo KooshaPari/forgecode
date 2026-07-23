@@ -1,40 +1,46 @@
-// forge_daemon — Rust orchestration layer over the Zig kqueue+posix_spawn daemon.
+// forge_daemon — Rust orchestration layer over the Zig kqueue+posix_spawn
+// daemon.
 #![allow(dead_code)] // FFI symbols are used by tests and external callers
 //
-// Split: Zig = hot core (kqueue/posix_spawn/socket), Rust = config/IPC/observability.
-// The Zig core is compiled to libforge_daemon_core.a (C ABI) by build.rs.
+// Split: Zig = hot core (kqueue/posix_spawn/socket), Rust =
+// config/IPC/observability. The Zig core is compiled to libforge_daemon_core.a
+// (C ABI) by build.rs.
 //
 // Two usage modes:
 //
-//   1. In-process C-ABI dispatch (DaemonDispatch):
-//      Calls forge_daemon_dispatch() directly from the same process — the Zig
-//      core handles posix_spawn, pipe, waitpid.  No daemon socket needed.
+//   1. In-process C-ABI dispatch (DaemonDispatch): Calls
+//      forge_daemon_dispatch() directly from the same process — the Zig core
+//      handles posix_spawn, pipe, waitpid.  No daemon socket needed.
 //
-//   2. Socket-based client (DaemonClient):
-//      Connects to a running forge-daemon process over a Unix socket.
-//      Sends JSON requests, receives JSON responses.
+//   2. Socket-based client (DaemonClient): Connects to a running forge-daemon
+//      process over a Unix socket. Sends JSON requests, receives JSON
+//      responses.
 //
 // The Rust side of forge_main can use either mode; mode 1 is simpler for
 // single-machine use.  Mode 2 supports the warm-pool long-running daemon
 // model that eliminates dyld+tokio init cost across multiple callers.
 
-use std::ffi::CString;
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(unix)]
 use tokio::net::UnixStream;
-use tracing::{debug, info, warn};
+#[cfg(forge_daemon_zig_core)]
+use tracing::debug;
+use tracing::{info, warn};
 
 // ---------------------------------------------------------------------------
 // FFI bindings to libforge_daemon_core.a
 // ---------------------------------------------------------------------------
 
+#[cfg(forge_daemon_zig_core)]
 unsafe extern "C" {
     /// Start the daemon (bind socket, init kqueue).
-    /// socket_path: NUL-terminated C string; null → /tmp/forge-daemon-<uid>.sock
-    /// Returns 0 on success, -1 on error.
+    /// socket_path: NUL-terminated C string; null →
+    /// /tmp/forge-daemon-<uid>.sock Returns 0 on success, -1 on error.
     fn forge_daemon_start(socket_path: *const std::os::raw::c_char) -> std::os::raw::c_int;
 
     /// Stop the daemon (close socket, kill workers).
@@ -43,8 +49,9 @@ unsafe extern "C" {
     /// Returns 1 if daemon is running, 0 otherwise.
     fn forge_daemon_is_running() -> std::os::raw::c_int;
 
-    /// Write the active socket path into `out` (capacity `cap`, NUL-terminated).
-    /// Returns bytes written (excl. NUL), or -1 if not started.
+    /// Write the active socket path into `out` (capacity `cap`,
+    /// NUL-terminated). Returns bytes written (excl. NUL), or -1 if not
+    /// started.
     fn forge_daemon_socket_path(out: *mut std::os::raw::c_char, cap: usize) -> std::os::raw::c_int;
 
     /// Dispatch one forge task via posix_spawn (hot path).
@@ -59,6 +66,7 @@ unsafe extern "C" {
     ) -> std::os::raw::c_int;
 }
 
+#[cfg(unix)]
 unsafe extern "C" {
     fn getuid() -> u32;
 }
@@ -73,12 +81,15 @@ pub struct DaemonDispatch;
 
 impl DaemonDispatch {
     /// Dispatch a single forge task and return its stdout output + exit code.
+    #[cfg(forge_daemon_zig_core)]
     pub fn dispatch(
         forge_bin: &str,
         prompt: &str,
         model: &str,
         cwd: &Path,
     ) -> Result<(i32, Vec<u8>)> {
+        use std::ffi::CString;
+
         let forge_bin_c = CString::new(forge_bin).context("forge_bin NUL")?;
         let prompt_c = CString::new(prompt).context("prompt NUL")?;
         let model_c = CString::new(model).context("model NUL")?;
@@ -109,6 +120,21 @@ impl DaemonDispatch {
             "forge_daemon_dispatch returned"
         );
         Ok((exit_code, result_buf))
+    }
+
+    /// The Zig daemon core uses macOS kqueue/posix_spawn internals and is not
+    /// linked into non-macOS builds. Keep workspace checks green while making
+    /// platform support explicit at the call boundary.
+    #[cfg(not(forge_daemon_zig_core))]
+    pub fn dispatch(
+        _forge_bin: &str,
+        _prompt: &str,
+        _model: &str,
+        _cwd: &Path,
+    ) -> Result<(i32, Vec<u8>)> {
+        anyhow::bail!(
+            "forge daemon dispatch requires FORGE_DAEMON_BUILD_ZIG_CORE=1 on supported macOS hosts"
+        )
     }
 }
 
@@ -150,7 +176,8 @@ impl DaemonClient {
         Self { socket_path: socket_path.into(), next_id: 1 }
     }
 
-    /// Create a client using the default socket path (/tmp/forge-daemon-<uid>.sock).
+    /// Create a client using the default socket path
+    /// (/tmp/forge-daemon-<uid>.sock).
     pub fn default_path() -> Self {
         let uid = libc_getuid();
         Self::new(format!("/tmp/forge-daemon-{uid}.sock"))
@@ -205,6 +232,7 @@ impl DaemonClient {
         id
     }
 
+    #[cfg(unix)]
     async fn send_recv(&self, req: &DaemonRequest) -> Result<DaemonResponse> {
         let mut stream = UnixStream::connect(&self.socket_path)
             .await
@@ -233,6 +261,11 @@ impl DaemonClient {
 
         serde_json::from_slice(&resp_buf).context("deserialize response")
     }
+
+    #[cfg(not(unix))]
+    async fn send_recv(&self, _req: &DaemonRequest) -> Result<DaemonResponse> {
+        anyhow::bail!("forge daemon socket client requires Unix domain sockets")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -246,7 +279,8 @@ pub struct DaemonGuard {
 }
 
 impl DaemonGuard {
-    /// Launch the standalone forge-daemon binary; wait until the socket appears.
+    /// Launch the standalone forge-daemon binary; wait until the socket
+    /// appears.
     pub async fn start(daemon_bin: &Path, forge_bin: &Path) -> Result<Self> {
         let socket_path = format!("/tmp/forge-daemon-{}.sock", libc_getuid());
 
@@ -287,14 +321,22 @@ impl Drop for DaemonGuard {
 
 #[inline]
 fn libc_getuid() -> u32 {
-    unsafe { getuid() }
+    #[cfg(unix)]
+    unsafe {
+        getuid()
+    }
+
+    #[cfg(not(unix))]
+    {
+        0
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-#[cfg(test)]
+#[cfg(all(test, forge_daemon_zig_core))]
 mod tests {
     use super::*;
 

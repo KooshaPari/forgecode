@@ -1,8 +1,10 @@
 pub mod config;
 
-use crate::config::Tier;
 use std::sync::Arc;
+
 use thiserror::Error;
+
+use crate::config::Tier;
 
 // ---------------------------------------------------------------------------
 // Trait

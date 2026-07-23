@@ -71,7 +71,8 @@ impl ToolCallContext {
         f(&mut metrics)
     }
 
-    /// Returns the conversation ID associated with this tool call context, if any.
+    /// Returns the conversation ID associated with this tool call context, if
+    /// any.
     pub fn conversation_id(&self) -> Option<ConversationId> {
         self.conversation_id
     }
@@ -81,7 +82,8 @@ impl ToolCallContext {
         self.conversation_id = id;
     }
 
-    /// Returns the parent conversation ID associated with this tool call context, if any.
+    /// Returns the parent conversation ID associated with this tool call
+    /// context, if any.
     pub fn parent_id(&self) -> Option<ConversationId> {
         self.parent_id
     }

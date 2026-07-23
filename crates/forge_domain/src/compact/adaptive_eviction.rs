@@ -46,7 +46,8 @@ impl Default for AdaptiveEvictionConfig {
 }
 
 impl AdaptiveEvictionConfig {
-    /// Calculate the adaptive eviction percentage based on token count and threshold
+    /// Calculate the adaptive eviction percentage based on token count and
+    /// threshold
     pub fn calculate_eviction(&self, token_count: usize, threshold: usize) -> f64 {
         if threshold == 0 {
             return self.medium_headroom_eviction;

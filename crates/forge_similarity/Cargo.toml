@@ -2,6 +2,7 @@
 name = "forge_similarity"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 description = "similarity scoring — trait + hash-only + local ONNX + hosted fallback"
 
 [dependencies]

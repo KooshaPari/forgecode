@@ -4,8 +4,6 @@ use std::future::Future;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
-use tokio::sync::Mutex as TokioMutex;
-
 use backon::{ExponentialBuilder, Retryable};
 use bstr::ByteSlice;
 use forge_app::McpClientInfra;
@@ -23,6 +21,7 @@ use schemars::Schema;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::Mutex as TokioMutex;
 
 use crate::error::Error;
 use crate::resilience::{Bulkhead, CircuitBreaker, CircuitBreakerConfig};
@@ -568,8 +567,8 @@ impl ForgeMcpClient {
     }
 
     /// Returns a predicate that decides whether an MCP error is worth retrying.
-    /// When a transport error is detected the cached client handle is cleared so
-    /// the next attempt reconnects.
+    /// When a transport error is detected the cached client handle is cleared
+    /// so the next attempt reconnects.
     fn mcp_should_retry(&self, err: &anyhow::Error) -> bool {
         let is_transport = err
             .downcast_ref::<rmcp::ServiceError>()
@@ -590,7 +589,8 @@ impl ForgeMcpClient {
 
     /// Executes `call` with:
     ///
-    /// 1. A **bulkhead** that limits concurrency to `DEFAULT_MCP_MAX_CONCURRENT`.
+    /// 1. A **bulkhead** that limits concurrency to
+    ///    `DEFAULT_MCP_MAX_CONCURRENT`.
     /// 2. A **circuit breaker** that short-circuits after repeated failures.
     /// 3. **Retry with exponential backoff** driven by the global
     ///    [`RetryConfig`] (falls back to `DEFAULT_MCP_MAX_RETRIES` if the
@@ -961,8 +961,9 @@ mod tests {
     ///    same connection once it is stored.
     #[test]
     fn test_connect_mutex_is_present_and_starts_unlocked() {
-        use forge_domain::Environment;
         use std::path::PathBuf;
+
+        use forge_domain::Environment;
 
         let config = McpServerConfig::Http(McpHttpServer {
             url: "https://example.com".to_string(),

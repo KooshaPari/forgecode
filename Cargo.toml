@@ -16,6 +16,7 @@ members = [
   "crates/forge_eventsource",
   "crates/forge_eventsource_stream",
   "crates/forge_fs",
+  "crates/forge_gpu",
   "crates/forge_infra",
   "crates/forge_json_repair",
   "crates/forge_main",
@@ -42,6 +43,7 @@ members = [
   "crates/forge_daemon",
   "benchmarks/forge_daemon_bench",
   "benchmarks/perf_harness",
+  "benchmarks/dual_harness",
 ]
 resolver = "2"
 

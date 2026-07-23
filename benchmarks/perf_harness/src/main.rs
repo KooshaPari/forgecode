@@ -3,19 +3,17 @@
 // Measures three axes the perf/resource-pooling work item cares about:
 //
 //   1. per_agent_rss_kib      post-init RSS of the forge_main binary, sampled
-//                             after `--help` exits.  Proxy for the cold-start
-//                             memory footprint each "agent" pays before any
-//                             work happens.  (The actual per-task agent is the
-//                             Zig daemon; this is the upper bound.)
+//      after `--help` exits.  Proxy for the cold-start memory footprint each
+//      "agent" pays before any work happens.  (The actual per-task agent is the
+//      Zig daemon; this is the upper bound.)
 //
 //   2. idle_cpu_pct           Average user+system CPU fraction while idle for
-//                             1s.  Should be ~0%; anything above 1% means
-//                             background timers or busy-polling are alive.
+//      1s.  Should be ~0%; anything above 1% means background timers or
+//      busy-polling are alive.
 //
 //   3. system_pool_count      Number of distinct kernel resources held by the
-//                             harness while idle: threads (proc/<pid>/task
-//                             count), file descriptors (fdinfo count), and
-//                             tokio worker threads (TOKIO_WORKER_THREADS).
+//      harness while idle: threads (proc/<pid>/task count), file descriptors
+//      (fdinfo count), and tokio worker threads (TOKIO_WORKER_THREADS).
 //
 // Usage:
 //   perf_harness run --project . --regimes warmup,sustained,burst
@@ -24,11 +22,9 @@
 // The scorecard is emitted as JSON to stdout (or `--out` if provided) for
 // the perf/resource-pooling pipeline to consume.
 
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-    time::{Duration, Instant},
-};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use forge_daemon::DaemonDispatch;
@@ -127,7 +123,7 @@ async fn main() -> Result<()> {
         .init();
 
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 || args[1] != "run" {
+    if args.get(1).is_none_or(|arg| arg != "run") {
         anyhow::bail!("usage: perf_harness run [--project DIR] [--regimes w,s,b] [--out PATH]");
     }
 
@@ -193,12 +189,13 @@ async fn main() -> Result<()> {
 }
 
 fn flag_value(args: &[String], name: &str) -> Option<String> {
-    let mut i = 1;
-    while i < args.len() {
-        if args[i] == name && i + 1 < args.len() {
-            return Some(args[i + 1].clone());
+    let mut iter = args.iter().skip(1);
+    while let Some(flag) = iter.next() {
+        if flag == name
+            && let Some(value) = iter.next()
+        {
+            return Some(value.clone());
         }
-        i += 1;
     }
     None
 }
@@ -445,22 +442,31 @@ fn parse_cpu_field(stat: &str, one_based: usize) -> f64 {
     // /proc/<pid>/stat format: pid (comm) state ... utime stime ...
     // fields are 1-based; one_based=14 → utime, 15 → stime.
     // The comm field may contain spaces and parens, so find the LAST ')'.
-    let last_paren = stat.rfind(')')?;
-    let after = &stat[last_paren + 1..];
+    let Some(last_paren) = stat.rfind(')') else {
+        return 0.0;
+    };
+    let Some(after) = stat.get(last_paren + 1..) else {
+        return 0.0;
+    };
     let parts: Vec<&str> = after.split_whitespace().collect();
     // parts[0] is 'state' (one_based 3); utime is one_based 14 → index 11 in
     // the after-paren split.  Index = one_based - 3.
-    let idx = one_based.checked_sub(3)?;
-    let ticks_str = parts.get(idx)?;
-    let ticks: u64 = ticks_str.parse().ok()?;
+    let Some(idx) = one_based.checked_sub(3) else {
+        return 0.0;
+    };
+    let Some(ticks_str) = parts.get(idx) else {
+        return 0.0;
+    };
+    let Ok(ticks) = ticks_str.parse::<u64>() else {
+        return 0.0;
+    };
     // Convert to a rough percent of one CPU using clock_tick (typically 100).
     let clock_tick: f64 = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
-    let pct = if clock_tick > 0.0 {
+    if clock_tick > 0.0 {
         (ticks as f64 / clock_tick) * 100.0
     } else {
         0.0
-    };
-    pct
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -483,13 +489,13 @@ fn percentile(values: &mut [u64], p: f64) -> u64 {
     }
     values.sort_unstable();
     let idx = ((values.len() as f64 - 1.0) * p).floor() as usize;
-    values[idx]
+    values.get(idx).copied().unwrap_or(0)
 }
 
 // libc shim — we only need sysconf on Linux for clock tick.
 #[cfg(target_os = "linux")]
 mod libc {
-    extern "C" {
+    unsafe extern "C" {
         pub fn sysconf(name: i32) -> i64;
     }
     pub const _SC_CLK_TCK: i32 = 2;

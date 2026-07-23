@@ -58,7 +58,8 @@ pub enum OverrideReason {
 // DriftEvent
 // ---------------------------------------------------------------------------
 
-/// An event emitted by the drift detector, observable via `broadcast::Receiver`.
+/// An event emitted by the drift detector, observable via
+/// `broadcast::Receiver`.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DriftEvent {
     /// Two agent prompts have non-trivial overlap.

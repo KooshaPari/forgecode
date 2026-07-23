@@ -299,12 +299,14 @@ impl DbServer {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::protocol::{Request, Response, read_frame, write_frame};
     use std::path::{Path, PathBuf};
+
     use tempfile::TempDir;
     use tokio::net::UnixStream;
     use tokio::time::{Duration, sleep};
+
+    use super::*;
+    use crate::protocol::{Request, Response, read_frame, write_frame};
 
     fn tmp_paths(dir: &TempDir) -> (PathBuf, PathBuf) {
         let sock = dir.path().join("test.sock");

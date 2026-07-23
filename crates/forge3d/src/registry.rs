@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 /// Thread-safe agent registry with heartbeat-based lease eviction.
 ///
 /// Key API:
@@ -12,7 +14,6 @@
 ///   Explicit heartbeats set `last_heartbeat = now` (no forward-dating),
 ///   so the agent ages naturally from that point.
 use parking_lot::RwLock;
-use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -91,8 +92,8 @@ impl Registry {
     ///
     /// - **New agent**: `last_heartbeat` is forward-dated to `now + LEASE_MS`
     ///   so that a freshly registered agent appears alive.
-    /// - **Existing agent**: fields are overridden and `last_heartbeat` is
-    ///   set to the wall-clock `now_unix_ms`.
+    /// - **Existing agent**: fields are overridden and `last_heartbeat` is set
+    ///   to the wall-clock `now_unix_ms`.
     pub fn upsert(
         &self,
         agent_id: &str,

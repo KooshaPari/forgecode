@@ -11,8 +11,9 @@ use crate::Percentage;
 #[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Dummy)]
 #[serde(rename_all = "snake_case")]
 pub enum SummarizationStrategy {
-    /// Pure structural extraction - extracts tool calls, file paths, and commands
-    /// into a structured summary. Fast, deterministic, no API cost.
+    /// Pure structural extraction - extracts tool calls, file paths, and
+    /// commands into a structured summary. Fast, deterministic, no API
+    /// cost.
     #[default]
     Extract,
 
