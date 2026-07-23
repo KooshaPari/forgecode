@@ -4,8 +4,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{Mutex, mpsc};
+#[cfg(unix)]
+use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
@@ -65,6 +68,21 @@ impl DbServer {
     }
 
     pub async fn run(self) -> Result<()> {
+        #[cfg(not(unix))]
+        {
+            anyhow::bail!(
+                "forge_dbd requires Unix domain socket support and is not available on this platform"
+            );
+        }
+
+        #[cfg(unix)]
+        {
+            self.run_unix().await
+        }
+    }
+
+    #[cfg(unix)]
+    async fn run_unix(self) -> Result<()> {
         info!(
             socket = %self.socket_path.display(),
             db    = %self.state.db_path.display(),
@@ -165,6 +183,7 @@ impl DbServer {
     // Per-connection handler
     // -------------------------------------------------------------------------
 
+    #[cfg(unix)]
     async fn handle_client(
         stream: UnixStream,
         queue_tx: Arc<mpsc::Sender<QueuedRequest>>,
@@ -297,7 +316,7 @@ impl DbServer {
 // Tests
 // ---------------------------------------------------------------------------
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::path::{Path, PathBuf};
 
