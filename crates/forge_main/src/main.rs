@@ -215,6 +215,7 @@ fn parse_cli() -> Cli {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
     use forge_main::TopLevelCommand;
     use pretty_assertions::assert_eq;
 
