@@ -329,8 +329,7 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ForgeAp
             .collect();
 
         // Execute all provider fetches concurrently.
-        let results: Vec<Result<ProviderModels>> =
-            futures::future::join_all(futures).await;
+        let results: Vec<Result<ProviderModels>> = futures::future::join_all(futures).await;
 
         // Separate successes from failures, logging each failure.
         let mut models = Vec::with_capacity(results.len());
@@ -350,10 +349,10 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ForgeAp
 
         // If every provider failed, surface the first error so the caller
         // knows why rather than seeing a confusing empty list.
-        if models.is_empty() {
-            if let Some(err) = first_error {
-                return Err(err);
-            }
+        if models.is_empty()
+            && let Some(err) = first_error
+        {
+            return Err(err);
         }
 
         Ok(models)
