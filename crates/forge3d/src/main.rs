@@ -17,15 +17,23 @@
 //! If the daemon is already running and `--forge3-client` is supplied, the
 //! binary delegates a `forge3_client ping` to the existing instance and exits.
 
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::process;
+#[cfg(unix)]
 use std::sync::Arc;
 
+#[cfg(unix)]
 use clap::Parser;
+#[cfg(unix)]
 use forge_drift::{DriftConfig, DriftDetector, DriftIndex};
+#[cfg(unix)]
 use forge3d::pidfile::PidFile;
+#[cfg(unix)]
 use forge3d::server::Server;
+#[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
+#[cfg(unix)]
 use tokio_util::sync::CancellationToken;
 
 /// Forge3 daemon — agent registry and drift detection over UDS.
@@ -33,6 +41,7 @@ use tokio_util::sync::CancellationToken;
 /// Acquires an exclusive pidfile+flock slot, starts the drift detector, and
 /// serves JSON-RPC requests over a Unix domain socket. Exits cleanly on
 /// SIGTERM or SIGINT.
+#[cfg(unix)]
 #[derive(Parser, Debug)]
 #[command(
     name = "forge3d",
@@ -88,6 +97,18 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
+    #[cfg(not(unix))]
+    {
+        eprintln!("forge3d is only supported on Unix platforms");
+        process::exit(0);
+    }
+
+    #[cfg(unix)]
+    run_unix().await;
+}
+
+#[cfg(unix)]
+async fn run_unix() {
     // Initialise a minimal tracing subscriber so the daemon's own log
     // messages (from `server.rs`, `pidfile.rs`, etc.) are visible.
     tracing_subscriber::fmt::init();
