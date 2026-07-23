@@ -17,7 +17,7 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches};
 use forge_api::ForgeAPI;
 use forge_config::ForgeConfig;
 use forge_domain::TitleFormat;
@@ -157,7 +157,7 @@ async fn run() -> Result<()> {
     }));
 
     // Initialize and run the UI
-    let mut cli = Cli::parse();
+    let mut cli = parse_cli();
 
     // Check if there's piped input, but skip for `forge select` since that
     // command uses stdin for its item list.
@@ -197,6 +197,20 @@ async fn run() -> Result<()> {
     ui.run().await;
 
     Ok(())
+}
+
+fn parse_cli() -> Cli {
+    let bin_name = std::env::args_os()
+        .next()
+        .and_then(|arg| {
+            std::path::PathBuf::from(arg)
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "helioslite".to_string());
+    let bin_name: &'static str = Box::leak(bin_name.into_boxed_str());
+    let matches = Cli::command().name(bin_name).get_matches();
+    Cli::from_arg_matches(&matches).unwrap_or_else(|err| err.exit())
 }
 
 #[cfg(test)]
