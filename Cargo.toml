@@ -43,6 +43,7 @@ members = [
   "crates/forge_daemon",
   "benchmarks/forge_daemon_bench",
   "benchmarks/perf_harness",
+  "benchmarks/dual_harness",
 ]
 resolver = "2"
 
