@@ -25,10 +25,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use forge_drift::{AlertId, DriftDetector, OverrideReason};
+#[cfg(unix)]
 use tokio::net::UnixListener;
+#[cfg(unix)]
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+#[cfg(unix)]
+use tracing::error;
+use tracing::{info, warn};
 
 use crate::error::{Forge3Error, Result};
 use crate::pidfile::PidFile;
@@ -216,47 +220,58 @@ impl Server {
         socket_path: &Path,
         shutdown: CancellationToken,
     ) -> Result<()> {
-        // Remove any stale socket file from a previous run.
-        if socket_path.exists() {
-            std::fs::remove_file(socket_path)?;
+        #[cfg(not(unix))]
+        {
+            let _ = (self, socket_path, shutdown);
+            Err(Forge3Error::Protocol(
+                "forge3d Unix socket server is only supported on Unix platforms".into(),
+            ))
         }
 
-        let listener = UnixListener::bind(socket_path)?;
-        info!("forge3d listening on {}", socket_path.display());
-
-        // Track all per-connection tasks so we can await/abort them on exit.
-        let mut tasks: JoinSet<()> = JoinSet::new();
-
-        loop {
-            tokio::select! {
-                // Clean shutdown: cancel all in-flight connection tasks.
-                _ = shutdown.cancelled() => {
-                    info!("forge3d shutting down; aborting {} in-flight connection(s)", tasks.len());
-                    tasks.abort_all();
-                    while tasks.join_next().await.is_some() {}
-                    return Ok(());
-                }
-
-                accept_result = listener.accept() => {
-                    let (stream, _addr) = match accept_result {
-                        Ok(pair) => pair,
-                        Err(e) => {
-                            error!("accept error: {e}");
-                            return Err(e.into());
-                        }
-                    };
-
-                    let server = self.clone();
-                    tasks.spawn(async move {
-                        if let Err(e) = handle_connection(&server, stream).await {
-                            warn!("connection error: {e}");
-                        }
-                    });
-                }
+        #[cfg(unix)]
+        {
+            // Remove any stale socket file from a previous run.
+            if socket_path.exists() {
+                std::fs::remove_file(socket_path)?;
             }
 
-            // Reap any tasks that have already finished to keep the set bounded.
-            while let Some(_result) = tasks.try_join_next() {}
+            let listener = UnixListener::bind(socket_path)?;
+            info!("forge3d listening on {}", socket_path.display());
+
+            // Track all per-connection tasks so we can await/abort them on exit.
+            let mut tasks: JoinSet<()> = JoinSet::new();
+
+            loop {
+                tokio::select! {
+                    // Clean shutdown: cancel all in-flight connection tasks.
+                    _ = shutdown.cancelled() => {
+                        info!("forge3d shutting down; aborting {} in-flight connection(s)", tasks.len());
+                        tasks.abort_all();
+                        while tasks.join_next().await.is_some() {}
+                        return Ok(());
+                    }
+
+                    accept_result = listener.accept() => {
+                        let (stream, _addr) = match accept_result {
+                            Ok(pair) => pair,
+                            Err(e) => {
+                                error!("accept error: {e}");
+                                return Err(e.into());
+                            }
+                        };
+
+                        let server = self.clone();
+                        tasks.spawn(async move {
+                            if let Err(e) = handle_connection(&server, stream).await {
+                                warn!("connection error: {e}");
+                            }
+                        });
+                    }
+                }
+
+                // Reap any tasks that have already finished to keep the set bounded.
+                while let Some(_result) = tasks.try_join_next() {}
+            }
         }
     }
 
@@ -377,6 +392,7 @@ impl Default for Server {
 ///
 /// Notifications (requests with no `id`) are silently consumed per the
 /// JSON-RPC 2.0 spec.
+#[cfg(unix)]
 async fn handle_connection(server: &Server, stream: tokio::net::UnixStream) -> Result<()> {
     let (mut reader, mut writer) = tokio::io::split(stream);
 
