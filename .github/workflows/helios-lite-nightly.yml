@@ -60,7 +60,7 @@ jobs:
       - name: Build renamed binary
         run: |
           cargo build --release -p forge_main --bin helioslite
-          cargo build --release -p forge_main --bin forge-dev
+          cargo build --release -p forge_main --bin forge-dev --features dev-binary
 
       - name: Smoke-test renamed binary
         run: ./target/release/helioslite --version
