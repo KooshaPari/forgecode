@@ -11,8 +11,8 @@
 #   ./install.sh --local
 #
 # Installs the HeliosLite CLI as a single-binary `helioslite` on PATH.
-# On Linux/macOS we use the matching `helioslite-x86_64-unknown-linux-gnu.tar.xz`
-# from GitHub Releases (cargo-dist artifact).
+# On Linux/macOS we download the matching raw `forge-*` release binary from
+# GitHub Releases and install it as `helioslite`.
 
 set -euo pipefail
 
@@ -20,7 +20,7 @@ VERSION=""
 LOCAL=0
 SKIP_FORGE=0
 SKIP_UPDATE_CHECK=0
-REPO="KooshaPari/heliosLite"
+REPO="${HELIOSLITE_RELEASE_REPO:-KooshaPari/forgecode}"
 
 for arg in "$@"; do
     case "$arg" in
@@ -76,25 +76,21 @@ if [ "$LOCAL" = "1" ]; then
         exit 1
     fi
     echo -e "  → \033[36mLocal install — building from source...\033[0m"
-    pushd "$(cd "$(dirname "$0")" && pwd)/.." >/dev/null
+    pushd "$(cd "$(dirname "$0")" && pwd)" >/dev/null
     cargo build --release --bin helioslite
-    popd >/dev/null
     cp "target/release/helioslite" "$INSTALL_DIR/helioslite"
+    popd >/dev/null
 else
     TARGET="$(detect_target)"
-    ARCHIVE_EXT="tar.xz"
-    if [ "${TARGET##*-}" = "apple-darwin" ]; then ARCHIVE_EXT="tar.xz"; fi
-    ASSET="helioslite-${TARGET}.${ARCHIVE_EXT}"
+    ASSET="forge-${TARGET}"
     URL="https://github.com/$REPO/releases/download/v$VERSION/$ASSET"
     TMP="$(mktemp -d -t helioslite-install-XXXXXX)"
 
     echo -e "  → \033[36mDownloading $URL\033[0m"
-    if ! curl -fsSL "$URL" -o "$TMP/$ASSET"; then
+    if ! curl -fsSL "$URL" -o "$TMP/helioslite"; then
         echo -e "  ✖ \033[31mDownload failed\033[0m"
         exit 1
     fi
-    echo -e "  → \033[36mExtracting...\033[0m"
-    tar -xJf "$TMP/$ASSET" -C "$TMP"
     cp "$TMP/helioslite" "$INSTALL_DIR/helioslite"
     rm -rf "$TMP"
 fi

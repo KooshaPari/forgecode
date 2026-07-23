@@ -11,8 +11,8 @@
 #   pwsh ./install.ps1 -Local
 #
 # Installs the HeliosLite CLI as a single-binary `helioslite` on PATH.
-# On Windows we use the `helioslite-x86_64-pc-windows-msvc.zip` from
-# GitHub Releases (cargo-dist artifact).
+# On Windows we download the matching raw `forge-*.exe` release binary from
+# GitHub Releases and install it as `helioslite.exe`.
 
 [CmdletBinding()]
 param(
@@ -31,7 +31,8 @@ function Write-Warn($msg) { Write-Host "  ⚠ $msg" -ForegroundColor Yellow }
 function Write-Err($msg)  { Write-Host "  ✖ $msg" -ForegroundColor Red }
 
 # 1) Resolve target version
-$ReleasesApi = "https://api.github.com/repos/KooshaPari/heliosLite/releases"
+$ReleaseRepo = if ($env:HELIOSLITE_RELEASE_REPO) { $env:HELIOSLITE_RELEASE_REPO } else { "KooshaPari/forgecode" }
+$ReleasesApi = "https://api.github.com/repos/$ReleaseRepo/releases"
 if (-not $Version -and -not $Local) {
     try {
         $relJson = Invoke-RestMethod -Uri "$ReleasesApi/latest" -Headers @{ "User-Agent" = "helioslite-install" }
@@ -53,7 +54,7 @@ if ($Local) {
         Write-Err "cargo not on PATH — install rustup: https://rustup.rs/"
         exit 1
     }
-    Push-Location (Resolve-Path "$PSScriptRoot\..")
+    Push-Location (Resolve-Path "$PSScriptRoot")
     try {
         cargo build --release --bin helioslite
         Copy-Item -Force "target\release\helioslite.exe" "$InstallDir\helioslite.exe"
@@ -61,23 +62,21 @@ if ($Local) {
         Pop-Location
     }
 } else {
-    $Asset = "helioslite-x86_64-pc-windows-msvc.zip"
-    $Url   = "https://github.com/KooshaPari/heliosLite/releases/download/v$Version/$Asset"
+    $Asset = "forge-x86_64-pc-windows-msvc.exe"
+    $Url   = "https://github.com/$ReleaseRepo/releases/download/v$Version/$Asset"
     $Tmp   = Join-Path $env:TEMP "helioslite-install-$Version"
     New-Item -ItemType Directory -Force -Path $Tmp | Out-Null
 
     Write-Step "Downloading $Url"
-    $ZipPath = Join-Path $Tmp $Asset
+    $BinaryPath = Join-Path $Tmp "helioslite.exe"
     try {
-        Invoke-WebRequest -Uri $Url -OutFile $ZipPath -UseBasicParsing
+        Invoke-WebRequest -Uri $Url -OutFile $BinaryPath -UseBasicParsing
     } catch {
         Write-Err "Download failed: $_"
         exit 1
     }
 
-    Write-Step "Extracting..."
-    Expand-Archive -Force -Path $ZipPath -DestinationPath $Tmp
-    Copy-Item -Force (Join-Path $Tmp "helioslite.exe") "$InstallDir\helioslite.exe"
+    Copy-Item -Force $BinaryPath "$InstallDir\helioslite.exe"
     Remove-Item -Recurse -Force $Tmp
 }
 
