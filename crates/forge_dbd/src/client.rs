@@ -1,10 +1,14 @@
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+#[cfg(unix)]
+use anyhow::Context;
+use anyhow::{Result, bail};
 #[cfg(unix)]
 use tokio::net::UnixStream;
 
-use crate::protocol::{HealthStatus, Request, Response, read_frame, write_frame};
+use crate::protocol::{HealthStatus, Request, Response};
+#[cfg(unix)]
+use crate::protocol::{read_frame, write_frame};
 
 /// Client for the `forge_dbd` Unix-socket daemon.
 ///
@@ -20,10 +24,9 @@ impl DbClient {
     ///
     /// This does **not** open a connection; use [`DbClient::send`] for that.
     pub async fn connect(socket_path: impl AsRef<Path>) -> Result<Self> {
-        let socket_path = socket_path.as_ref().to_path_buf();
-
         #[cfg(not(unix))]
         {
+            let _ = socket_path;
             bail!(
                 "forge_dbd requires Unix domain socket support and is not available on this platform"
             );
@@ -31,6 +34,7 @@ impl DbClient {
 
         #[cfg(unix)]
         {
+            let socket_path = socket_path.as_ref().to_path_buf();
             // Verify the socket is reachable right away so callers get an early
             // error rather than failing on the first `send`.
             let _ = UnixStream::connect(&socket_path).await.with_context(|| {

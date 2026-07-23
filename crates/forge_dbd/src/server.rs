@@ -10,9 +10,13 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
+#[cfg(unix)]
+use tracing::{error, warn};
 
-use crate::protocol::{HealthStatus, Request, Response, read_frame, write_frame};
+use crate::protocol::{HealthStatus, Request, Response};
+#[cfg(unix)]
+use crate::protocol::{read_frame, write_frame};
 
 // ---------------------------------------------------------------------------
 // Shared daemon state (cheap to clone; wraps Arcs internally)
