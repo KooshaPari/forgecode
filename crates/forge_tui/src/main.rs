@@ -1,10 +1,15 @@
-use std::io::{BufReader, Read, Write};
-use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
+#[cfg(unix)]
+use std::{
+    io::{BufReader, Read, Write},
+    os::unix::net::UnixStream,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
+#[cfg(unix)]
 use serde_json::Value;
 
+#[cfg(unix)]
 fn socket_path() -> PathBuf {
     if let Ok(s) = std::env::var("FORGE3D_SOCKET") {
         return PathBuf::from(s);
@@ -13,6 +18,7 @@ fn socket_path() -> PathBuf {
     PathBuf::from(runtime).join("forge3/daemon.sock")
 }
 
+#[cfg(unix)]
 fn send_request(stream: &mut UnixStream, req: &[u8]) -> Result<String, String> {
     let len = req.len() as u32;
     let header = len.to_be_bytes();
@@ -34,6 +40,7 @@ fn send_request(stream: &mut UnixStream, req: &[u8]) -> Result<String, String> {
     String::from_utf8(buf).map_err(|e| format!("utf8: {e}"))
 }
 
+#[cfg(unix)]
 fn rpc_call(method: &str, params: Value) -> Result<String, String> {
     let mut stream = UnixStream::connect(socket_path()).map_err(|e| format!("connect: {e}"))?;
     let req = serde_json::json!({
@@ -46,6 +53,7 @@ fn rpc_call(method: &str, params: Value) -> Result<String, String> {
     send_request(&mut stream, &body)
 }
 
+#[cfg(unix)]
 fn print_dashboard() {
     // Fetch agent list
     let resp = match rpc_call("agent.list_active", serde_json::json!({})) {
@@ -119,6 +127,7 @@ fn print_dashboard() {
     println!("  |  socket: {}", socket_path().display());
 }
 
+#[cfg(unix)]
 fn main() {
     let start = Instant::now();
     println!("forge_tui — polling every 2s. Ctrl+C to exit.");
@@ -128,4 +137,12 @@ fn main() {
         std::io::stdout().flush().ok();
         std::thread::sleep(Duration::from_secs(2));
     }
+}
+
+#[cfg(not(unix))]
+fn main() {
+    eprintln!(
+        "forge_tui requires Unix domain socket support and is not available on this platform"
+    );
+    std::process::exit(1);
 }
