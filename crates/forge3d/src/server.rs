@@ -32,11 +32,14 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 #[cfg(unix)]
 use tracing::error;
+#[cfg(unix)]
 use tracing::{info, warn};
 
 use crate::error::{Forge3Error, Result};
 use crate::pidfile::PidFile;
-use crate::protocol::{self, ErrorBody, ErrorResponse, Request, Response, SuccessResponse};
+#[cfg(unix)]
+use crate::protocol;
+use crate::protocol::{ErrorBody, ErrorResponse, Request, Response, SuccessResponse};
 use crate::registry::Registry;
 
 // ---------------------------------------------------------------------------
