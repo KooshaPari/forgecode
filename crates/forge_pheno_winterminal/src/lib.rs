@@ -88,11 +88,6 @@ pub mod error {
         /// Invalid GUID string
         #[error("Invalid GUID: {0}")]
         InvalidGuid(String),
-
-        /// Registry access failure (Windows only)
-        #[cfg(windows)]
-        #[error("Registry error: {0}")]
-        Registry(#[from] winreg::RegError),
     }
 
     pub type Result<T> = std::result::Result<T, WinterminalError>;
@@ -168,7 +163,7 @@ pub mod detect {
             if fallback.exists() {
                 return InstallState::Installed { version: "legacy".into(), config_path: fallback };
             }
-            InstallState::NotInstalled(Reason::NotInstalled)
+            return InstallState::NotInstalled(Reason::NotInstalled);
         }
 
         // On non-Windows, this is dead code but keeps the function body complete:
