@@ -15,10 +15,10 @@ use anyhow::Context as _;
 use forge_domain::{
     Compact, Context, ContextMessage, ContextSummary, ModelId, Provider, ResultStreamExt,
 };
+use tracing::{info, warn};
 use url::Url;
 
 use crate::{ProviderService, TemplateEngine};
-use tracing::{info, warn};
 
 /// LLM-based summarizer for context compaction.
 /// LLM-based summarizer for context compaction.

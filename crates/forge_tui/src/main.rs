@@ -1,36 +1,41 @@
-use serde_json::Value;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
+
+use serde_json::Value;
 
 fn socket_path() -> PathBuf {
     if let Ok(s) = std::env::var("FORGE3D_SOCKET") {
         return PathBuf::from(s);
     }
-    let runtime = std::env::var("XDG_RUNTIME_DIR")
-        .unwrap_or_else(|_| "/tmp".to_string());
+    let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".to_string());
     PathBuf::from(runtime).join("forge3/daemon.sock")
 }
 
 fn send_request(stream: &mut UnixStream, req: &[u8]) -> Result<String, String> {
     let len = req.len() as u32;
     let header = len.to_be_bytes();
-    stream.write_all(&header).map_err(|e| format!("write: {e}"))?;
+    stream
+        .write_all(&header)
+        .map_err(|e| format!("write: {e}"))?;
     stream.write_all(req).map_err(|e| format!("write: {e}"))?;
 
     let mut reader = BufReader::new(stream.try_clone().map_err(|e| format!("clone: {e}"))?);
     let mut resp_header = [0u8; 4];
-    reader.read_exact(&mut resp_header).map_err(|e| format!("read header: {e}"))?;
+    reader
+        .read_exact(&mut resp_header)
+        .map_err(|e| format!("read header: {e}"))?;
     let resp_len = u32::from_be_bytes(resp_header) as usize;
     let mut buf = vec![0u8; resp_len];
-    reader.read_exact(&mut buf).map_err(|e| format!("read body: {e}"))?;
+    reader
+        .read_exact(&mut buf)
+        .map_err(|e| format!("read body: {e}"))?;
     String::from_utf8(buf).map_err(|e| format!("utf8: {e}"))
 }
 
 fn rpc_call(method: &str, params: Value) -> Result<String, String> {
-    let mut stream = UnixStream::connect(socket_path())
-        .map_err(|e| format!("connect: {e}"))?;
+    let mut stream = UnixStream::connect(socket_path()).map_err(|e| format!("connect: {e}"))?;
     let req = serde_json::json!({
         "jsonrpc": "2.0",
         "method": method,
@@ -64,28 +69,46 @@ fn print_dashboard() {
 
     // Header
     println!("\x1B[1mforge3d \u{2014} Agent Dashboard\x1B[0m");
-    println!("{}\u{2500}{}\u{2500}{}", "\u{250C}", "\u{2500}".repeat(58), "\u{2510}");
+    println!("\u{250C}\u{2500}{}\u{2500}\u{2510}", "\u{2500}".repeat(58),);
 
     // agents line
-    if let Some(agents) = v.get("result").and_then(|r| r.get("agents")).and_then(|a| a.as_array()) {
+    if let Some(agents) = v
+        .get("result")
+        .and_then(|r| r.get("agents"))
+        .and_then(|a| a.as_array())
+    {
         if agents.is_empty() {
             println!("\u{2502}  \u{2139} No registered agents                         \u{2502}");
         } else {
-            println!("\u{2502}  \u{2022} {} agent(s) registered{:>33}  \u{2502}",
-                agents.len(), "");
-            println!("\u{2502}  \u{2500}{}\u{2500}  \u{2502}",
-                "\u{2500}".repeat(44));
+            println!(
+                "\u{2502}  \u{2022} {} agent(s) registered{:>33}  \u{2502}",
+                agents.len(),
+                ""
+            );
+            println!(
+                "\u{2502}  \u{2500}{}\u{2500}  \u{2502}",
+                "\u{2500}".repeat(44)
+            );
             for agent in agents {
-                let id = agent.get("agent_id").and_then(|v| v.as_str()).unwrap_or("?");
+                let id = agent
+                    .get("agent_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?");
                 let pid = agent.get("pid").and_then(|v| v.as_u64()).unwrap_or(0);
                 let lane = agent.get("lane").and_then(|v| v.as_str()).unwrap_or("?");
-                println!("\u{2502}   {:<18} pid={:<8} lane={:<12}  \u{2502}", id, pid, lane);
+                println!(
+                    "\u{2502}   {:<18} pid={:<8} lane={:<12}  \u{2502}",
+                    id, pid, lane
+                );
             }
         }
     } else {
         // Error case — show the raw error
         if let Some(err) = v.get("error") {
-            let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown");
+            let msg = err
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown");
             println!("\u{2502}  \u{26A0} RPC error: {:<38} \u{2502}", msg);
         }
     }
@@ -93,8 +116,7 @@ fn print_dashboard() {
     println!("\u{2514}{}\u{2518}", "\u{2500}".repeat(58));
 
     // Status line
-    println!("  |  socket: {}",
-        socket_path().display());
+    println!("  |  socket: {}", socket_path().display());
 }
 
 fn main() {

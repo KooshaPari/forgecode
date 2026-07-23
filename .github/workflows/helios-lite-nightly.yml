@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   rebuild-nightly-container:
@@ -25,17 +25,17 @@ jobs:
       HELIOSLITE_REPO: ${{ github.repository }}
       HELIOSLITE_RELEASES_BACKEND: "github"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
 
       - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@4fd1da8b0805d2d2e936788875a7d65dbd677dc2
         with:
           components: rustfmt, clippy
 
       - name: Cache cargo registry/target
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
@@ -61,7 +61,7 @@ jobs:
         run: ./target/release/helioslite --version
 
       - name: Upload named artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: helioslite-nightly-${{ github.run_number }}
           path: |

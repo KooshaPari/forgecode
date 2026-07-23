@@ -5,10 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::summary::{SummaryTool, SummaryToolCall};
 use crate::compact::strategy::CompactionStrategy;
 use crate::context::ContextMessage;
-
-use super::summary::{SummaryTool, SummaryToolCall};
 
 /// Minimum importance score required to survive compaction
 pub const MIN_SURVIVAL_SCORE: u8 = 60;

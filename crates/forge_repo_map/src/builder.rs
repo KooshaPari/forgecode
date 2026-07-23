@@ -5,8 +5,7 @@ use derive_setters::Setters;
 use ignore::WalkBuilder;
 
 use crate::parser;
-use crate::types::FileEntry;
-use crate::types::{FileSymbols, RepoMap};
+use crate::types::{FileEntry, FileSymbols, RepoMap};
 
 /// Build a repository structure map by walking a directory and parsing
 /// recognised source files with tree-sitter.

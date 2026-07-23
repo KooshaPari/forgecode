@@ -67,10 +67,27 @@ impl TerminalForgePalette {
         if s.len() != 6 {
             return None;
         }
-        let r = u8::from_str_radix(&s[0..2], 16).ok()?;
-        let g = u8::from_str_radix(&s[2..4], 16).ok()?;
-        let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+
+        let [r_hi, r_lo, g_hi, g_lo, b_hi, b_lo] = s.as_bytes() else {
+            return None;
+        };
+        let r = parse_hex_pair(*r_hi, *r_lo)?;
+        let g = parse_hex_pair(*g_hi, *g_lo)?;
+        let b = parse_hex_pair(*b_hi, *b_lo)?;
         Some(Color::Rgb { r, g, b })
+    }
+}
+
+fn parse_hex_pair(hi: u8, lo: u8) -> Option<u8> {
+    Some((hex_nibble(hi)? << 4) | hex_nibble(lo)?)
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -123,9 +140,7 @@ mod tests {
 
     #[test]
     fn parse_hex_accepts_canonical_terminal_forge_tokens() {
-        for hex in [
-            "#0d1117", "#161b22", "#ffb454", "#ff7edb", "#7ee787",
-        ] {
+        for hex in ["#0d1117", "#161b22", "#ffb454", "#ff7edb", "#7ee787"] {
             assert!(
                 TerminalForgePalette::parse_hex(hex).is_some(),
                 "expected {hex} to parse"

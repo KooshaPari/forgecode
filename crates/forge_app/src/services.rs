@@ -277,7 +277,8 @@ pub trait ConversationService: Send + Sync {
         limit: Option<usize>,
     ) -> anyhow::Result<Option<Vec<ConversationSummary>>>;
 
-    /// Find conversations by source (e.g., "interactive", "headless", "forge-p")
+    /// Find conversations by source (e.g., "interactive", "headless",
+    /// "forge-p")
     async fn get_conversations_by_source(
         &self,
         source: &str,

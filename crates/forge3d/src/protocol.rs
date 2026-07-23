@@ -1,6 +1,7 @@
-use crate::error::{Forge3Error, Result};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+use crate::error::{Forge3Error, Result};
 
 /// Maximum size of a single framed JSON-RPC payload (4 MiB).
 ///

@@ -246,8 +246,9 @@ impl CompactionMetrics {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     #[test]
     fn test_record_compaction_event() {

@@ -28,7 +28,8 @@ impl diesel::QueryableByName<diesel::sqlite::Sqlite> for SnippetRow {
 }
 
 /// Row type for reading conversations during FTS refresh.
-/// Used to populate FTS5 with decompressed context from both compressed and uncompressed rows.
+/// Used to populate FTS5 with decompressed context from both compressed and
+/// uncompressed rows.
 #[derive(Debug, Clone)]
 struct FtsRefreshRow {
     rowid: i64,
@@ -170,8 +171,9 @@ impl ConversationRepository for ConversationRepositoryImpl {
             use diesel::prelude::*;
 
             let workspace_id = wid.id() as i64;
-            // Filter for rows with context data: either plain context column OR compressed context_zstd
-            // Using raw SQL to express: context IS NOT NULL OR is_compressed = 1
+            // Filter for rows with context data: either plain context column OR compressed
+            // context_zstd Using raw SQL to express: context IS NOT NULL OR
+            // is_compressed = 1
             let mut query = conversations::table
                 .filter(conversations::workspace_id.eq(&workspace_id))
                 .filter(sql::<diesel::sql_types::Bool>(
@@ -462,13 +464,15 @@ impl ConversationRepository for ConversationRepositoryImpl {
         //
         // Process:
         // 1. Clear the FTS index (DELETE all rows)
-        // 2. SELECT all conversations with their rowid, title, context, context_zstd, is_compressed
-        // 3. For each row: if is_compressed=1, decompress context_zstd to get searchable text;
-        //    otherwise use context directly
+        // 2. SELECT all conversations with their rowid, title, context, context_zstd,
+        //    is_compressed
+        // 3. For each row: if is_compressed=1, decompress context_zstd to get
+        //    searchable text; otherwise use context directly
         // 4. INSERT (rowid, title, content, cwd) into conversations_fts
         //
         // This is more work than FTS5's 'rebuild' but necessary because:
-        // - External-content FTS5 reads context column by name → compressed rows (context=NULL) are missed
+        // - External-content FTS5 reads context column by name → compressed rows
+        //   (context=NULL) are missed
         // - Decompression must happen in app code; FTS5 has no built-in codec
         // - Contentful FTS5 is the pragmatic correct solution
         self.run_with_connection(move |connection, _wid| {
@@ -654,7 +658,8 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             let current_state = IntentState::from_str(&record.intent_state)?;
 
-            // Enforce state machine: can_transition_to returns false for illegal transitions
+            // Enforce state machine: can_transition_to returns false for illegal
+            // transitions
             if !current_state.can_transition_to(new_state) {
                 return Err(anyhow::anyhow!(
                     "Illegal state transition: {} → {}",
@@ -816,10 +821,10 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 #[diesel(column_name = "COUNT(*)")]
                 count: i64,
             }
-            if let Ok(rows) = diesel::sql_query(null_sql).load::<CountRow>(connection) {
-                if let Some(r) = rows.first() {
-                    skipped_count = r.count as usize;
-                }
+            if let Ok(rows) = diesel::sql_query(null_sql).load::<CountRow>(connection)
+                && let Some(r) = rows.first()
+            {
+                skipped_count = r.count as usize;
             }
 
             Ok((compressed_count, skipped_count, error_count))
@@ -850,7 +855,10 @@ fn find_last_compaction_point(context_json: &str) -> usize {
     }
     // After that user-role, look forward for the first tool_call marker.
     let after_user = last_user.unwrap() + user_marker.len();
-    if context_json[after_user..].find(tool_marker).is_some() {
+    if context_json
+        .get(after_user..)
+        .is_some_and(|tail| tail.find(tool_marker).is_some())
+    {
         // Truncate at the user-role boundary so we keep the user turn
         // but discard everything after it (including the tool call).
         return last_user.unwrap();
@@ -872,10 +880,14 @@ fn truncate_context(context_json: &str, rewind_point: usize) -> String {
     // produce a truncated object/messages array.
     let bytes = context_json.as_bytes();
     let mut cut = rewind_point.min(bytes.len());
-    while cut > 0 && bytes[cut - 1] != b',' && bytes[cut - 1] != b'[' && bytes[cut - 1] != b'{' {
+    while cut > 0
+        && bytes
+            .get(cut - 1)
+            .is_some_and(|byte| !matches!(byte, b',' | b'[' | b'{'))
+    {
         cut -= 1;
     }
-    let prefix = &context_json[..cut];
+    let prefix = context_json.get(..cut).unwrap_or_default();
     format!("{}\"rewound\":true}}", prefix.trim_end_matches([',', ' ']))
 }
 
@@ -2005,9 +2017,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_finds_compressed_conversations() -> anyhow::Result<()> {
-        // CRITICAL TEST: Proves that compressed rows (context=NULL, is_compressed=1) are
-        // findable by FTS5 search after refresh_fts_index populates the index with
-        // decompressed content.
+        // CRITICAL TEST: Proves that compressed rows (context=NULL, is_compressed=1)
+        // are findable by FTS5 search after refresh_fts_index populates the
+        // index with decompressed content.
         //
         // This test catches the bug where external-content FTS5 reads by column name
         // (context), missing compressed rows where context=NULL.
@@ -2020,13 +2032,15 @@ mod tests {
         let context_compressed = Context::default().messages(vec![msg_compressed.into()]);
         let context_plain = Context::default().messages(vec![msg_plain.into()]);
 
-        // Insert compressed conversation (will be stored as context_zstd, is_compressed=1, context=NULL)
+        // Insert compressed conversation (will be stored as context_zstd,
+        // is_compressed=1, context=NULL)
         let compressed_conv = Conversation::new(ConversationId::generate())
             .title(Some("Compressed Conversation".to_string()))
             .context(Some(context_compressed.clone()));
         repo.upsert_conversation(compressed_conv.clone()).await?;
 
-        // Insert uncompressed conversation (will be stored as plain context, is_compressed=0)
+        // Insert uncompressed conversation (will be stored as plain context,
+        // is_compressed=0)
         let plain_conv = Conversation::new(ConversationId::generate())
             .title(Some("Plain Conversation".to_string()))
             .context(Some(context_plain.clone()));
@@ -2150,7 +2164,8 @@ mod tests {
         Ok(())
     }
 
-    /// Verify idempotency: running compress twice does not double-compress or error.
+    /// Verify idempotency: running compress twice does not double-compress or
+    /// error.
     #[tokio::test]
     async fn test_compress_uncompressed_contexts_idempotent() -> anyhow::Result<()> {
         let repo = repository()?;

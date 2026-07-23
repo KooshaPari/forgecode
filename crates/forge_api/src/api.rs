@@ -93,7 +93,8 @@ pub trait API: Sync + Send {
         limit: Option<usize>,
     ) -> Result<Vec<ConversationSummary>>;
 
-    /// Lists conversations by source (e.g., "interactive", "headless", "forge-p")
+    /// Lists conversations by source (e.g., "interactive", "headless",
+    /// "forge-p")
     async fn get_conversations_by_source(
         &self,
         source: &str,

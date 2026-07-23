@@ -1,8 +1,8 @@
 //! forge3d binary — daemon entry point.
 //!
-//! Starts the forge3d daemon: acquires an exclusive pidfile+flock slot, spins up
-//! the drift detector, and begins serving JSON-RPC requests over a Unix domain
-//! socket.
+//! Starts the forge3d daemon: acquires an exclusive pidfile+flock slot, spins
+//! up the drift detector, and begins serving JSON-RPC requests over a Unix
+//! domain socket.
 //!
 //! # Usage
 //!
@@ -22,12 +22,11 @@ use std::process;
 use std::sync::Arc;
 
 use clap::Parser;
-use tokio::signal::unix::{SignalKind, signal};
-use tokio_util::sync::CancellationToken;
-
 use forge_drift::{DriftConfig, DriftDetector, DriftIndex};
 use forge3d::pidfile::PidFile;
 use forge3d::server::Server;
+use tokio::signal::unix::{SignalKind, signal};
+use tokio_util::sync::CancellationToken;
 
 /// Forge3 daemon — agent registry and drift detection over UDS.
 ///
@@ -149,8 +148,8 @@ async fn main() {
     let shutdown = CancellationToken::new();
 
     // ------------------------------------------------------------------
-    // 4. Spawn the serve loop in a background task so we can listen for
-    //    shutdown signals concurrently.
+    // 4. Spawn the serve loop in a background task so we can listen for shutdown
+    //    signals concurrently.
     // ------------------------------------------------------------------
     let serve_handle = {
         let server = server.clone();

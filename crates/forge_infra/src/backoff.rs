@@ -4,8 +4,10 @@
 //! Three strategies via [`BackoffStrategy`]:
 //!
 //! - [`Fixed`](BackoffStrategy::Fixed): constant delay regardless of attempt.
-//! - [`Linear`](BackoffStrategy::Linear): `base * (attempt + 1)` — grows from attempt 0.
-//! - [`Exponential`](BackoffStrategy::Exponential): `base * 2^attempt` — doubles.
+//! - [`Linear`](BackoffStrategy::Linear): `base * (attempt + 1)` — grows from
+//!   attempt 0.
+//! - [`Exponential`](BackoffStrategy::Exponential): `base * 2^attempt` —
+//!   doubles.
 //!
 //! All strategies are capped at `max` so an unbounded exponential cannot
 //! stall the caller. Saturating arithmetic prevents overflow at extreme
@@ -40,11 +42,7 @@ impl Backoff {
     /// Build a new schedule. `base` is the unit interval; `max` caps any
     /// individual delay.
     pub fn new(strategy: BackoffStrategy, base: Duration, max: Duration) -> Self {
-        Self {
-            strategy,
-            base,
-            max,
-        }
+        Self { strategy, base, max }
     }
 
     /// Delay for the given (zero-based) retry attempt.

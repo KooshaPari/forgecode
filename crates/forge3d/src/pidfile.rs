@@ -3,30 +3,29 @@
 //! The PID file lives at `~/.forge/daemon.pid` (or whatever the caller passes
 //! to [`PidFile::acquire`]) and serves two purposes:
 //!
-//! 1. **Discovery** — clients can resolve the running daemon by reading the
-//!    PID and asking `/proc/<pid>/` whether it's still alive before
-//!    connecting to the Unix socket. The PID file alone does not guarantee
-//!    exclusivity: if a daemon is killed with `kill -9` and a new one starts
-//!    before the stale PID is cleaned up, both could race.
+//! 1. **Discovery** — clients can resolve the running daemon by reading the PID
+//!    and asking `/proc/<pid>/` whether it's still alive before connecting to
+//!    the Unix socket. The PID file alone does not guarantee exclusivity: if a
+//!    daemon is killed with `kill -9` and a new one starts before the stale PID
+//!    is cleaned up, both could race.
 //!
-//! 2. **Advisory exclusion** — for the brief interval between
-//!    "daemon A is shutting down" and "kernel has reaped A", the PID file
-//!    acts as a hint that something *recently* held the slot. Pairing it with
-//!    `flock(2)` on the same fd (or a sibling `daemon.lock` file) gives a
-//!    stronger guarantee: the kernel-level lock survives process death
-//!    without coordination.
+//! 2. **Advisory exclusion** — for the brief interval between "daemon A is
+//!    shutting down" and "kernel has reaped A", the PID file acts as a hint
+//!    that something *recently* held the slot. Pairing it with `flock(2)` on
+//!    the same fd (or a sibling `daemon.lock` file) gives a stronger guarantee:
+//!    the kernel-level lock survives process death without coordination.
 //!
 //! Design choice: we use [`fs2::FileExt`] for `flock(2)` (cross-platform,
 //! no tokio dep) and use a separate `lock` file from the pid file so that
 //! external tooling can inspect the pid without taking the lock.
 //!
 //! Failure modes:
-//! - If the lock can be acquired but the pid file is unparseable, we
-//!   overwrite the pid file (the holder is gone). This means a crash-then-
-//!   restart cycle works without manual cleanup.
+//! - If the lock can be acquired but the pid file is unparseable, we overwrite
+//!   the pid file (the holder is gone). This means a crash-then- restart cycle
+//!   works without manual cleanup.
 //! - If the lock is held *and* the recorded pid is alive, we return
-//!   [`Forge3Error::LockHeld`] with the live pid so the caller can
-//!   decide whether to wait, error out, or take over.
+//!   [`Forge3Error::LockHeld`] with the live pid so the caller can decide
+//!   whether to wait, error out, or take over.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -54,8 +53,8 @@ impl PidFile {
     /// The guard's `Drop` impl deletes both files (best-effort).
     ///
     /// Errors:
-    /// - [`Forge3Error::AlreadyRunning`] if the lock is held by a live
-    ///   process whose PID matches the pidfile.
+    /// - [`Forge3Error::AlreadyRunning`] if the lock is held by a live process
+    ///   whose PID matches the pidfile.
     /// - [`Forge3Error::LockHeld`] if the lock is held by another live PID.
     /// - I/O errors from filesystem access.
     pub fn acquire(dir: &Path, pid: u32) -> Result<Self> {
@@ -169,8 +168,9 @@ fn pid_is_alive(pid: u32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
+
+    use super::*;
 
     #[test]
     fn acquire_writes_pidfile() {

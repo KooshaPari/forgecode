@@ -26,8 +26,11 @@ impl<'a> std::fmt::Display for FastConversationRow<'a> {
 
         // Truncate title to fixed width (50 chars) with ellipsis if longer
         let max_title_width = 50;
-        let title_display = if title.len() > max_title_width {
-            format!("{}…", &title[..max_title_width])
+        let title_display = if title.chars().count() > max_title_width {
+            format!(
+                "{}…",
+                title.chars().take(max_title_width).collect::<String>()
+            )
         } else {
             title.to_string()
         };
@@ -71,8 +74,9 @@ impl ConversationSelector {
     /// `forge conversation show` to display the selected conversation's
     /// metadata and last message side-by-side with the picker list.
     ///
-    /// The `query` parameter filters/searches conversations if provided (enables FTS).
-    /// The `sort` parameter controls the display order (updated, created, turns, title, cwd).
+    /// The `query` parameter filters/searches conversations if provided
+    /// (enables FTS). The `sort` parameter controls the display order
+    /// (updated, created, turns, title, cwd).
     ///
     /// Returns the selected conversation ID, or None if the user cancelled.
     /// The caller should use `ForgeAPI::conversation()` to load the full

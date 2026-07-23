@@ -1,9 +1,9 @@
 //! forge_pheno_winterminal — Windows Terminal profile/palette/scheme management
 //!
-//! Manages Windows Terminal `profiles.json` (profiles, color schemes, font faces,
-//! cursor shapes, padding, acrylic opacity) programmatically so forgecode can
-//! switch terminal themes, tie profiles to agent identities, and sync Ghostty
-//! config to Windows Terminal.
+//! Manages Windows Terminal `profiles.json` (profiles, color schemes, font
+//! faces, cursor shapes, padding, acrylic opacity) programmatically so
+//! forgecode can switch terminal themes, tie profiles to agent identities, and
+//! sync Ghostty config to Windows Terminal.
 //!
 //! ## Architecture
 //!
@@ -33,18 +33,17 @@
 //!
 //! - **No_std guard**: `profiles.json` is the single source of truth on disk.
 //!   `WinterminalConfig::load()` / `save()` are the only mutation entry points.
-//! - **Idempotent merge**: `apply_theme()` calls `upsert_profile()` + `upsert_scheme()`
-//!   in a single write transaction (atomic write + backup).
-//! - **Cross-platform detection**: `detect_install()` returns `InstallState` even on
-//!   non-Windows hosts (reports `NotInstalled(Reason::NotWindows)`); all API calls
-//!   short-circuit on non-Windows.
+//! - **Idempotent merge**: `apply_theme()` calls `upsert_profile()` +
+//!   `upsert_scheme()` in a single write transaction (atomic write + backup).
+//! - **Cross-platform detection**: `detect_install()` returns `InstallState`
+//!   even on non-Windows hosts (reports `NotInstalled(Reason::NotWindows)`);
+//!   all API calls short-circuit on non-Windows.
 
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // Re-exports
 // ---------------------------------------------------------------------------
-
 pub use config::*;
 pub use detect::*;
 pub use error::*;
@@ -57,6 +56,7 @@ pub use scheme::*;
 
 pub mod error {
     use std::path::PathBuf;
+
     use thiserror::Error;
 
     #[derive(Debug, Error)]
@@ -121,11 +121,14 @@ pub mod detect {
         Unreadable(String),
     }
 
-    /// Detect whether Windows Terminal is installed and where `profiles.json` lives.
+    /// Detect whether Windows Terminal is installed and where `profiles.json`
+    /// lives.
     ///
     /// On non-Windows hosts, always returns `NotInstalled(NotWindows)`.
-    /// On Windows, probes `%LOCALAPPDATA%\Packages\Microsoft.WindowsTerminal_*\LocalState\settings.json`
-    /// and falls back to the user-visible `%USERPROFILE%\.config\wt\` convention.
+    /// On Windows, probes
+    /// `%LOCALAPPDATA%\Packages\Microsoft.WindowsTerminal_*\LocalState\
+    /// settings.json` and falls back to the user-visible
+    /// `%USERPROFILE%\.config\wt\` convention.
     pub fn detect_install() -> InstallState {
         // Non-Windows short-circuit
         if cfg!(not(windows)) {
@@ -184,7 +187,8 @@ pub mod detect {
             .join("profiles.json")
     }
 
-    /// Cross-platform stub for non-Windows (returns a reasonable default for rendering)
+    /// Cross-platform stub for non-Windows (returns a reasonable default for
+    /// rendering)
     #[cfg(not(windows))]
     pub fn get_default_config_path() -> PathBuf {
         PathBuf::from(r"C:\Users\Default\AppData\Local\Microsoft\Windows Terminal\profiles.json")
@@ -349,8 +353,9 @@ pub mod background {
 // ---------------------------------------------------------------------------
 
 pub mod profile {
-    use super::*;
     use serde::{Deserialize, Serialize};
+
+    use super::*;
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct Profile {
@@ -426,8 +431,9 @@ pub mod profile {
 // ---------------------------------------------------------------------------
 
 pub mod scheme {
-    use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
+
+    use serde::{Deserialize, Serialize};
 
     /// A Windows Terminal color scheme (16 + dim colors)
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -543,7 +549,8 @@ pub mod scheme {
             }
         }
 
-        /// Convert to a JSON map suitable for embedding in profiles.json `schemes` array
+        /// Convert to a JSON map suitable for embedding in profiles.json
+        /// `schemes` array
         pub fn to_scheme_map(&self) -> HashMap<String, serde_json::Value> {
             let mut m = HashMap::new();
             m.insert("name".into(), self.name.clone().into());
@@ -619,8 +626,9 @@ pub mod scheme {
 // ---------------------------------------------------------------------------
 
 pub mod config {
-    use super::*;
     use serde::{Deserialize, Serialize};
+
+    use super::*;
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct WinterminalConfig {
@@ -681,7 +689,8 @@ pub mod config {
     }
 
     impl WinterminalConfig {
-        /// Load `profiles.json` from disk. On non-Windows, returns `Err(NotWindows)`.
+        /// Load `profiles.json` from disk. On non-Windows, returns
+        /// `Err(NotWindows)`.
         pub fn load(path: Option<&Path>) -> Result<Self> {
             let config_path = match path {
                 Some(p) => p.to_path_buf(),
@@ -751,8 +760,8 @@ pub mod config {
             }
         }
 
-        /// Apply a theme: upsert the scheme, then set it as the color_scheme for
-        /// all non-hidden profiles.
+        /// Apply a theme: upsert the scheme, then set it as the color_scheme
+        /// for all non-hidden profiles.
         pub fn apply_theme(&mut self, scheme: scheme::Scheme) -> usize {
             let scheme_name = scheme.name.clone();
             self.upsert_scheme(scheme);

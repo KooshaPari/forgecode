@@ -4,10 +4,11 @@
 //! flags) to enumerate active sessions and their windows.  All commands
 //! are driven through [`tokio::process::Command`].
 
-use crate::{MuxBridge, MuxError, MuxSession, MuxWindow};
 use bstr::ByteSlice;
 use futures::future::try_join_all;
 use tokio::process::Command;
+
+use crate::{MuxBridge, MuxError, MuxSession, MuxWindow};
 
 /// Bridge that shells out to the `tmux` binary.
 ///
@@ -93,17 +94,16 @@ fn parse_sessions(raw: &str) -> Result<Vec<MuxSession>, MuxError> {
             continue;
         }
 
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() < 2 {
+        let mut parts = line.split('\t');
+        let (Some(id), Some(name)) = (parts.next(), parts.next()) else {
             return Err(MuxError::Parse(format!(
-                "expected at least 2 tab-separated fields, got {}: {line:?}",
-                parts.len(),
+                "expected at least 2 tab-separated fields: {line:?}",
             )));
-        }
+        };
 
         sessions.push(MuxSession {
-            id: parts[0].to_string(),
-            name: parts[1].to_string(),
+            id: id.to_string(),
+            name: name.to_string(),
             windows: Vec::new(),
         });
     }
@@ -133,16 +133,15 @@ async fn fetch_windows(session_name: &str) -> Result<Vec<MuxWindow>, MuxError> {
             continue;
         }
 
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() < 2 {
+        let mut parts = line.split('\t');
+        let (Some(id), Some(name)) = (parts.next(), parts.next()) else {
             return Err(MuxError::Parse(format!(
-                "expected at least 2 tab-separated fields, got {}: {line:?}",
-                parts.len(),
+                "expected at least 2 tab-separated fields: {line:?}",
             )));
-        }
+        };
 
-        let active = parts.get(2).copied().unwrap_or("0") == "1";
-        windows.push(MuxWindow { id: parts[0].to_string(), name: parts[1].to_string(), active });
+        let active = parts.next().unwrap_or("0") == "1";
+        windows.push(MuxWindow { id: id.to_string(), name: name.to_string(), active });
     }
 
     Ok(windows)

@@ -5,8 +5,9 @@
 //! [`GpuLane::cuda_visible_device_index_for_profile`] when a runtime adapter
 //! inverts indices (e.g. Windows llama.cpp on this host).
 
-use serde::{Deserialize, Serialize};
 use std::str::FromStr;
+
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Agent-side GPU role lanes for the Pheno heterogeneous stack.

@@ -31,12 +31,8 @@ env:
     - main
 jobs:
   lint:
-    # Advisory-only: auto-commits style fixes via autofix.ci.
-    # Blocking gates live in lint.yml (fmt --check) and test.yml (nextest).
-    # This job must NOT block merges — it is informational.
-    name: Lint Fix (advisory)
+    name: Lint Fix
     runs-on: ubuntu-latest
-    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -53,14 +49,10 @@ jobs:
       with:
         toolchain: nightly
         components: clippy, rustfmt
-    - name: Cargo Fmt
-      run: cargo +nightly fmt --all
     - name: Cargo Clippy
-      run: cargo +nightly clippy --all-features --workspace --all-targets --fix --allow-dirty -- -D warnings
+      run: cargo +nightly clippy --all-features --workspace --all-targets -- -D warnings
     - name: Cargo Clippy String Safety
       run: cargo +nightly clippy --all-features --workspace -- -D clippy::string_slice -D clippy::indexing_slicing -D clippy::disallowed_methods
-    - name: Autofix
-      uses: autofix-ci/action@7a166d7532b277f34e16238930461bf77f9d7ed8
 concurrency:
   group: autofix-${{github.ref}}
   cancel-in-progress: false

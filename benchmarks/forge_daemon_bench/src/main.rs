@@ -2,7 +2,8 @@
 //
 // Methodology:
 //   - fork+exec baseline: tokio::process::Command::new("true") × M parallel
-//   - daemon dispatch: forge_daemon::DaemonDispatch::dispatch("true", ...) × M parallel
+//   - daemon dispatch: forge_daemon::DaemonDispatch::dispatch("true", ...) × M
+//     parallel
 //   - Measures: wall-clock time per batch, agents/s, latency per task
 //
 // "true" is used as the forge_bin so the benchmark is self-contained and
@@ -12,10 +13,8 @@
 //
 // Results are printed to stdout in a tabular format.
 
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use forge_daemon::DaemonDispatch;
@@ -37,26 +36,24 @@ async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let m_values: Vec<usize> = {
         let mut ms = vec![];
-        let mut i = 1;
-        while i < args.len() {
-            if args[i] == "--m" && i + 1 < args.len() {
-                ms.push(args[i + 1].parse().unwrap_or(32));
-                i += 2;
-            } else {
-                i += 1;
+        let mut iter = args.iter().skip(1);
+        while let Some(flag) = iter.next() {
+            if flag == "--m"
+                && let Some(value) = iter.next()
+            {
+                ms.push(value.parse().unwrap_or(32));
             }
         }
         if ms.is_empty() { vec![8, 16, 32] } else { ms }
     };
     let iters: usize = {
         let mut it = DEFAULT_ITERS;
-        let mut i = 1;
-        while i < args.len() {
-            if args[i] == "--iters" && i + 1 < args.len() {
-                it = args[i + 1].parse().unwrap_or(DEFAULT_ITERS);
-                i += 2;
-            } else {
-                i += 1;
+        let mut iter = args.iter().skip(1);
+        while let Some(flag) = iter.next() {
+            if flag == "--iters"
+                && let Some(value) = iter.next()
+            {
+                it = value.parse().unwrap_or(DEFAULT_ITERS);
             }
         }
         it
@@ -95,7 +92,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Baseline: launch /usr/bin/true M times in parallel with tokio::process::Command.
+/// Baseline: launch /usr/bin/true M times in parallel with
+/// tokio::process::Command.
 async fn bench_fork_exec(m: usize, iters: usize) -> Result<f64> {
     let mut total = Duration::ZERO;
 
@@ -123,7 +121,8 @@ async fn bench_fork_exec(m: usize, iters: usize) -> Result<f64> {
     Ok(total.as_secs_f64() * 1000.0 / iters as f64)
 }
 
-/// Daemon dispatch: run /usr/bin/true via forge_daemon C-ABI (posix_spawn path).
+/// Daemon dispatch: run /usr/bin/true via forge_daemon C-ABI (posix_spawn
+/// path).
 fn bench_daemon_dispatch(m: usize, iters: usize) -> Result<f64> {
     let mut total = Duration::ZERO;
     let cwd = std::env::current_dir()?;

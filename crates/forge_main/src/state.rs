@@ -96,13 +96,15 @@ pub struct StatusBar {
 }
 
 impl StatusBar {
-    // WIP: Claude-style status bar (PRs #27/#29/#30), not yet fully wired into the render loop.
+    // WIP: Claude-style status bar (PRs #27/#29/#30), not yet fully wired into the
+    // render loop.
     #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
     }
 
-    // WIP: Claude-style status bar (PRs #27/#29/#30), not yet fully wired into the render loop.
+    // WIP: Claude-style status bar (PRs #27/#29/#30), not yet fully wired into the
+    // render loop.
     #[allow(dead_code)]
     pub fn snapshot(&self) -> StatusBarSnapshot {
         self.inner.lock().expect("StatusBar mutex poisoned").clone()

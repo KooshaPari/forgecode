@@ -23,10 +23,13 @@ fn match_pattern_rec(pat: &[char], pi: usize, txt: &[char], ti: usize) -> bool {
     if pi == pat.len() {
         return ti == txt.len();
     }
-    if pat[pi] == '*' {
+    let Some(current) = pat.get(pi).copied() else {
+        return false;
+    };
+    if current == '*' {
         // Skip consecutive stars so '**' doesn't explode the recursion
         let mut np = pi;
-        while np < pat.len() && pat[np] == '*' {
+        while pat.get(np) == Some(&'*') {
             np += 1;
         }
         if np == pat.len() {
@@ -38,26 +41,31 @@ fn match_pattern_rec(pat: &[char], pi: usize, txt: &[char], ti: usize) -> bool {
             }
         }
         false
-    } else if pat[pi] == '?' {
+    } else if current == '?' {
         if ti < txt.len() {
             match_pattern_rec(pat, pi + 1, txt, ti + 1)
         } else {
             false
         }
-    } else if pat[pi] == '[' {
+    } else if current == '[' {
         // Character class [abc] or [!abc]
         let mut p = pi + 1;
-        let neg = p < pat.len() && pat[p] == '!';
+        let neg = pat.get(p) == Some(&'!');
         if neg {
             p += 1;
         }
         let mut chars_in_class: Vec<char> = Vec::new();
-        while p < pat.len() && pat[p] != ']' {
-            chars_in_class.push(pat[p]);
+        while let Some(class_char) = pat.get(p).copied() {
+            if class_char == ']' {
+                break;
+            }
+            chars_in_class.push(class_char);
             p += 1;
         }
         let end = if p < pat.len() { p } else { return false };
-        let in_class = ti < txt.len() && chars_in_class.contains(&txt[ti]);
+        let in_class = txt
+            .get(ti)
+            .is_some_and(|text_char| chars_in_class.contains(text_char));
         let match_char = if neg { !in_class } else { in_class };
         if match_char {
             match_pattern_rec(pat, end + 1, txt, ti + 1)
@@ -65,7 +73,7 @@ fn match_pattern_rec(pat: &[char], pi: usize, txt: &[char], ti: usize) -> bool {
             false
         }
     } else {
-        if ti < txt.len() && pat[pi] == txt[ti] {
+        if txt.get(ti) == Some(&current) {
             match_pattern_rec(pat, pi + 1, txt, ti + 1)
         } else {
             false

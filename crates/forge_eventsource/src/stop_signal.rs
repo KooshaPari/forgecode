@@ -1,8 +1,8 @@
 /// Returns `true` when an SSE event data field signals the end of the stream.
 ///
 /// Two terminal markers are recognised:
-/// * `"[DONE]"` — the OpenAI / Anthropic sentinel that every provider using
-///   the OpenAI-compatible SSE framing emits as the final data field.
+/// * `"[DONE]"` — the OpenAI / Anthropic sentinel that every provider using the
+///   OpenAI-compatible SSE framing emits as the final data field.
 /// * `""` — an empty data field that some providers emit as a keepalive or
 ///   implicit end-of-stream marker and that must be swallowed rather than
 ///   forwarded as a message.

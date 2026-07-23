@@ -559,8 +559,8 @@ mod tests {
     fn create_error_response(message: &str, code: u16) -> serde_json::Value {
         serde_json::json!({
             "error": {
-                "message": message,
-                "code": code
+                "code": code,
+                "message": message
             }
         })
     }

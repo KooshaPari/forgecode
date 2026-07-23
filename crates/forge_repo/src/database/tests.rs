@@ -249,7 +249,8 @@ mod integration_tests {
     }
 
     /// Test 3: IntentState transition guards
-    /// Verify the state machine enforces legal transitions and rejects illegal ones
+    /// Verify the state machine enforces legal transitions and rejects illegal
+    /// ones
     #[test]
     fn test_intent_state_transition_guards_legal_transitions() {
         // Forward path: pending → extracting → extracted → verified → pruned
@@ -292,7 +293,8 @@ mod integration_tests {
         assert!(!IntentState::Extracted.can_transition_to(IntentState::Extracting));
     }
 
-    /// Test 4: Prune conversation gate — verify pruning only allowed when intent_state = 'verified'
+    /// Test 4: Prune conversation gate — verify pruning only allowed when
+    /// intent_state = 'verified'
     #[tokio::test]
     async fn test_prune_conversation_gate_requires_verified_state() -> Result<()> {
         let pool = DatabasePool::in_memory()?;
@@ -366,9 +368,10 @@ mod integration_tests {
         Ok(())
     }
 
-    /// Test 5: FTS5 schema validation (P2c: CONTENTFUL for compressed-row support)
-    /// Verify that the migration correctly created CONTENTFUL FTS5 without triggers
-    /// (Changed from external-content to support compressed rows where context=NULL)
+    /// Test 5: FTS5 schema validation (P2c: CONTENTFUL for compressed-row
+    /// support) Verify that the migration correctly created CONTENTFUL FTS5
+    /// without triggers (Changed from external-content to support
+    /// compressed rows where context=NULL)
     #[tokio::test]
     async fn test_fts5_external_content_schema() -> Result<()> {
         let pool = DatabasePool::in_memory()?;
