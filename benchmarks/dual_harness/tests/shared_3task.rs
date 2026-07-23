@@ -7,21 +7,6 @@ fn fixture_path() -> PathBuf {
     if let Some(p) = std::env::var_os("DUAL_HARNESS_FIXTURE") {
         return PathBuf::from(p);
     }
-    // Prefer sibling pheno-harness worktree fixture when present (pre-merge),
-    // else default path used by the library.
-    let candidates = [
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .ancestors()
-            .nth(5)
-            .unwrap()
-            .join("worktrees/pheno-harness/fixture-forgecode-adapters/plans/2026-07-22-dual-harness-matrix/fixtures/shared-3task.v1.json"),
-        dual_harness::default_shared_3task_path(),
-    ];
-    for c in candidates {
-        if c.exists() {
-            return c;
-        }
-    }
     dual_harness::default_shared_3task_path()
 }
 

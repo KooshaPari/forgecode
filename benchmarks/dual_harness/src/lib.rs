@@ -110,21 +110,11 @@ pub fn load_fixture(path: &Path) -> Result<DualHarnessFixture, FixtureError> {
     Ok(fixture)
 }
 
-/// Default path to pheno-harness shared-3task fixture (repos layout).
+/// Default path to the vendored shared-3task fixture.
 pub fn default_shared_3task_path() -> PathBuf {
-    // benchmarks/dual_harness → benchmarks → forgecode wt → worktrees/forgecode → worktrees → repos
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(5)
-        .map(|repos| {
-            repos
-                .join("pheno-harness")
-                .join("plans")
-                .join("2026-07-22-dual-harness-matrix")
-                .join("fixtures")
-                .join("shared-3task.v1.json")
-        })
-        .unwrap_or_else(|| PathBuf::from("shared-3task.v1.json"))
+        .join("fixtures")
+        .join("shared-3task.v1.json")
 }
 
 struct ProcRun {
