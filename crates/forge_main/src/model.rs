@@ -688,6 +688,12 @@ pub enum AppCommand {
     #[strum(props(usage = "Logout from configured provider"))]
     Logout,
 
+    /// Remove a configured provider from the TUI.
+    /// This can be triggered with the '/providers remove' command.
+    #[strum(props(usage = "Remove a configured provider"))]
+    #[command(name = "providers-remove")]
+    ProviderRemove,
+
     /// Retry without modifying model context
     #[strum(props(usage = "Retry the last command"))]
     #[command(alias = "r")]
@@ -863,6 +869,7 @@ impl AppCommand {
             AppCommand::Agent => "agent",
             AppCommand::Login => "login",
             AppCommand::Logout => "logout",
+            AppCommand::ProviderRemove => "providers-remove",
             AppCommand::Retry => "retry",
             AppCommand::Conversations { .. } => "conversation",
             AppCommand::Subagents => "subagents",

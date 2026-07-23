@@ -2950,6 +2950,9 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             AppCommand::Logout => {
                 return self.handle_provider_logout(None).await;
             }
+            AppCommand::ProviderRemove => {
+                return self.handle_provider_logout(None).await;
+            }
             AppCommand::Retry => {
                 self.spinner.start(None)?;
                 self.on_message(None).await?;
