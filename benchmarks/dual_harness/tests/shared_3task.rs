@@ -41,9 +41,7 @@ async fn shared_3task_all_pass() {
     }
 
     let fixture = load_fixture(&path).expect("load fixture");
-    let outcomes = run_forgecode_fixture(&fixture)
-        .await
-        .expect("run fixture");
+    let outcomes = run_forgecode_fixture(&fixture).await.expect("run fixture");
     assert_eq!(outcomes.len(), 3, "expected 3 shared tasks");
     for o in &outcomes {
         assert!(o.passed, "{} failed: {}", o.task_id, o.detail);

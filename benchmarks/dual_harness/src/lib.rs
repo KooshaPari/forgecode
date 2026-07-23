@@ -153,10 +153,10 @@ async fn run_one(task: &FixtureTask) -> Result<TaskOutcome, FixtureError> {
         .get("forgecode")
         .ok_or_else(|| FixtureError::MissingAdapter(task.task_id.clone()))?;
 
-    if let Some(env_key) = &adapter.working_dir_env {
-        if std::env::var_os(env_key).is_none() {
-            return Err(FixtureError::WorkdirUnset(task.task_id.clone()));
-        }
+    if let Some(env_key) = &adapter.working_dir_env
+        && std::env::var_os(env_key).is_none()
+    {
+        return Err(FixtureError::WorkdirUnset(task.task_id.clone()));
     }
 
     let run = spawn_adapter(adapter).await?;
@@ -168,17 +168,9 @@ async fn run_one(task: &FixtureTask) -> Result<TaskOutcome, FixtureError> {
     } else if let Some(err) = &run.error {
         err.clone()
     } else {
-        format!(
-            "status={:?} stdout={:?}",
-            run.status,
-            run.stdout.trim()
-        )
+        format!("status={:?} stdout={:?}", run.status, run.stdout.trim())
     };
-    Ok(TaskOutcome {
-        task_id: task.task_id.clone(),
-        passed,
-        detail,
-    })
+    Ok(TaskOutcome { task_id: task.task_id.clone(), passed, detail })
 }
 
 async fn spawn_adapter(adapter: &AdapterSpec) -> Result<ProcRun, FixtureError> {
@@ -189,9 +181,8 @@ async fn spawn_adapter(adapter: &AdapterSpec) -> Result<ProcRun, FixtureError> {
     cmd.stderr(std::process::Stdio::piped());
     cmd.kill_on_drop(true);
     if let Some(env_key) = &adapter.working_dir_env {
-        let dir = std::env::var(env_key).map_err(|_| {
-            FixtureError::WorkdirUnset(format!("env {env_key}"))
-        })?;
+        let dir = std::env::var(env_key)
+            .map_err(|_| FixtureError::WorkdirUnset(format!("env {env_key}")))?;
         cmd.current_dir(dir);
     }
 

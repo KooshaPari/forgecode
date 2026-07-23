@@ -7,10 +7,7 @@ use std::process::ExitCode;
 #[tokio::main]
 async fn main() -> ExitCode {
     if std::env::var_os("DUAL_HARNESS_WORKDIR").is_none() {
-        let tmp = std::env::temp_dir().join(format!(
-            "dual-harness-forge-{}",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("dual-harness-forge-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&tmp);
         // SAFETY: single-threaded before spawn; set for child processes.
         unsafe { std::env::set_var("DUAL_HARNESS_WORKDIR", &tmp) };
