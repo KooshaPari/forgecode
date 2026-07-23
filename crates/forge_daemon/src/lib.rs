@@ -24,7 +24,9 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+#[cfg(unix)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(unix)]
 use tokio::net::UnixStream;
 #[cfg(forge_daemon_zig_core)]
 use tracing::debug;
@@ -64,6 +66,7 @@ unsafe extern "C" {
     ) -> std::os::raw::c_int;
 }
 
+#[cfg(unix)]
 unsafe extern "C" {
     fn getuid() -> u32;
 }
@@ -229,6 +232,7 @@ impl DaemonClient {
         id
     }
 
+    #[cfg(unix)]
     async fn send_recv(&self, req: &DaemonRequest) -> Result<DaemonResponse> {
         let mut stream = UnixStream::connect(&self.socket_path)
             .await
@@ -256,6 +260,11 @@ impl DaemonClient {
             .context("read response")?;
 
         serde_json::from_slice(&resp_buf).context("deserialize response")
+    }
+
+    #[cfg(not(unix))]
+    async fn send_recv(&self, _req: &DaemonRequest) -> Result<DaemonResponse> {
+        anyhow::bail!("forge daemon socket client requires Unix domain sockets")
     }
 }
 
@@ -312,7 +321,15 @@ impl Drop for DaemonGuard {
 
 #[inline]
 fn libc_getuid() -> u32 {
-    unsafe { getuid() }
+    #[cfg(unix)]
+    unsafe {
+        getuid()
+    }
+
+    #[cfg(not(unix))]
+    {
+        0
+    }
 }
 
 // ---------------------------------------------------------------------------
