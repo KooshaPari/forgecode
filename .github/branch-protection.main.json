@@ -16,12 +16,15 @@
     "required_approving_review_count": 1,
     "require_last_push_approval": true,
     "bypass_pull_request_allowances": {
-      "users": ["KooshaPari"],
-      "teams": ["maintainers"],
-      "apps": ["renovate", "github-actions"]
+      "users": [
+        "KooshaPari"
+      ],
+      "apps": [
+        "renovate",
+        "github-actions"
+      ]
     }
   },
-  "restrictions": null,
   "required_linear_history": true,
   "allow_force_pushes": false,
   "allow_deletions": false,
@@ -29,5 +32,5 @@
   "required_conversation_resolution": true,
   "lock_branch": false,
   "allow_fork_syncing": true,
-  "required_signatures": true
+  "required_signatures": false
 }
