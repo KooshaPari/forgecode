@@ -126,6 +126,14 @@ impl From<&ContextMessage> for MessageImportance {
                             score += 5;
                         }
                     }
+                    crate::context::Role::Tool => {
+                        // Tool messages are important for traceability
+                        score = 55;
+                        factors.push(ImportanceFactor::HasToolResults);
+                        if text_message.content.len() > 200 {
+                            score += 5;
+                        }
+                    }
                 }
             }
             ContextMessage::Tool(tool_result) => {

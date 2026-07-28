@@ -144,6 +144,45 @@ pub struct Compact {
     #[merge(strategy = crate::merge::std::overwrite)]
     #[serde(default)]
     pub enable_importance_scoring: bool,
+
+    // --- heliosLite fork: programmatic/semantic/AI-based compression ---
+
+    /// Compression level for programmatic/semantic/AI strategies.
+    /// 0 = off, 1 = programmatic only, 2 = + semantic, 3 = + AI-driven.
+    #[serde(default)]
+    #[merge(strategy = crate::merge::std::overwrite)]
+    pub context_compression_level: u32,
+
+    /// Minimum importance score (0.0–1.0) for AI-driven pruning.
+    /// Messages below this threshold are candidates for removal.
+    #[serde(default)]
+    #[merge(strategy = crate::merge::std::overwrite)]
+    pub min_importance_threshold: f64,
+
+    /// Maximum number of messages to prune per compaction cycle.
+    #[serde(default)]
+    #[merge(strategy = crate::merge::std::overwrite)]
+    pub prune_threshold: usize,
+
+    /// Enable semantic compression (embedding/cluster-based).
+    #[serde(default)]
+    #[merge(strategy = crate::merge::std::overwrite)]
+    pub enable_semantic_compression: bool,
+
+    /// Enable structural deduplication (importance pruning).
+    #[serde(default)]
+    #[merge(strategy = crate::merge::std::overwrite)]
+    pub enable_structural_dedup: bool,
+
+    /// Compression strategy identifier ("programmatic", "semantic", "ai", "all").
+    #[serde(default)]
+    #[merge(strategy = crate::merge::std::overwrite)]
+    pub compression_strategy: String,
+
+    /// Prune strategy identifier ("importance", "position", "all").
+    #[serde(default)]
+    #[merge(strategy = crate::merge::std::overwrite)]
+    pub prune_strategy: String,
 }
 fn deserialize_percentage<'de, D>(deserializer: D) -> Result<f64, D::Error>
 where
@@ -204,6 +243,13 @@ impl Compact {
             enable_prefilter: false,
             enable_adaptive_eviction: false,
             enable_importance_scoring: false,
+            context_compression_level: 0,
+            min_importance_threshold: 0.15,
+            prune_threshold: 3,
+            enable_semantic_compression: false,
+            enable_structural_dedup: false,
+            compression_strategy: String::new(),
+            prune_strategy: String::new(),
         }
     }
 

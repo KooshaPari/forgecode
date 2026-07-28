@@ -27,6 +27,55 @@ pub enum SummarizationStrategy {
     Hybrid,
 }
 
+/// Programmatic compression strategy for context reduction.
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Dummy)]
+#[serde(rename_all = "snake_case")]
+pub enum CompressionStrategy {
+    /// Remove low-information tokens (whitespace, comments, boilerplate).
+    /// Fast, deterministic, no API cost.
+    #[default]
+    TokenPrune,
+
+    /// Structural deduplication - merge similar tool calls and file reads.
+    StructuralDedup,
+
+    /// Semantic compression using embeddings - cluster and merge related
+    /// messages, preserving decision points and key facts.
+    SemanticCompress,
+}
+
+/// AI-driven pruning strategy for message eviction.
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Dummy)]
+#[serde(rename_all = "snake_case")]
+pub enum PruneStrategy {
+    /// Evict oldest messages first (FIFO). Simple and predictable.
+    #[default]
+    AgeBased,
+
+    /// Evict messages with lowest semantic importance score.
+    ImportanceBased,
+
+    /// Hybrid: combine age and importance, protecting high-importance
+    /// messages even when old.
+    Hybrid,
+}
+
+/// Semantic truncation mode for tool results and long outputs.
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Dummy)]
+#[serde(rename_all = "snake_case")]
+pub enum SemanticTruncMode {
+    /// Truncate at fixed token count (fast, deterministic).
+    #[default]
+    Fixed,
+
+    /// Truncate at sentence/paragraph boundaries (preserves readability).
+    BoundaryAware,
+
+    /// Use semantic similarity to keep the most informative portion of
+    /// long outputs, discarding redundant sections.
+    SemanticKeep,
+}
+
 /// Frequency at which forge checks for updates
 //
 // Phenotype-org: changed default from `Always` (network round-trip on every
@@ -173,6 +222,46 @@ pub struct Compact {
     /// Whether to trigger compaction when the last message is from a user
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_turn_end: Option<bool>,
+
+    /// Programmatic compression strategy for context reduction.
+    /// `TokenPrune` removes low-information tokens (default, fast, no API cost).
+    /// `StructuralDedup` merges similar tool calls and file reads.
+    /// `SemanticCompress` uses embeddings to cluster and merge related messages.
+    #[serde(default)]
+    pub compression_strategy: CompressionStrategy,
+
+    /// AI-driven pruning strategy for message eviction during compaction.
+    /// `AgeBased` evicts oldest first (default).
+    /// `ImportanceBased` evicts lowest-importance messages.
+    /// `Hybrid` combines both, protecting high-importance messages.
+    #[serde(default)]
+    pub prune_strategy: PruneStrategy,
+
+    /// Semantic truncation mode for tool results and long outputs.
+    /// `Fixed` truncates at token count (default).
+    /// `BoundaryAware` truncates at sentence/paragraph boundaries.
+    /// `SemanticKeep` uses similarity to keep the most informative portion.
+    #[serde(default)]
+    pub trunc_mode: SemanticTruncMode,
+
+    /// Maximum token ratio of a single tool result to keep before truncation.
+    /// Messages exceeding this ratio of the context window are truncated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trunc_ratio: Option<f64>,
+
+    /// Enable programmatic token pruning (removes whitespace, comments,
+    /// boilerplate from message content). No API cost, deterministic.
+    #[serde(default)]
+    pub enable_token_prune: bool,
+
+    /// Enable structural deduplication of similar tool calls and file reads.
+    #[serde(default)]
+    pub enable_structural_dedup: bool,
+
+    /// Token threshold for semantic compression (messages above this ratio
+    /// of total context are candidates for semantic compression).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic_compress_threshold: Option<f64>,
 }
 
 impl Default for Compact {
@@ -201,6 +290,13 @@ impl Compact {
             enable_prefilter: false,
             enable_adaptive_eviction: false,
             enable_importance_scoring: false,
+            compression_strategy: CompressionStrategy::default(),
+            prune_strategy: PruneStrategy::default(),
+            trunc_mode: SemanticTruncMode::default(),
+            trunc_ratio: None,
+            enable_token_prune: false,
+            enable_structural_dedup: false,
+            semantic_compress_threshold: None,
         }
     }
 }
@@ -225,6 +321,13 @@ impl Dummy<fake::Faker> for Compact {
             enable_prefilter: fake::Faker.fake_with_rng(rng),
             enable_adaptive_eviction: fake::Faker.fake_with_rng(rng),
             enable_importance_scoring: fake::Faker.fake_with_rng(rng),
+            compression_strategy: fake::Faker.fake_with_rng(rng),
+            prune_strategy: fake::Faker.fake_with_rng(rng),
+            trunc_mode: fake::Faker.fake_with_rng(rng),
+            trunc_ratio: fake::Faker.fake_with_rng(rng),
+            enable_token_prune: fake::Faker.fake_with_rng(rng),
+            enable_structural_dedup: fake::Faker.fake_with_rng(rng),
+            semantic_compress_threshold: fake::Faker.fake_with_rng(rng),
         }
     }
 }

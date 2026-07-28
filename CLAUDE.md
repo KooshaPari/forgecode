@@ -1,13 +1,14 @@
-# forgecode — CLAUDE.md
+# heliosLite — CLAUDE.md
 
 > **Fork of [tailcallhq/forgecode](https://github.com/tailcallhq/forgecode).**
 > Phenotype-org additions: `deny.toml` + `cargo-deny.yml` CI bootstrapped 2026-05-01.
+> Rebranded to `heliosLite` — programmatic/semantic/AI-based compression, pruning, and truncation hooks for long-running AFK sessions.
 
 ---
 
 This repo is a **fork** of the upstream [tailcallhq/forgecode](https://github.com/tailcallhq/forgecode)
 project — an AI-enhanced terminal development environment with ZSH plugin support,
-TUI, and multi-provider LLM integration.
+TUI, and multi-provider LLM integration. Rebranded as `heliosLite`.
 
 Do not rewrite upstream content. Any changes to upstream-origin files must be
 clearly annotated as Phenotype-org-specific additions.
@@ -21,13 +22,16 @@ clearly annotated as Phenotype-org-specific additions.
 | Rust version | 1.92 |
 | License | MIT |
 | Upstream | <https://github.com/tailcallhq/forgecode> |
+| Rebrand | `heliosLite` (Phenotype-org fork) |
 
 ## Phenotype-Org Additions
 
-The following files are Phenotype-org-specific additions (not present in upstream):
+The following files are Phenotype-org-specific additions (not present in upstream).
+Rebranded to `heliosLite`:
 
 - `deny.toml` — cargo-deny configuration
 - `cargo-deny.yml` — GitHub Actions CI workflow for dependency auditing
+- `CLAUDE.md` — this file (rebranded to heliosLite)
 
 All other files follow upstream conventions.
 
@@ -115,7 +119,7 @@ crates/
 ## Git Workflow
 
 ```
-origin  = KooshaPari/forgecode     (Phenotype-org fork)
+origin  = KooshaPari/heliosLite   (Phenotype-org fork, rebranded)
 upstream = tailcallhq/forgecode     (canonical upstream)
 ```
 
