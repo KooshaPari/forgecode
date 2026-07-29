@@ -34,10 +34,10 @@ jobs:
     permissions:
       contents: write
       issues: write
-      pull-requests: read
+      pull-requests: write
     steps:
       - name: Auto Labeler
-        if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository
+        if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.head.repo.fork
         uses: release-drafter/release-drafter/autolabeler@eada3c96a64734dd381cfbda23511034e328ddb0
         with:
           config-name: release-drafter.yml
