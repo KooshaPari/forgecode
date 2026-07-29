@@ -7,7 +7,7 @@ pub mod ai_driven;
 pub mod semantic;
 pub mod strategy;
 
-use forge_domain::{Compact, Context, MessageEntry};
+use forge_domain::{Compact, Context};
 
 /// Describes what happened during a compression pass.
 #[derive(Debug, Clone, Default)]
@@ -67,15 +67,4 @@ pub fn compress(context: impl Into<Context>, config: &Compact) -> (Context, Comp
     report.truncated = report.remaining_tokens > budget;
 
     (ctx, report)
-}
-
-/// Compress a single message to a shorter form.
-pub fn summarize_message(msg: &MessageEntry, max_chars: usize) -> Option<String> {
-    let text = msg.to_text();
-    if text.len() <= max_chars {
-        return None;
-    }
-    // Simple truncation with ellipsis at word boundary
-    let truncated: String = text.chars().take(max_chars.saturating_sub(3)).collect();
-    Some(format!("{}...", truncated.trim()))
 }

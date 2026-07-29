@@ -7,12 +7,7 @@ fn cargo_cmd(parts: &[&str]) -> String {
 
 /// Base parts for clippy commands (shared across all clippy invocations).
 fn clippy_base() -> Vec<&'static str> {
-    vec![
-        "cargo",
-        "clippy",
-        "--all-features",
-        "--workspace",
-    ]
+    vec!["cargo", "clippy", "--all-features", "--workspace"]
 }
 
 /// Build a cargo clippy command that checks all targets for general warnings.

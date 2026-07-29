@@ -20,7 +20,7 @@ pub fn generate_release_drafter_workflow() {
                 ],
                 branches: vec!["main".to_string()],
             }),
-                ..Event::default()
+            ..Event::default()
         })
         .permissions(
             Permissions::default()

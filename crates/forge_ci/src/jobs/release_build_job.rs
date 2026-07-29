@@ -93,7 +93,11 @@ impl From<ReleaseBuilderJob> for Job {
                 // Upload to the generated github release id
                 .add_step(
                     Step::new("Upload to Release")
-                        .uses("xresloader", "upload-to-github-release", "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0")
+                        .uses(
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                        )
                         .add_with(("release_id", release_id))
                         .add_with(("file", "${{ matrix.binary_name }}"))
                         .add_with(("overwrite", "true")),

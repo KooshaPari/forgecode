@@ -9,11 +9,19 @@ pub fn generate_ci_workflow() {
     // Create a basic build job for CI with coverage
     let build_job = Job::new("Build and Test")
         .permissions(Permissions::default().contents(Level::Read))
-        .add_step(Step::new("Checkout Code").uses("actions", "checkout", "d23441a48e516b6c34aea4fa41551a30e30af803"))
+        .add_step(Step::new("Checkout Code").uses(
+            "actions",
+            "checkout",
+            "d23441a48e516b6c34aea4fa41551a30e30af803",
+        ))
         .add_step(setup_protoc())
         .add_step(
             Step::new("Setup Rust Toolchain")
-                .uses("actions-rust-lang", "setup-rust-toolchain", "166cdcfd11aee3cb47222f9ddb555ce30ddb9659")
+                .uses(
+                    "actions-rust-lang",
+                    "setup-rust-toolchain",
+                    "166cdcfd11aee3cb47222f9ddb555ce30ddb9659",
+                )
                 .with(("toolchain", "stable")),
         )
         .add_step(Step::new("Install cargo-llvm-cov").run("cargo install cargo-llvm-cov"))
@@ -26,11 +34,19 @@ pub fn generate_ci_workflow() {
     let perf_test_job = Job::new("zsh-rprompt-performance")
         .name("Performance: zsh rprompt")
         .permissions(Permissions::default().contents(Level::Read))
-        .add_step(Step::new("Checkout Code").uses("actions", "checkout", "d23441a48e516b6c34aea4fa41551a30e30af803"))
+        .add_step(Step::new("Checkout Code").uses(
+            "actions",
+            "checkout",
+            "d23441a48e516b6c34aea4fa41551a30e30af803",
+        ))
         .add_step(setup_protoc())
         .add_step(
             Step::new("Setup Rust Toolchain")
-                .uses("actions-rust-lang", "setup-rust-toolchain", "166cdcfd11aee3cb47222f9ddb555ce30ddb9659")
+                .uses(
+                    "actions-rust-lang",
+                    "setup-rust-toolchain",
+                    "166cdcfd11aee3cb47222f9ddb555ce30ddb9659",
+                )
                 .with(("toolchain", "stable")),
         )
         .add_step(

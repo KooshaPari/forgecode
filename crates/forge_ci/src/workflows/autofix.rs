@@ -8,7 +8,11 @@ use crate::steps::setup_protoc;
 pub fn generate_autofix_workflow() {
     let lint_fix_job = Job::new("Lint Fix")
         .permissions(Permissions::default().contents(Level::Read))
-        .add_step(Step::new("Checkout Code").uses("actions", "checkout", "d23441a48e516b6c34aea4fa41551a30e30af803"))
+        .add_step(Step::new("Checkout Code").uses(
+            "actions",
+            "checkout",
+            "d23441a48e516b6c34aea4fa41551a30e30af803",
+        ))
         .add_step(Step::new("Install SQLite").run("sudo apt-get install -y libsqlite3-dev"))
         .add_step(setup_protoc())
         .add_step(
