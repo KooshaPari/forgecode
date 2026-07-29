@@ -1449,41 +1449,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#fnv_rs@0.4.4",
-      "author": "Crypto-Spartan <accounts@cryptospartan.net>",
-      "name": "fnv_rs",
-      "version": "0.4.4",
-      "description": "Fowler–Noll–Vo hash function including 32, 64, 128, 256, 512, & 1024 bit variants.",
-      "scope": "required",
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "239a1f6954abe50219acb3094a0926b64874aed7458906540e5d6cc0462b1439"
-        }
-      ],
-      "licenses": [
-        {
-          "expression": "Apache-2.0  OR  MIT"
-        }
-      ],
-      "purl": "pkg:cargo/fnv_rs@0.4.4",
-      "externalReferences": [
-        {
-          "type": "documentation",
-          "url": "https://docs.rs/fnv-rs"
-        },
-        {
-          "type": "website",
-          "url": "https://github.com/Crypto-Spartan/fnv-rs"
-        },
-        {
-          "type": "vcs",
-          "url": "https://github.com/Crypto-Spartan/fnv-rs"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#foldhash@0.2.0",
       "author": "Orson Peters <orsonpeters@gmail.com>",
       "name": "foldhash",
@@ -2667,37 +2632,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/Amanieu/parking_lot"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#paste@1.0.15",
-      "author": "David Tolnay <dtolnay@gmail.com>",
-      "name": "paste",
-      "version": "1.0.15",
-      "description": "Macros for all your token pasting needs",
-      "scope": "required",
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
-        }
-      ],
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "purl": "pkg:cargo/paste@1.0.15",
-      "externalReferences": [
-        {
-          "type": "documentation",
-          "url": "https://docs.rs/paste"
-        },
-        {
-          "type": "vcs",
-          "url": "https://github.com/dtolnay/paste"
         }
       ]
     },
@@ -4849,7 +4783,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#derive_setters@0.1.9",
         "registry+https://github.com/rust-lang/crates.io-index#eserde@0.1.7",
         "registry+https://github.com/rust-lang/crates.io-index#fake@5.1.0",
-        "registry+https://github.com/rust-lang/crates.io-index#fnv_rs@0.4.4",
+        "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7",
         "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_json_repair#0.1.1",
         "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_template#0.1.1",
         "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_tool_macros#0.1.1",
@@ -4902,7 +4836,7 @@
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
         "registry+https://github.com/rust-lang/crates.io-index#chrono@0.4.45",
-        "registry+https://github.com/rust-lang/crates.io-index#fnv_rs@0.4.4",
+        "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7",
         "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_domain#0.1.1",
         "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_fs#0.1.1",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
@@ -5199,14 +5133,6 @@
       "ref": "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7"
     },
     {
-      "ref": "registry+https://github.com/rust-lang/crates.io-index#fnv_rs@0.4.4",
-      "dependsOn": [
-        "registry+https://github.com/rust-lang/crates.io-index#hex@0.4.3",
-        "registry+https://github.com/rust-lang/crates.io-index#paste@1.0.15",
-        "registry+https://github.com/rust-lang/crates.io-index#rustc_version@0.4.1"
-      ]
-    },
-    {
       "ref": "registry+https://github.com/rust-lang/crates.io-index#foldhash@0.2.0"
     },
     {
@@ -5437,9 +5363,6 @@
         "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
         "registry+https://github.com/rust-lang/crates.io-index#smallvec@1.15.2"
       ]
-    },
-    {
-      "ref": "registry+https://github.com/rust-lang/crates.io-index#paste@1.0.15"
     },
     {
       "ref": "registry+https://github.com/rust-lang/crates.io-index#percent-encoding@2.3.2"

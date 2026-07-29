@@ -301,7 +301,7 @@ impl McpConfig {
     pub fn cache_key(&self) -> u64 {
         use std::hash::{Hash, Hasher};
 
-        let mut hasher = fnv_rs::Fnv64::default();
+        let mut hasher = fnv::FnvHasher::default();
         Hash::hash(self, &mut hasher);
         hasher.finish()
     }

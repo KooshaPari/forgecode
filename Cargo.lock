@@ -2516,17 +2516,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
-name = "fnv_rs"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "239a1f6954abe50219acb3094a0926b64874aed7458906540e5d6cc0462b1439"
-dependencies = [
- "hex",
- "paste",
- "rustc_version",
-]
-
-[[package]]
 name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2742,7 +2731,7 @@ dependencies = [
  "derive_setters",
  "eserde",
  "fake",
- "fnv_rs",
+ "fnv",
  "forge_json_repair",
  "forge_template",
  "forge_test_kit",
@@ -3232,7 +3221,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
- "fnv_rs",
+ "fnv",
  "forge_domain",
  "forge_fs",
  "serde",
