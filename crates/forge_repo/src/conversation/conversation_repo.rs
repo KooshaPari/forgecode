@@ -302,21 +302,13 @@ impl ConversationRepository for ConversationRepositoryImpl {
             let mut query = conversations::table
                 .filter(conversations::parent_id.is_null())
                 .filter(conversations::context.is_not_null())
-                .select((
-                    conversations::conversation_id,
-                    conversations::title,
-                    conversations::created_at,
-                    conversations::updated_at,
-                    conversations::parent_id,
-                    conversations::cwd,
-                    conversations::message_count,
-                ))
+                .select(ConversationRecordLite::as_select())
                 .order(conversations::updated_at.desc())
                 .into_boxed();
 
             if !all_workspaces {
                 let workspace_id = wid.id() as i64;
-                query = query.filter(conversations::workspace_id.eq(&workspace_id));
+                query = query.filter(conversations::workspace_id.eq(workspace_id.clone()));
             }
 
             if let Some(limit_value) = limit {
