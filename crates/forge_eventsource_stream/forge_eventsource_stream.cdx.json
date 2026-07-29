@@ -2,9 +2,8 @@
   "bomFormat": "CycloneDX",
   "specVersion": "1.3",
   "version": 1,
-  "serialNumber": "urn:uuid:2ccc0591-cf1f-4571-8e79-29288a13417b",
   "metadata": {
-    "timestamp": "2026-06-28T19:27:15.683801000Z",
+    "timestamp": "2025-07-29T00:00:00.000000000Z",
     "tools": [
       {
         "vendor": "CycloneDX",
@@ -44,15 +43,15 @@
   "components": [
     {
       "type": "library",
-      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.32",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.33",
       "name": "futures-core",
-      "version": "0.3.32",
+      "version": "0.3.33",
       "description": "The core traits and types in for the `futures` library. ",
       "scope": "required",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "7e3450815272ef58cec6d564423f6e755e25379b217b0bc688e295ba24df6b1d"
+          "content": "2cd50c473c80f6d7c3670a752354b8e569b1a7cbfdc0419ec88e5edad85e0dc7"
         }
       ],
       "licenses": [
@@ -60,7 +59,7 @@
           "expression": "MIT OR Apache-2.0"
         }
       ],
-      "purl": "pkg:cargo/futures-core@0.3.32",
+      "purl": "pkg:cargo/futures-core@0.3.33",
       "externalReferences": [
         {
           "type": "website",
@@ -74,16 +73,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.0",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3",
       "author": "Andrew Gallant <jamslam@gmail.com>, bluss",
       "name": "memchr",
-      "version": "2.8.0",
+      "version": "2.8.3",
       "description": "Provides extremely fast (uses SIMD on x86_64, aarch64 and wasm32) routines for 1, 2 or 3 byte search and single substring search. ",
       "scope": "required",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
+          "content": "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
         }
       ],
       "licenses": [
@@ -91,7 +90,7 @@
           "expression": "Unlicense OR MIT"
         }
       ],
-      "purl": "pkg:cargo/memchr@2.8.0",
+      "purl": "pkg:cargo/memchr@2.8.3",
       "externalReferences": [
         {
           "type": "documentation",
@@ -169,21 +168,21 @@
     {
       "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_eventsource_stream#0.1.1",
       "dependsOn": [
-        "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.32",
+        "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.33",
         "registry+https://github.com/rust-lang/crates.io-index#nom@8.0.0",
         "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17"
       ]
     },
     {
-      "ref": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.32"
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.33"
     },
     {
-      "ref": "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.0"
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3"
     },
     {
       "ref": "registry+https://github.com/rust-lang/crates.io-index#nom@8.0.0",
       "dependsOn": [
-        "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.0"
+        "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3"
       ]
     },
     {

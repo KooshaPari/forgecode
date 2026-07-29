@@ -13,24 +13,24 @@
     ],
     "component": {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_similarity#0.1.0",
-      "name": "forge_similarity",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_pheno_shell#0.1.0",
+      "name": "forge_pheno_shell",
       "version": "0.1.0",
-      "description": "similarity scoring — trait + hash-only + local ONNX + hosted fallback",
+      "description": "Shell abstraction layer for forgecode: unified detection + completion emission for ZSH, Bash, Fish, PowerShell (Windows + Core), Nushell, Elvish, Cmd, Tcsh, Oil",
       "scope": "required",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:cargo/forge_similarity@0.1.0?download_url=file://.",
+      "purl": "pkg:cargo/forge_pheno_shell@0.1.0?download_url=file://.",
       "components": [
         {
           "type": "library",
-          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_similarity#0.1.0 bin-target-0",
-          "name": "forge_similarity",
+          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_pheno_shell#0.1.0 bin-target-0",
+          "name": "forge_pheno_shell",
           "version": "0.1.0",
-          "purl": "pkg:cargo/forge_similarity@0.1.0?download_url=file://.#src/lib.rs"
+          "purl": "pkg:cargo/forge_pheno_shell@0.1.0?download_url=file://.#src/lib.rs"
         }
       ]
     },
@@ -42,37 +42,6 @@
     ]
   },
   "components": [
-    {
-      "type": "library",
-      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#async-trait@0.1.91",
-      "author": "David Tolnay <dtolnay@gmail.com>",
-      "name": "async-trait",
-      "version": "0.1.91",
-      "description": "Type erasure for async trait methods",
-      "scope": "required",
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "ae36dc4177970ef04fde5178d3e2429882def40e57a451f919c098f72baa6cec"
-        }
-      ],
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "purl": "pkg:cargo/async-trait@0.1.91",
-      "externalReferences": [
-        {
-          "type": "documentation",
-          "url": "https://docs.rs/async-trait"
-        },
-        {
-          "type": "vcs",
-          "url": "https://github.com/dtolnay/async-trait"
-        }
-      ]
-    },
     {
       "type": "library",
       "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
@@ -361,16 +330,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@1.0.69",
       "author": "David Tolnay <dtolnay@gmail.com>",
       "name": "thiserror-impl",
-      "version": "2.0.19",
+      "version": "1.0.69",
       "description": "Implementation detail of the `thiserror` crate",
       "scope": "required",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "43cbfe0cf76104d42a574802844187e84a305e531ed54455f11fbde0f10541cd"
+          "content": "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
         }
       ],
       "licenses": [
@@ -378,7 +347,7 @@
           "expression": "MIT OR Apache-2.0"
         }
       ],
-      "purl": "pkg:cargo/thiserror-impl@2.0.19",
+      "purl": "pkg:cargo/thiserror-impl@1.0.69",
       "externalReferences": [
         {
           "type": "vcs",
@@ -388,16 +357,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#thiserror@1.0.69",
       "author": "David Tolnay <dtolnay@gmail.com>",
       "name": "thiserror",
-      "version": "2.0.19",
+      "version": "1.0.69",
       "description": "derive(Error)",
       "scope": "required",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "09a43598840e33d5b0331f38c5e30d13bb11c11210a4b58f0d9b18a5a5eefcd9"
+          "content": "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
         }
       ],
       "licenses": [
@@ -405,7 +374,7 @@
           "expression": "MIT OR Apache-2.0"
         }
       ],
-      "purl": "pkg:cargo/thiserror@2.0.19",
+      "purl": "pkg:cargo/thiserror@1.0.69",
       "externalReferences": [
         {
           "type": "documentation",
@@ -544,20 +513,11 @@
   ],
   "dependencies": [
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_similarity#0.1.0",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_pheno_shell#0.1.0",
       "dependsOn": [
-        "registry+https://github.com/rust-lang/crates.io-index#async-trait@0.1.91",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
-        "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
+        "registry+https://github.com/rust-lang/crates.io-index#thiserror@1.0.69",
         "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44"
-      ]
-    },
-    {
-      "ref": "registry+https://github.com/rust-lang/crates.io-index#async-trait@0.1.91",
-      "dependsOn": [
-        "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
-        "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
-        "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3"
       ]
     },
     {
@@ -613,17 +573,17 @@
       ]
     },
     {
-      "ref": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19",
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@1.0.69",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
         "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
-        "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3"
+        "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119"
       ]
     },
     {
-      "ref": "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#thiserror@1.0.69",
       "dependsOn": [
-        "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@2.0.19"
+        "registry+https://github.com/rust-lang/crates.io-index#thiserror-impl@1.0.69"
       ]
     },
     {

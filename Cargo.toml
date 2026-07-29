@@ -127,7 +127,6 @@ regex = "1.12.3"
 reqwest = { version = "0.12.23", features = [
     "json",
     "rustls-tls",
-    "hickory-dns",
     "http2",
 ], default-features = false }
 rustls = { version = "0.23", features = ["ring"], default-features = false }
