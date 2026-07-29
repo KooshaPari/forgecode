@@ -1,4 +1,3 @@
-use gh_workflow::generate::Generate;
 use gh_workflow::*;
 
 use crate::jobs::{sync_all_issues_job, sync_pr_job};
@@ -40,8 +39,5 @@ pub fn generate_bounty_workflow() {
         .add_job("sync-all-issues", sync_all_issues_job())
         .add_job("sync-pr", sync_pr_job());
 
-    Generate::new(workflow)
-        .name("bounty.yml")
-        .generate()
-        .unwrap();
+    super::generate_workflow(workflow, "bounty.yml");
 }

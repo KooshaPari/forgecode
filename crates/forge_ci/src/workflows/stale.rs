@@ -1,4 +1,3 @@
-use gh_workflow::generate::Generate;
 use gh_workflow::*;
 use indexmap::indexmap;
 use serde_json::json;
@@ -41,8 +40,5 @@ Status update or closure in ${{ env.DAYS_BEFORE_PR_CLOSE }} days."#),
                 ),
         );
 
-    Generate::new(workflow)
-        .name("stale.yml")
-        .generate()
-        .unwrap();
+    super::generate_workflow(workflow, "stale.yml");
 }

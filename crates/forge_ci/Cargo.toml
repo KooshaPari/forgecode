@@ -8,9 +8,9 @@ rust-version.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+serde_yml.workspace = true
 gh-workflow.workspace = true
 indexmap.workspace = true
 derive_setters.workspace = true
 
 [dev-dependencies]
-

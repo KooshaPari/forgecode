@@ -1,4 +1,3 @@
-use gh_workflow::generate::Generate;
 use gh_workflow::*;
 
 use crate::jobs::draft_release_update_job;
@@ -29,8 +28,5 @@ pub fn generate_release_drafter_workflow() {
         )
         .add_job("update_release_draft", draft_release_update_job());
 
-    Generate::new(release_drafter)
-        .name("release-drafter.yml")
-        .generate()
-        .unwrap();
+    super::generate_workflow(release_drafter, "release-drafter.yml");
 }

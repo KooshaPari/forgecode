@@ -1,4 +1,3 @@
-use gh_workflow::generate::Generate;
 use gh_workflow::*;
 
 use crate::jobs::{self, ReleaseBuilderJob};
@@ -103,5 +102,5 @@ pub fn generate_ci_workflow() {
         .add_job("build_release", build_release_job)
         .add_job("build_release_pr", build_release_pr_job);
 
-    Generate::new(workflow).name("ci.yml").generate().unwrap();
+    super::generate_workflow(workflow, "ci.yml");
 }

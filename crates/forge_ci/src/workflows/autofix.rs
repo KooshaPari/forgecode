@@ -1,4 +1,3 @@
-use gh_workflow::generate::Generate;
 use gh_workflow::*;
 
 use crate::jobs;
@@ -52,8 +51,5 @@ pub fn generate_autofix_workflow() {
         )
         .add_job("lint", lint_fix_job);
 
-    Generate::new(workflow)
-        .name("autofix.yml")
-        .generate()
-        .unwrap();
+    super::generate_workflow(workflow, "autofix.yml");
 }

@@ -1,4 +1,3 @@
-use gh_workflow::generate::Generate;
 use gh_workflow::*;
 
 use crate::jobs::{ReleaseBuilderJob, release_homebrew_job, release_npm_job};
@@ -21,8 +20,5 @@ pub fn release_publish() {
         .add_job("npm_release", npm_release_job)
         .add_job("homebrew_release", homebrew_release_job);
 
-    Generate::new(npm_workflow)
-        .name("release.yml")
-        .generate()
-        .unwrap();
+    super::generate_workflow(npm_workflow, "release.yml");
 }

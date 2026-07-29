@@ -1,4 +1,3 @@
-use gh_workflow::generate::Generate;
 use gh_workflow::*;
 
 use crate::jobs::label_sync_job;
@@ -18,8 +17,5 @@ pub fn generate_labels_workflow() {
         )
         .add_job("label-sync", label_sync_job());
 
-    Generate::new(labels_workflow)
-        .name("labels.yml")
-        .generate()
-        .unwrap();
+    super::generate_workflow(labels_workflow, "labels.yml");
 }
