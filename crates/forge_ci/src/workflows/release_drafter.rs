@@ -18,6 +18,7 @@ pub fn generate_release_drafter_workflow() {
                     PullRequestType::Closed,
                 ],
                 branches: vec!["main".to_string()],
+                ..PullRequestTarget::default()
             }),
             ..Event::default()
         })
