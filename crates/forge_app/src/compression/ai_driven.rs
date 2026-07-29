@@ -56,7 +56,9 @@ pub fn compress_ai(mut ctx: Context, _config: &Compact) -> (Context, Compression
         if current <= budget {
             break;
         }
-        if scores[idx] < min_importance && idx < ctx.messages.len() {
+        if idx < ctx.messages.len()
+            && scores.get(idx).copied().is_some_and(|score| score < min_importance)
+        {
             ctx.messages.remove(idx);
             removed.push(idx);
             current = ctx.token_count_approx();

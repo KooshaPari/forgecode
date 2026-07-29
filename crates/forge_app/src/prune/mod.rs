@@ -80,7 +80,11 @@ pub fn prune(ctx: &Context, config: &Compact) -> (Context, PruneReport) {
         if idx == 0 || idx == remaining.messages.len().saturating_sub(1) {
             continue;
         }
-        if remaining.messages[idx].has_role(Role::System) {
+        if remaining
+            .messages
+            .get(idx)
+            .is_some_and(|message| message.has_role(Role::System))
+        {
             continue;
         }
         remaining.messages.remove(idx);
