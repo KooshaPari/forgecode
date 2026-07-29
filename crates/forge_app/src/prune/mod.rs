@@ -6,7 +6,7 @@
 //! This is separate from compression: compression reduces message size,
 //! while pruning removes entire messages.
 
-use forge_domain::{Compact, Context, MessageEntry, Role};
+use forge_domain::{Compact, Context, Role};
 
 /// Report of what was pruned.
 #[derive(Debug, Clone, Default)]
@@ -30,10 +30,7 @@ pub struct PruneReport {
 ///    until within budget or out of removable messages.
 /// 4. Always preserve: system messages, first user message,
 ///    last assistant message.
-pub fn prune(
-    ctx: &Context,
-    config: &Compact,
-) -> (Context, PruneReport) {
+pub fn prune(ctx: &Context, config: &Compact) -> (Context, PruneReport) {
     let mut report = PruneReport::default();
     let current_tokens = ctx.token_count_approx();
     let budget = config.token_threshold.unwrap_or(80_000) as usize;
@@ -70,7 +67,7 @@ pub fn prune(
     indices.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
     let mut remaining = ctx.clone();
-    let prune_threshold = config.prune_threshold.unwrap_or(3);
+    let prune_threshold = config.prune_threshold;
 
     for (idx, _score) in indices {
         if remaining.token_count_approx() <= budget {

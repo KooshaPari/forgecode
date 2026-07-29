@@ -547,6 +547,7 @@ impl From<forge_domain::Role> for Role {
             forge_domain::Role::System => Role::System,
             forge_domain::Role::User => Role::User,
             forge_domain::Role::Assistant => Role::Assistant,
+            forge_domain::Role::Tool => Role::Tool,
         }
     }
 }

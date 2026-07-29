@@ -8,7 +8,6 @@ mod command_generator;
 mod compact;
 mod compression;
 mod data_gen;
-mod prune;
 pub mod dto;
 mod error;
 mod file_tracking;
@@ -23,6 +22,7 @@ mod operation;
 mod orch;
 #[cfg(test)]
 mod orch_spec;
+mod prune;
 pub mod retry;
 mod search_dedup;
 mod services;

@@ -6,7 +6,7 @@
 //! Currently provides the hook structure and an importance-based heuristic.
 //! Full LLM-based scoring can be plugged into `score_message_importance`.
 
-use forge_domain::{Compact, Context, Role, TextMessage};
+use forge_domain::{Compact, Context, Role};
 
 use super::CompressionReport;
 
@@ -16,15 +16,12 @@ use super::CompressionReport;
 /// 1. Score each message by importance (heuristic or LLM call).
 /// 2. Remove lowest-scoring messages until under budget.
 /// 3. Preserve system messages, first user message, and last assistant message.
-pub fn compress_ai(
-    mut ctx: Context,
-    _config: &Compact,
-) -> (Context, CompressionReport) {
+pub fn compress_ai(mut ctx: Context, _config: &Compact) -> (Context, CompressionReport) {
     let mut report = CompressionReport::default();
     let before = ctx.token_count_approx();
 
     let budget = _config.token_threshold.unwrap_or(80_000) as usize;
-    let min_importance = _config.min_importance_threshold.unwrap_or(0.15);
+    let min_importance = _config.min_importance_threshold;
 
     if before <= budget {
         return (ctx, report);
@@ -79,11 +76,8 @@ pub fn compress_ai(
 /// - Has tool result → higher importance.
 /// - Longer content → slightly higher (but capped).
 /// - Droppable → lower importance.
-fn score_message_importance(
-    msg: &impl HasImportanceSignals,
-    _config: &Compact,
-) -> f64 {
-    let mut score = 0.5;
+fn score_message_importance(msg: &impl HasImportanceSignals, _config: &Compact) -> f64 {
+    let mut score: f64 = 0.5;
 
     if msg.has_tool_call() {
         score += 0.3;
@@ -111,15 +105,15 @@ trait HasImportanceSignals {
 
 impl HasImportanceSignals for forge_domain::MessageEntry {
     fn has_tool_call(&self) -> bool {
-        self.has_tool_call()
+        self.message.has_tool_call()
     }
     fn has_tool_result(&self) -> bool {
-        self.has_tool_result()
+        self.message.has_tool_result()
     }
     fn is_droppable(&self) -> bool {
-        self.is_droppable()
+        self.message.is_droppable()
     }
     fn has_reasoning_details(&self) -> bool {
-        self.has_reasoning_details()
+        self.message.has_reasoning_details()
     }
 }

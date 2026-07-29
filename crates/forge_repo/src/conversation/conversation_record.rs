@@ -280,6 +280,7 @@ pub enum RoleRecord {
     System,
     User,
     Assistant,
+    Tool,
 }
 
 impl From<&forge_domain::Role> for RoleRecord {
@@ -288,6 +289,7 @@ impl From<&forge_domain::Role> for RoleRecord {
             forge_domain::Role::System => Self::System,
             forge_domain::Role::User => Self::User,
             forge_domain::Role::Assistant => Self::Assistant,
+            forge_domain::Role::Tool => Self::Tool,
         }
     }
 }
@@ -298,6 +300,7 @@ impl From<RoleRecord> for forge_domain::Role {
             RoleRecord::System => Self::System,
             RoleRecord::User => Self::User,
             RoleRecord::Assistant => Self::Assistant,
+            RoleRecord::Tool => Self::Tool,
         }
     }
 }

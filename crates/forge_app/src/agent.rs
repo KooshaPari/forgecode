@@ -162,6 +162,20 @@ impl AgentExt for Agent {
                 enable_prefilter: workflow_compact.enable_prefilter,
                 enable_adaptive_eviction: workflow_compact.enable_adaptive_eviction,
                 enable_importance_scoring: workflow_compact.enable_importance_scoring,
+                context_compression_level: match workflow_compact.compression_strategy {
+                    forge_config::CompressionStrategy::TokenPrune => 1,
+                    forge_config::CompressionStrategy::StructuralDedup => 1,
+                    forge_config::CompressionStrategy::SemanticCompress => 2,
+                },
+                min_importance_threshold: 0.15,
+                prune_threshold: 3,
+                enable_semantic_compression: matches!(
+                    workflow_compact.compression_strategy,
+                    forge_config::CompressionStrategy::SemanticCompress
+                ),
+                enable_structural_dedup: workflow_compact.enable_structural_dedup,
+                compression_strategy: format!("{:?}", workflow_compact.compression_strategy),
+                prune_strategy: format!("{:?}", workflow_compact.prune_strategy),
             };
             merged_compact.merge(agent.compact.clone());
             agent.compact = merged_compact;

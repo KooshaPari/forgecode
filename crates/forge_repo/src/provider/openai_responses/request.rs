@@ -268,6 +268,9 @@ impl FromDomain<ChatContext> for oai::CreateResponse {
                             }
                         }
                     }
+                    Role::Tool => {
+                        anyhow::bail!("Tool text messages should use a tool result item")
+                    }
                 },
                 ContextMessage::Tool(result) => {
                     let call_id = result

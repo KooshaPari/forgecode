@@ -3,11 +3,11 @@
 //! These modules integrate into the existing compaction pipeline to provide
 //! richer context-reduction strategies beyond simple position-based truncation.
 
-pub mod strategy;
-pub mod semantic;
 pub mod ai_driven;
+pub mod semantic;
+pub mod strategy;
 
-use forge_domain::{Compact, Context, MessageEntry, Role, TextMessage, TokenCount};
+use forge_domain::{Compact, Context, MessageEntry};
 
 /// Describes what happened during a compression pass.
 #[derive(Debug, Clone, Default)]
@@ -27,16 +27,13 @@ pub struct CompressionReport {
 /// Run all enabled compression strategies against `context`.
 ///
 /// Returns a report and the (possibly modified) context.
-pub fn compress(
-    context: impl Into<Context>,
-    config: &Compact,
-) -> (Context, CompressionReport) {
+pub fn compress(context: impl Into<Context>, config: &Compact) -> (Context, CompressionReport) {
     let mut ctx: Context = context.into();
     let mut report = CompressionReport::default();
 
     let total_tokens = ctx.token_count_approx();
     let budget = config.token_threshold.unwrap_or(80_000) as usize;
-    let level = config.context_compression_level.unwrap_or(0);
+    let level = config.context_compression_level;
 
     if total_tokens <= budget {
         return (ctx, report);

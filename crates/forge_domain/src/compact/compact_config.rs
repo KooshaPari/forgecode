@@ -146,7 +146,6 @@ pub struct Compact {
     pub enable_importance_scoring: bool,
 
     // --- heliosLite fork: programmatic/semantic/AI-based compression ---
-
     /// Compression level for programmatic/semantic/AI strategies.
     /// 0 = off, 1 = programmatic only, 2 = + semantic, 3 = + AI-driven.
     #[serde(default)]

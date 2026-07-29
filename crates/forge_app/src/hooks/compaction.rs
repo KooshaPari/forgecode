@@ -3,8 +3,7 @@ use forge_domain::{Agent, Conversation, Environment, EventData, EventHandle, Res
 use tracing::{debug, info};
 
 use crate::compact::Compactor;
-use crate::compression::CompressionEngine;
-use crate::prune::PruneEngine;
+use crate::{compression, prune};
 
 /// Hook handler that performs context compaction when needed
 ///
@@ -20,8 +19,6 @@ use crate::prune::PruneEngine;
 pub struct CompactionHandler {
     agent: Agent,
     environment: Environment,
-    compression_engine: CompressionEngine,
-    prune_engine: PruneEngine,
 }
 
 impl CompactionHandler {
@@ -31,12 +28,7 @@ impl CompactionHandler {
     /// * `agent` - The agent configuration containing compaction settings
     /// * `environment` - The environment configuration
     pub fn new(agent: Agent, environment: Environment) -> Self {
-        Self {
-            agent: agent.clone(),
-            environment: environment.clone(),
-            compression_engine: CompressionEngine::new(agent.compact.compression_strategy.clone()),
-            prune_engine: PruneEngine::new(agent.compact.prune_strategy.clone()),
-        }
+        Self { agent, environment }
     }
 }
 
@@ -48,12 +40,12 @@ impl EventHandle<EventData<ResponsePayload>> for CompactionHandler {
         conversation: &mut Conversation,
     ) -> anyhow::Result<()> {
         if let Some(context) = &conversation.context {
-            let token_count = context.token_count();
+            let token_count = context.token_count_approx();
 
             // Phase 1: AI-driven semantic compression (before standard compaction)
             let compressed = if self.agent.compact.enable_semantic_compression {
                 info!(agent_id = %self.agent.id, "Semantic compression phase");
-                self.compression_engine.compress(context, &self.agent.compact)?
+                compression::compress(context.clone(), &self.agent.compact).0
             } else {
                 context.clone()
             };
@@ -61,7 +53,7 @@ impl EventHandle<EventData<ResponsePayload>> for CompactionHandler {
             // Phase 2: AI-driven importance pruning (before standard compaction)
             let pruned = if self.agent.compact.enable_structural_dedup {
                 info!(agent_id = %self.agent.id, "Structural dedup / importance pruning phase");
-                self.prune_engine.prune(&compressed, &self.agent.compact)?
+                prune::prune(&compressed, &self.agent.compact).0
             } else {
                 compressed
             };

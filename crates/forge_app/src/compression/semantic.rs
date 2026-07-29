@@ -17,10 +17,7 @@ use super::CompressionReport;
 /// 1. Long assistant messages with no tool calls → candidate for summarization.
 /// 2. Repeated assistant messages (same role, similar length) → collapse.
 /// 3. Messages with very low character-per-token ratio → drop.
-pub fn compress_semantic(
-    mut ctx: Context,
-    _config: &Compact,
-) -> (Context, CompressionReport) {
+pub fn compress_semantic(mut ctx: Context, _config: &Compact) -> (Context, CompressionReport) {
     let mut report = CompressionReport::default();
     let before = ctx.token_count_approx();
 
