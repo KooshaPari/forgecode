@@ -31,7 +31,7 @@ name: Release Drafter
     branches:
     - main
 permissions:
-  contents: read
+  contents: write
   pull-requests: read
 jobs:
   update_release_draft:

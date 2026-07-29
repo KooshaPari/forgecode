@@ -9,7 +9,6 @@ fn cargo_cmd(parts: &[&str]) -> String {
 fn clippy_base() -> Vec<&'static str> {
     vec![
         "cargo",
-        "+nightly",
         "clippy",
         "--all-features",
         "--workspace",

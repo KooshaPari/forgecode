@@ -24,7 +24,7 @@ pub fn generate_release_drafter_workflow() {
         })
         .permissions(
             Permissions::default()
-                .contents(Level::Read)
+                .contents(Level::Write)
                 .pull_requests(Level::Read),
         )
         .add_job("update_release_draft", draft_release_update_job());
