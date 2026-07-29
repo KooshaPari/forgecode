@@ -33,7 +33,7 @@ pub struct PruneReport {
 pub fn prune(ctx: &Context, config: &Compact) -> (Context, PruneReport) {
     let mut report = PruneReport::default();
     let current_tokens = ctx.token_count_approx();
-    let budget = config.token_threshold.unwrap_or(80_000) as usize;
+    let budget = config.token_threshold.unwrap_or(80_000);
 
     if current_tokens <= budget {
         report.remaining_tokens = current_tokens;

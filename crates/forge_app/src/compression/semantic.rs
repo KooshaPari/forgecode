@@ -21,7 +21,7 @@ pub fn compress_semantic(mut ctx: Context, _config: &Compact) -> (Context, Compr
     let mut report = CompressionReport::default();
     let before = ctx.token_count_approx();
 
-    let budget = _config.token_threshold.unwrap_or(80_000) as usize;
+    let budget = _config.token_threshold.unwrap_or(80_000);
     if before <= budget {
         return (ctx, report);
     }

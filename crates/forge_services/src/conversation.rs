@@ -88,9 +88,10 @@ impl<S: ConversationRepository> ConversationService for ForgeConversationService
     async fn get_parent_conversations_lite(
         &self,
         limit: Option<usize>,
+        all_workspaces: bool,
     ) -> Result<Option<Vec<ConversationSummary>>> {
         self.conversation_repository
-            .get_parent_conversations_lite(limit)
+            .get_parent_conversations_lite(limit, all_workspaces)
             .await
     }
 

@@ -161,9 +161,10 @@ impl<F: Send + Sync> ConversationRepository for ForgeRepo<F> {
     async fn get_parent_conversations_lite(
         &self,
         limit: Option<usize>,
+        all_workspaces: bool,
     ) -> anyhow::Result<Option<Vec<ConversationSummary>>> {
         self.conversation_repository
-            .get_parent_conversations_lite(limit)
+            .get_parent_conversations_lite(limit, all_workspaces)
             .await
     }
 

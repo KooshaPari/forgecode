@@ -20,7 +20,7 @@ pub fn compress_ai(mut ctx: Context, _config: &Compact) -> (Context, Compression
     let mut report = CompressionReport::default();
     let before = ctx.token_count_approx();
 
-    let budget = _config.token_threshold.unwrap_or(80_000) as usize;
+    let budget = _config.token_threshold.unwrap_or(80_000);
     let min_importance = _config.min_importance_threshold;
 
     if before <= budget {
