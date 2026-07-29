@@ -254,9 +254,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "hickory": {
-          "type": "boolean"
-        },
         "keep_alive_interval_secs": {
           "description": "Keep-alive interval in seconds",
           "format": "uint64",
@@ -338,7 +335,6 @@
         "pool_idle_timeout_secs",
         "pool_max_idle_per_host",
         "max_redirects",
-        "hickory",
         "tls_backend",
         "adaptive_window",
         "keep_alive_timeout_secs",

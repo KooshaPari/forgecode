@@ -12,7 +12,7 @@ use crate::config::Tier;
 
 /// Pluggable similarity provider.
 ///
-/// - T2  uses local ONNX models (via `fastembed` or similar).
+/// - T2  uses a local embedding provider when implemented.
 /// - T3  uses a hosted service (e.g. `forgeservices`).
 /// - T0/T1 providers return `Ok(None)` to signal "not my tier".
 #[async_trait::async_trait]
@@ -59,33 +59,32 @@ impl SimilarityProvider for HashOnlyProvider {
 }
 
 // ---------------------------------------------------------------------------
-// Concrete: Local fastembed (T2)
+// Concrete: Local fallback (T2)
 // ---------------------------------------------------------------------------
 
-/// Wraps `fastembed-rs` for local ONNX embedding + cosine similarity.
-pub struct LocalFastembedProvider;
+/// Fallback provider used until a real local embedding backend is available.
+pub struct LocalFallbackProvider;
 
-impl LocalFastembedProvider {
+impl LocalFallbackProvider {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for LocalFastembedProvider {
+impl Default for LocalFallbackProvider {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait::async_trait]
-impl SimilarityProvider for LocalFastembedProvider {
+impl SimilarityProvider for LocalFallbackProvider {
     async fn compare(
         &self,
         _agent_id: &str,
         _new_prompt: &str,
     ) -> Result<Option<f64>, SimilarityError> {
-        // Stub — real `fastembed` integration is deferred to a follow-up PR.
-        // The architecture is correct: return None → caller falls back to Jaccard.
+        // The caller falls back to Jaccard when no embedding backend is configured.
         Ok(None)
     }
 }
@@ -116,12 +115,12 @@ pub fn select_provider(
     match tier {
         Tier::T0 | Tier::T1 => Arc::new(HashOnlyProvider::new()),
         Tier::T2 => {
-            // T2: local ONNX — for now, returns None (Jaccard fallback)
-            Arc::new(LocalFastembedProvider::new())
+            // T2: local embedding — fallback until a backend is implemented.
+            Arc::new(LocalFallbackProvider::new())
         }
         Tier::T3 => {
             // T3: hosted — for now, same fallback
-            Arc::new(LocalFastembedProvider::new())
+            Arc::new(LocalFallbackProvider::new())
         }
     }
 }

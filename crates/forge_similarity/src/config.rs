@@ -11,7 +11,7 @@ pub enum Tier {
     T0,
     /// Hash + word-distance for all lengths (no embedding model).
     T1,
-    /// Hash + local ONNX embedding (fastembed-rs).
+    /// Hash + local embedding when a backend is configured.
     T2,
     /// Hash + hosted embedding provider + optional re-rank.
     T3,

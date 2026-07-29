@@ -18,15 +18,23 @@ pub fn generate_release_drafter_workflow() {
                     PullRequestType::Closed,
                 ],
                 branches: vec!["main".to_string()],
+                ..PullRequestTarget::default()
             }),
             ..Event::default()
         })
         .permissions(
             Permissions::default()
-                .contents(Level::Write)
+                .contents(Level::Read)
                 .pull_requests(Level::Read),
         )
-        .add_job("update_release_draft", draft_release_update_job());
+        .add_job(
+            "update_release_draft",
+            draft_release_update_job().permissions(
+                Permissions::default()
+                    .contents(Level::Write)
+                    .pull_requests(Level::Read),
+            ),
+        );
 
     super::generate_workflow(release_drafter, "release-drafter.yml");
 }

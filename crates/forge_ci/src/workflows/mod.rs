@@ -26,8 +26,8 @@ pub(crate) fn generate_workflow(workflow: Workflow, name: &str) {
     let equivalent = current.as_deref().is_some_and(|existing| {
         existing == content
             || match (
-                serde_yml::from_str::<serde_yml::Value>(existing),
-                serde_yml::from_str::<serde_yml::Value>(&content),
+                serde_yaml_ng::from_str::<serde_yaml_ng::Value>(existing),
+                serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&content),
             ) {
                 (Ok(left), Ok(right)) => left == right,
                 _ => false,

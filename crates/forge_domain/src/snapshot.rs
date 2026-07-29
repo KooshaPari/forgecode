@@ -86,7 +86,7 @@ impl Snapshot {
 
     /// Create a hash of a file path for storage
     pub fn path_hash(&self) -> String {
-        let mut hasher = fnv_rs::Fnv64::default();
+        let mut hasher = fnv::FnvHasher::default();
         hasher.write(self.path.as_bytes());
         format!("{:x}", hasher.finish())
     }

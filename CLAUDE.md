@@ -40,11 +40,11 @@ All other files follow upstream conventions.
 | Layer | Technology |
 |-------|------------|
 | Runtime | tokio (full, rt-multi-thread, macros, sync, fs, process, signal) |
-| HTTP client | reqwest (rustls, hickory-dns, http2) |
+| HTTP client | reqwest (rustls, http2) |
 | Auth | aws-config, aws-sdk-bedrockruntime, google-cloud-auth |
 | CLI | clap 4.6 + clap_complete |
 | TUI | reedline 0.47, rustyline 18, termimad, console |
-| Serialization | serde, serde_json, serde_yml, toml_edit |
+| Serialization | serde, serde_json, serde_yaml_ng, toml_edit |
 | Diff/patch | dissimilar, similar, strip-ansi-escapes |
 | Search | grep-searcher, fzf-wrapped, ignore |
 | MCP | rmcp (client + SSE + subprocess + streamable-http transports) |

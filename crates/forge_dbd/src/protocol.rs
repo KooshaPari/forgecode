@@ -53,8 +53,8 @@ pub async fn write_frame<W: AsyncWrite + Unpin, T: Serialize>(
     writer: &mut W,
     value: &T,
 ) -> io::Result<()> {
-    let serialized =
-        bincode::serialize(value).map_err(|e| io::Error::other(format!("bincode error: {e}")))?;
+    let serialized = bincode::serde::encode_to_vec(value, bincode::config::standard())
+        .map_err(|e| io::Error::other(format!("bincode error: {e}")))?;
     let len = serialized.len() as u32;
     writer.write_all(&len.to_le_bytes()).await?;
     writer.write_all(&serialized).await?;
@@ -71,5 +71,7 @@ pub async fn read_frame<R: AsyncRead + Unpin, T: for<'de> Deserialize<'de>>(
     let len = u32::from_le_bytes(len_bytes) as usize;
     let mut buf = vec![0u8; len];
     reader.read_exact(&mut buf).await?;
-    bincode::deserialize(&buf).map_err(|e| io::Error::other(format!("bincode error: {e}")))
+    bincode::serde::decode_from_slice(&buf, bincode::config::standard())
+        .map(|(value, _)| value)
+        .map_err(|e| io::Error::other(format!("bincode error: {e}")))
 }
