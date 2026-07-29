@@ -2682,6 +2682,7 @@ dependencies = [
  "indexmap 2.14.0",
  "serde",
  "serde_json",
+ "serde_yml 0.0.13",
 ]
 
 [[package]]
