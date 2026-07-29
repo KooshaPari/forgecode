@@ -91,6 +91,7 @@ pub trait API: Sync + Send {
     async fn get_parent_conversations_lite(
         &self,
         limit: Option<usize>,
+        all_workspaces: bool,
     ) -> Result<Vec<ConversationSummary>>;
 
     /// Lists conversations by source (e.g., "interactive", "headless",

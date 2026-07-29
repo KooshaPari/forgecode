@@ -1020,7 +1020,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                         let max_conversations = self.config.max_conversations;
                         let conversations = self
                             .api
-                            .get_parent_conversations_lite(Some(max_conversations), false)
+                            .get_parent_conversations_lite(Some(max_conversations), true)
                             .await?;
 
                         if !conversations.is_empty()
@@ -2209,7 +2209,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
         let max_conversations = self.config.max_conversations;
         let conversations = self
             .api
-            .get_parent_conversations_lite(Some(max_conversations), false)
+            .get_parent_conversations_lite(Some(max_conversations), true)
             .await?;
         self.spinner.stop(None)?;
 
@@ -3343,7 +3343,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             // Show conversation picker with lightweight metadata query
             let summaries = self
                 .api
-                .get_parent_conversations_lite(Some(self.config.max_conversations), false)
+                .get_parent_conversations_lite(Some(self.config.max_conversations), true)
                 .await?;
 
             if summaries.is_empty() {
@@ -3423,7 +3423,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             // Interactive: show picker then prompt for new name
             let summaries = self
                 .api
-                .get_parent_conversations_lite(Some(self.config.max_conversations), false)
+                .get_parent_conversations_lite(Some(self.config.max_conversations), true)
                 .await?;
 
             if summaries.is_empty() {
