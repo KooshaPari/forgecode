@@ -57,7 +57,10 @@ pub fn compress_ai(mut ctx: Context, _config: &Compact) -> (Context, Compression
             break;
         }
         if idx < ctx.messages.len()
-            && scores.get(idx).copied().is_some_and(|score| score < min_importance)
+            && scores
+                .get(idx)
+                .copied()
+                .is_some_and(|score| score < min_importance)
         {
             ctx.messages.remove(idx);
             removed.push(idx);
