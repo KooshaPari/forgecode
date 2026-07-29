@@ -40,7 +40,7 @@ All other files follow upstream conventions.
 | Layer | Technology |
 |-------|------------|
 | Runtime | tokio (full, rt-multi-thread, macros, sync, fs, process, signal) |
-| HTTP client | reqwest (rustls, hickory-dns, http2) |
+| HTTP client | reqwest (rustls, http2) |
 | Auth | aws-config, aws-sdk-bedrockruntime, google-cloud-auth |
 | CLI | clap 4.6 + clap_complete |
 | TUI | reedline 0.47, rustyline 18, termimad, console |

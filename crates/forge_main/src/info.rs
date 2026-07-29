@@ -346,7 +346,6 @@ impl From<&ForgeConfig> for Info {
                 )
                 .add_key_value("Pool Max Idle", http.pool_max_idle_per_host.to_string())
                 .add_key_value("Max Redirects", http.max_redirects.to_string())
-                .add_key_value("Use Hickory DNS", http.hickory.to_string())
                 .add_key_value("TLS Backend", format!("{:?}", http.tls_backend))
                 .add_key_value(
                     "Min TLS Version",
