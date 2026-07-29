@@ -78,13 +78,12 @@ anyhow = "1.0.102"
 async-recursion = "1.1.1"
 async-stream = "0.3"
 async-trait = "0.1.89"
-aws-config = { version = "1.8.13", features = ["behavior-version-latest", "sso", "rustls"], default-features = false }
-aws-sdk-bedrockruntime = { version = "1.129.0", features = ["behavior-version-latest", "rustls"], default-features = false }
+aws-config = { version = "1.8.13", features = ["behavior-version-latest", "sso", "default-https-client"], default-features = false }
+aws-sdk-bedrockruntime = { version = "1.129.0", features = ["behavior-version-latest", "default-https-client"], default-features = false }
 aws-credential-types = "1.2.14"
 aws-smithy-types = "1.4.3"
 aws-smithy-runtime-api = "1.11.3"
 aws-smithy-async = { version = "1.2.11", features = ["rt-tokio"] }
-aws-smithy-runtime = { version = "1.10", features = ["connector-hyper-0-14-x", "tls-rustls"] }
 base64 = "0.22.1"
 bstr = "1.12.1"
 bytes = "1.11.1"
