@@ -13,7 +13,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "signal"] }
 tracing = { workspace = true }
-bincode = "1.3"
+bincode = { version = "2.0.1", features = ["serde"] }
 forge_domain = { workspace = true }
 
 [dev-dependencies]
