@@ -1,4 +1,4 @@
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
 
 use derive_more::Display;
@@ -175,7 +175,11 @@ impl Environment {
     }
 
     pub fn workspace_hash(&self) -> WorkspaceHash {
-        let mut hasher = DefaultHasher::default();
+        // BuildHasherDefault produces a deterministic hasher (zero seed),
+        // unlike DefaultHasher::default() which uses OS entropy per-process.
+        // This ensures the same CWD always maps to the same workspace_id
+        // across invocations.
+        let mut hasher = BuildHasherDefault::<DefaultHasher>::default().build_hasher();
         self.cwd.hash(&mut hasher);
 
         WorkspaceHash(hasher.finish())
