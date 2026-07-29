@@ -302,6 +302,15 @@ impl ConversationRepository for ConversationRepositoryImpl {
             let mut query = conversations::table
                 .filter(conversations::parent_id.is_null())
                 .filter(conversations::context.is_not_null())
+                .select((
+                    conversations::conversation_id,
+                    conversations::title,
+                    conversations::created_at,
+                    conversations::updated_at,
+                    conversations::parent_id,
+                    conversations::cwd,
+                    conversations::message_count,
+                ))
                 .order(conversations::updated_at.desc())
                 .into_boxed();
 

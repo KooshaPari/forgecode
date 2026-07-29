@@ -32,7 +32,7 @@ pub fn compress(context: impl Into<Context>, config: &Compact) -> (Context, Comp
     let mut report = CompressionReport::default();
 
     let total_tokens = ctx.token_count_approx();
-    let budget = config.token_threshold.unwrap_or(80_000) as usize;
+    let budget = config.token_threshold.unwrap_or(80_000);
     let level = config.context_compression_level;
 
     if total_tokens <= budget {
