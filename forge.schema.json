@@ -18,6 +18,11 @@
     "Compact": {
       "description": "Configuration for automatic context compaction for all agents",
       "properties": {
+        "compression_strategy": {
+          "$ref": "#/$defs/CompressionStrategy",
+          "default": "token_prune",
+          "description": "Programmatic compression strategy for context reduction.\n`TokenPrune` removes low-information tokens (default, fast, no API cost).\n`StructuralDedup` merges similar tool calls and file reads.\n`SemanticCompress` uses embeddings to cluster and merge related messages."
+        },
         "enable_adaptive_eviction": {
           "default": false,
           "description": "Enable adaptive eviction window that adjusts based on context ratio.\nMore aggressive eviction when approaching token threshold.",
@@ -31,6 +36,16 @@
         "enable_prefilter": {
           "default": false,
           "description": "Enable pre-compaction filtering to remove noise before summarization.\nRemoves short tool results, debug output, and duplicate operations.",
+          "type": "boolean"
+        },
+        "enable_structural_dedup": {
+          "default": false,
+          "description": "Enable structural deduplication of similar tool calls and file reads.",
+          "type": "boolean"
+        },
+        "enable_token_prune": {
+          "default": false,
+          "description": "Enable programmatic token pruning (removes whitespace, comments,\nboilerplate from message content). No API cost, deterministic.",
           "type": "boolean"
         },
         "eviction_window": {
@@ -70,12 +85,25 @@
             "null"
           ]
         },
+        "prune_strategy": {
+          "$ref": "#/$defs/PruneStrategy",
+          "default": "age_based",
+          "description": "AI-driven pruning strategy for message eviction during compaction.\n`AgeBased` evicts oldest first (default).\n`ImportanceBased` evicts lowest-importance messages.\n`Hybrid` combines both, protecting high-importance messages."
+        },
         "retention_window": {
           "default": 0,
           "description": "Number of most recent messages to preserve during compaction.\nThese messages won't be considered for summarization. Works alongside\neviction_window - the more conservative limit (fewer messages to\ncompact) takes precedence.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
+        },
+        "semantic_compress_threshold": {
+          "description": "Token threshold for semantic compression (messages above this ratio\nof total context are candidates for semantic compression).",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "summarization_strategy": {
           "$ref": "#/$defs/SummarizationStrategy",
@@ -125,6 +153,19 @@
           ],
           "description": "Maximum percentage of the model context window used to derive the token\nthreshold before triggering compaction. This is combined with\n`token_threshold` by taking the lower value."
         },
+        "trunc_mode": {
+          "$ref": "#/$defs/SemanticTruncMode",
+          "default": "fixed",
+          "description": "Semantic truncation mode for tool results and long outputs.\n`Fixed` truncates at token count (default).\n`BoundaryAware` truncates at sentence/paragraph boundaries.\n`SemanticKeep` uses similarity to keep the most informative portion."
+        },
+        "trunc_ratio": {
+          "description": "Maximum token ratio of a single tool result to keep before truncation.\nMessages exceeding this ratio of the context window are truncated.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
         "turn_threshold": {
           "description": "Maximum number of conversation turns before triggering compaction",
           "format": "uint",
@@ -136,6 +177,26 @@
         }
       },
       "type": "object"
+    },
+    "CompressionStrategy": {
+      "description": "Programmatic compression strategy for context reduction.",
+      "oneOf": [
+        {
+          "const": "token_prune",
+          "description": "Remove low-information tokens (whitespace, comments, boilerplate).\nFast, deterministic, no API cost.",
+          "type": "string"
+        },
+        {
+          "const": "structural_dedup",
+          "description": "Structural deduplication - merge similar tool calls and file reads.",
+          "type": "string"
+        },
+        {
+          "const": "semantic_compress",
+          "description": "Semantic compression using embeddings - cluster and merge related\nmessages, preserving decision points and key facts.",
+          "type": "string"
+        }
+      ]
     },
     "Effort": {
       "description": "Effort level for model reasoning.",
@@ -573,6 +634,26 @@
       ],
       "type": "object"
     },
+    "PruneStrategy": {
+      "description": "AI-driven pruning strategy for message eviction.",
+      "oneOf": [
+        {
+          "const": "age_based",
+          "description": "Evict oldest messages first (FIFO). Simple and predictable.",
+          "type": "string"
+        },
+        {
+          "const": "importance_based",
+          "description": "Evict messages with lowest semantic importance score.",
+          "type": "string"
+        },
+        {
+          "const": "hybrid",
+          "description": "Hybrid: combine age and importance, protecting high-importance\nmessages even when old.",
+          "type": "string"
+        }
+      ]
+    },
     "ReasoningConfig": {
       "description": "Controls the reasoning behaviour of a model, including effort level, token\nbudget, and visibility of the thinking process.",
       "properties": {
@@ -673,6 +754,26 @@
         "suppress_errors"
       ],
       "type": "object"
+    },
+    "SemanticTruncMode": {
+      "description": "Semantic truncation mode for tool results and long outputs.",
+      "oneOf": [
+        {
+          "const": "fixed",
+          "description": "Truncate at fixed token count (fast, deterministic).",
+          "type": "string"
+        },
+        {
+          "const": "boundary_aware",
+          "description": "Truncate at sentence/paragraph boundaries (preserves readability).",
+          "type": "string"
+        },
+        {
+          "const": "semantic_keep",
+          "description": "Use semantic similarity to keep the most informative portion of\nlong outputs, discarding redundant sections.",
+          "type": "string"
+        }
+      ]
     },
     "SummarizationStrategy": {
       "description": "Strategy for generating summaries during compaction.",
