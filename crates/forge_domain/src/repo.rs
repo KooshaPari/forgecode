@@ -153,6 +153,7 @@ pub trait ConversationRepository: Send + Sync {
     async fn get_parent_conversations_lite(
         &self,
         limit: Option<usize>,
+        all_workspaces: bool,
     ) -> Result<Option<Vec<ConversationSummary>>>;
 
     /// Retrieves conversations by source (e.g., "interactive", "headless",
