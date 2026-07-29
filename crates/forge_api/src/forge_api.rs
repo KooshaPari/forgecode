@@ -323,10 +323,11 @@ impl<
     async fn get_parent_conversations_lite(
         &self,
         limit: Option<usize>,
+        all_workspaces: bool,
     ) -> Result<Vec<ConversationSummary>> {
         Ok(self
             .services
-            .get_parent_conversations_lite(limit)
+            .get_parent_conversations_lite(limit, all_workspaces)
             .await?
             .unwrap_or_default())
     }

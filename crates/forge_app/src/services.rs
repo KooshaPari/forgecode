@@ -275,6 +275,7 @@ pub trait ConversationService: Send + Sync {
     async fn get_parent_conversations_lite(
         &self,
         limit: Option<usize>,
+        all_workspaces: bool,
     ) -> anyhow::Result<Option<Vec<ConversationSummary>>>;
 
     /// Find conversations by source (e.g., "interactive", "headless",
@@ -748,9 +749,10 @@ impl<I: Services> ConversationService for I {
     async fn get_parent_conversations_lite(
         &self,
         limit: Option<usize>,
+        all_workspaces: bool,
     ) -> anyhow::Result<Option<Vec<ConversationSummary>>> {
         self.conversation_service()
-            .get_parent_conversations_lite(limit)
+            .get_parent_conversations_lite(limit, all_workspaces)
             .await
     }
 
