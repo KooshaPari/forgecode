@@ -296,23 +296,19 @@ impl ConversationRepository for ConversationRepositoryImpl {
     async fn get_parent_conversations_lite(
         &self,
         limit: Option<usize>,
+        all_workspaces: bool,
     ) -> anyhow::Result<Option<Vec<ConversationSummary>>> {
         self.run_with_connection(move |connection, wid| {
-            let workspace_id = wid.id() as i64;
             let mut query = conversations::table
-                .filter(conversations::workspace_id.eq(&workspace_id))
                 .filter(conversations::parent_id.is_null())
-                .select((
-                    conversations::conversation_id,
-                    conversations::title,
-                    conversations::created_at,
-                    conversations::updated_at,
-                    conversations::parent_id,
-                    conversations::cwd,
-                    conversations::message_count,
-                ))
+                .filter(conversations::context.is_not_null())
                 .order(conversations::updated_at.desc())
                 .into_boxed();
+
+            if !all_workspaces {
+                let workspace_id = wid.id() as i64;
+                query = query.filter(conversations::workspace_id.eq(&workspace_id));
+            }
 
             if let Some(limit_value) = limit {
                 query = query.limit(limit_value as i64);
