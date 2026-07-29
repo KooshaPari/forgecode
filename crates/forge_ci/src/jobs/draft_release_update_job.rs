@@ -11,7 +11,7 @@ pub fn draft_release_update_job() -> Job {
                     "eada3c96a64734dd381cfbda23511034e328ddb0",
                 )
                 .if_condition(Expression::new(
-                    "github.event_name == 'pull_request_target'",
+                    "github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository",
                 ))
                 .env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}"))
                 .add_with(("config-name", "release-drafter.yml")),
