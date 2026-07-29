@@ -122,7 +122,8 @@ mod tests {
             }
 
             // Test round-trip serialization
-            let serialized = serde_yaml_ng::to_string(&policies).expect("Failed to serialize policies");
+            let serialized =
+                serde_yaml_ng::to_string(&policies).expect("Failed to serialize policies");
             let deserialized: PolicyConfig =
                 serde_yaml_ng::from_str(&serialized).expect("Failed to deserialize policies");
             assert_eq!(policies, deserialized);
