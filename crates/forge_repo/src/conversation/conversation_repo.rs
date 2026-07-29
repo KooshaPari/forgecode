@@ -308,7 +308,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             if !all_workspaces {
                 let workspace_id = wid.id() as i64;
-                query = query.filter(conversations::workspace_id.eq(workspace_id.clone()));
+                query = query.filter(conversations::workspace_id.eq(workspace_id));
             }
 
             if let Some(limit_value) = limit {
