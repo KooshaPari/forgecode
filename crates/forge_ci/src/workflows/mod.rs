@@ -17,14 +17,22 @@ pub(crate) fn generate_workflow(workflow: Workflow, name: &str) {
     let path = std::path::PathBuf::from(root.trim())
         .join(".github/workflows")
         .join(name);
+    let rendered = workflow.to_string().expect("workflow yaml");
     let content = format!(
-        "{}\n{}",
+        "{}\n{}\n",
         GENERATED_HEADER,
-        workflow.to_string().expect("workflow yaml")
+        rendered
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n")
     );
     let current = std::fs::read_to_string(&path).ok();
+    let exact = current
+        .as_deref()
+        .is_some_and(|existing| existing == content);
     let equivalent = current.as_deref().is_some_and(|existing| {
-        existing == content
+        exact
             || match (
                 serde_yaml_ng::from_str::<serde_yaml_ng::Value>(existing),
                 serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&content),
@@ -39,7 +47,7 @@ pub(crate) fn generate_workflow(workflow: Workflow, name: &str) {
             "generated workflow is stale: {}",
             path.display()
         );
-    } else if !equivalent {
+    } else if !exact {
         std::fs::write(&path, content).expect("write workflow");
     }
 }
