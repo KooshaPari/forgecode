@@ -8,6 +8,16 @@ fn generate() {
 #[test]
 fn test_release_drafter() {
     workflow::generate_release_drafter_workflow();
+
+    let workflow_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(".github/workflows/release-drafter.yml");
+    let workflow = std::fs::read_to_string(workflow_path)
+        .expect("release drafter workflow should be generated");
+    assert!(
+        !workflow.contains("Auto Labeler"),
+        "pull_request_target must not execute label writes"
+    );
 }
 
 #[test]

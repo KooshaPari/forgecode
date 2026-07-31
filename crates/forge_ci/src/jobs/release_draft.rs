@@ -23,7 +23,7 @@ pub fn create_draft_release_job(build_job_id: &str) -> Job {
                 .with(("config-name", "release-drafter.yml")),
         )
         .add_step(
-            Step::new("Export Outputs").run("echo \"crate_release_id=${{ steps.create_release.outputs.id }}\" >> $GITHUB_OUTPUT && echo \"crate_release_name=${{ steps.create_release.outputs.tag_name }}\" >> $GITHUB_OUTPUT")
+            Step::new("Export Outputs").run("echo \"crate_release_id=${{ steps.create_release.outputs.id }}\" >> \"$GITHUB_OUTPUT\" && echo \"crate_release_name=${{ steps.create_release.outputs.tag_name }}\" >> \"$GITHUB_OUTPUT\"")
                 .id("set_output"),
         )
         .outputs(indexmap! {
