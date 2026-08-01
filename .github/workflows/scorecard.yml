@@ -16,12 +16,14 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   analysis:
     name: Scorecard analysis
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
 
     steps:
       - name: Checkout
