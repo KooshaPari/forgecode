@@ -206,34 +206,34 @@ tikv-jemallocator = "0.6"
 mimalloc = { version = "0.1", default-features = false }
 
 # Internal crates
-forge_embed = { path = "crates/forge_embed" }
-forge_api = { path = "crates/forge_api" }
-forge_app = { path = "crates/forge_app" }
-forge_ci = { path = "crates/forge_ci" }
-forge_display = { path = "crates/forge_display" }
-forge_domain = { path = "crates/forge_domain" }
-forge_fs = { path = "crates/forge_fs" }
-forge_infra = { path = "crates/forge_infra" }
-forge_repo = { path = "crates/forge_repo" }
-forge_main = { path = "crates/forge_main" }
-forge_services = { path = "crates/forge_services" }
-forge_snaps = { path = "crates/forge_snaps" }
-forge_spinner = { path = "crates/forge_spinner" }
-forge_stream = { path = "crates/forge_stream" }
-forge_template = { path = "crates/forge_template" }
-forge_tool_macros = { path = "crates/forge_tool_macros" }
-forge_tracker = { path = "crates/forge_tracker" }
-forge_walker = { path = "crates/forge_walker" }
-forge_json_repair = { path = "crates/forge_json_repair" }
-forge_select = { path = "crates/forge_select" }
-forge_test_kit = { path = "crates/forge_test_kit" }
+forge_embed = { path = "crates/forge_embed", version = "0.1.1" }
+forge_api = { package = "forge-api", path = "crates/forge_api", version = "1.1.1" }
+forge_app = { path = "crates/forge_app", version = "0.1.1" }
+forge_ci = { path = "crates/forge_ci", version = "0.1.1" }
+forge_display = { path = "crates/forge_display", version = "0.1.1" }
+forge_domain = { path = "crates/forge_domain", version = "0.1.1" }
+forge_fs = { path = "crates/forge_fs", version = "0.1.1" }
+forge_infra = { path = "crates/forge_infra", version = "0.1.1" }
+forge_repo = { path = "crates/forge_repo", version = "0.1.1" }
+forge_main = { path = "crates/forge_main", version = "2.10.0" }
+forge_services = { path = "crates/forge_services", version = "0.1.1" }
+forge_snaps = { path = "crates/forge_snaps", version = "0.1.1" }
+forge_spinner = { path = "crates/forge_spinner", version = "0.1.1" }
+forge_stream = { path = "crates/forge_stream", version = "0.1.1" }
+forge_template = { path = "crates/forge_template", version = "0.1.1" }
+forge_tool_macros = { path = "crates/forge_tool_macros", version = "0.1.1" }
+forge_tracker = { path = "crates/forge_tracker", version = "0.1.1" }
+forge_walker = { path = "crates/forge_walker", version = "0.1.1" }
+forge_json_repair = { path = "crates/forge_json_repair", version = "0.1.1" }
+forge_select = { path = "crates/forge_select", version = "0.1.1" }
+forge_test_kit = { path = "crates/forge_test_kit", version = "0.1.1" }
 
-forge_markdown_stream = { path = "crates/forge_markdown_stream" }
-forge_config = { path = "crates/forge_config" }
-forge_eventsource = { path = "crates/forge_eventsource" }
-forge_eventsource_stream = { path = "crates/forge_eventsource_stream" }
+forge_markdown_stream = { path = "crates/forge_markdown_stream", version = "0.1.1" }
+forge_config = { path = "crates/forge_config", version = "0.1.1" }
+forge_eventsource = { path = "crates/forge_eventsource", version = "0.1.1" }
+forge_eventsource_stream = { path = "crates/forge_eventsource_stream", version = "0.1.1" }
 
 forge3d = { path = "crates/forge3d" }
-forge_drift = { path = "crates/forge_drift" }
-forge_similarity = { path = "crates/forge_similarity" }
-forge_mux = { path = "crates/forge_mux" }
+forge_drift = { path = "crates/forge_drift", version = "0.1.0" }
+forge_similarity = { path = "crates/forge_similarity", version = "0.1.0" }
+forge_mux = { path = "crates/forge_mux", version = "0.1.0" }

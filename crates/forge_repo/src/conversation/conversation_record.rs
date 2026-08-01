@@ -971,6 +971,7 @@ pub(super) struct ConversationRecord {
     pub intent_hash: Option<String>,
     pub context_zstd: Option<Vec<u8>>,
     pub is_compressed: i32,
+    pub hidden: i32,
 }
 
 impl ConversationRecord {
@@ -1037,6 +1038,7 @@ impl ConversationRecord {
             intent_hash: None,
             context_zstd,
             is_compressed,
+            hidden: 0,
         }
     }
 
@@ -1110,6 +1112,7 @@ impl ConversationRecord {
             intent_hash: None,
             context_zstd,
             is_compressed,
+            hidden: 0,
         }
     }
 }
@@ -1129,6 +1132,7 @@ pub(super) struct ConversationRecordLite {
     pub parent_id: Option<String>,
     pub cwd: Option<String>,
     pub message_count: Option<i32>,
+    pub hidden: i32,
 }
 
 impl From<ConversationRecordLite> for forge_domain::ConversationSummary {
@@ -1146,6 +1150,7 @@ impl From<ConversationRecordLite> for forge_domain::ConversationSummary {
             updated_at: record.updated_at.map(|u| u.and_utc()),
             message_count: record.message_count,
             cwd: record.cwd,
+            hidden: record.hidden != 0,
         }
     }
 }

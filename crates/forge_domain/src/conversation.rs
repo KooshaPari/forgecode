@@ -78,6 +78,11 @@ pub struct ConversationSummary {
     pub updated_at: Option<DateTime<Utc>>,
     pub message_count: Option<i32>,
     pub cwd: Option<String>,
+    /// When `true`, the conversation is hidden from the session viewer
+    /// selector but still present in the DB. Used by the heliosLite fork to
+    /// hide agent-spawned subagent sessions without pruning them.
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 impl From<Conversation> for ConversationSummary {
@@ -90,6 +95,7 @@ impl From<Conversation> for ConversationSummary {
             updated_at: c.metadata.updated_at,
             message_count: c.message_count,
             cwd: c.cwd,
+            hidden: false,
         }
     }
 }

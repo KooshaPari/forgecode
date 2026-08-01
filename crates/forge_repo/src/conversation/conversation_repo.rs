@@ -245,10 +245,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let parent_id = parent_id.into_string();
         self.run_with_connection(move |connection, wid| {
             let workspace_id = wid.id() as i64;
+            // heliosLite: filter out hidden (agent-spawned) conversations from default listings
             let records: Vec<ConversationRecord> = conversations::table
                 .filter(conversations::workspace_id.eq(&workspace_id))
                 .filter(conversations::parent_id.eq(&parent_id))
                 .filter(conversations::context.is_not_null())
+                .filter(conversations::hidden.eq(0))
                 .order(conversations::updated_at.desc())
                 .load(connection)?;
 
@@ -269,15 +271,20 @@ impl ConversationRepository for ConversationRepositoryImpl {
     ) -> anyhow::Result<Option<Vec<Conversation>>> {
         self.run_with_connection(move |connection, wid| {
             let workspace_id = wid.id() as i64;
+            // heliosLite: filter out hidden (agent-spawned) conversations from default listings
             let mut query = conversations::table
                 .filter(conversations::workspace_id.eq(&workspace_id))
                 .filter(conversations::context.is_not_null())
+                .filter(conversations::hidden.eq(0))
                 .filter(conversations::parent_id.is_null())
                 .order(conversations::updated_at.desc())
                 .into_boxed();
 
             if let Some(limit_value) = limit {
-                query = query.limit(limit_value as i64);
+                if limit_value > 0 {
+                    query = query.limit(limit_value as i64);
+                }
+                // 0 = unlimited (heliosLite)
             }
 
             let records: Vec<ConversationRecord> = query.load(connection)?;
@@ -299,9 +306,11 @@ impl ConversationRepository for ConversationRepositoryImpl {
         all_workspaces: bool,
     ) -> anyhow::Result<Option<Vec<ConversationSummary>>> {
         self.run_with_connection(move |connection, wid| {
+            // heliosLite: filter out hidden (agent-spawned) conversations from default listings
             let mut query = conversations::table
                 .filter(conversations::parent_id.is_null())
                 .filter(conversations::context.is_not_null())
+                .filter(conversations::hidden.eq(0))
                 .select(ConversationRecordLite::as_select())
                 .order(conversations::updated_at.desc())
                 .into_boxed();
@@ -312,7 +321,10 @@ impl ConversationRepository for ConversationRepositoryImpl {
             }
 
             if let Some(limit_value) = limit {
-                query = query.limit(limit_value as i64);
+                if limit_value > 0 {
+                    query = query.limit(limit_value as i64);
+                }
+                // 0 = unlimited (heliosLite)
             }
 
             let records: Vec<ConversationRecordLite> = query.load(connection)?;
@@ -336,15 +348,20 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let source = source.to_string();
         self.run_with_connection(move |connection, wid| {
             let workspace_id = wid.id() as i64;
+            // heliosLite: filter out hidden (agent-spawned) conversations from default listings
             let mut query = conversations::table
                 .filter(conversations::workspace_id.eq(&workspace_id))
                 .filter(conversations::context.is_not_null())
+                .filter(conversations::hidden.eq(0))
                 .filter(conversations::source.eq(&source))
                 .order(conversations::updated_at.desc())
                 .into_boxed();
 
             if let Some(limit_value) = limit {
-                query = query.limit(limit_value as i64);
+                if limit_value > 0 {
+                    query = query.limit(limit_value as i64);
+                }
+                // 0 = unlimited (heliosLite)
             }
 
             let records: Vec<ConversationRecord> = query.load(connection)?;
@@ -608,15 +625,20 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let cwd = cwd.to_string();
         self.run_with_connection(move |connection, wid| {
             let workspace_id = wid.id() as i64;
+            // heliosLite: filter out hidden (agent-spawned) conversations from default listings
             let mut query = conversations::table
                 .filter(conversations::workspace_id.eq(&workspace_id))
                 .filter(conversations::context.is_not_null())
+                .filter(conversations::hidden.eq(0))
                 .filter(conversations::cwd.eq(&cwd))
                 .order(conversations::updated_at.desc())
                 .into_boxed();
 
             if let Some(limit_value) = limit {
-                query = query.limit(limit_value as i64);
+                if limit_value > 0 {
+                    query = query.limit(limit_value as i64);
+                }
+                // 0 = unlimited (heliosLite)
             }
 
             let records: Vec<ConversationRecord> = query.load(connection)?;
@@ -1137,6 +1159,7 @@ mod tests {
             intent_hash: None,
             context_zstd: None,
             is_compressed: 0,
+            hidden: 0,
         };
 
         let actual = Conversation::try_from(fixture)?;
@@ -1591,6 +1614,7 @@ mod tests {
             intent_hash: None,
             context_zstd: None,
             is_compressed: 0,
+            hidden: 0,
         };
 
         let result = Conversation::try_from(fixture);

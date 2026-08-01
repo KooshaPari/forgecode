@@ -2292,6 +2292,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
+name = "forge-api"
+version = "1.1.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "forge_app",
+ "forge_config",
+ "forge_domain",
+ "forge_infra",
+ "forge_repo",
+ "forge_services",
+ "forge_stream",
+ "futures",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "forge3d"
 version = "2.9.9"
 dependencies = [
@@ -2314,27 +2335,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
-]
-
-[[package]]
-name = "forge_api"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "forge_app",
- "forge_config",
- "forge_domain",
- "forge_infra",
- "forge_repo",
- "forge_services",
- "forge_stream",
- "futures",
- "serde_json",
- "tokio",
- "tokio-util",
- "tracing",
- "url",
 ]
 
 [[package]]
@@ -2693,7 +2693,7 @@ dependencies = [
  "dirs",
  "enable-ansi-support",
  "fake",
- "forge_api",
+ "forge-api",
  "forge_app",
  "forge_config",
  "forge_display",

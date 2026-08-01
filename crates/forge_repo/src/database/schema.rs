@@ -21,5 +21,6 @@ diesel::table! {
         intent_hash -> Nullable<Text>,
         context_zstd -> Nullable<Binary>,
         is_compressed -> Integer,
+        hidden -> Integer,
     }
 }

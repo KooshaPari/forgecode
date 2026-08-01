@@ -6,6 +6,7 @@ use anyhow::Result;
 use backon::{BlockingRetryable, ExponentialBuilder};
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, CustomizeConnection, Pool, PooledConnection};
+use diesel::sql_types::{BigInt, Text};
 use diesel::sqlite::SqliteConnection;
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use forge_config::RetryConfig;
@@ -15,11 +16,23 @@ pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("src/database/migra
 
 pub type DbPool = Pool<ConnectionManager<SqliteConnection>>;
 pub type PooledSqliteConnection = PooledConnection<ConnectionManager<SqliteConnection>>;
+#[derive(QueryableByName)]
+struct CountResult {
+    #[diesel(sql_type = BigInt)]
+    cnt: i64,
+}
+
+#[derive(QueryableByName)]
+struct ColumnInfoRow {
+    #[diesel(sql_type = Text)]
+    name: String,
+}
 
 /// Fallback max retries for pool operations when no `RetryConfig` is supplied.
 const DEFAULT_POOL_MAX_RETRIES: usize = 5;
 /// Fallback minimum delay between pool-connection retries.
 const DEFAULT_POOL_MIN_DELAY: Duration = Duration::from_secs(1);
+const HIDDEN_MIGRATION_VERSION: &str = "2026-07-29-000000_add_hidden_to_conversations";
 
 #[derive(Debug, Clone)]
 pub struct PoolConfig {
@@ -79,9 +92,7 @@ impl DatabasePool {
             .get()
             .map_err(|e| anyhow::anyhow!("Failed to get connection for migrations: {e}"))?;
 
-        connection
-            .run_pending_migrations(MIGRATIONS)
-            .map_err(|e| anyhow::anyhow!("Failed to run database migrations: {e}"))?;
+        run_pending_migrations_with_hidden_repair(&mut connection)?;
 
         Ok(Self {
             pool,
@@ -256,7 +267,7 @@ impl DatabasePool {
             .get()
             .map_err(|e| anyhow::anyhow!("Failed to get connection for migrations: {e}"))?;
 
-        connection.run_pending_migrations(MIGRATIONS).map_err(|e| {
+        run_pending_migrations_with_hidden_repair(&mut connection).map_err(|e| {
             warn!(error = %e, "Failed to run database migrations");
             anyhow::anyhow!("Failed to run database migrations: {e}")
         })?;
@@ -267,4 +278,59 @@ impl DatabasePool {
         debug!(database_path = %config.database_path.display(), "created connection pool");
         Ok(Self { pool, retry_config, _checkpointer: checkpointer })
     }
+}
+
+fn run_pending_migrations_with_hidden_repair(connection: &mut SqliteConnection) -> Result<()> {
+    if let Err(err) = connection.run_pending_migrations(MIGRATIONS) {
+        let error_text = err.to_string();
+
+        if error_text.contains("duplicate column name: hidden")
+            && hidden_migration_is_already_present(connection)?
+        {
+            mark_hidden_migration_applied(connection)?;
+
+            connection
+                .run_pending_migrations(MIGRATIONS)
+                .map_err(|e| anyhow::anyhow!("Failed to rerun migrations after recovery: {e}"))?;
+            return Ok(());
+        }
+
+        return Err(anyhow::anyhow!(
+            "Failed to run database migrations: {error_text}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn hidden_migration_is_already_present(connection: &mut SqliteConnection) -> Result<bool> {
+    let columns: Vec<ColumnInfoRow> = diesel::sql_query("PRAGMA table_info(conversations)")
+        .load(connection)
+        .map_err(|e| anyhow::anyhow!("Failed to inspect conversations schema: {e}"))?;
+
+    Ok(columns.iter().any(|row| row.name == "hidden"))
+}
+
+fn mark_hidden_migration_applied(connection: &mut SqliteConnection) -> Result<()> {
+    let version = HIDDEN_MIGRATION_VERSION;
+    let existing: CountResult = diesel::sql_query(
+        "SELECT COUNT(*) as cnt FROM __diesel_schema_migrations WHERE version = ?",
+    )
+    .bind::<Text, _>(version)
+    .get_result(connection)
+    .map_err(|e| anyhow::anyhow!("Failed to read migration registry: {e}"))?;
+
+    if existing.cnt > 0 {
+        return Ok(());
+    }
+
+    diesel::sql_query(
+        "INSERT INTO __diesel_schema_migrations (version, run_on)
+         VALUES (?, CURRENT_TIMESTAMP)",
+    )
+    .bind::<Text, _>(version)
+    .execute(connection)
+    .map_err(|e| anyhow::anyhow!("Failed to mark hidden migration as applied: {e}"))?;
+
+    Ok(())
 }

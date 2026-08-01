@@ -248,6 +248,7 @@ mod tests {
             updated_at: Some(now),
             message_count: None,
             cwd: None,
+            hidden: false,
         }
     }
 
