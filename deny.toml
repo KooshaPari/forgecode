@@ -30,10 +30,6 @@ ignore = [
     # Tracking: https://github.com/KooshaPari/forgecode/issues — upstream-dependency-advisories label.
     { id = "RUSTSEC-2026-0118", reason = "Transitive dep from upstream forgecode workspace; no direct use in Phenotype additions; pending upstream resolution." },
     { id = "RUSTSEC-2026-0119", reason = "Transitive dep from upstream forgecode workspace; no direct use in Phenotype additions; pending upstream resolution." },
-    { id = "RUSTSEC-2026-0098", reason = "Transitive dep from upstream forgecode workspace; no direct use in Phenotype additions; pending upstream resolution." },
-    { id = "RUSTSEC-2026-0099", reason = "Transitive dep from upstream forgecode workspace; no direct use in Phenotype additions; pending upstream resolution." },
-    { id = "RUSTSEC-2026-0104", reason = "Transitive dep from upstream forgecode workspace; no direct use in Phenotype additions; pending upstream resolution." },
-
     # Unmaintained-transitive advisories surfaced via upstream forgecode workspace
     # deps (no direct use in Phenotype additions). All have "no safe upgrade"
     # per RustSec; resolution depends on upstream tailcallhq/forgecode bumps.
