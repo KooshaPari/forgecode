@@ -28,6 +28,21 @@ fn generated_ci_preserves_blocking_pr_security_scans() {
     assert!(workflow.contains("exit-code: '1'"));
     assert!(workflow.ends_with('\n'));
     assert!(workflow.lines().all(|line| line.trim_end() == line));
+
+    let trufflehog = std::fs::read_to_string(root.join(".github/workflows/trufflehog.yml"))
+        .expect("trufflehog workflow is readable");
+    assert!(trufflehog.contains("name: Trufflehog Secrets Scan"));
+    assert!(trufflehog.contains("permissions:\n  contents: read"));
+    assert!(trufflehog.contains(
+        "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
+    ));
+    assert!(trufflehog.contains(
+        "trufflesecurity/trufflehog@cb6aeefd6e2498240d0418e63f69684d28337e7b"
+    ));
+    assert!(trufflehog.contains("version: 3.91.0"));
+    assert!(trufflehog.contains("extra_args: --only-verified"));
+    assert!(trufflehog.ends_with('\n'));
+    assert!(trufflehog.lines().all(|line| line.trim_end() == line));
 }
 
 #[test]
