@@ -184,8 +184,7 @@ pub fn run_zsh_doctor() -> Result<()> {
     #[cfg(windows)]
     if !zsh_available() {
         println!(
-            "Forge doctor skipped: zsh is not available on Windows. "
-                .to_owned()
+            "Forge doctor skipped: zsh is not available on Windows. ".to_owned()
                 + "Install zsh or run `forge zsh doctor` from a zsh-capable environment."
         );
         return Ok(());
