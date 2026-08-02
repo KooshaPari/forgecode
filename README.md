@@ -561,6 +561,16 @@ Set to a higher value if you want more retry attempts, or lower if you want fast
 </details>
 
 <details>
+<summary><strong>Auto-Continue on Interrupt</strong></summary>
+
+Set `auto_continue_on_interrupt: true` to continue after a per-turn request or
+tool-failure limit without waiting for an interactive confirmation. Automatic
+continuation is bounded and stops with a diagnostic after eight chained
+interruptions.
+
+</details>
+
+<details>
 <summary><strong>Max Requests Per Turn</strong></summary>
 
 Limit the maximum number of requests an agent can make in a single conversation turn. This prevents runaway conversations and helps control API usage and costs.
