@@ -178,8 +178,31 @@ fn execute_zsh_script_with_streaming(script_content: &str, script_name: &str) ->
 ///
 /// Returns error if the doctor script cannot be executed
 pub fn run_zsh_doctor() -> Result<()> {
+    // The Windows release does not bundle zsh.  Doctor is a diagnostic aid,
+    // so report that limitation and leave the command successful instead of
+    // turning an otherwise usable installation into a hard failure.
+    #[cfg(windows)]
+    if !zsh_available() {
+        println!(
+            "Forge doctor skipped: zsh is not available on Windows. "
+                .to_owned()
+                + "Install zsh or run `forge zsh doctor` from a zsh-capable environment."
+        );
+        return Ok(());
+    }
+
     let script_content = include_str!("../../../../shell-plugin/doctor.zsh");
     execute_zsh_script_with_streaming(script_content, "doctor")
+}
+
+#[cfg(windows)]
+fn zsh_available() -> bool {
+    std::process::Command::new("zsh")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok()
 }
 
 /// Shows ZSH keyboard shortcuts with streaming output

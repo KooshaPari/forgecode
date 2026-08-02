@@ -126,21 +126,25 @@ fi
 # 2. Check if forge is installed and in PATH
 print_section "Forge Installation"
 
+# Respect an explicitly configured executable (for example, forgecode on a
+# machine that keeps the legacy forge binary installed alongside it).
+local forge_bin="${FORGE_BIN:-forge}"
+
 # Check if forge is in PATH
-if command -v forge &> /dev/null; then
-    local forge_path=$(command -v forge)
+if command -v "$forge_bin" &> /dev/null; then
+    local forge_path=$(command -v "$forge_bin")
     
     # Get forge version and extract just the version number
-    local forge_version=$(forge --version 2>&1 | head -n1 | awk '{print $2}')
+    local forge_version=$("$forge_bin" --version 2>&1 | head -n1 | awk '{print $2}')
     if [[ -n "$forge_version" ]]; then
-        print_result pass "forge: ${forge_version}"
+        print_result pass "${forge_bin}: ${forge_version}"
         print_result info "${forge_path}"
     else
-        print_result pass "forge: installed"
+        print_result pass "${forge_bin}: installed"
         print_result info "${forge_path}"
     fi
 else
-    print_result fail "Forge binary not found in PATH" "Installation: curl -fsSL https://forgecode.dev/cli | sh"
+    print_result fail "Forge binary not found: ${forge_bin}" "Installation: curl -fsSL https://forgecode.dev/cli | sh"
 fi
 
 # 3. Check shell plugin
@@ -152,8 +156,8 @@ if [[ -n "$_FORGE_PLUGIN_LOADED" ]]; then
 else
     print_result fail "Forge plugin not loaded"
     print_result instruction "Add to your ~/.zshrc:"
-    print_result code "eval \"\$(forge zsh plugin)\""
-    print_result instruction "Or run: forge zsh setup"
+    print_result code "eval \"\$(\"${forge_bin}\" zsh plugin)\""
+    print_result instruction "Or run: ${forge_bin} zsh setup"
 fi
 
 
@@ -198,11 +202,11 @@ elif (( $+functions[p10k] )); then
 elif [[ -n "$ZSH_THEME" ]]; then
     print_result warn "Using theme: ${ZSH_THEME}"
     print_result instruction "To use Forge theme, add to ~/.zshrc:"
-    print_result code "eval \"\$(forge zsh theme)\""
+    print_result code "eval \"\$(\"${forge_bin}\" zsh theme)\""
 else
     print_result warn "No theme loaded"
     print_result instruction "To use Forge theme, add to ~/.zshrc:"
-    print_result code "eval \"\$(forge zsh theme)\""
+    print_result code "eval \"\$(\"${forge_bin}\" zsh theme)\""
 fi
 
 # Helper function to compare versions
