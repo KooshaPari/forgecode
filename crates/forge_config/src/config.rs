@@ -259,6 +259,14 @@ pub struct ForgeConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_requests_per_turn: Option<usize>,
 
+    /// Whether to automatically continue the conversation (without a
+    /// confirmation prompt) when a per-turn limit — such as the tool failure
+    /// or request limit — is reached. Recommended for long-running and
+    /// non-interactive conversations so the session does not stall on a y/n
+    /// prompt.
+    #[serde(default)]
+    pub auto_continue_on_interrupt: bool,
+
     /// Context compaction settings applied to all agents; falls back to each
     /// agent's individual setting when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]

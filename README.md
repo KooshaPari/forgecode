@@ -561,6 +561,20 @@ Set to a higher value if you want more retry attempts, or lower if you want fast
 </details>
 
 <details>
+<summary><strong>Auto-Continue on Interrupt</strong></summary>
+
+Control whether Forge automatically continues a conversation when a per-turn limit (such as the tool failure or request limit) is reached, instead of blocking on a "Do you want to continue anyway?" confirmation prompt. Recommended for long-running and non-interactive conversations.
+
+```yaml
+# forge.yaml
+auto_continue_on_interrupt: true # Continue without a y/n prompt on limits
+```
+
+When disabled (default), Forge asks for confirmation and stops if you decline. The prompt is also skipped automatically when stdin is not a TTY, in CI, or when `FORGE_NON_INTERACTIVE` / `FORGE_AGENT_MODE` is set.
+
+</details>
+
+<details>
 <summary><strong>Max Requests Per Turn</strong></summary>
 
 Limit the maximum number of requests an agent can make in a single conversation turn. This prevents runaway conversations and helps control API usage and costs.

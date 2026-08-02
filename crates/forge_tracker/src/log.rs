@@ -30,15 +30,12 @@ pub fn init_tracing(log_path: PathBuf, tracker: Tracker) -> anyhow::Result<Guard
 
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_env(
-                // Additive rename: HELIOSLITE_LOG wins, falls back to FORGE_LOG
-                // (which is the upstream / pre-rename env name).
-                std::env::var("HELIOSLITE_LOG")
-                    .or_else(|_| std::env::var("FORGE_LOG"))
-                    .ok()
-                    .as_deref(),
-            )
-            .unwrap_or(level),
+            // Additive rename: HELIOSLITE_LOG wins, falls back to FORGE_LOG
+            // (which is the upstream / pre-rename env name).
+            std::env::var("HELIOSLITE_LOG")
+                .or_else(|_| std::env::var("FORGE_LOG"))
+                .map(tracing_subscriber::EnvFilter::new)
+                .unwrap_or(level),
         )
         .with(fmt_layer)
         .init();

@@ -4,6 +4,11 @@
   "description": "Top-level Forge configuration merged from all sources (defaults, file,\nenvironment).",
   "type": "object",
   "properties": {
+    "auto_continue_on_interrupt": {
+      "description": "Whether to automatically continue the conversation (without a\nconfirmation prompt) when a per-turn limit — such as the tool failure\nor request limit — is reached. Recommended for long-running and\nnon-interactive conversations so the session does not stall on a y/n\nprompt.",
+      "type": "boolean",
+      "default": false
+    },
     "auto_dump": {
       "description": "Format used when automatically creating a session dump after task\ncompletion; disabled when absent.",
       "anyOf": [

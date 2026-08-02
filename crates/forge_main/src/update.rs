@@ -23,11 +23,10 @@ async fn execute_update_command(api: Arc<impl API>, auto_update: bool) {
         .execute_shell_command_raw(&format!("curl -fsSL {primary} | sh"))
         .await
     {
-        Ok(o) => o,
+        Ok(o) => Ok(o),
         Err(_) => api
             .execute_shell_command_raw(&format!("curl -fsSL {fallback} | sh"))
-            .await
-            .unwrap_or_else(|e| e),
+            .await,
     };
 
     match output {
@@ -138,11 +137,11 @@ pub async fn on_update(api: Arc<impl API>, update: Option<&Update>) {
     let primary_repo =
         std::env::var("HELIOSLITE_REPO").unwrap_or_else(|_| "KooshaPari/heliosLite".to_string());
     let legacy_repo = "KooshaPari/forgecode";
+    let interval: std::time::Duration = frequency.clone().into();
     let informer_primary =
-        update_informer::new(registry::GitHub, primary_repo.as_str(), VERSION)
-            .interval(frequency.into());
+        update_informer::new(registry::GitHub, primary_repo.as_str(), VERSION).interval(interval);
     let informer_legacy = update_informer::new(registry::GitHub, legacy_repo, VERSION)
-        .interval(frequency.into());
+        .interval(interval);
 
     if let Some(version) = informer_primary
         .check_version()
