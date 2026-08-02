@@ -1008,6 +1008,11 @@
         "null"
       ]
     },
+    "auto_continue_on_interrupt": {
+      "default": false,
+      "description": "Automatically continue after a per-turn limit interruption; bounded to eight chained interruptions.",
+      "type": "boolean"
+    },
     "max_search_lines": {
       "default": 0,
       "description": "Maximum number of lines returned by a single file search operation.",

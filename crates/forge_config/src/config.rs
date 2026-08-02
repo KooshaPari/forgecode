@@ -259,6 +259,10 @@ pub struct ForgeConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_requests_per_turn: Option<usize>,
 
+    /// Whether to automatically continue after a per-turn limit interruption.
+    #[serde(default)]
+    pub auto_continue_on_interrupt: bool,
+
     /// Context compaction settings applied to all agents; falls back to each
     /// agent's individual setting when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
