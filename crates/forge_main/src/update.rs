@@ -42,6 +42,50 @@ fn validate_update_url(raw: &str) -> Option<Url> {
     Some(url)
 }
 
+/// Return the release asset name produced for a Rust target triple.
+///
+/// Release artifacts are intentionally named after their complete target
+/// triple, matching the matrix in `.github/workflows/release.yml`. Keeping
+/// this mapping explicit prevents an updater from guessing an asset for an
+/// unsupported platform.
+fn release_asset_for_target(target: &str) -> Option<&'static str> {
+    match target {
+        "aarch64-apple-darwin" => Some("forge-aarch64-apple-darwin"),
+        "x86_64-apple-darwin" => Some("forge-x86_64-apple-darwin"),
+        "aarch64-unknown-linux-gnu" => Some("forge-aarch64-unknown-linux-gnu"),
+        "x86_64-unknown-linux-gnu" => Some("forge-x86_64-unknown-linux-gnu"),
+        "aarch64-unknown-linux-musl" => Some("forge-aarch64-unknown-linux-musl"),
+        "x86_64-unknown-linux-musl" => Some("forge-x86_64-unknown-linux-musl"),
+        "aarch64-pc-windows-msvc" => Some("forge-aarch64-pc-windows-msvc.exe"),
+        "x86_64-pc-windows-msvc" => Some("forge-x86_64-pc-windows-msvc.exe"),
+        _ => None,
+    }
+}
+
+/// Build the canonical GitHub release URL for a supported target asset.
+///
+/// Versions may be supplied with or without the conventional leading `v`.
+/// The returned URL is only constructed for non-empty, release-safe version
+/// strings and targets present in the release matrix.
+fn release_asset_url(version: &str, target: &str) -> Option<Url> {
+    let version = version.strip_prefix('v').unwrap_or(version);
+    if version.is_empty()
+        || version.starts_with('v')
+        || version.len() > 64
+        || !version.as_bytes()[0].is_ascii_digit()
+        || !version
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+    {
+        return None;
+    }
+    let asset = release_asset_for_target(target)?;
+    Url::parse(&format!(
+        "https://github.com/{DEFAULT_UPDATE_REPO}/releases/download/v{version}/{asset}"
+    ))
+    .ok()
+}
+
 fn verified_update_command(url: &Url) -> String {
     let raw = url.as_str();
     format!(
@@ -259,6 +303,65 @@ mod tests {
         ] {
             assert!(validate_update_repo(value).is_none(), "accepted {value:?}");
         }
+    }
+
+    #[test]
+    fn release_asset_maps_supported_target_triples() {
+        for (target, expected) in [
+            ("aarch64-apple-darwin", "forge-aarch64-apple-darwin"),
+            ("x86_64-apple-darwin", "forge-x86_64-apple-darwin"),
+            ("aarch64-unknown-linux-gnu", "forge-aarch64-unknown-linux-gnu"),
+            ("x86_64-unknown-linux-gnu", "forge-x86_64-unknown-linux-gnu"),
+            ("aarch64-unknown-linux-musl", "forge-aarch64-unknown-linux-musl"),
+            ("x86_64-unknown-linux-musl", "forge-x86_64-unknown-linux-musl"),
+            ("aarch64-pc-windows-msvc", "forge-aarch64-pc-windows-msvc.exe"),
+            ("x86_64-pc-windows-msvc", "forge-x86_64-pc-windows-msvc.exe"),
+        ] {
+            assert_eq!(release_asset_for_target(target), Some(expected));
+        }
+    }
+
+    #[test]
+    fn release_asset_rejects_unsupported_target_triples() {
+        for target in [
+            "aarch64-linux-android",
+            "x86_64-pc-windows-gnu",
+            "x86_64-unknown-freebsd",
+            "wasm32-unknown-unknown",
+            "",
+        ] {
+            assert_eq!(release_asset_for_target(target), None, "accepted {target:?}");
+        }
+    }
+
+    #[test]
+    fn release_asset_url_normalizes_version_and_target() {
+        assert_eq!(
+            release_asset_url("2.10.2", "aarch64-apple-darwin").unwrap().as_str(),
+            "https://github.com/KooshaPari/forgecode/releases/download/v2.10.2/forge-aarch64-apple-darwin"
+        );
+        assert_eq!(
+            release_asset_url("v2.10.2", "x86_64-pc-windows-msvc")
+                .unwrap()
+                .as_str(),
+            "https://github.com/KooshaPari/forgecode/releases/download/v2.10.2/forge-x86_64-pc-windows-msvc.exe"
+        );
+    }
+
+    #[test]
+    fn release_asset_url_rejects_invalid_versions_and_targets() {
+        for version in [
+            "",
+            "v",
+            "vv2.10.2",
+            "release-2.10.2",
+            "2.10.2/../../x",
+            "2.10.2?download=1",
+            "2.10.2#x",
+        ] {
+            assert!(release_asset_url(version, "aarch64-apple-darwin").is_none());
+        }
+        assert!(release_asset_url("2.10.2", "x86_64-pc-windows-gnu").is_none());
     }
 
     #[test]

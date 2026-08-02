@@ -6,14 +6,18 @@ current after install. It cross-references `docs/FORK.md` and
 
 ## Channels
 
-HeliosLite publishes to four mutually-consistent channels:
+HeliosLite is currently released from `KooshaPari/forgecode`. The release
+workflow publishes platform binaries with adjacent `.sha256` sidecars; an
+installer must verify the sidecar before executing or replacing a binary.
+Package-manager channels remain deferred until fork-owned repositories and
+signed release provenance are available.
 
 | Channel  | Source                                  | Use when                                 |
 |----------|-----------------------------------------|------------------------------------------|
 | stable   | `KooshaPari/forgecode` `release/v*`     | production users                        |
 | rc       | `KooshaPari/forgecode` `rc-v*`          | QA / willing early adopters             |
 | nightly  | `helios-lite-nightly` workflow artifact | short-lived; pinned by SHA              |
-| legacy   | `forgecode.dev/cli`                     | bootstrap for first install only        |
+| legacy   | `forgecode.dev/cli`                     | bootstrap only; must expose `cli.sha256` |
 
 Stable and rc go through `cargo-dist`-style release pipelines; nightly
 runs via `helios-lite-nightly.yml`.
@@ -22,12 +26,12 @@ runs via `helios-lite-nightly.yml`.
 
 | Platform  | Command                                             | Source                                    |
 |-----------|-----------------------------------------------------|-------------------------------------------|
-| curl \\|sh (Linux/macOS) | `curl -fsSL https://helioslite.dev/cli \| sh`  | `install.sh`                              |
+| curl \\|sh (Linux/macOS) | `curl -fsSL https://helioslite.dev/cli \| sh`  | `install.sh` + mandatory `cli.sha256`     |
 | irm (Windows PowerShell) | `irm https://helioslite.dev/install.ps1 \| iex` | `install.ps1`                             |
-| Homebrew (macOS/Linux)   | `brew install helioslite`                  | packaging/homebrew/helioslite.rb          |
-| Chocolatey (Windows)    | `choco install helioslite`                  | packaging/chocolatey/helioslite.nuspec    |
-| winget (Windows)        | `winget install KooshaPari.HeliosLite`     | packaging/winget/                         |
-| crates.io (Rust users)  | `cargo install helioslite`                  | publishing API (gate 4b publishes here)  |
+| Homebrew (macOS/Linux)   | deferred                                | fork-owned tap + signed release required  |
+| Chocolatey (Windows)    | deferred                                | fork-owned feed + signed release required  |
+| winget (Windows)        | deferred                                | fork-owned manifest + signed release required |
+| crates.io (Rust users)  | deferred                                | workspace crates must be publishable first |
 
 ## In-app update behaviour
 
@@ -35,9 +39,12 @@ runs via `helios-lite-nightly.yml`.
    `KooshaPari/forgecode` repo (`HELIOSLITE_REPO` env var overrides).
 2. If `frequency = Always` and the process is in a TTY, we ask whether
    to upgrade.
-3. If `--apply` was passed or `--yes` was paired with the prompt, we
-   `curl -fsSL $HELIOSLITE_UPDATE_URL | sh` — first trying
-   `helioslite.dev/cli`, then falling back to `forgecode.dev/cli`.
+3. If `--apply` was passed or `--yes` was paired with the prompt, the updater
+   downloads `$HELIOSLITE_UPDATE_URL` and its adjacent `.sha256` sidecar,
+   verifies the exact 64-hex SHA-256 digest, and only then executes the
+   installer from a unique temporary directory. Missing or mismatched
+   sidecars fail closed. The default endpoint is `helioslite.dev/cli`, with
+   `forgecode.dev/cli` retained only as a legacy fallback.
 4. If the CLI is non-interactive (CI, agent fleet, scripted install),
    the check is skipped.
 
