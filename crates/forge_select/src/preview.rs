@@ -1,11 +1,13 @@
 use std::collections::BTreeSet;
 use std::io::{self, Write};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use std::{cmp, fmt};
 
 use bstr::ByteSlice;
+use signal_hook::consts::SIGINT;
 use crossterm::cursor::{Hide, MoveTo, MoveToColumn, MoveUp, Show};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -286,6 +288,26 @@ pub fn run_select_ui(options: SelectUiOptions) -> anyhow::Result<Option<String>>
     Ok(run_select_ui_values(options)?.and_then(|values| values.into_iter().next()))
 }
 
+/// Process-wide SIGINT flag used as a terminal-restore safety net.
+///
+/// When a real SIGINT arrives while the picker is not blocked in the key event
+/// reader (e.g. forge is spawned in its own process group and Ctrl+C delivers
+/// an actual signal rather than a raw-mode key event), the flag is set. The
+/// picker loop notices it and restores the terminal before returning, instead
+/// of letting the process be killed with raw mode still enabled — which would
+/// leave the shell with broken, half-echoed input.
+static SIGINT_FLAG: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+
+fn sigint_flag() -> &'static Arc<AtomicBool> {
+    SIGINT_FLAG.get_or_init(|| {
+        let flag = Arc::new(AtomicBool::new(false));
+        // Register once for the process lifetime. Errors (e.g. an unsupported
+        // platform) are ignored so the picker still works without the net.
+        let _ = signal_hook::flag::register(SIGINT, Arc::clone(&flag));
+        flag
+    })
+}
+
 fn run_select_ui_values(options: SelectUiOptions) -> anyhow::Result<Option<Vec<String>>> {
     let SelectUiOptions {
         prompt,
@@ -322,6 +344,9 @@ fn run_select_ui_values(options: SelectUiOptions) -> anyhow::Result<Option<Vec<S
     let _ = matcher.tick(50);
 
     let guard = TerminalGuard::enter()?;
+    // Reset the SIGINT safety-net flag so a stale signal from a previous picker
+    // invocation can't abort this one spuriously.
+    sigint_flag().store(false, Ordering::SeqCst);
     let mut stderr = io::BufWriter::new(io::stderr());
     let prompt = prompt.unwrap_or_else(|| "❯ ".to_string());
     let preview_command = preview.unwrap_or_default();
@@ -436,6 +461,14 @@ fn run_select_ui_values(options: SelectUiOptions) -> anyhow::Result<Option<Vec<S
                 },
             )?;
             needs_render = false;
+        }
+
+        // Safety net: if a real SIGINT arrived while we weren't reading keys,
+        // restore the terminal and exit cleanly instead of dying in raw mode.
+        if sigint_flag().load(Ordering::Relaxed) {
+            restore_select_viewport(&mut stderr, reserved_height, viewport_top_row)?;
+            drop(guard);
+            return Ok(None);
         }
 
         if event::poll(Duration::from_millis(250))? {
