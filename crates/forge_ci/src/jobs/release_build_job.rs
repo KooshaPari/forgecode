@@ -92,7 +92,8 @@ impl From<ReleaseBuilderJob> for Job {
                 )
                 .add_step(
                     Step::new("Generate SHA-256 checksum")
-                        .run(r#"if command -v sha256sum >/dev/null 2>&1; then sha256sum "${{ matrix.binary_name }}" > "${{ matrix.binary_name }}.sha256"; else shasum -a 256 "${{ matrix.binary_name }}" > "${{ matrix.binary_name }}.sha256"; fi"#),
+                        .run(r#"if command -v sha256sum >/dev/null 2>&1; then sha256sum "${{ matrix.binary_name }}" > "${{ matrix.binary_name }}.sha256"; else shasum -a 256 "${{ matrix.binary_name }}" > "${{ matrix.binary_name }}.sha256"; fi"#)
+                        .shell("bash"),
                 )
                 // Upload to the generated github release id
                 .add_step(
