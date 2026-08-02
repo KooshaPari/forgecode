@@ -168,8 +168,8 @@ impl ForgeCommandExecutorService {
 fn sanitize_windows_path() -> Option<String> {
     const MAX_PATH_LEN: usize = 1900;
 
-    let system_root = std::env::var_os("SystemRoot")
-        .unwrap_or_else(|| std::ffi::OsString::from("C:\\Windows"));
+    let system_root =
+        std::env::var_os("SystemRoot").unwrap_or_else(|| std::ffi::OsString::from("C:\\Windows"));
     let mut seen = std::collections::HashSet::new();
     let mut parts: Vec<String> = Vec::new();
 

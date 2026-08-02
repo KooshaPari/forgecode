@@ -7,7 +7,6 @@ use std::time::{Duration, Instant};
 use std::{cmp, fmt};
 
 use bstr::ByteSlice;
-use signal_hook::consts::SIGINT;
 use crossterm::cursor::{Hide, MoveTo, MoveToColumn, MoveUp, Show};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
@@ -21,6 +20,7 @@ use crossterm::{execute, queue};
 use derive_setters::Setters;
 use nucleo::pattern::{CaseMatching, Normalization};
 use nucleo::{Config as NucleoConfig, Nucleo, Utf32String};
+use signal_hook::consts::SIGINT;
 
 /// Row rendered by the shared selector UI.
 #[derive(Clone, Debug, PartialEq, Eq)]
