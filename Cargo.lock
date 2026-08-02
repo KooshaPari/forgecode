@@ -2901,6 +2901,7 @@ dependencies = [
  "nucleo-picker",
  "pretty_assertions",
  "rustyline",
+ "signal-hook 0.3.18",
  "tracing",
 ]
 
