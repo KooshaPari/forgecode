@@ -58,6 +58,10 @@ use crate::{TRACKER, banner, tracker};
 const MISSING_AGENT_TITLE: &str = "<missing agent.title>";
 const MAX_AUTO_CONTINUE_ATTEMPTS: usize = 8;
 
+fn auto_continue_allowed(attempts: usize) -> bool {
+    attempts < MAX_AUTO_CONTINUE_ATTEMPTS
+}
+
 /// Detects the source of the conversation based on CLI arguments.
 /// Returns "interactive", "forge-p", "headless", or the subcommand name.
 fn detect_source(cli: &Cli) -> String {
@@ -4961,7 +4965,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 }
 
                 if self.config.auto_continue_on_interrupt || Self::is_non_interactive() {
-                    if self.auto_continue_attempts >= MAX_AUTO_CONTINUE_ATTEMPTS {
+                    if !auto_continue_allowed(self.auto_continue_attempts) {
                         self.auto_continue_attempts = 0;
                         self.writeln_title(TitleFormat::error(format!(
                             "Automatic continuation stopped after {MAX_AUTO_CONTINUE_ATTEMPTS} interruptions"
@@ -5980,6 +5984,16 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
 
 #[cfg(test)]
 mod tests {
+    use super::{MAX_AUTO_CONTINUE_ATTEMPTS, auto_continue_allowed};
+
+    #[test]
+    fn automatic_continuation_has_a_hard_boundary() {
+        assert!(auto_continue_allowed(0));
+        assert!(auto_continue_allowed(MAX_AUTO_CONTINUE_ATTEMPTS - 1));
+        assert!(!auto_continue_allowed(MAX_AUTO_CONTINUE_ATTEMPTS));
+        assert!(!auto_continue_allowed(usize::MAX));
+    }
+
     // Note: Tests for confirm_delete_conversation are disabled because
     // ForgeSelect::confirm is not easily mockable in the current
     // architecture. The functionality is tested through integration tests
