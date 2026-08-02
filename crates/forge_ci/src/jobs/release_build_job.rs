@@ -90,6 +90,10 @@ impl From<ReleaseBuilderJob> for Job {
                     Step::new("Copy Binary")
                         .run("cp ${{ matrix.binary_path }} ${{ matrix.binary_name }}"),
                 )
+                .add_step(
+                    Step::new("Generate SHA-256 checksum")
+                        .run(r#"if command -v sha256sum >/dev/null 2>&1; then sha256sum "${{ matrix.binary_name }}" > "${{ matrix.binary_name }}.sha256"; else shasum -a 256 "${{ matrix.binary_name }}" > "${{ matrix.binary_name }}.sha256"; fi"#),
+                )
                 // Upload to the generated github release id
                 .add_step(
                     Step::new("Upload to Release")
@@ -98,8 +102,19 @@ impl From<ReleaseBuilderJob> for Job {
                             "upload-to-github-release",
                             "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
                         )
-                        .add_with(("release_id", release_id))
+                        .add_with(("release_id", release_id.clone()))
                         .add_with(("file", "${{ matrix.binary_name }}"))
+                        .add_with(("overwrite", "true")),
+                )
+                .add_step(
+                    Step::new("Upload checksum to Release")
+                        .uses(
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                        )
+                        .add_with(("release_id", release_id))
+                        .add_with(("file", "${{ matrix.binary_name }}.sha256"))
                         .add_with(("overwrite", "true")),
                 );
         }

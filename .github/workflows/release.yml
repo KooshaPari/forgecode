@@ -102,46 +102,17 @@ jobs:
           APP_VERSION: ${{ github.event.release.tag_name }}
       - name: Copy Binary
         run: cp ${{ matrix.binary_path }} ${{ matrix.binary_name }}
+      - name: Generate SHA-256 checksum
+        run: if command -v sha256sum >/dev/null 2>&1; then sha256sum "${{ matrix.binary_name }}" > "${{ matrix.binary_name }}.sha256"; else shasum -a 256 "${{ matrix.binary_name }}" > "${{ matrix.binary_name }}.sha256"; fi
       - name: Upload to Release
         uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
         with:
           release_id: ${{ github.event.release.id }}
           file: ${{ matrix.binary_name }}
           overwrite: "true"
-  npm_release:
-    needs:
-      - build_release
-    name: npm_release
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        repository:
-          - antinomyhq/npm-code-forge
-          - antinomyhq/npm-forgecode
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Upload checksum to Release
+        uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
         with:
-          repository: ${{ matrix.repository }}
-          ref: main
-          token: ${{ secrets.NPM_ACCESS }}
-      - name: Update NPM Package
-        run: ./update-package.sh ${{ github.event.release.tag_name }}
-        env:
-          AUTO_PUSH: "true"
-          CI: "true"
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-  homebrew_release:
-    needs:
-      - build_release
-    name: homebrew_release
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          repository: antinomyhq/homebrew-code-forge
-          ref: main
-          token: ${{ secrets.HOMEBREW_ACCESS }}
-      - name: Update Homebrew Formula
-        run: GITHUB_TOKEN="${{ secrets.HOMEBREW_ACCESS }}" ./update-formula.sh ${{ github.event.release.tag_name }}
+          release_id: ${{ github.event.release.id }}
+          file: ${{ matrix.binary_name }}.sha256
+          overwrite: "true"
