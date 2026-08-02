@@ -132,7 +132,7 @@ fn windows_update_command() -> Option<String> {
 $dir = Join-Path $env:LOCALAPPDATA 'Programs\Forge'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') {{ 'aarch64' }} else {{ 'x86_64' }}
-$repo = if ($env:HELIOSLITE_REPO) { $env:HELIOSLITE_REPO } else { 'KooshaPari/forgecode' }
+$repo = if ($env:HELIOSLITE_REPO) {{ $env:HELIOSLITE_REPO }} else {{ 'KooshaPari/forgecode' }}
 $url = 'https://github.com/' + $repo + '/releases/latest/download/forge-' + $arch + '-pc-windows-msvc.exe'
 $new = Join-Path $dir 'forge.exe.new'
 Invoke-WebRequest -Uri $url -OutFile $new -UseBasicParsing
