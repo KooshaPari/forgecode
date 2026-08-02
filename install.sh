@@ -36,6 +36,9 @@ for arg in "$@"; do
     esac
 done
 
+# Accept either `1.2.3` or the GitHub-style `v1.2.3` spelling.
+VERSION="${VERSION#v}"
+
 # 1) Resolve target version
 if [ -z "$VERSION" ] && [ "$LOCAL" = "0" ]; then
     VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
@@ -91,6 +94,37 @@ else
         echo -e "  ✖ \033[31mDownload failed\033[0m"
         exit 1
     fi
+    CHECKSUM_URL="$URL.sha256"
+    if ! curl -fsSL "$CHECKSUM_URL" -o "$TMP/helioslite.sha256"; then
+        echo -e "  ✖ \033[31mRelease checksum is unavailable; refusing an unverified binary\033[0m" >&2
+        exit 1
+    fi
+    EXPECTED_SHA="$(awk 'NF { print $1; exit }' "$TMP/helioslite.sha256")"
+    case "$EXPECTED_SHA" in
+        (''|*[!0123456789abcdefABCDEF]*)
+            echo -e "  ✖ \033[31mInvalid SHA-256 checksum format\033[0m" >&2
+            exit 1
+            ;;
+    esac
+    if [ "${#EXPECTED_SHA}" -ne 64 ]; then
+        echo -e "  ✖ \033[31mInvalid SHA-256 checksum length\033[0m" >&2
+        exit 1
+    fi
+    if command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL_SHA="$(sha256sum "$TMP/helioslite" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+        ACTUAL_SHA="$(shasum -a 256 "$TMP/helioslite" | awk '{print $1}')"
+    else
+        echo -e "  ✖ \033[31mNo SHA-256 utility found; refusing an unverified binary\033[0m" >&2
+        exit 1
+    fi
+    EXPECTED_SHA_NORMALIZED="$(printf '%s' "$EXPECTED_SHA" | tr '[:upper:]' '[:lower:]')"
+    ACTUAL_SHA_NORMALIZED="$(printf '%s' "$ACTUAL_SHA" | tr '[:upper:]' '[:lower:]')"
+    if [ "$EXPECTED_SHA_NORMALIZED" != "$ACTUAL_SHA_NORMALIZED" ]; then
+        echo -e "  ✖ \033[31mSHA-256 verification failed\033[0m" >&2
+        exit 1
+    fi
+    echo -e "  ✓ \033[32mSHA-256 verified\033[0m"
     cp "$TMP/helioslite" "$INSTALL_DIR/helioslite"
     rm -rf "$TMP"
 fi

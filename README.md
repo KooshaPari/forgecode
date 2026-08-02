@@ -14,7 +14,7 @@ An AI-enhanced terminal development environment — an agentic coding CLI/TUI wi
 >
 > `Forgecode` is the upstream (`tailcallhq/forgecode`, MIT/Apache-2.0). This
 > fork (`KooshaPari/forgecode`) is published under the new name
-> **`helioslite`** on crates.io / npm and the **`KooshaPari/heliosLite`**
+> **`helioslite`** on crates.io / npm and the **`KooshaPari/forgecode`**
 > GitHub repo. The internal crate identifier `forgecode` and binary name
 > `forge-dev` are preserved as deprecated aliases for upstream-merge safety;
 > new installs should use `helioslite`.
@@ -24,7 +24,7 @@ An AI-enhanced terminal development environment — an agentic coding CLI/TUI wi
 > | binary | `helioslite` (canonical) | `forge-dev`, `forge` (deprecated aliases) |
 > | crates | `forgecode` workspace | `helioslite` workspace |
 > | env vars | `FORGE_*`, `FORGE_DEV_*` | `HELIOSLITE_*` (legacy aliased) |
-> | repo | `KooshaPari/forgecode` | `KooshaPari/heliosLite` |
+> | repo | `KooshaPari/forgecode` | `KooshaPari/forgecode` |
 > | install URL | `forgecode.dev/cli` | `helioslite.dev/cli` (legacy alias kept) |
 >
 > ```bash

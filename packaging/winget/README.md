@@ -16,16 +16,16 @@ PackageName: HeliosLite
 License: MIT
 ShortDescription: AI-DD/HITL-less coding agent (renamed from forge-dev)
 PublisherUrl: https://kooshapari.com
-PublisherSupportUrl: https://github.com/KooshaPari/heliosLite/issues
+PublisherSupportUrl: https://github.com/KooshaPari/forgecode/issues
 Author: KooshaPari
 ManifestType: versioned
 InstallerType: zip
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/KooshaPari/heliosLite/releases/download/v0.1.0/helioslite-windows-x64.zip
+    InstallerUrl: https://github.com/KooshaPari/forgecode/releases/download/v0.1.0/helioslite-windows-x64.zip
     InstallerSha256: <set at release>
   - Architecture: arm64
-    InstallerUrl: https://github.com/KooshaPari/heliosLite/releases/download/v0.1.0/helioslite-windows-arm64.zip
+    InstallerUrl: https://github.com/KooshaPari/forgecode/releases/download/v0.1.0/helioslite-windows-arm64.zip
     InstallerSha256: <set at release>
 Commands:
   - helioslite

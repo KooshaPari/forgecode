@@ -13,6 +13,16 @@ fn test_release_drafter() {
 #[test]
 fn test_release_workflow() {
     workflow::release_publish();
+
+    let generated = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.github/workflows/release.yml"),
+    )
+    .expect("generated release workflow");
+    assert!(!generated.contains("npm_release"));
+    assert!(!generated.contains("homebrew_release"));
+    assert!(generated.contains("Generate SHA-256 checksum"));
+    assert!(generated.contains("matrix.binary_name }}.sha256"));
 }
 
 #[test]

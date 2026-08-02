@@ -10,8 +10,8 @@ HeliosLite publishes to four mutually-consistent channels:
 
 | Channel  | Source                                  | Use when                                 |
 |----------|-----------------------------------------|------------------------------------------|
-| stable   | `KooshaPari/heliosLite` `release/v*`    | production users                        |
-| rc       | `KooshaPari/heliosLite` `rc-v*`         | QA / willing early adopters             |
+| stable   | `KooshaPari/forgecode` `release/v*`     | production users                        |
+| rc       | `KooshaPari/forgecode` `rc-v*`          | QA / willing early adopters             |
 | nightly  | `helios-lite-nightly` workflow artifact | short-lived; pinned by SHA              |
 | legacy   | `forgecode.dev/cli`                     | bootstrap for first install only        |
 
@@ -32,7 +32,7 @@ runs via `helios-lite-nightly.yml`.
 ## In-app update behaviour
 
 1. On every CLI invocation we consult `update_informer` against the
-   `KooshaPari/heliosLite` repo (`HELIOSLITE_REPO` env var overrides).
+   `KooshaPari/forgecode` repo (`HELIOSLITE_REPO` env var overrides).
 2. If `frequency = Always` and the process is in a TTY, we ask whether
    to upgrade.
 3. If `--apply` was passed or `--yes` was paired with the prompt, we

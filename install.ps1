@@ -42,6 +42,7 @@ if (-not $Version -and -not $Local) {
         $Version = "0.1.0"
     }
 }
+$Version = $Version.TrimStart("v")
 Write-Step "Target version: $Version"
 
 # 2) Pick install location
@@ -75,6 +76,25 @@ if ($Local) {
         Write-Err "Download failed: $_"
         exit 1
     }
+
+    $ChecksumPath = Join-Path $Tmp "helioslite.exe.sha256"
+    try {
+        Invoke-WebRequest -Uri "$Url.sha256" -OutFile $ChecksumPath -UseBasicParsing
+    } catch {
+        Write-Err "Release checksum is unavailable; refusing an unverified binary."
+        exit 1
+    }
+    $ExpectedSha = (Get-Content $ChecksumPath | ForEach-Object { ($_ -split '\s+')[0] } | Where-Object { $_ } | Select-Object -First 1)
+    if ($ExpectedSha -notmatch '^[0-9a-fA-F]{64}$') {
+        Write-Err "Invalid SHA-256 checksum format."
+        exit 1
+    }
+    $ActualSha = (Get-FileHash -Algorithm SHA256 -Path $BinaryPath).Hash
+    if ($ExpectedSha.ToLowerInvariant() -ne $ActualSha.ToLowerInvariant()) {
+        Write-Err "SHA-256 verification failed."
+        exit 1
+    }
+    Write-OK "SHA-256 verified"
 
     Copy-Item -Force $BinaryPath "$InstallDir\helioslite.exe"
     Remove-Item -Recurse -Force $Tmp

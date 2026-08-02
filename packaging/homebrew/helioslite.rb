@@ -1,10 +1,10 @@
 class HeliosLiteFormula < Formula
   desc "KooshaPari/forgecode → HeliosLite. AI-DD/HITL-less coding agent."
   homepage "https://helioslite.dev"
-  url "https://github.com/KooshaPari/heliosLite/archive/refs/tags/v#{version}.tar.gz"
+  url "https://github.com/KooshaPari/forgecode/archive/refs/tags/v#{version}.tar.gz"
   sha256 "<set at tag time>"
   license "MIT"
-  head "https://github.com/KooshaPari/heliosLite.git", branch: "main"
+  head "https://github.com/KooshaPari/forgecode.git", branch: "main"
 
   # Renamed binary `helioslite`. Legacy aliases `forge` and `forge-dev`
   # remain installed so existing automations keep working.
@@ -38,14 +38,14 @@ class HeliosLiteFormula < Formula
       future major release.
 
       The legacy package name on npm/crates.io is `forge-dev` and will
-      continue to publish until the KooshaPari/heliosLite publisher
+      continue to publish until the KooshaPari/forgecode publisher
       is live.
 
       To upgrade:
         brew upgrade helioslite
 
       Or to pick a specific channel:
-        HELIOSLITE_REPO=KooshaPari/heliosLite helioslite update
+        HELIOSLITE_REPO=KooshaPari/forgecode helioslite update
     EOS
   end
 end

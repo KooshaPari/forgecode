@@ -1,14 +1,16 @@
 use gh_workflow::*;
 
-use crate::jobs::{ReleaseBuilderJob, release_homebrew_job, release_npm_job};
+use crate::jobs::ReleaseBuilderJob;
 
-/// Generate npm release workflow
+/// Generate the release build workflow.
+///
+/// Third-party npm and Homebrew publication jobs are intentionally omitted
+/// until fork-owned destinations and credentials are configured. Keeping the
+/// destinations in generated CI would allow a release in this repository to
+/// publish into the upstream project's channels.
 pub fn release_publish() {
     let release_build_job = ReleaseBuilderJob::new("${{ github.event.release.tag_name }}")
         .release_id("${{ github.event.release.id }}");
-    let npm_release_job = release_npm_job().add_needs("build_release");
-    let homebrew_release_job = release_homebrew_job().add_needs("build_release");
-
     let npm_workflow = Workflow::default()
         .name("Multi Channel Release")
         .on(Event {
@@ -16,9 +18,7 @@ pub fn release_publish() {
             ..Event::default()
         })
         .permissions(Permissions::default().contents(Level::Read))
-        .add_job("build_release", release_build_job.into_job())
-        .add_job("npm_release", npm_release_job)
-        .add_job("homebrew_release", homebrew_release_job);
+        .add_job("build_release", release_build_job.into_job());
 
     super::generate_workflow(npm_workflow, "release.yml");
 }

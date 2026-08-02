@@ -6,6 +6,26 @@ use forge_config::{Update, UpdateFrequency};
 use forge_select::ForgeWidget;
 use forge_tracker::VERSION;
 use update_informer::{Check, Version, registry};
+use url::Url;
+
+const ALLOWED_UPDATE_HOSTS: &[&str] = &["helioslite.dev", "forgecode.dev"];
+
+fn validate_update_url(raw: &str) -> Option<Url> {
+    let url = Url::parse(raw).ok()?;
+    if url.scheme() != "https"
+        || url.username() != ""
+        || url.password().is_some()
+        || url.host_str().is_none()
+        || !ALLOWED_UPDATE_HOSTS.contains(&url.host_str().unwrap())
+        || url.port().is_some()
+        || url.path() != "/cli"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return None;
+    }
+    Some(url)
+}
 
 /// Runs the official installation script to update Forge, failing silently.
 /// When `auto_update` is true, exits immediately after a successful update
@@ -16,16 +36,22 @@ use update_informer::{Check, Version, registry};
 /// URL so users running pre-rename builds keep working.
 async fn execute_update_command(api: Arc<impl API>, auto_update: bool) {
     let primary = std::env::var("HELIOSLITE_UPDATE_URL")
-        .unwrap_or_else(|_| "https://helioslite.dev/cli".to_string());
-    let fallback = "https://forgecode.dev/cli";
+        .ok()
+        .and_then(|raw| validate_update_url(&raw))
+        .unwrap_or_else(|| Url::parse("https://helioslite.dev/cli").expect("valid update URL"));
+    let fallback = Url::parse("https://forgecode.dev/cli").expect("valid update URL");
 
     let output = match api
-        .execute_shell_command_raw(&format!("curl -fsSL {primary} | sh"))
+        .execute_shell_command_raw(&format!(
+            "tmp_dir=\"$(mktemp -d)\" && trap 'rm -rf \"$tmp_dir\"' EXIT && curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --output \"$tmp_dir/update.sh\" {primary} && sh \"$tmp_dir/update.sh\""
+        ))
         .await
     {
         Ok(output) => Ok(output),
         Err(_) => {
-            api.execute_shell_command_raw(&format!("curl -fsSL {fallback} | sh"))
+            api.execute_shell_command_raw(&format!(
+                "tmp_dir=\"$(mktemp -d)\" && trap 'rm -rf \"$tmp_dir\"' EXIT && curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --output \"$tmp_dir/update.sh\" {fallback} && sh \"$tmp_dir/update.sh\""
+            ))
                 .await
         }
     };
@@ -126,18 +152,18 @@ pub async fn on_update(api: Arc<impl API>, update: Option<&Update>) {
     }
 
     // Phenotype rename: prefer the renamed-binary GitHub repo
-    // (`KooshaPari/heliosLite`). In flight, the `KooshaPari/forgecode` releases
+    // (`KooshaPari/forgecode`). The fork's releases are served from the canonical
     // are kept as the canonical source for both name chains; `HELIOSLITE_REPO`
     // overrides the lookup so nightlies can target a third-party fork without
     // recompiling.
     //
     // Tombstone: until the rename is pushed to remote (Gate 4b),
-    // `KooshaPari/heliosLite` doesn't exist and the lookup 404s. We swallow
+    // the canonical repository lookup can fail. We swallow
     // that case and try the legacy `KooshaPari/forgecode` releases so users on
     // pre-rename builds keep getting notified. This branch will be removed once
     // the rename is permanent.
     let primary_repo =
-        std::env::var("HELIOSLITE_REPO").unwrap_or_else(|_| "KooshaPari/heliosLite".to_string());
+        std::env::var("HELIOSLITE_REPO").unwrap_or_else(|_| "KooshaPari/forgecode".to_string());
     let legacy_repo = "KooshaPari/forgecode";
     let informer_primary = update_informer::new(registry::GitHub, primary_repo.as_str(), VERSION)
         .interval(frequency.clone().into());
@@ -176,5 +202,18 @@ mod tests {
 
         let expected = false;
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn update_url_allows_only_trusted_https_hosts() {
+        assert!(validate_update_url("https://helioslite.dev/cli").is_some());
+        assert!(validate_update_url("https://forgecode.dev/cli").is_some());
+        assert!(validate_update_url("http://helioslite.dev/cli").is_none());
+        assert!(validate_update_url("https://example.com/cli").is_none());
+        assert!(validate_update_url("https://helioslite.dev:8443/cli").is_none());
+        assert!(validate_update_url("https://helioslite.dev/other").is_none());
+        assert!(validate_update_url("https://helioslite.dev/cli?x=1").is_none());
+        assert!(validate_update_url("https://helioslite.dev/cli#fragment").is_none());
+        assert!(validate_update_url("https://helioslite.dev/cli; rm -rf /").is_none());
     }
 }

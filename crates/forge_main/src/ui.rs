@@ -2032,7 +2032,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
         // repository or the legacy KooshaPari/forgecode path.  This is purely
         // additive — if the env vars are unset we fall back to the legacy labels.
         let repo = std::env::var("HELIOSLITE_REPO")
-            .unwrap_or_else(|_| "KooshaPari/heliosLite".to_string());
+            .unwrap_or_else(|_| "KooshaPari/forgecode".to_string());
         let update_url = std::env::var("HELIOSLITE_UPDATE_URL")
             .unwrap_or_else(|_| "https://helioslite.dev/cli".to_string());
         let rename_banner = format!("HeliosLite rename channel → repo={repo} update={update_url}");

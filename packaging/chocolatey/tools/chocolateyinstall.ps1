@@ -9,7 +9,7 @@ Class Program
         Write-Host "[helioslite installer] detecting platform..."
         $os = $IsWindows ? "windows" : ($IsLinux ? "linux" : "macos")
         Write-Host "[helioslite installer] platform=$os"
-        Write-Host "[helioslite installer] download from https://github.com/KooshaPari/heliosLite/releases"
+        Write-Host "[helioslite installer] download from https://github.com/KooshaPari/forgecode/releases"
         Write-Host "[helioslite installer] verifying sha256 sum against published checksums"
         Write-Host "[helioslite installer] running in legacy mode (OMNIROUTE_LEGACY=1) — set to 0 for the renamed CLI"
         return 0

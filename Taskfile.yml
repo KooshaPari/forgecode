@@ -26,7 +26,7 @@
 version: "3"
 
 env:
-  HELIOSLITE_REPO: "{{.GITEA_REPOSITORY | default \"KooshaPari/heliosLite\"}}"
+  HELIOSLITE_REPO: "{{.GITEA_REPOSITORY | default \"KooshaPari/forgecode\"}}"
   HELIOSLITE_CARGO_PROFILE:
     sh: 'cargo info --quiet 2>/dev/null && echo dev || echo release'
 
