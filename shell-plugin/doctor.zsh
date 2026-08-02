@@ -416,7 +416,7 @@ if [[ "$platform" == "Darwin" ]]; then
         print_result info "• VS Code: Settings → terminal.integrated.macOptionIsMeta → true"
         print_result info "• iTerm2: Preferences → Profiles → Keys → Option Key → Esc+"
         print_result info "• Terminal.app: Preferences → Profiles → Keyboard → Use Option as Meta"
-        print_result info "Run 'forge zsh keyboard' for detailed keyboard shortcuts"
+        print_result info "Run '${forge_bin} zsh keyboard' for detailed keyboard shortcuts"
     fi
     
 elif [[ "$platform" == "Linux" ]]; then
@@ -506,7 +506,7 @@ elif [[ "$platform" == "Linux" ]]; then
         print_result info "• GNOME Terminal: Usually works by default"
         print_result info "• Konsole: Usually works by default"
         print_result info "• xterm: Add 'XTerm*metaSendsEscape: true' to ~/.Xresources"
-        print_result info "Run 'forge zsh keyboard' for detailed keyboard shortcuts"
+        print_result info "Run '${forge_bin} zsh keyboard' for detailed keyboard shortcuts"
     fi
 else
     # Other platforms (BSD, etc.)
