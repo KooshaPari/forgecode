@@ -183,10 +183,11 @@ pub fn run_zsh_doctor() -> Result<()> {
     // turning an otherwise usable installation into a hard failure.
     #[cfg(windows)]
     if !zsh_available() {
-        println!(
-            "Forge doctor skipped: zsh is not available on Windows. ".to_owned()
-                + "Install zsh or run `forge zsh doctor` from a zsh-capable environment."
+        let message = concat!(
+            "Forge doctor skipped: zsh is not available on Windows. ",
+            "Install zsh or run `forge zsh doctor` from a zsh-capable environment."
         );
+        println!("{message}");
         return Ok(());
     }
 
