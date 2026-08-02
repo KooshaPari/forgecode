@@ -9,6 +9,21 @@ use update_informer::{Check, Version, registry};
 use url::Url;
 
 const ALLOWED_UPDATE_HOSTS: &[&str] = &["helioslite.dev", "forgecode.dev"];
+const DEFAULT_UPDATE_REPO: &str = "KooshaPari/forgecode";
+
+fn validate_update_repo(raw: &str) -> Option<&str> {
+    let (owner, name) = raw.split_once('/')?;
+    if owner.is_empty() || name.is_empty() || raw.len() > 100 || name.ends_with(".git") {
+        return None;
+    }
+    let valid = |part: &str| {
+        part.bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            && !part.starts_with('.')
+            && !part.ends_with('.')
+    };
+    (valid(owner) && valid(name)).then_some(raw)
+}
 
 fn validate_update_url(raw: &str) -> Option<Url> {
     let url = Url::parse(raw).ok()?;
@@ -27,6 +42,13 @@ fn validate_update_url(raw: &str) -> Option<Url> {
     Some(url)
 }
 
+fn verified_update_command(url: &Url) -> String {
+    let raw = url.as_str();
+    format!(
+        "tmp_dir=\"$(mktemp -d)\" && trap 'rm -rf \"$tmp_dir\"' EXIT && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 --output \"$tmp_dir/update.sh\" '{raw}' && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 --output \"$tmp_dir/update.sh.sha256\" '{raw}.sha256' && expected=\"$(awk 'NF {{ print $1; exit }}' \"$tmp_dir/update.sh.sha256\")\" && case \"$expected\" in (''|*[!0123456789abcdefABCDEF]*) exit 1;; esac && [ \"${{#expected}}\" -eq 64 ] && actual=\"$(if command -v sha256sum >/dev/null 2>&1; then sha256sum \"$tmp_dir/update.sh\"; else shasum -a 256 \"$tmp_dir/update.sh\"; fi | awk '{{print $1}}')\" && [ \"$(printf '%s' \"$expected\" | tr '[:upper:]' '[:lower:]')\" = \"$(printf '%s' \"$actual\" | tr '[:upper:]' '[:lower:]')\" ] && sh \"$tmp_dir/update.sh\""
+    )
+}
+
 /// Runs the official installation script to update Forge, failing silently.
 /// When `auto_update` is true, exits immediately after a successful update
 /// without prompting the user.
@@ -42,16 +64,12 @@ async fn execute_update_command(api: Arc<impl API>, auto_update: bool) {
     let fallback = Url::parse("https://forgecode.dev/cli").expect("valid update URL");
 
     let output = match api
-        .execute_shell_command_raw(&format!(
-            "tmp_dir=\"$(mktemp -d)\" && trap 'rm -rf \"$tmp_dir\"' EXIT && curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --output \"$tmp_dir/update.sh\" {primary} && sh \"$tmp_dir/update.sh\""
-        ))
+        .execute_shell_command_raw(&verified_update_command(&primary))
         .await
     {
         Ok(output) => Ok(output),
         Err(_) => {
-            api.execute_shell_command_raw(&format!(
-                "tmp_dir=\"$(mktemp -d)\" && trap 'rm -rf \"$tmp_dir\"' EXIT && curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --output \"$tmp_dir/update.sh\" {fallback} && sh \"$tmp_dir/update.sh\""
-            ))
+            api.execute_shell_command_raw(&verified_update_command(&fallback))
                 .await
         }
     };
@@ -162,9 +180,11 @@ pub async fn on_update(api: Arc<impl API>, update: Option<&Update>) {
     // that case and try the legacy `KooshaPari/forgecode` releases so users on
     // pre-rename builds keep getting notified. This branch will be removed once
     // the rename is permanent.
-    let primary_repo =
-        std::env::var("HELIOSLITE_REPO").unwrap_or_else(|_| "KooshaPari/forgecode".to_string());
-    let legacy_repo = "KooshaPari/forgecode";
+    let primary_repo = std::env::var("HELIOSLITE_REPO")
+        .ok()
+        .and_then(|raw| validate_update_repo(&raw).map(str::to_owned))
+        .unwrap_or_else(|| DEFAULT_UPDATE_REPO.to_string());
+    let legacy_repo = DEFAULT_UPDATE_REPO;
     let informer_primary = update_informer::new(registry::GitHub, primary_repo.as_str(), VERSION)
         .interval(frequency.clone().into());
     let informer_legacy =
@@ -215,5 +235,39 @@ mod tests {
         assert!(validate_update_url("https://helioslite.dev/cli?x=1").is_none());
         assert!(validate_update_url("https://helioslite.dev/cli#fragment").is_none());
         assert!(validate_update_url("https://helioslite.dev/cli; rm -rf /").is_none());
+    }
+
+    #[test]
+    fn update_repo_accepts_github_style_owner_and_name() {
+        assert_eq!(validate_update_repo("KooshaPari/forgecode"), Some("KooshaPari/forgecode"));
+        assert_eq!(validate_update_repo("org_name/tool.v2"), Some("org_name/tool.v2"));
+    }
+
+    #[test]
+    fn update_repo_rejects_injection_and_malformed_values() {
+        for value in [
+            "",
+            "forgecode",
+            "/forgecode",
+            "KooshaPari/",
+            "KooshaPari/forge code",
+            "KooshaPari/forgecode?x=1",
+            "KooshaPari/forgecode.git",
+            "../owner/repo",
+            "owner/.repo",
+            "owner/repo/extra",
+        ] {
+            assert!(validate_update_repo(value).is_none(), "accepted {value:?}");
+        }
+    }
+
+    #[test]
+    fn verified_update_command_requires_checksum_before_execution() {
+        let url = Url::parse("https://helioslite.dev/cli").unwrap();
+        let command = verified_update_command(&url);
+        assert!(command.contains("/cli.sha256"));
+        assert!(command.contains("sha256sum"));
+        assert!(command.contains("sh \"$tmp_dir/update.sh\""));
+        assert!(command.contains("[ \"${#expected}\" -eq 64 ]"));
     }
 }
