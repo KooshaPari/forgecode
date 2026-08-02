@@ -32,6 +32,9 @@ fn test_release_workflow() {
     assert!(!generated.contains("npm_release"));
     assert!(!generated.contains("homebrew_release"));
     assert!(generated.contains("Generate SHA-256 checksum"));
+    assert!(generated.contains("shell: bash"));
+    assert!(generated.contains("target: x86_64-unknown-linux-gnu"));
+    assert!(generated.contains("target: x86_64-pc-windows-msvc"));
     assert!(generated.contains("matrix.binary_name }}.sha256"));
 }
 
