@@ -851,6 +851,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Top-level Forge configuration merged from all sources (defaults, file,\nenvironment).",
   "properties": {
+    "auto_continue_on_interrupt": {
+      "default": false,
+      "description": "Whether to automatically continue after a per-turn limit interruption.",
+      "type": "boolean"
+    },
     "auto_dump": {
       "anyOf": [
         {

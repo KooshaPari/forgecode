@@ -56,6 +56,11 @@ use crate::{TRACKER, banner, tracker};
 
 // File-specific constants
 const MISSING_AGENT_TITLE: &str = "<missing agent.title>";
+const MAX_AUTO_CONTINUE_ATTEMPTS: usize = 8;
+
+fn auto_continue_allowed(attempts: usize) -> bool {
+    attempts < MAX_AUTO_CONTINUE_ATTEMPTS
+}
 
 /// Detects the source of the conversation based on CLI arguments.
 /// Returns "interactive", "forge-p", "headless", or the subcommand name.
@@ -141,6 +146,8 @@ pub struct UI<A: ConsoleWriter, F: Fn(ForgeConfig) -> A> {
     // into the render loop.
     #[allow(dead_code)]
     interrupt_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Number of automatic continuation requests in the current chain.
+    auto_continue_attempts: usize,
     #[allow(dead_code)] // The guard is kept alive by being held in the struct
     _guard: forge_tracker::Guard,
 }
@@ -369,6 +376,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             hydration_handles: Vec::new(),
             cache_generation: std::sync::atomic::AtomicU64::new(0),
             interrupt_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            auto_continue_attempts: 0,
             _guard: forge_tracker::init_tracing(env.log_path(), TRACKER.clone())?,
         })
     }
@@ -4633,6 +4641,16 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
     }
 
     async fn on_message(&mut self, content: Option<String>) -> Result<()> {
+        self.auto_continue_attempts = 0;
+        self.on_message_inner(content, false).await
+    }
+
+    async fn on_message_inner(
+        &mut self,
+        content: Option<String>,
+        is_auto_continuation: bool,
+    ) -> Result<()> {
+        debug_assert!(is_auto_continuation || self.auto_continue_attempts == 0);
         let conversation_id = self.init_conversation().await?;
 
         if self.config.auto_install_vscode_extension {
@@ -4922,16 +4940,44 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 writer.finish()?;
                 self.spinner.stop(None)?;
 
-                let title = match reason {
+                match reason {
                     InterruptionReason::MaxRequestPerTurnLimitReached { limit } => {
-                        format!("Maximum request ({limit}) per turn achieved")
+                        self.writeln_title(TitleFormat::action(format!(
+                            "Maximum request ({limit}) per turn achieved"
+                        )))?;
                     }
-                    InterruptionReason::MaxToolFailurePerTurnLimitReached { limit, .. } => {
-                        format!("Maximum tool failure limit ({limit}) reached for this turn")
+                    InterruptionReason::MaxToolFailurePerTurnLimitReached { limit, errors } => {
+                        self.writeln_title(TitleFormat::action(format!(
+                            "Maximum tool failure limit ({limit}) reached for this turn"
+                        )))?;
+                        if !errors.is_empty() {
+                            let mut failing_tools = errors
+                                .iter()
+                                .map(|(name, count)| format!("{name} x {count}"))
+                                .collect::<Vec<_>>();
+                            failing_tools.sort();
+                            self.writeln_title(TitleFormat::action(format!(
+                                "Failing tools: {}",
+                                failing_tools.join(", ")
+                            )))?;
+                        }
                     }
-                };
+                }
 
-                self.writeln_title(TitleFormat::action(title))?;
+                if self.config.auto_continue_on_interrupt || Self::is_non_interactive() {
+                    if !auto_continue_allowed(self.auto_continue_attempts) {
+                        self.auto_continue_attempts = 0;
+                        self.writeln_title(TitleFormat::error(format!(
+                            "Automatic continuation stopped after {MAX_AUTO_CONTINUE_ATTEMPTS} interruptions"
+                        )))?;
+                        return Ok(());
+                    }
+                    self.auto_continue_attempts += 1;
+                    self.spinner.start(None)?;
+                    Box::pin(self.on_message_inner(None, true)).await?;
+                    return Ok(());
+                }
+
                 let continued = self.should_continue().await?;
                 if !continued && let Some(conversation_id) = self.state.conversation_id {
                     self.writeln_title(
@@ -4944,6 +4990,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             }
             ChatResponse::TaskComplete => {
                 writer.finish()?;
+                self.auto_continue_attempts = 0;
                 if let Some(conversation_id) = self.state.conversation_id {
                     self.writeln_title(
                         TitleFormat::debug("Finished").sub_title(conversation_id.into_string()),
@@ -4956,6 +5003,15 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             }
         }
         Ok(())
+    }
+
+    fn is_non_interactive() -> bool {
+        use std::io::IsTerminal;
+
+        std::env::var_os("CI").is_some()
+            || std::env::var_os("FORGE_NON_INTERACTIVE").is_some()
+            || std::env::var_os("FORGE_AGENT_MODE").is_some()
+            || !std::io::stdin().is_terminal()
     }
 
     async fn should_continue(&mut self) -> anyhow::Result<bool> {
@@ -5928,6 +5984,16 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
 
 #[cfg(test)]
 mod tests {
+    use super::{MAX_AUTO_CONTINUE_ATTEMPTS, auto_continue_allowed};
+
+    #[test]
+    fn automatic_continuation_has_a_hard_boundary() {
+        assert!(auto_continue_allowed(0));
+        assert!(auto_continue_allowed(MAX_AUTO_CONTINUE_ATTEMPTS - 1));
+        assert!(!auto_continue_allowed(MAX_AUTO_CONTINUE_ATTEMPTS));
+        assert!(!auto_continue_allowed(usize::MAX));
+    }
+
     // Note: Tests for confirm_delete_conversation are disabled because
     // ForgeSelect::confirm is not easily mockable in the current
     // architecture. The functionality is tested through integration tests
