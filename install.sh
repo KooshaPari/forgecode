@@ -10,6 +10,9 @@
 #   # Local install (no download): run from repo root
 #   ./install.sh --local
 #
+#   # Override automatic Linux GNU/musl detection (useful in CI):
+#   HELIOSLITE_TARGET=x86_64-unknown-linux-musl ./install.sh
+#
 # Installs the HeliosLite CLI as a single-binary `helioslite` on PATH.
 # On Linux/macOS we download the matching raw `forge-*` release binary from
 # GitHub Releases and install it as `helioslite`.
@@ -21,6 +24,7 @@ LOCAL=0
 SKIP_FORGE=0
 SKIP_UPDATE_CHECK=0
 REPO="${HELIOSLITE_RELEASE_REPO:-KooshaPari/forgecode}"
+TARGET_OVERRIDE="${HELIOSLITE_TARGET:-}"
 
 for arg in "$@"; do
     case "$arg" in
@@ -58,7 +62,7 @@ mkdir -p "$INSTALL_DIR"
 
 # 3) Detect target triple
 detect_target() {
-    local os arch
+    local os arch libc
     os="$(uname -s | tr '[:upper:]' '[:lower:]')"
     arch="$(uname -m)"
     case "$arch" in
@@ -67,7 +71,30 @@ detect_target() {
         *) echo -e "  ✖ \033[31mUnsupported architecture: $arch\033[0m"; return 1 ;;
     esac
     case "$os" in
-        linux)   echo "${arch}-unknown-linux-gnu" ;;
+        linux)
+            # Allow CI/packagers to pin an exact release target, but never
+            # interpolate arbitrary input into an asset URL.
+            if [ -n "$TARGET_OVERRIDE" ]; then
+                case "$TARGET_OVERRIDE" in
+                    x86_64-unknown-linux-gnu|x86_64-unknown-linux-musl|\
+                    aarch64-unknown-linux-gnu|aarch64-unknown-linux-musl)
+                        echo "$TARGET_OVERRIDE"; return 0 ;;
+                    *)
+                        echo -e "  ✖ \033[31mUnsupported HELIOSLITE_TARGET: $TARGET_OVERRIDE\033[0m" >&2
+                        return 1 ;;
+                esac
+            fi
+            libc="gnu"
+            # musl's ldd identifies itself in its version output.  The
+            # loader check covers minimal Alpine images where ldd is absent.
+            if { command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 \
+                    | grep -qi musl; } \
+                || compgen -G '/lib/ld-musl-*.so.1' >/dev/null 2>&1 \
+                || compgen -G '/lib64/ld-musl-*.so.1' >/dev/null 2>&1; then
+                libc="musl"
+            fi
+            echo "${arch}-unknown-linux-${libc}"
+            ;;
         darwin)  echo "${arch}-apple-darwin" ;;
         *) echo -e "  ✖ \033[31mUnsupported OS: $os\033[0m"; return 1 ;;
     esac
