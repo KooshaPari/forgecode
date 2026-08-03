@@ -23,6 +23,10 @@ fn test_release_workflow() {
     assert!(!generated.contains("homebrew_release"));
     assert!(generated.contains("Generate SHA-256 checksum"));
     assert!(generated.contains("matrix.binary_name }}.sha256"));
+    assert!(generated.contains("aggregate_checksums"));
+    assert!(generated.contains("Generate aggregate SHA-256 checksums"));
+    assert!(generated.contains("SHA256SUMS"));
+    assert!(generated.contains("needs:") && generated.contains("- build_release"));
 }
 
 #[test]

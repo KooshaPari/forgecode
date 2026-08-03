@@ -58,7 +58,9 @@ if [ -z "$VERSION" ] && [ "$LOCAL" = "0" ]; then
         exit 1
     fi
 fi
-validate_version "$VERSION"
+if [ "$LOCAL" = "0" ]; then
+    validate_version "$VERSION"
+fi
 echo -e "  → \033[36mTarget version: $VERSION\033[0m"
 
 # 2) Pick install location

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::{fs, io, path::Path};
 
 use colored::Colorize;
 use forge_api::API;
@@ -7,6 +8,7 @@ use forge_select::ForgeWidget;
 use forge_tracker::VERSION;
 use update_informer::{Check, Version, registry};
 use url::Url;
+use sha2::{Digest, Sha256};
 
 const ALLOWED_UPDATE_HOSTS: &[&str] = &["helioslite.dev", "forgecode.dev"];
 const DEFAULT_UPDATE_REPO: &str = "KooshaPari/forgecode";
@@ -84,6 +86,43 @@ fn release_asset_url(version: &str, target: &str) -> Option<Url> {
         "https://github.com/{DEFAULT_UPDATE_REPO}/releases/download/v{version}/{asset}"
     ))
     .ok()
+}
+
+/// Parse the first SHA-256 token from a sidecar checksum document.
+fn parse_sha256_sidecar(contents: &str) -> Option<[u8; 32]> {
+    let token = contents.split_whitespace().next()?;
+    if token.len() != 64 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut digest = [0u8; 32];
+    for (index, chunk) in token.as_bytes().chunks_exact(2).enumerate() {
+        digest[index] = u8::from_str_radix(std::str::from_utf8(chunk).ok()?, 16).ok()?;
+    }
+    Some(digest)
+}
+
+fn verify_sha256(payload: &[u8], expected: &[u8; 32]) -> bool {
+    Sha256::digest(payload).as_slice() == expected
+}
+
+/// Stage a verified release beside the current executable and atomically replace it.
+/// The caller must verify the downloaded bytes before invoking this function.
+fn install_verified_binary(payload: &[u8], destination: &Path) -> io::Result<()> {
+    let parent = destination.parent().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, "destination has no parent")
+    })?;
+    fs::create_dir_all(parent)?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    use std::io::Write;
+    temp.write_all(payload)?;
+    temp.as_file().sync_all()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        temp.as_file().set_permissions(fs::Permissions::from_mode(0o755))?;
+    }
+    temp.persist(destination).map_err(|error| error.error)?;
+    Ok(())
 }
 
 fn verified_update_command(url: &Url) -> String {
@@ -372,5 +411,27 @@ mod tests {
         assert!(command.contains("sha256sum"));
         assert!(command.contains("sh \"$tmp_dir/update.sh\""));
         assert!(command.contains("[ \"${#expected}\" -eq 64 ]"));
+    }
+
+    #[test]
+    fn checksum_sidecar_parser_and_verifier_are_strict() {
+        let payload = b"forge release";
+        let digest = Sha256::digest(payload);
+        let sidecar = format!("{:x}  forge-aarch64-apple-darwin\n", digest);
+        let expected = parse_sha256_sidecar(&sidecar).unwrap();
+        assert!(verify_sha256(payload, &expected));
+        assert!(parse_sha256_sidecar("not-a-digest").is_none());
+        assert!(parse_sha256_sidecar(&"a".repeat(64)).is_some());
+        assert!(parse_sha256_sidecar(&"g".repeat(64)).is_none());
+    }
+
+    #[test]
+    fn verified_binary_is_staged_and_replaced_atomically() {
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("bin/forge");
+        std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        std::fs::write(&destination, b"old binary").unwrap();
+        install_verified_binary(b"new binary", &destination).unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), b"new binary");
     }
 }
