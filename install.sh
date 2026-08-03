@@ -26,6 +26,10 @@ SKIP_UPDATE_CHECK=0
 REPO="${HELIOSLITE_RELEASE_REPO:-KooshaPari/forgecode}"
 TARGET_OVERRIDE="${HELIOSLITE_TARGET:-}"
 
+validate_repo() { [[ "$1" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { echo "Invalid release repo: $1" >&2; exit 1; }; }
+validate_version() { printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$' || { echo "Invalid release version: $1" >&2; exit 1; }; }
+validate_repo "$REPO"
+
 for arg in "$@"; do
     case "$arg" in
         --local)             LOCAL=1 ;;
@@ -50,10 +54,11 @@ if [ -z "$VERSION" ] && [ "$LOCAL" = "0" ]; then
                 | head -1 \
                 | sed -E 's/.*"v?([^"]+)".*/\1/' || true)"
     if [ -z "$VERSION" ]; then
-        echo -e "  ⚠ \033[33mCould not determine latest version — falling back to v0.1.0\033[0m"
-        VERSION="0.1.0"
+        echo -e "  ✖ \033[31mCould not determine latest version; refusing an unpinned install\033[0m" >&2
+        exit 1
     fi
 fi
+validate_version "$VERSION"
 echo -e "  → \033[36mTarget version: $VERSION\033[0m"
 
 # 2) Pick install location
@@ -115,6 +120,7 @@ else
     ASSET="forge-${TARGET}"
     URL="https://github.com/$REPO/releases/download/v$VERSION/$ASSET"
     TMP="$(mktemp -d -t helioslite-install-XXXXXX)"
+    trap 'rm -rf "$TMP"' EXIT INT TERM
 
     echo -e "  → \033[36mDownloading $URL\033[0m"
     if ! curl -fsSL "$URL" -o "$TMP/helioslite"; then
@@ -152,7 +158,11 @@ else
         exit 1
     fi
     echo -e "  ✓ \033[32mSHA-256 verified\033[0m"
-    cp "$TMP/helioslite" "$INSTALL_DIR/helioslite"
+    STAGED="$INSTALL_DIR/.helioslite.tmp.$$"
+    cp "$TMP/helioslite" "$STAGED"
+    chmod +x "$STAGED"
+    mv -f "$STAGED" "$INSTALL_DIR/helioslite"
+    trap - EXIT INT TERM
     rm -rf "$TMP"
 fi
 chmod +x "$INSTALL_DIR/helioslite"
