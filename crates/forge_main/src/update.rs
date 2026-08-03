@@ -48,7 +48,10 @@ fn release_asset_url(version: &str, target: &str) -> Option<Url> {
     if version.is_empty()
         || version.starts_with('v')
         || version.len() > 64
-        || !version.as_bytes()[0].is_ascii_digit()
+        || !version
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| byte.is_ascii_digit())
         || !version
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
