@@ -74,6 +74,12 @@ pub fn sync_pr_job() -> Job {
             --token ${{ secrets.GITHUB_TOKEN }}"
             .to_string(),
     )
+    // The scheduled workflow invocation has no pull-request payload. Keep
+    // this job limited to the two events that provide the PR number consumed
+    // by `sync-pr.ts`.
+    .cond(Expression::new(
+        "github.event_name == 'pull_request' || github.event_name == 'pull_request_target'",
+    ))
     .permissions(
         Permissions::default()
             .issues(Level::Write)
