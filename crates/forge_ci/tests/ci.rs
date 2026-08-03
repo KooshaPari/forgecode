@@ -36,6 +36,24 @@ fn test_release_workflow() {
     assert!(generated.contains("target: x86_64-unknown-linux-gnu"));
     assert!(generated.contains("target: x86_64-pc-windows-msvc"));
     assert!(generated.contains("matrix.binary_name }}.sha256"));
+    assert!(generated.contains("attest_release_assets:"));
+    assert!(generated.contains("needs: build_release"));
+    assert!(generated.contains("attestations: write"));
+    assert!(generated.contains("id-token: write"));
+    let release_download = r#"gh release download "${{ github.event.release.tag_name }}" \
+            --repo "${{ github.repository }}" \
+            --dir release-assets \
+            --pattern "forge-*""#;
+    assert!(generated.contains(release_download));
+    assert!(
+        !generated.contains(": \n"),
+        "release workflow must not contain trailing whitespace"
+    );
+    assert!(
+        !generated.contains("\\\\\n"),
+        "shell continuations must have exactly one trailing backslash"
+    );
+    assert!(generated.contains("actions/attest-build-provenance@"));
 }
 
 #[test]
