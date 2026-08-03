@@ -1,6 +1,6 @@
 # forge-dev Packaging & Installer Spec
 
-**Status**: Draft  
+**Status**: Draft — publication deferred pending fork-owned signed releases
 **Owner**: @KooshaPari  
 **Repo**: `KooshaPari/forgecode` (fork of `tailcallhq/forge`, no upstream rename)  
 **Binary**: `forge-dev` (not `forge`)  
@@ -62,18 +62,22 @@ path = "src/main.rs"
 
 ### 2.4 NPM packages
 
-Two npm distribution repos (`antinomyhq/npm-code-forge`, `antinomyhq/npm-forgecode`)
-manage publishing. The `update-package.sh` script called during CI references the
-binary name. Affected paths:
+No npm distribution repository is currently authorized for this fork. Do not
+publish to the historical upstream repositories. A future fork-owned package
+must consume a release asset plus its verified `.sha256` sidecar and pass the
+release provenance gate before publication. The `update-package.sh` script
+called during CI references the binary name. Affected paths:
 
 - `.github/workflows/release.yml:126-128` — `matrix.repository` entries
 - `update-package.sh` (external repo) — binary name in install script
 
 ### 2.5 Homebrew
 
-**External repo**: `antinomyhq/homebrew-code-forge`  
-The `update-formula.sh` script generates a formula referencing `forge`. A new tap
-`KooshaPari/homebrew-forge-dev` should be created. The formula:
+No Homebrew tap is currently authorized for this fork. Do not publish to
+`antinomyhq/homebrew-code-forge`. A future tap such as
+`KooshaPari/homebrew-forge-dev` must be created only after a signed release and
+verified checksums exist. The `update-formula.sh` script generates a formula
+referencing `forge`. The formula:
 
 - `binary` → `forge-dev`
 - `test` block calls `forge-dev --version`
@@ -83,8 +87,9 @@ The `update-formula.sh` script generates a formula referencing `forge`. A new ta
 
 **File**: `crates/forge_main/src/update.rs:16`
 
-The auto-update shell command currently points at the upstream install URL. For
-forge-dev this must change to a fork-owned endpoint:
+The updater must use a fork-owned endpoint and verify the adjacent checksum
+sidecar before executing any downloaded installer. A bare `curl | sh` flow is
+not an acceptable release contract. The intended endpoint is:
 
 ```rust
 // Current (upstream):

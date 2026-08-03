@@ -10,6 +10,9 @@
 #   # Local install (no download): run from repo root
 #   ./install.sh --local
 #
+#   # Override automatic Linux GNU/musl detection (useful in CI):
+#   HELIOSLITE_TARGET=x86_64-unknown-linux-musl ./install.sh
+#
 # Installs the HeliosLite CLI as a single-binary `helioslite` on PATH.
 # On Linux/macOS we download the matching raw `forge-*` release binary from
 # GitHub Releases and install it as `helioslite`.
@@ -21,6 +24,11 @@ LOCAL=0
 SKIP_FORGE=0
 SKIP_UPDATE_CHECK=0
 REPO="${HELIOSLITE_RELEASE_REPO:-KooshaPari/forgecode}"
+TARGET_OVERRIDE="${HELIOSLITE_TARGET:-}"
+
+validate_repo() { [[ "$1" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { echo "Invalid release repo: $1" >&2; exit 1; }; }
+validate_version() { printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$' || { echo "Invalid release version: $1" >&2; exit 1; }; }
+validate_repo "$REPO"
 
 for arg in "$@"; do
     case "$arg" in
@@ -36,6 +44,9 @@ for arg in "$@"; do
     esac
 done
 
+# Accept either `1.2.3` or the GitHub-style `v1.2.3` spelling.
+VERSION="${VERSION#v}"
+
 # 1) Resolve target version
 if [ -z "$VERSION" ] && [ "$LOCAL" = "0" ]; then
     VERSION="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
@@ -43,10 +54,11 @@ if [ -z "$VERSION" ] && [ "$LOCAL" = "0" ]; then
                 | head -1 \
                 | sed -E 's/.*"v?([^"]+)".*/\1/' || true)"
     if [ -z "$VERSION" ]; then
-        echo -e "  ⚠ \033[33mCould not determine latest version — falling back to v0.1.0\033[0m"
-        VERSION="0.1.0"
+        echo -e "  ✖ \033[31mCould not determine latest version; refusing an unpinned install\033[0m" >&2
+        exit 1
     fi
 fi
+validate_version "$VERSION"
 echo -e "  → \033[36mTarget version: $VERSION\033[0m"
 
 # 2) Pick install location
@@ -55,7 +67,7 @@ mkdir -p "$INSTALL_DIR"
 
 # 3) Detect target triple
 detect_target() {
-    local os arch
+    local os arch libc
     os="$(uname -s | tr '[:upper:]' '[:lower:]')"
     arch="$(uname -m)"
     case "$arch" in
@@ -64,7 +76,30 @@ detect_target() {
         *) echo -e "  ✖ \033[31mUnsupported architecture: $arch\033[0m"; return 1 ;;
     esac
     case "$os" in
-        linux)   echo "${arch}-unknown-linux-gnu" ;;
+        linux)
+            # Allow CI/packagers to pin an exact release target, but never
+            # interpolate arbitrary input into an asset URL.
+            if [ -n "$TARGET_OVERRIDE" ]; then
+                case "$TARGET_OVERRIDE" in
+                    x86_64-unknown-linux-gnu|x86_64-unknown-linux-musl|\
+                    aarch64-unknown-linux-gnu|aarch64-unknown-linux-musl)
+                        echo "$TARGET_OVERRIDE"; return 0 ;;
+                    *)
+                        echo -e "  ✖ \033[31mUnsupported HELIOSLITE_TARGET: $TARGET_OVERRIDE\033[0m" >&2
+                        return 1 ;;
+                esac
+            fi
+            libc="gnu"
+            # musl's ldd identifies itself in its version output.  The
+            # loader check covers minimal Alpine images where ldd is absent.
+            if { command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 \
+                    | grep -qi musl; } \
+                || compgen -G '/lib/ld-musl-*.so.1' >/dev/null 2>&1 \
+                || compgen -G '/lib64/ld-musl-*.so.1' >/dev/null 2>&1; then
+                libc="musl"
+            fi
+            echo "${arch}-unknown-linux-${libc}"
+            ;;
         darwin)  echo "${arch}-apple-darwin" ;;
         *) echo -e "  ✖ \033[31mUnsupported OS: $os\033[0m"; return 1 ;;
     esac
@@ -85,13 +120,49 @@ else
     ASSET="forge-${TARGET}"
     URL="https://github.com/$REPO/releases/download/v$VERSION/$ASSET"
     TMP="$(mktemp -d -t helioslite-install-XXXXXX)"
+    trap 'rm -rf "$TMP"' EXIT INT TERM
 
     echo -e "  → \033[36mDownloading $URL\033[0m"
     if ! curl -fsSL "$URL" -o "$TMP/helioslite"; then
         echo -e "  ✖ \033[31mDownload failed\033[0m"
         exit 1
     fi
-    cp "$TMP/helioslite" "$INSTALL_DIR/helioslite"
+    CHECKSUM_URL="$URL.sha256"
+    if ! curl -fsSL "$CHECKSUM_URL" -o "$TMP/helioslite.sha256"; then
+        echo -e "  ✖ \033[31mRelease checksum is unavailable; refusing an unverified binary\033[0m" >&2
+        exit 1
+    fi
+    EXPECTED_SHA="$(awk 'NF { print $1; exit }' "$TMP/helioslite.sha256")"
+    case "$EXPECTED_SHA" in
+        (''|*[!0123456789abcdefABCDEF]*)
+            echo -e "  ✖ \033[31mInvalid SHA-256 checksum format\033[0m" >&2
+            exit 1
+            ;;
+    esac
+    if [ "${#EXPECTED_SHA}" -ne 64 ]; then
+        echo -e "  ✖ \033[31mInvalid SHA-256 checksum length\033[0m" >&2
+        exit 1
+    fi
+    if command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL_SHA="$(sha256sum "$TMP/helioslite" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+        ACTUAL_SHA="$(shasum -a 256 "$TMP/helioslite" | awk '{print $1}')"
+    else
+        echo -e "  ✖ \033[31mNo SHA-256 utility found; refusing an unverified binary\033[0m" >&2
+        exit 1
+    fi
+    EXPECTED_SHA_NORMALIZED="$(printf '%s' "$EXPECTED_SHA" | tr '[:upper:]' '[:lower:]')"
+    ACTUAL_SHA_NORMALIZED="$(printf '%s' "$ACTUAL_SHA" | tr '[:upper:]' '[:lower:]')"
+    if [ "$EXPECTED_SHA_NORMALIZED" != "$ACTUAL_SHA_NORMALIZED" ]; then
+        echo -e "  ✖ \033[31mSHA-256 verification failed\033[0m" >&2
+        exit 1
+    fi
+    echo -e "  ✓ \033[32mSHA-256 verified\033[0m"
+    STAGED="$INSTALL_DIR/.helioslite.tmp.$$"
+    cp "$TMP/helioslite" "$STAGED"
+    chmod +x "$STAGED"
+    mv -f "$STAGED" "$INSTALL_DIR/helioslite"
+    trap - EXIT INT TERM
     rm -rf "$TMP"
 fi
 chmod +x "$INSTALL_DIR/helioslite"
