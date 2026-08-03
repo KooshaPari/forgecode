@@ -2,6 +2,33 @@ use gh_workflow::*;
 
 use crate::jobs::ReleaseBuilderJob;
 
+const RELEASE_ASSET_ATTESTATION_JOB: &str = r#"
+  attest_release_assets:
+    name: Attest release assets
+    needs: build_release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          gh release download "${{ github.event.release.tag_name }}" \
+            --repo "${{ github.repository }}" \
+            --dir release-assets \
+            --pattern "forge-*"
+          test "$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 18
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
+        with:
+          subject-path: release-assets/*
+"#;
+
 /// Generate the release build workflow.
 ///
 /// Third-party npm and Homebrew publication jobs are intentionally omitted
@@ -20,5 +47,9 @@ pub fn release_publish() {
         .permissions(Permissions::default().contents(Level::Read))
         .add_job("build_release", release_build_job.into_job());
 
-    super::generate_workflow(npm_workflow, "release.yml");
+    super::generate_workflow_with_suffix(
+        npm_workflow,
+        "release.yml",
+        RELEASE_ASSET_ATTESTATION_JOB,
+    );
 }
