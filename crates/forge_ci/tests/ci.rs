@@ -56,4 +56,12 @@ fn test_autofix_workflow() {
 #[test]
 fn test_bounty_workflow() {
     workflow::generate_bounty_workflow();
+
+    let generated = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/bounty.yml"),
+    )
+    .expect("generated bounty workflow");
+    assert!(generated.contains(
+        "if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'",
+    ));
 }
