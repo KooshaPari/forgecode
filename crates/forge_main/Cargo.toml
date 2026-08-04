@@ -66,6 +66,7 @@ tracing.workspace = true
 chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 toml_edit.workspace = true
 regex.workspace = true
 strum.workspace = true
@@ -83,6 +84,7 @@ open.workspace = true
 humantime.workspace = true
 num-format.workspace = true
 url.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
 forge_embed.workspace = true
 include_dir.workspace = true
 indexmap.workspace = true

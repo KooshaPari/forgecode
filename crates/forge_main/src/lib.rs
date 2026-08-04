@@ -10,6 +10,7 @@ mod info;
 mod input;
 mod logs;
 mod model;
+pub mod native_update;
 mod oauth_callback;
 mod porcelain;
 mod prompt;
