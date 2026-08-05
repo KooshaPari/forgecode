@@ -4,7 +4,7 @@
   <a href="assets/brand/helioslite-icon.svg"><img src="assets/brand/helioslite-icon.svg" alt="helioslite" width="160" height="160"></a>
 </p>
 <p align="center"><em>AI-enhanced terminal development environment — agentic coding CLI/TUI with ZSH plugin support.</em></p>
-<p align="center"><sub>Terminal-Forge palette · <a href="assets/brand/README.md">brand assets &amp; tokens</a> · theme.rs wired (PR #86) · <a href="docs/assets/identity/">visual identity demo</a> — <em>Phenotype-org addition on top of upstream <a href="https://github.com/tailcallhq/forgecode">tailcallhq/forgecode</a></em></sub></p>
+<p align="center"><sub>Terminal-Forge palette · <a href="assets/brand/README.md">brand assets &amp; tokens</a> · <a href="docs/VISUAL_SPEC.md">visual spec</a> · theme.rs wired (PR #86) · <a href="docs/assets/identity/">visual identity demo</a> — <em>Phenotype-org addition on top of upstream <a href="https://github.com/tailcallhq/forgecode">tailcallhq/forgecode</a></em></sub></p>
 
 ---
 
@@ -74,6 +74,25 @@ crates/
 ```
 
 See `docs/SSOT.md` for the authoritative state-of-the-repo and `CLAUDE.md`/`AGENTS.md` for contributor governance.
+
+## Accessibility
+
+forgecode is terminal-first, so accessibility means working with the user's
+terminal, not against it (see [FR-014](FUNCTIONAL_REQUIREMENTS.md)):
+
+- **Color is never the sole carrier of meaning.** Status, errors, and
+  success states carry text markers in addition to Terminal-Forge color.
+  `NO_COLOR` is honored and explicitly stripped from subprocess environments
+  so tool output stays deterministic.
+- **Non-interactive parity.** Every interactive capability has a
+  non-interactive path: `forge -p` for single prompts, `--porcelain` for
+  machine-readable output, CI detection (`is_ci`) so scripts never hang on
+  prompts.
+- **Screen-reader mode: planned.** A structured, non-interactive output mode
+  for screen readers is on the roadmap (tracked with FR-014); today the CLI
+  already emits plain-text output that works with any terminal reader.
+- **Motion.** Animated brand assets (the SMIL CRT mark) ship a
+  `prefers-reduced-motion` fallback (see `assets/tokens.css`).
 
 ## Install forge-dev
 
