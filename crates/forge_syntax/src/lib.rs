@@ -188,7 +188,7 @@ pub fn code_wrap(text: &str, width: usize, pretty_broken: bool) -> (usize, Vec<S
 
 #[cfg(test)]
 mod tests {
-    use super::{Theme, code_wrap, highlight_line};
+    use super::{Theme, code_wrap, highlight_line, sanitize_terminal_text};
     use pretty_assertions::assert_eq;
     #[test]
     fn test_unknown_is_literal() {
@@ -206,6 +206,16 @@ mod tests {
                 .map(String::from)
                 .collect(),
         );
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_terminal_controls_are_rendered_as_visible_escapes() {
+        let fixture = "println!(\"ok\");\x1b[2J\r";
+
+        let actual = sanitize_terminal_text(fixture);
+        let expected = "println!(\"ok\");\\u{1b}[2J\\r".to_string();
+
         assert_eq!(actual, expected);
     }
 }
