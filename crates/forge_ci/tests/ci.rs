@@ -62,17 +62,25 @@ fn generate() {
 
 #[test]
 fn test_release_drafter() {
+    let expected = std::fs::read_to_string(generated_workflow_path("release-drafter.yml"))
+        .expect("release drafter workflow baseline");
     workflow::generate_release_drafter_workflow();
 
-    let workflow_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(".github/workflows/release-drafter.yml");
-    let workflow = std::fs::read_to_string(workflow_path)
-        .expect("release drafter workflow should be generated");
+    let actual = std::fs::read_to_string(generated_workflow_path("release-drafter.yml"))
+        .expect("release drafter workflow output");
     assert!(
-        !workflow.contains("Auto Labeler"),
+        !actual.contains("Auto Labeler"),
         "pull_request_target must not execute label writes"
     );
+    assert!(actual.contains("contents: write"));
+    assert!(actual.contains("pull-requests: read"));
+    assert!(
+        actual.contains("release-drafter/release-drafter@5a60cd8ddda6dc14fce77159675b8fd2cdca4007")
+    );
+
+    let expected = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&expected).unwrap();
+    let actual = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&actual).unwrap();
+    assert_eq!(actual, expected);
 }
 
 #[test]
