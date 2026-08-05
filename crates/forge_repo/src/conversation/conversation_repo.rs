@@ -943,7 +943,6 @@ impl ConversationRepository for ConversationRepositoryImpl {
             for row in rows {
                 let Ok(id) = ConversationId::parse(&row.conversation_id) else {
                     report.invalid_id += 1;
-                    report.errors += 1;
                     continue;
                 };
 
