@@ -13,16 +13,24 @@ pub struct CodeHighlighter {
 
 impl Default for CodeHighlighter {
     fn default() -> Self {
-        Self {
-            theme: match detect_theme_mode() {
-                ThemeMode::Dark => Theme::Dark,
-                ThemeMode::Light => Theme::Light,
-            },
-        }
+        Self::new(match detect_theme_mode() {
+            ThemeMode::Dark => Theme::Dark,
+            ThemeMode::Light => Theme::Light,
+        })
     }
 }
 
 impl CodeHighlighter {
+    /// Creates a highlighter using the caller-selected terminal palette.
+    pub fn new(theme: Theme) -> Self {
+        Self { theme }
+    }
+
+    /// Replaces the terminal palette used for subsequent code lines.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.theme = theme;
+    }
+
     /// Highlight a single line of code.
     fn highlight_line(&self, line: &str, language: Option<&str>) -> String {
         highlight_line(line, language, self.theme)
