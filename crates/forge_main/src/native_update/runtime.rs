@@ -9,6 +9,7 @@ mod tests {
     use url::Url;
 
     use super::{NativeUpdateResponse, NativeUpdateTransport, install_release_at};
+    use crate::native_update::RELEASE_REPOSITORY;
 
     struct QueueTransport {
         responses: Mutex<VecDeque<Result<NativeUpdateResponse, String>>>,
@@ -52,6 +53,7 @@ mod tests {
         ]);
 
         let result = install_release_at(
+            RELEASE_REPOSITORY,
             "2.10.2",
             "aarch64-apple-darwin",
             Path::new(&destination),
@@ -193,12 +195,13 @@ pub(crate) enum NativeUpdateError {
 /// This accepts an explicit destination for normal composition and deterministic tests; the
 /// production entrypoint below always passes `current_exe()` for the compile-time target.
 pub(crate) async fn install_release_at(
+    repository: &str,
     version: &str,
     target: &str,
     destination: &Path,
     transport: &impl NativeUpdateTransport,
 ) -> Result<(), NativeUpdateError> {
-    let plan = NativeUpdatePlan::new(version, target).map_err(plan_error)?;
+    let plan = NativeUpdatePlan::new(repository, version, target).map_err(plan_error)?;
     let sidecar = fetch_release_response(plan.checksum_url(), transport).await?;
     let expected = parse_sha256_sidecar(&sidecar)?;
     let payload = fetch_release_response(plan.asset_url(), transport).await?;
@@ -209,11 +212,14 @@ pub(crate) async fn install_release_at(
 }
 
 /// Apply a release to the running native executable on a supported compile-time target.
-pub(crate) async fn update_current_executable(version: &str) -> Result<(), NativeUpdateError> {
+pub(crate) async fn update_current_executable(
+    repository: &str,
+    version: &str,
+) -> Result<(), NativeUpdateError> {
     let target = compile_time_target()?;
     let destination = std::env::current_exe().map_err(|_| NativeUpdateError::Install)?;
     let transport = ReqwestNativeUpdateTransport::new()?;
-    install_release_at(version, target, &destination, &transport).await
+    install_release_at(repository, version, target, &destination, &transport).await
 }
 
 async fn fetch_release_response(

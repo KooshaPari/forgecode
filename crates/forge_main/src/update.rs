@@ -23,15 +23,23 @@ fn validate_update_repo(raw: &str) -> Option<&str> {
 
 /// Boundary for replacing the current executable with the notified release.
 trait NativeUpdateExecutor {
-    fn execute<'a>(&'a self, version: &'a str) -> BoxFuture<'a, anyhow::Result<()>>;
+    fn execute<'a>(
+        &'a self,
+        repository: &'a str,
+        version: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<()>>;
 }
 
 struct CurrentExecutableNativeUpdateExecutor;
 
 impl NativeUpdateExecutor for CurrentExecutableNativeUpdateExecutor {
-    fn execute<'a>(&'a self, version: &'a str) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn execute<'a>(
+        &'a self,
+        repository: &'a str,
+        version: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
-            crate::native_update::update_current_executable(version)
+            crate::native_update::update_current_executable(repository, version)
                 .await
                 .map_err(Into::into)
         })
@@ -43,10 +51,11 @@ impl NativeUpdateExecutor for CurrentExecutableNativeUpdateExecutor {
 /// without prompting the user.
 async fn execute_update_command(
     executor: &impl NativeUpdateExecutor,
+    repository: &str,
     notified_version: &str,
     auto_update: bool,
 ) {
-    match executor.execute(notified_version).await {
+    match executor.execute(repository, notified_version).await {
         Err(err) => {
             let _ = send_update_failure_event(&format!("Auto update failed {err}")).await;
         }
@@ -161,6 +170,7 @@ pub async fn on_update(update: Option<&Update>) {
         if auto_update || confirm_update(version).await {
             execute_update_command(
                 &CurrentExecutableNativeUpdateExecutor,
+                &primary_repo,
                 &notified_version,
                 auto_update,
             )
@@ -200,7 +210,11 @@ mod tests {
     }
 
     impl NativeUpdateExecutor for RecordingNativeUpdateExecutor {
-        fn execute<'a>(&'a self, version: &'a str) -> BoxFuture<'a, anyhow::Result<()>> {
+        fn execute<'a>(
+            &'a self,
+            _repository: &'a str,
+            version: &'a str,
+        ) -> BoxFuture<'a, anyhow::Result<()>> {
             Box::pin(async move {
                 self.notified_versions
                     .lock()
@@ -215,7 +229,7 @@ mod tests {
     async fn update_execution_invokes_native_executor_with_notified_version() {
         let fixture = RecordingNativeUpdateExecutor::new();
 
-        execute_update_command(&fixture, "v2.10.2", false).await;
+        execute_update_command(&fixture, DEFAULT_UPDATE_REPO, "v2.10.2", false).await;
 
         let actual = fixture.notified_versions();
         let expected = vec!["v2.10.2".to_string()];
@@ -224,16 +238,21 @@ mod tests {
 
     #[test]
     fn native_update_plan_builds_immutable_release_urls() {
-        let fixture =
-            crate::native_update::NativeUpdatePlan::new("v2.10.2", "aarch64-apple-darwin").unwrap();
+        let fixture = crate::native_update::NativeUpdatePlan::new(
+            DEFAULT_UPDATE_REPO,
+            "v2.10.2",
+            "aarch64-apple-darwin",
+        )
+        .unwrap();
 
         let actual = (
             fixture.asset_url().as_str(),
             fixture.checksum_url().as_str(),
         );
+        let release_base = "https://github.com/KooshaPari/forgecode/releases/download/v2.10.2";
         let expected = (
-            "https://github.com/KooshaPari/forgecode/releases/download/v2.10.2/forge-aarch64-apple-darwin",
-            "https://github.com/KooshaPari/forgecode/releases/download/v2.10.2/forge-aarch64-apple-darwin.sha256",
+            format!("{release_base}/forge-aarch64-apple-darwin"),
+            format!("{release_base}/forge-aarch64-apple-darwin.sha256"),
         );
 
         assert_eq!(actual, expected);
