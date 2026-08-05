@@ -9,5 +9,9 @@ rust-version.workspace = true
 name = "forge_syntax"
 path = "src/lib.rs"
 
+[dependencies]
+unicode-segmentation = "1.12"
+unicode-width.workspace = true
+
 [dev-dependencies]
 pretty_assertions.workspace = true

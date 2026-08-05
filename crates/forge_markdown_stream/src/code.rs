@@ -110,7 +110,7 @@ mod tests {
         let fixture = "  abcdef\u{ac00}\u{b098}\u{b2e4}";
         let (actual_indent, actual_lines) = code_wrap(fixture, 8, true);
         let expected_indent = 2;
-        let expected_lines = vec!["  ab", "cd", "ef", "\u{ac00}\u{b098}", "\u{b2e4}"]
+        let expected_lines = vec!["  ab", "cd", "ef", "\u{ac00}", "\u{b098}", "\u{b2e4}"]
             .into_iter()
             .map(String::from)
             .collect::<Vec<_>>();

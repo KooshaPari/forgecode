@@ -1,4 +1,7 @@
-//! Dependency-free ANSI highlighting and terminal-safe code wrapping.
+//! Lightweight ANSI highlighting and terminal-safe code wrapping.
+
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 /// Terminal palette selected by the caller's terminal-theme detection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -8,6 +11,7 @@ pub enum Theme {
 }
 
 const RESET: &str = "\x1b[0m";
+const WRAP_PADDING: usize = 4;
 
 /// Converts terminal control characters to visible source-code escapes.
 pub fn sanitize_terminal_text(text: &str) -> String {
@@ -178,35 +182,46 @@ pub fn highlight_line(line: &str, language: Option<&str>, theme: Theme) -> Strin
     output
 }
 
-/// Wraps code by character count while preserving leading indentation.
+/// Wraps sanitized code by terminal display columns while preserving indentation.
 pub fn code_wrap(text: &str, width: usize, pretty_broken: bool) -> (usize, Vec<String>) {
+    let sanitized = sanitize_terminal_text(text);
+    let text = sanitized.as_str();
     if text.is_empty() {
         return (0, vec![String::new()]);
     }
     if !pretty_broken {
         return (0, vec![text.to_string()]);
     }
-    let indent = text
-        .chars()
-        .take_while(|character| character.is_whitespace())
-        .count();
     let content = text.trim_start();
+    let indentation = &text[..text.len() - content.len()];
+    let indent = indentation.chars().count();
     if content.is_empty() {
         return (indent, vec![text.to_string()]);
     }
-    let size = width.saturating_sub(4).saturating_sub(indent);
-    let characters: Vec<char> = content.chars().collect();
-    if size == 0 || characters.len() <= size {
+    let available_width = width
+        .saturating_sub(WRAP_PADDING)
+        .saturating_sub(UnicodeWidthStr::width(indentation));
+    if available_width == 0 || UnicodeWidthStr::width(content) <= available_width {
         return (indent, vec![text.to_string()]);
     }
     let mut lines = Vec::new();
-    for (index, chunk) in characters.chunks(size).enumerate() {
-        let part: String = chunk.iter().collect();
-        lines.push(if index == 0 {
-            format!("{}{}", " ".repeat(indent), part)
-        } else {
-            part
-        });
+    let mut current = String::new();
+    let mut current_width = 0;
+    for grapheme in UnicodeSegmentation::graphemes(content, true) {
+        let grapheme_width = UnicodeWidthStr::width(grapheme);
+        if !current.is_empty() && current_width + grapheme_width > available_width {
+            lines.push(current);
+            current = String::new();
+            current_width = 0;
+        }
+        current.push_str(grapheme);
+        current_width += grapheme_width;
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if let Some(first) = lines.first_mut() {
+        first.insert_str(0, indentation);
     }
     (indent, lines)
 }
@@ -226,7 +241,7 @@ mod tests {
         let actual = code_wrap("  abcdef\u{ac00}\u{b098}\u{b2e4}", 8, true);
         let expected = (
             2,
-            vec!["  ab", "cd", "ef", "\u{ac00}\u{b098}", "\u{b2e4}"]
+            vec!["  ab", "cd", "ef", "\u{ac00}", "\u{b098}", "\u{b2e4}"]
                 .into_iter()
                 .map(String::from)
                 .collect(),
@@ -270,6 +285,42 @@ mod tests {
             "\x1b[38;5;244m// comment\x1b[0m"
         )
         .to_string();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_wrap_uses_terminal_columns_for_wide_graphemes() {
+        let fixture = "\u{ac00}\u{b098}\u{b2e4}\u{b77c}\u{b9c8}\u{bc14}";
+
+        let actual = code_wrap(fixture, 10, true);
+        let expected = (
+            0,
+            vec!["\u{ac00}\u{b098}\u{b2e4}".to_string(), "\u{b77c}\u{b9c8}\u{bc14}".to_string()],
+        );
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_wrap_does_not_split_combining_graphemes() {
+        let fixture = "e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}";
+
+        let actual = code_wrap(fixture, 8, true);
+        let expected = (
+            0,
+            vec!["e\u{301}e\u{301}e\u{301}e\u{301}".to_string(), "e\u{301}".to_string()],
+        );
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_wrap_neutralizes_ansi_control_bytes_before_measuring_width() {
+        let fixture = "\x1b[31mlet value";
+
+        let actual = code_wrap(fixture, 24, true);
+        let expected = (0, vec!["\\u{1b}[31mlet value".to_string()]);
 
         assert_eq!(actual, expected);
     }
