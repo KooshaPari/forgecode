@@ -113,7 +113,15 @@ fn test_release_workflow() {
 
 #[test]
 fn test_labels_workflow() {
+    let expected = std::fs::read_to_string(generated_workflow_path("labels.yml"))
+        .expect("labels workflow baseline");
     workflow::generate_labels_workflow();
+    let actual = std::fs::read_to_string(generated_workflow_path("labels.yml"))
+        .expect("labels workflow output");
+
+    let expected = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&expected).unwrap();
+    let actual = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&actual).unwrap();
+    assert_eq!(actual, expected);
 }
 
 #[test]
