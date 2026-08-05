@@ -100,7 +100,6 @@ dirs = "6.0.0"
 dissimilar = "1.0.9"
 dotenvy = "0.15.7"
 futures = "0.3.32"
-gh-workflow = "0.9.0"
 glob = "0.3.3"
 grep-searcher = "0.1.14"
 grep-regex = "0.1.13"
@@ -175,7 +174,6 @@ uuid = { version = "1.23.0", features = [
 ] }
 whoami = "2.1.0"
 fnv = "1.0.7"
-merge = { version = "0.2", features = ["derive"] }
 hex = "0.4.3"
 rmcp = { version = "1.0.0", features = [
     "client",
