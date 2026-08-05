@@ -480,32 +480,31 @@ mod tests {
             .compression_strategy("other-compression")
             .prune_strategy("other-prune");
         fixture.merge_from(other);
-        assert_eq!(fixture.retention_window, 21);
-        assert_eq!(fixture.eviction_window, 0.22);
-        assert_eq!(
-            fixture.summarization_strategy,
-            SummarizationStrategy::Hybrid
-        );
-        assert_eq!(fixture.summary_timeout_secs, 23);
-        assert!(fixture.enable_prefilter);
-        assert!(fixture.enable_adaptive_eviction);
-        assert!(fixture.enable_importance_scoring);
-        assert_eq!(fixture.context_compression_level, 2);
-        assert_eq!(fixture.min_importance_threshold, 0.24);
-        assert_eq!(fixture.prune_threshold, 25);
-        assert!(fixture.enable_semantic_compression);
-        assert!(fixture.enable_structural_dedup);
-        assert_eq!(fixture.compression_strategy, "other-compression");
-        assert_eq!(fixture.prune_strategy, "other-prune");
-        assert_eq!(fixture.max_tokens, Some(10));
-        assert_eq!(fixture.token_threshold, Some(11));
-        assert_eq!(fixture.token_threshold_percentage, Some(0.12));
-        assert_eq!(fixture.turn_threshold, Some(13));
-        assert_eq!(fixture.message_threshold, Some(14));
-        assert_eq!(fixture.model, Some(ModelId::new("base-model")));
-        assert_eq!(fixture.on_turn_end, Some(true));
-        assert_eq!(fixture.summary_model, Some(ModelId::new("base-summary")));
-        assert_eq!(fixture.summary_max_tokens, Some(15));
+        let expected = Compact::new()
+            .retention_window(21_usize)
+            .eviction_window(0.22_f64)
+            .max_tokens(10_usize)
+            .token_threshold(11_usize)
+            .token_threshold_percentage(0.12_f64)
+            .turn_threshold(13_usize)
+            .message_threshold(14_usize)
+            .model(ModelId::new("base-model"))
+            .on_turn_end(true)
+            .summarization_strategy(SummarizationStrategy::Hybrid)
+            .summary_model(ModelId::new("base-summary"))
+            .summary_max_tokens(15_usize)
+            .summary_timeout_secs(23_u64)
+            .enable_prefilter(true)
+            .enable_adaptive_eviction(true)
+            .enable_importance_scoring(true)
+            .context_compression_level(2_u32)
+            .min_importance_threshold(0.24_f64)
+            .prune_threshold(25_usize)
+            .enable_semantic_compression(true)
+            .enable_structural_dedup(true)
+            .compression_strategy("other-compression")
+            .prune_strategy("other-prune");
+        assert_eq!(fixture, expected);
     }
 
     #[test]
