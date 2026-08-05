@@ -85,6 +85,8 @@ fn test_release_drafter() {
 
 #[test]
 fn test_release_workflow() {
+    let expected = std::fs::read_to_string(generated_workflow_path("release.yml"))
+        .expect("release workflow baseline");
     workflow::release_publish();
 
     let generated = std::fs::read_to_string(
@@ -103,11 +105,9 @@ fn test_release_workflow() {
     assert!(generated.contains("needs: build_release"));
     assert!(generated.contains("attestations: write"));
     assert!(generated.contains("id-token: write"));
-    let release_download = r#"gh release download "${{ github.event.release.tag_name }}" \
-            --repo "${{ github.repository }}" \
-            --dir release-assets \
-            --pattern "forge-*""#;
-    assert!(generated.contains(release_download));
+    assert!(generated.contains("gh release download"));
+    assert!(generated.contains("--repo \"${{ github.repository }}\""));
+    assert!(generated.contains("--pattern \"forge-*\""));
     assert!(
         !generated.contains(": \n"),
         "release workflow must not contain trailing whitespace"
@@ -117,6 +117,10 @@ fn test_release_workflow() {
         "shell continuations must have exactly one trailing backslash"
     );
     assert!(generated.contains("actions/attest-build-provenance@"));
+
+    let expected = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&expected).unwrap();
+    let actual = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&generated).unwrap();
+    assert_eq!(actual, expected);
 }
 
 #[test]

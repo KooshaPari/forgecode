@@ -11,13 +11,13 @@
 //! - `sync-pr.ts --pr N` — propagates labels from linked issues to the PR;
 //!   handles the rewarded lifecycle on merge.
 
-use gh_workflow::*;
+use crate::workflow_model::{Job, Level, Permissions, Step};
 
 const SCRIPTS_DIR: &str = ".github/scripts/bounty/src";
 const TSX: &str = "npx -y tsx@4.20.6";
 
 /// Returns a checkout step — required before script invocation.
-fn checkout_step() -> Step<Use> {
+fn checkout_step() -> Step {
     Step::new("Checkout").uses(
         "actions",
         "checkout",
@@ -77,9 +77,9 @@ pub fn sync_pr_job() -> Job {
     // The scheduled workflow invocation has no pull-request payload. Keep
     // this job limited to the two events that provide the PR number consumed
     // by `sync-pr.ts`.
-    .cond(Expression::new(
+    .if_condition(
         "github.event_name == 'pull_request' || github.event_name == 'pull_request_target'",
-    ))
+    )
     .permissions(
         Permissions::default()
             .issues(Level::Write)

@@ -70,6 +70,8 @@ pub(crate) struct Event {
     pull_request_target: Option<PullRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     issues: Option<Issues>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    release: Option<Release>,
 }
 
 impl Event {
@@ -111,6 +113,11 @@ impl Event {
         self.issues = Some(Issues { types: types.into_iter().map(Into::into).collect() });
         self
     }
+
+    pub(crate) fn release(mut self, types: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.release = Some(Release { types: types.into_iter().map(Into::into).collect() });
+        self
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -131,6 +138,11 @@ struct Issues {
 }
 
 #[derive(Clone, Serialize)]
+struct Release {
+    types: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
 struct Concurrency {
     group: String,
     #[serde(rename = "cancel-in-progress")]
@@ -141,11 +153,18 @@ struct Concurrency {
 pub(crate) struct Push {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     branches: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tags: Vec<String>,
 }
 
 impl Push {
     pub(crate) fn add_branch(mut self, branch: impl Into<String>) -> Self {
         self.branches.push(branch.into());
+        self
+    }
+
+    pub(crate) fn add_tag(mut self, tag: impl Into<String>) -> Self {
+        self.tags.push(tag.into());
         self
     }
 }
@@ -170,6 +189,16 @@ impl Permissions {
         self
     }
 
+    pub(crate) fn id_token(mut self, level: Level) -> Self {
+        self.0.insert("id-token".to_string(), level);
+        self
+    }
+
+    pub(crate) fn attestations(mut self, level: Level) -> Self {
+        self.0.insert("attestations".to_string(), level);
+        self
+    }
+
     fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -189,8 +218,14 @@ pub(crate) struct Job {
     name: String,
     #[serde(rename = "runs-on")]
     runs_on: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    needs: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    strategy: Option<Value>,
     #[serde(skip_serializing_if = "Permissions::is_empty")]
     permissions: Permissions,
+    #[serde(skip_serializing_if = "IndexMap::is_empty")]
+    outputs: IndexMap<String, String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     steps: Vec<Step>,
 }
@@ -218,15 +253,41 @@ impl Job {
         self.condition = Some(condition.into());
         self
     }
+
+    pub(crate) fn runs_on(mut self, runs_on: impl Into<String>) -> Self {
+        self.runs_on = runs_on.into();
+        self
+    }
+
+    pub(crate) fn needs(mut self, needs: impl Into<String>) -> Self {
+        self.needs = Some(needs.into());
+        self
+    }
+
+    pub(crate) fn strategy(mut self, strategy: Value) -> Self {
+        self.strategy = Some(strategy);
+        self
+    }
+
+    pub(crate) fn output(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.outputs.insert(key.into(), value.into());
+        self
+    }
 }
 
 #[derive(Clone, Default, Serialize)]
 pub(crate) struct Step {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(rename = "if", skip_serializing_if = "Option::is_none")]
+    condition: Option<String>,
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     uses: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     run: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    shell: Option<String>,
     #[serde(rename = "with", skip_serializing_if = "IndexMap::is_empty")]
     inputs: IndexMap<String, String>,
     #[serde(skip_serializing_if = "IndexMap::is_empty")]
@@ -256,9 +317,24 @@ impl Step {
         self
     }
 
+    pub(crate) fn id(mut self, id: impl Into<String>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
     #[allow(dead_code)]
     pub(crate) fn run(mut self, command: impl Into<String>) -> Self {
         self.run = Some(command.into());
+        self
+    }
+
+    pub(crate) fn if_condition(mut self, condition: impl Into<String>) -> Self {
+        self.condition = Some(condition.into());
+        self
+    }
+
+    pub(crate) fn shell(mut self, shell: impl Into<String>) -> Self {
+        self.shell = Some(shell.into());
         self
     }
 
