@@ -952,7 +952,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             }
             TopLevelCommand::Update(args) => {
                 let update = forge_config::Update::default().auto_update(args.no_confirm);
-                on_update(self.api.clone(), Some(&update)).await;
+                on_update(Some(&update)).await;
                 return Ok(());
             }
             TopLevelCommand::Setup => {
@@ -2909,7 +2909,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 self.on_show_tools(agent_id, false).await?;
             }
             AppCommand::Update => {
-                on_update(self.api.clone(), None).await;
+                on_update(None).await;
             }
             AppCommand::Exit => {
                 return Ok(true);
@@ -2923,7 +2923,8 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 self.on_model_selection(None).await?;
             }
             AppCommand::Shell(ref command) => {
-                self.api.execute_shell_command_raw(command).await?;
+                let working_dir = self.api.environment().cwd;
+                self.api.execute_shell_command(command, working_dir).await?;
             }
             AppCommand::Commit { max_diff_size, .. } => {
                 let args = CommitCommandGroup {
@@ -4594,7 +4595,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 .set_active_agent(active_agent.clone().unwrap_or_default())
                 .await?;
             // only call on_update if this is the first initialization
-            on_update(self.api.clone(), self.config.updates.as_ref()).await;
+            on_update(self.config.updates.as_ref()).await;
             // Apply the MCP trust gate. Servers are NOT connected here —
             // connections remain lazy and happen on first tool use.
             self.api.init_mcp().await?;

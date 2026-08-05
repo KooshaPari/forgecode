@@ -3,10 +3,7 @@ use url::Url;
 
 mod runtime;
 
-pub(crate) use runtime::{
-    NativeUpdateResponse, NativeUpdateTransport, ReqwestNativeUpdateTransport, install_release_at,
-    update_current_executable,
-};
+pub(crate) use runtime::update_current_executable;
 
 const RELEASE_REPOSITORY: &str = "KooshaPari/forgecode";
 

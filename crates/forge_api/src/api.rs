@@ -192,9 +192,6 @@ pub trait API: Sync + Send {
         working_dir: PathBuf,
     ) -> Result<CommandOutput>;
 
-    /// Executes the shell command on present stdio.
-    async fn execute_shell_command_raw(&self, command: &str) -> Result<std::process::ExitStatus>;
-
     /// Reads and merges MCP configurations from all available configuration
     /// files This combines both user-level and local configurations with
     /// local taking precedence. If scope is provided, only loads from that

@@ -431,14 +431,6 @@ impl<
             .map_err(|e| anyhow::anyhow!(e))
     }
 
-    async fn execute_shell_command_raw(
-        &self,
-        command: &str,
-    ) -> anyhow::Result<std::process::ExitStatus> {
-        let cwd = self.environment().cwd;
-        self.infra.execute_command_raw(command, cwd, None).await
-    }
-
     async fn get_agent_provider(&self, agent_id: AgentId) -> anyhow::Result<Provider<Url>> {
         let agent_provider_resolver = AgentProviderResolver::new(self.services.clone());
         agent_provider_resolver.get_provider(Some(agent_id)).await
