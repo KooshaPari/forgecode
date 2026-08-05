@@ -3,7 +3,7 @@
   "specVersion": "1.3",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-05T09:20:21.000000000Z",
+    "timestamp": "2026-08-05T23:46:33.000000000Z",
     "tools": [
       {
         "vendor": "CycloneDX",
@@ -13,7 +13,7 @@
     ],
     "component": {
       "type": "application",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/benchmarks/perf_harness#0.1.0",
+      "bom-ref": "path+file:///Users/Shared/forgecode-integration-cleanup-20260805/benchmarks/perf_harness#0.1.0",
       "name": "perf_harness",
       "version": "0.1.0",
       "description": "Per-agent resource-pooling harness (RSS, idle CPU, system-pool count)",
@@ -27,7 +27,7 @@
       "components": [
         {
           "type": "application",
-          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/benchmarks/perf_harness#0.1.0 bin-target-0",
+          "bom-ref": "path+file:///Users/Shared/forgecode-integration-cleanup-20260805/benchmarks/perf_harness#0.1.0 bin-target-0",
           "name": "perf_harness",
           "version": "0.1.0",
           "purl": "pkg:cargo/perf_harness@0.1.0?download_url=file://.#src/main.rs"
@@ -44,7 +44,7 @@
   "components": [
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_daemon#0.1.0",
+      "bom-ref": "path+file:///Users/Shared/forgecode-integration-cleanup-20260805/crates/forge_daemon#0.1.0",
       "name": "forge_daemon",
       "version": "0.1.0",
       "description": "Zig forge-daemon client (kqueue+posix_spawn density lever)",
@@ -58,16 +58,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.4",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5",
       "author": "Andrew Gallant <jamslam@gmail.com>",
       "name": "aho-corasick",
-      "version": "1.1.4",
+      "version": "1.1.5",
       "description": "Fast multiple substring searching.",
       "scope": "required",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301"
+          "content": "c982642fa9e8606056828ee9a8505737230110bb1099153c79efe865c59d12ba"
         }
       ],
       "licenses": [
@@ -75,7 +75,7 @@
           "expression": "Unlicense OR MIT"
         }
       ],
-      "purl": "pkg:cargo/aho-corasick@1.1.4",
+      "purl": "pkg:cargo/aho-corasick@1.1.5",
       "externalReferences": [
         {
           "type": "website",
@@ -796,16 +796,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.16",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18",
       "author": "The Rust Project Developers, Andrew Gallant <jamslam@gmail.com>",
       "name": "regex-automata",
-      "version": "0.4.16",
+      "version": "0.4.18",
       "description": "Automata construction and matching using regular expressions.",
       "scope": "required",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "8fcfdb36bda0c880c5931cdc7a2bcdc8ba4556847b9d912bca70bc94708711ad"
+          "content": "ad8553b9b26413251cbf30e620595c7a41b3887f03da04579c0e6b0d6a06b4b2"
         }
       ],
       "licenses": [
@@ -813,7 +813,7 @@
           "expression": "MIT OR Apache-2.0"
         }
       ],
-      "purl": "pkg:cargo/regex-automata@0.4.16",
+      "purl": "pkg:cargo/regex-automata@0.4.18",
       "externalReferences": [
         {
           "type": "documentation",
@@ -1627,10 +1627,10 @@
   ],
   "dependencies": [
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/benchmarks/perf_harness#0.1.0",
+      "ref": "path+file:///Users/Shared/forgecode-integration-cleanup-20260805/benchmarks/perf_harness#0.1.0",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_daemon#0.1.0",
+        "path+file:///Users/Shared/forgecode-integration-cleanup-20260805/crates/forge_daemon#0.1.0",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
@@ -1639,7 +1639,7 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_daemon#0.1.0",
+      "ref": "path+file:///Users/Shared/forgecode-integration-cleanup-20260805/crates/forge_daemon#0.1.0",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
@@ -1650,7 +1650,7 @@
       ]
     },
     {
-      "ref": "registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.4",
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3"
       ]
@@ -1719,7 +1719,7 @@
     {
       "ref": "registry+https://github.com/rust-lang/crates.io-index#matchers@0.2.0",
       "dependsOn": [
-        "registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.16"
+        "registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18"
       ]
     },
     {
@@ -1769,9 +1769,9 @@
       ]
     },
     {
-      "ref": "registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.16",
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18",
       "dependsOn": [
-        "registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.4",
+        "registry+https://github.com/rust-lang/crates.io-index#aho-corasick@1.1.5",
         "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3",
         "registry+https://github.com/rust-lang/crates.io-index#regex-syntax@0.8.11"
       ]
@@ -1924,7 +1924,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#matchers@0.2.0",
         "registry+https://github.com/rust-lang/crates.io-index#nu-ansi-term@0.50.3",
         "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
-        "registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.16",
+        "registry+https://github.com/rust-lang/crates.io-index#regex-automata@0.4.18",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
         "registry+https://github.com/rust-lang/crates.io-index#sharded-slab@0.1.7",
