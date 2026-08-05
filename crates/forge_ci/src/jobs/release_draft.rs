@@ -1,14 +1,12 @@
-use gh_workflow::*;
-use indexmap::indexmap;
+use crate::workflow_model::{Job, Level, Permissions, Step};
 
 /// Create a draft release job for GitHub Actions
 pub fn create_draft_release_job(build_job_id: &str) -> Job {
     Job::new("draft_release")
-        .name("Draft Release")
-        .add_needs(build_job_id)
-        .cond(Expression::new(
+        .needs(build_job_id)
+        .if_condition(
             "github.event_name == 'push' && github.ref == 'refs/heads/main'",
-        ))
+        )
         // This job only runs on push to main, not needed for release events
         .permissions(
             Permissions::default()
@@ -19,15 +17,13 @@ pub fn create_draft_release_job(build_job_id: &str) -> Job {
         .add_step(
             Step::new("Draft Release").uses("release-drafter", "release-drafter", "5a60cd8ddda6dc14fce77159675b8fd2cdca4007")
                 .id("create_release")
-                .env(("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}"))
-                .with(("config-name", "release-drafter.yml")),
+                .env("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}")
+                .input("config-name", "release-drafter.yml"),
         )
         .add_step(
             Step::new("Export Outputs").run("echo \"crate_release_id=${{ steps.create_release.outputs.id }}\" >> \"$GITHUB_OUTPUT\" && echo \"crate_release_name=${{ steps.create_release.outputs.tag_name }}\" >> \"$GITHUB_OUTPUT\"")
                 .id("set_output"),
         )
-        .outputs(indexmap! {
-            "crate_release_name".to_string() => "${{ steps.set_output.outputs.crate_release_name }}".to_string(),
-            "crate_release_id".to_string() => "${{ steps.set_output.outputs.crate_release_id }}".to_string()
-        })
+        .output("crate_release_name", "${{ steps.set_output.outputs.crate_release_name }}")
+        .output("crate_release_id", "${{ steps.set_output.outputs.crate_release_id }}")
 }
