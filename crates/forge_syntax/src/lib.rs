@@ -196,7 +196,9 @@ pub fn code_wrap(text: &str, width: usize, pretty_broken: bool) -> (usize, Vec<S
         return (0, vec![text.to_string()]);
     }
     let content = text.trim_start();
-    let indentation = &text[..text.len() - content.len()];
+    let indentation = text
+        .strip_suffix(content)
+        .expect("trim_start content must be a suffix of the original text");
     let indent = indentation.chars().count();
     if content.is_empty() {
         return (indent, vec![text.to_string()]);
