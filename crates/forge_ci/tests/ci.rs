@@ -144,7 +144,19 @@ fn test_stale_workflow() {
 
 #[test]
 fn test_autofix_workflow() {
+    let expected = std::fs::read_to_string(generated_workflow_path("autofix.yml"))
+        .expect("autofix workflow baseline");
     workflow::generate_autofix_workflow();
+    let actual = std::fs::read_to_string(generated_workflow_path("autofix.yml"))
+        .expect("autofix workflow output");
+
+    assert!(actual.contains("cancel-in-progress: false"));
+    assert!(actual.contains("contents: read"));
+    assert!(actual.contains("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"));
+
+    let expected = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&expected).unwrap();
+    let actual = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&actual).unwrap();
+    assert_eq!(actual, expected);
 }
 
 #[test]

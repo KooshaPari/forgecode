@@ -13,6 +13,8 @@ pub(crate) struct Workflow {
     permissions: Permissions,
     #[serde(skip_serializing_if = "IndexMap::is_empty")]
     env: IndexMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    concurrency: Option<Concurrency>,
     #[serde(skip_serializing_if = "IndexMap::is_empty")]
     jobs: IndexMap<String, Job>,
 }
@@ -37,6 +39,15 @@ impl Workflow {
         self
     }
 
+    pub(crate) fn concurrency(
+        mut self,
+        group: impl Into<String>,
+        cancel_in_progress: bool,
+    ) -> Self {
+        self.concurrency = Some(Concurrency { group: group.into(), cancel_in_progress });
+        self
+    }
+
     pub(crate) fn add_job(mut self, id: impl Into<String>, job: Job) -> Self {
         self.jobs.insert(id.into(), job);
         self
@@ -53,6 +64,8 @@ pub(crate) struct Event {
     push: Option<Push>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     schedule: Vec<Schedule>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pull_request: Option<PullRequest>,
 }
 
 impl Event {
@@ -65,11 +78,36 @@ impl Event {
         self.schedule.push(Schedule { cron: cron.into() });
         self
     }
+
+    pub(crate) fn pull_request(
+        mut self,
+        types: impl IntoIterator<Item = impl Into<String>>,
+        branches: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.pull_request = Some(PullRequest {
+            types: types.into_iter().map(Into::into).collect(),
+            branches: branches.into_iter().map(Into::into).collect(),
+        });
+        self
+    }
 }
 
 #[derive(Clone, Serialize)]
 struct Schedule {
     cron: String,
+}
+
+#[derive(Clone, Serialize)]
+struct PullRequest {
+    types: Vec<String>,
+    branches: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct Concurrency {
+    group: String,
+    #[serde(rename = "cancel-in-progress")]
+    cancel_in_progress: bool,
 }
 
 #[derive(Clone, Default, Serialize)]

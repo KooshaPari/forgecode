@@ -1,7 +1,5 @@
-use gh_workflow::*;
-
 use crate::jobs;
-use crate::steps::setup_protoc;
+use crate::workflow_model::{Event, Job, Level, Permissions, Push, Step, Workflow};
 
 /// Generate the autofix workflow
 pub fn generate_autofix_workflow() {
@@ -13,7 +11,15 @@ pub fn generate_autofix_workflow() {
             "d23441a48e516b6c34aea4fa41551a30e30af803",
         ))
         .add_step(Step::new("Install SQLite").run("sudo apt-get install -y libsqlite3-dev"))
-        .add_step(setup_protoc())
+        .add_step(
+            Step::new("Setup Protobuf Compiler")
+                .uses(
+                    "arduino",
+                    "setup-protoc",
+                    "c65c819552d16ad3c9b72d9dfd5ba5237b9c906b",
+                )
+                .input("repo-token", "${{ secrets.GITHUB_TOKEN }}"),
+        )
         .add_step(
             Step::new("Setup Rust Toolchain")
                 .uses(
@@ -21,8 +27,7 @@ pub fn generate_autofix_workflow() {
                     "setup-rust-toolchain",
                     "166cdcfd11aee3cb47222f9ddb555ce30ddb9659",
                 )
-                .with(("toolchain", "nightly"))
-                .with(("components", "clippy, rustfmt")),
+                .input("components", "clippy, rustfmt"),
         )
         .add_step(Step::new("Cargo Clippy").run(jobs::clippy_cmd(false)))
         .add_step(
@@ -31,25 +36,14 @@ pub fn generate_autofix_workflow() {
 
     let events = Event::default()
         .push(Push::default().add_branch("main"))
-        .pull_request(
-            PullRequest::default()
-                .add_type(PullRequestType::Opened)
-                .add_type(PullRequestType::Synchronize)
-                .add_type(PullRequestType::Reopened)
-                .add_branch("main"),
-        );
+        .pull_request(["opened", "synchronize", "reopened"], ["main"]);
 
-    let workflow = Workflow::default()
-        .name("autofix.ci")
-        .add_env(RustFlags::deny("warnings"))
+    let workflow = Workflow::new("autofix.ci")
+        .env("RUSTFLAGS", "-Dwarnings")
         .on(events)
         .permissions(Permissions::default().contents(Level::Read))
-        .concurrency(
-            Concurrency::default()
-                .group("autofix-${{github.ref}}")
-                .cancel_in_progress(false),
-        )
+        .concurrency("autofix-${{github.ref}}", false)
         .add_job("lint", lint_fix_job);
 
-    super::generate_workflow(workflow, "autofix.yml");
+    super::generate_private_workflow(workflow, "autofix.yml");
 }
