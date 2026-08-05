@@ -268,10 +268,14 @@ impl ConversationRepository for ConversationRepositoryImpl {
         limit: Option<usize>,
     ) -> anyhow::Result<Option<Vec<Conversation>>> {
         self.run_with_connection(move |connection, wid| {
+            use diesel::dsl::sql;
+
             let workspace_id = wid.id() as i64;
             let mut query = conversations::table
                 .filter(conversations::workspace_id.eq(&workspace_id))
-                .filter(conversations::context.is_not_null())
+                .filter(sql::<diesel::sql_types::Bool>(
+                    "context IS NOT NULL OR is_compressed = 1",
+                ))
                 .filter(conversations::parent_id.is_null())
                 .order(conversations::updated_at.desc())
                 .into_boxed();
@@ -299,9 +303,23 @@ impl ConversationRepository for ConversationRepositoryImpl {
         all_workspaces: bool,
     ) -> anyhow::Result<Option<Vec<ConversationSummary>>> {
         self.run_with_connection(move |connection, wid| {
+            use diesel::dsl::sql;
+
             let mut query = conversations::table
                 .filter(conversations::parent_id.is_null())
-                .filter(conversations::context.is_not_null())
+                // Match rows with context data: either the plain `context`
+                // column OR the compressed `context_zstd` payload.
+                .filter(sql::<diesel::sql_types::Bool>(
+                    "context IS NOT NULL OR is_compressed = 1",
+                ))
+                // Hide agent-launched (subagent / `forge -p`) conversations from
+                // interactive pickers, mirroring `forge conversation list` which
+                // filters `context.initiator == "agent"` in memory. Compressed
+                // rows have no plain `context`, so json_extract yields NULL and
+                // they pass through.
+                .filter(sql::<diesel::sql_types::Bool>(
+                    "COALESCE(json_extract(context, '$.initiator'), 'user') <> 'agent'",
+                ))
                 .select(ConversationRecordLite::as_select())
                 .order(conversations::updated_at.desc())
                 .into_boxed();
