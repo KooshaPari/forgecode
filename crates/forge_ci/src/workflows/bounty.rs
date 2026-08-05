@@ -11,7 +11,7 @@ use crate::workflow_model::{Event, Job, Level, Permissions, Step, Workflow};
 pub fn generate_bounty_workflow() {
     let events = Event::default()
         .pull_request(["opened", "edited", "reopened"], std::iter::empty::<&str>())
-        .pull_request_target(["closed"])
+        .pull_request_target(["closed"], std::iter::empty::<&str>())
         .issues(["assigned", "unassigned", "labeled", "unlabeled"])
         .schedule("0 2 * * *");
 

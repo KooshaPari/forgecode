@@ -98,10 +98,11 @@ impl Event {
     pub(crate) fn pull_request_target(
         mut self,
         types: impl IntoIterator<Item = impl Into<String>>,
+        branches: impl IntoIterator<Item = impl Into<String>>,
     ) -> Self {
         self.pull_request_target = Some(PullRequest {
             types: types.into_iter().map(Into::into).collect(),
-            branches: Vec::new(),
+            branches: branches.into_iter().map(Into::into).collect(),
         });
         self
     }
@@ -228,6 +229,8 @@ pub(crate) struct Step {
     run: Option<String>,
     #[serde(rename = "with", skip_serializing_if = "IndexMap::is_empty")]
     inputs: IndexMap<String, String>,
+    #[serde(skip_serializing_if = "IndexMap::is_empty")]
+    env: IndexMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[allow(dead_code)]
     value: Option<Value>,
@@ -261,6 +264,11 @@ impl Step {
 
     pub(crate) fn input(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.inputs.insert(key.into(), value.into());
+        self
+    }
+
+    pub(crate) fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env.insert(key.into(), value.into());
         self
     }
 }
