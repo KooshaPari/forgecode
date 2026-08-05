@@ -8,7 +8,6 @@ use forge_app::{
     EnvironmentInfra, FileInfoInfra, FileReaderInfra, FileWriterInfra, KVStore, McpConfigManager,
     McpServerInfra, UserInfra,
 };
-use merge::Merge;
 
 pub struct ForgeMcpManager<I> {
     infra: Arc<I>,
@@ -157,7 +156,7 @@ where
                             "An error occurred while reading config at: {}",
                             path.display()
                         ))?;
-                        config.merge(new_config);
+                        config.merge_from(new_config);
                     }
                 }
                 Ok(config)
@@ -203,7 +202,7 @@ where
 
         // Merge: user first, then local (local takes precedence as in read_mcp_config).
         let mut merged = user_config;
-        merged.merge(local_config);
+        merged.merge_from(local_config);
 
         // Retain only servers that exist in the merged trusted set.
         let trusted_keys: std::collections::BTreeSet<_> =

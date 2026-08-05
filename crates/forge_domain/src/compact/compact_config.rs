@@ -1,5 +1,4 @@
 use derive_setters::Setters;
-use merge::Merge;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -39,14 +38,13 @@ fn default_summary_timeout() -> u64 {
 }
 
 /// Configuration for automatic context compaction
-#[derive(Debug, Clone, Serialize, Deserialize, Merge, Setters, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Setters, JsonSchema, PartialEq)]
 #[setters(strip_option, into)]
 pub struct Compact {
     /// Number of most recent messages to preserve during compaction.
     /// These messages won't be considered for summarization. Works alongside
     /// eviction_window - the more conservative limit (fewer messages to
     /// compact) takes precedence.
-    #[merge(strategy = crate::merge::std::overwrite)]
     #[serde(default)]
     pub retention_window: usize,
 
@@ -55,19 +53,16 @@ pub struct Compact {
     /// compaction and 1.0 allows summarizing all messages. Works alongside
     /// retention_window - the more conservative limit (fewer messages to
     /// compact) takes precedence.
-    #[merge(strategy = crate::merge::std::overwrite)]
     #[serde(default, deserialize_with = "deserialize_percentage")]
     pub eviction_window: f64,
 
     /// Maximum number of tokens to keep after compaction
-    #[merge(strategy = crate::merge::option)]
     pub max_tokens: Option<usize>,
 
     /// Maximum number of tokens before triggering compaction. This acts as an
     /// absolute cap and is combined with
     /// `token_threshold_percentage` by taking the lower value.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[merge(strategy = crate::merge::option)]
     pub token_threshold: Option<usize>,
 
     /// Maximum percentage of the model context window used to derive the token
@@ -78,70 +73,58 @@ pub struct Compact {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "deserialize_optional_percentage"
     )]
-    #[merge(strategy = crate::merge::option)]
     pub token_threshold_percentage: Option<f64>,
 
     /// Maximum number of conversation turns before triggering compaction
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[merge(strategy = crate::merge::option)]
     pub turn_threshold: Option<usize>,
 
     /// Maximum number of messages before triggering compaction
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[merge(strategy = crate::merge::option)]
     pub message_threshold: Option<usize>,
 
     /// Model ID to use for compaction, useful when compacting with a
     /// cheaper/faster model. If not specified, the root level model will be
     /// used.
-    #[merge(strategy = crate::merge::option)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelId>,
     /// Whether to trigger compaction when the last message is from a user
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[merge(strategy = crate::merge::option)]
     pub on_turn_end: Option<bool>,
 
     /// Strategy for generating summaries during compaction.
     /// - `extract`: Pure structural extraction (default, fast, no API cost)
     /// - `llm`: Full LLM summarization (higher quality, requires API)
     /// - `hybrid`: Extract + LLM refinement (balanced)
-    #[merge(strategy = crate::merge::std::overwrite)]
     #[serde(default)]
     pub summarization_strategy: SummarizationStrategy,
 
     /// Model ID to use for LLM-based summarization. If not specified,
     /// falls back to `model` or the root level model.
-    #[merge(strategy = crate::merge::option)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary_model: Option<ModelId>,
 
     /// Maximum tokens in generated summary. Helps control output size.
-    #[merge(strategy = crate::merge::option)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary_max_tokens: Option<usize>,
 
     /// Timeout for LLM summarization in seconds. If exceeded, falls back
     /// to structural extraction.
-    #[merge(strategy = crate::merge::std::overwrite)]
     #[serde(default = "default_summary_timeout")]
     pub summary_timeout_secs: u64,
 
     /// Enable pre-compaction filtering to remove noise before summarization.
     /// Removes short tool results, debug output, and duplicate operations.
-    #[merge(strategy = crate::merge::std::overwrite)]
     #[serde(default)]
     pub enable_prefilter: bool,
 
     /// Enable adaptive eviction window that adjusts based on context ratio.
     /// More aggressive eviction when approaching token threshold.
-    #[merge(strategy = crate::merge::std::overwrite)]
     #[serde(default)]
     pub enable_adaptive_eviction: bool,
 
     /// Enable importance-based message preservation during eviction.
     /// High-importance messages (tool calls, errors, decisions) are protected.
-    #[merge(strategy = crate::merge::std::overwrite)]
     #[serde(default)]
     pub enable_importance_scoring: bool,
 
@@ -149,40 +132,88 @@ pub struct Compact {
     /// Compression level for programmatic/semantic/AI strategies.
     /// 0 = off, 1 = programmatic only, 2 = + semantic, 3 = + AI-driven.
     #[serde(default)]
-    #[merge(strategy = crate::merge::std::overwrite)]
     pub context_compression_level: u32,
 
     /// Minimum importance score (0.0–1.0) for AI-driven pruning.
     /// Messages below this threshold are candidates for removal.
     #[serde(default)]
-    #[merge(strategy = crate::merge::std::overwrite)]
     pub min_importance_threshold: f64,
 
     /// Maximum number of messages to prune per compaction cycle.
     #[serde(default)]
-    #[merge(strategy = crate::merge::std::overwrite)]
     pub prune_threshold: usize,
 
     /// Enable semantic compression (embedding/cluster-based).
     #[serde(default)]
-    #[merge(strategy = crate::merge::std::overwrite)]
     pub enable_semantic_compression: bool,
 
     /// Enable structural deduplication (importance pruning).
     #[serde(default)]
-    #[merge(strategy = crate::merge::std::overwrite)]
     pub enable_structural_dedup: bool,
 
     /// Compression strategy identifier ("programmatic", "semantic", "ai", "all").
     #[serde(default)]
-    #[merge(strategy = crate::merge::std::overwrite)]
     pub compression_strategy: String,
 
     /// Prune strategy identifier ("importance", "position", "all").
     #[serde(default)]
-    #[merge(strategy = crate::merge::std::overwrite)]
     pub prune_strategy: String,
 }
+
+impl Compact {
+    /// Applies a higher-precedence compaction configuration.
+    ///
+    /// Scalar fields always overwrite this configuration. Optional fields
+    /// overwrite only when `other` provides a value.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - The higher-precedence compaction configuration.
+    pub fn merge_from(&mut self, other: Self) {
+        self.retention_window = other.retention_window;
+        self.eviction_window = other.eviction_window;
+        if other.max_tokens.is_some() {
+            self.max_tokens = other.max_tokens;
+        }
+        if other.token_threshold.is_some() {
+            self.token_threshold = other.token_threshold;
+        }
+        if other.token_threshold_percentage.is_some() {
+            self.token_threshold_percentage = other.token_threshold_percentage;
+        }
+        if other.turn_threshold.is_some() {
+            self.turn_threshold = other.turn_threshold;
+        }
+        if other.message_threshold.is_some() {
+            self.message_threshold = other.message_threshold;
+        }
+        if other.model.is_some() {
+            self.model = other.model;
+        }
+        if other.on_turn_end.is_some() {
+            self.on_turn_end = other.on_turn_end;
+        }
+        self.summarization_strategy = other.summarization_strategy;
+        if other.summary_model.is_some() {
+            self.summary_model = other.summary_model;
+        }
+        if other.summary_max_tokens.is_some() {
+            self.summary_max_tokens = other.summary_max_tokens;
+        }
+        self.summary_timeout_secs = other.summary_timeout_secs;
+        self.enable_prefilter = other.enable_prefilter;
+        self.enable_adaptive_eviction = other.enable_adaptive_eviction;
+        self.enable_importance_scoring = other.enable_importance_scoring;
+        self.context_compression_level = other.context_compression_level;
+        self.min_importance_threshold = other.min_importance_threshold;
+        self.prune_threshold = other.prune_threshold;
+        self.enable_semantic_compression = other.enable_semantic_compression;
+        self.enable_structural_dedup = other.enable_structural_dedup;
+        self.compression_strategy = other.compression_strategy;
+        self.prune_strategy = other.prune_strategy;
+    }
+}
+
 fn deserialize_percentage<'de, D>(deserializer: D) -> Result<f64, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -329,6 +360,110 @@ mod tests {
     ///   User messages
     fn ctx(pattern: &str) -> Context {
         MessagePattern::new(pattern).build()
+    }
+
+    #[test]
+    fn test_merge_from_overwrites_scalar_policies_and_preserves_absent_options() {
+        let mut fixture = Compact::new()
+            .retention_window(1_usize)
+            .eviction_window(0.1_f64)
+            .max_tokens(10_usize)
+            .token_threshold(11_usize)
+            .token_threshold_percentage(0.12_f64)
+            .turn_threshold(13_usize)
+            .message_threshold(14_usize)
+            .model(ModelId::new("base-model"))
+            .on_turn_end(true)
+            .summarization_strategy(SummarizationStrategy::Extract)
+            .summary_model(ModelId::new("base-summary"))
+            .summary_max_tokens(15_usize)
+            .summary_timeout_secs(16_u64)
+            .enable_prefilter(false)
+            .enable_adaptive_eviction(false)
+            .enable_importance_scoring(false)
+            .context_compression_level(1_u32)
+            .min_importance_threshold(0.17_f64)
+            .prune_threshold(18_usize)
+            .enable_semantic_compression(false)
+            .enable_structural_dedup(false)
+            .compression_strategy("base-compression")
+            .prune_strategy("base-prune");
+        let other = Compact::new()
+            .retention_window(21_usize)
+            .eviction_window(0.22_f64)
+            .summarization_strategy(SummarizationStrategy::Hybrid)
+            .summary_timeout_secs(23_u64)
+            .enable_prefilter(true)
+            .enable_adaptive_eviction(true)
+            .enable_importance_scoring(true)
+            .context_compression_level(2_u32)
+            .min_importance_threshold(0.24_f64)
+            .prune_threshold(25_usize)
+            .enable_semantic_compression(true)
+            .enable_structural_dedup(true)
+            .compression_strategy("other-compression")
+            .prune_strategy("other-prune");
+        fixture.merge_from(other);
+        assert_eq!(fixture.retention_window, 21);
+        assert_eq!(fixture.eviction_window, 0.22);
+        assert_eq!(
+            fixture.summarization_strategy,
+            SummarizationStrategy::Hybrid
+        );
+        assert_eq!(fixture.summary_timeout_secs, 23);
+        assert!(fixture.enable_prefilter);
+        assert!(fixture.enable_adaptive_eviction);
+        assert!(fixture.enable_importance_scoring);
+        assert_eq!(fixture.context_compression_level, 2);
+        assert_eq!(fixture.min_importance_threshold, 0.24);
+        assert_eq!(fixture.prune_threshold, 25);
+        assert!(fixture.enable_semantic_compression);
+        assert!(fixture.enable_structural_dedup);
+        assert_eq!(fixture.compression_strategy, "other-compression");
+        assert_eq!(fixture.prune_strategy, "other-prune");
+        assert_eq!(fixture.max_tokens, Some(10));
+        assert_eq!(fixture.token_threshold, Some(11));
+        assert_eq!(fixture.token_threshold_percentage, Some(0.12));
+        assert_eq!(fixture.turn_threshold, Some(13));
+        assert_eq!(fixture.message_threshold, Some(14));
+        assert_eq!(fixture.model, Some(ModelId::new("base-model")));
+        assert_eq!(fixture.on_turn_end, Some(true));
+        assert_eq!(fixture.summary_model, Some(ModelId::new("base-summary")));
+        assert_eq!(fixture.summary_max_tokens, Some(15));
+    }
+
+    #[test]
+    fn test_merge_from_overwrites_all_present_option_policies() {
+        let mut fixture = Compact::new()
+            .max_tokens(10_usize)
+            .token_threshold(11_usize)
+            .token_threshold_percentage(0.12_f64)
+            .turn_threshold(13_usize)
+            .message_threshold(14_usize)
+            .model(ModelId::new("base-model"))
+            .on_turn_end(false)
+            .summary_model(ModelId::new("base-summary"))
+            .summary_max_tokens(15_usize);
+        let other = Compact::new()
+            .max_tokens(20_usize)
+            .token_threshold(21_usize)
+            .token_threshold_percentage(0.22_f64)
+            .turn_threshold(23_usize)
+            .message_threshold(24_usize)
+            .model(ModelId::new("other-model"))
+            .on_turn_end(true)
+            .summary_model(ModelId::new("other-summary"))
+            .summary_max_tokens(25_usize);
+        fixture.merge_from(other);
+        assert_eq!(fixture.max_tokens, Some(20));
+        assert_eq!(fixture.token_threshold, Some(21));
+        assert_eq!(fixture.token_threshold_percentage, Some(0.22));
+        assert_eq!(fixture.turn_threshold, Some(23));
+        assert_eq!(fixture.message_threshold, Some(24));
+        assert_eq!(fixture.model, Some(ModelId::new("other-model")));
+        assert_eq!(fixture.on_turn_end, Some(true));
+        assert_eq!(fixture.summary_model, Some(ModelId::new("other-summary")));
+        assert_eq!(fixture.summary_max_tokens, Some(25));
     }
 
     #[test]

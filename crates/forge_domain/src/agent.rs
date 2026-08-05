@@ -2,7 +2,6 @@ use std::borrow::Cow;
 
 use derive_more::derive::Display;
 use derive_setters::Setters;
-use merge::Merge;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display as StrumDisplay, EnumString};
@@ -45,9 +44,40 @@ impl Default for AgentId {
     }
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize, Merge, Setters, JsonSchema, PartialEq)]
+#[cfg(test)]
+mod reasoning_config_tests {
+    use pretty_assertions::assert_eq;
+
+    use super::{Effort, ReasoningConfig};
+
+    #[test]
+    fn test_reasoning_config_merge_from_overwrites_only_present_other_values() {
+        let mut fixture = ReasoningConfig {
+            effort: Some(Effort::High),
+            max_tokens: Some(1024),
+            exclude: Some(true),
+            enabled: Some(true),
+        };
+        fixture.merge_from(ReasoningConfig {
+            effort: None,
+            max_tokens: Some(2048),
+            exclude: Some(false),
+            enabled: None,
+        });
+        assert_eq!(
+            fixture,
+            ReasoningConfig {
+                effort: Some(Effort::High),
+                max_tokens: Some(2048),
+                exclude: Some(false),
+                enabled: Some(true),
+            }
+        );
+    }
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize, Setters, JsonSchema, PartialEq)]
 #[setters(strip_option)]
-#[merge(strategy = merge::option::overwrite_none)]
 pub struct ReasoningConfig {
     /// Controls the effort level of the agent's reasoning
     /// supported by openrouter and forge provider
@@ -69,6 +99,28 @@ pub struct ReasoningConfig {
     /// supported by openrouter, anthropic and forge provider
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+}
+
+impl ReasoningConfig {
+    /// Overwrites this configuration only with values explicitly set in `other`.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - The higher-precedence configuration to apply.
+    pub fn merge_from(&mut self, other: Self) {
+        if other.effort.is_some() {
+            self.effort = other.effort;
+        }
+        if other.max_tokens.is_some() {
+            self.max_tokens = other.max_tokens;
+        }
+        if other.exclude.is_some() {
+            self.exclude = other.exclude;
+        }
+        if other.enabled.is_some() {
+            self.enabled = other.enabled;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, StrumDisplay, EnumString)]
