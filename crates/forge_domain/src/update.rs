@@ -32,16 +32,16 @@ pub struct Update {
 }
 
 impl Update {
-    /// Overwrites this update configuration only with values set in `other`.
+    /// Fills fields that are absent from this configuration with values from `other`.
     ///
     /// # Arguments
     ///
-    /// * `other` - The higher-precedence update configuration.
+    /// * `other` - The lower-precedence update configuration to use as a fallback.
     pub fn merge_from(&mut self, other: Self) {
-        if other.frequency.is_some() {
+        if self.frequency.is_none() {
             self.frequency = other.frequency;
         }
-        if other.auto_update.is_some() {
+        if self.auto_update.is_none() {
             self.auto_update = other.auto_update;
         }
     }
@@ -52,12 +52,12 @@ mod tests {
     use super::{Update, UpdateFrequency};
     use pretty_assertions::assert_eq;
     #[test]
-    fn test_update_merge_from_overwrites_only_present_other_values() {
-        let mut fixture = Update {
-            frequency: Some(UpdateFrequency::Daily),
-            auto_update: Some(true),
-        };
-        fixture.merge_from(Update { frequency: None, auto_update: Some(false) });
+    fn test_update_merge_from_fills_only_unset_values() {
+        let mut fixture = Update { frequency: Some(UpdateFrequency::Daily), auto_update: None };
+        fixture.merge_from(Update {
+            frequency: Some(UpdateFrequency::Never),
+            auto_update: Some(false),
+        });
         assert_eq!(
             fixture,
             Update {
