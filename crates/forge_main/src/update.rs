@@ -202,7 +202,10 @@ mod tests {
     impl NativeUpdateExecutor for RecordingNativeUpdateExecutor {
         fn execute<'a>(&'a self, version: &'a str) -> BoxFuture<'a, anyhow::Result<()>> {
             Box::pin(async move {
-                self.notified_versions.lock().unwrap().push(version.to_string());
+                self.notified_versions
+                    .lock()
+                    .unwrap()
+                    .push(version.to_string());
                 Err(anyhow::anyhow!("native update deliberately failed"))
             })
         }
@@ -275,5 +278,4 @@ mod tests {
             assert!(validate_update_repo(value).is_none(), "accepted {value:?}");
         }
     }
-
 }
