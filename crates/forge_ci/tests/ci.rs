@@ -1,5 +1,60 @@
 use forge_ci::workflows as workflow;
 
+const GENERATED_WORKFLOWS: [&str; 7] = [
+    "autofix.yml",
+    "bounty.yml",
+    "ci.yml",
+    "labels.yml",
+    "release-drafter.yml",
+    "release.yml",
+    "stale.yml",
+];
+
+fn generated_workflow_path(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(".github/workflows")
+        .join(name)
+}
+
+#[test]
+fn generated_workflows_are_parseable_and_identify_forge_ci_generator() {
+    workflow::generate_autofix_workflow();
+    workflow::generate_bounty_workflow();
+    workflow::generate_ci_workflow();
+    workflow::generate_labels_workflow();
+    workflow::generate_release_drafter_workflow();
+    workflow::release_publish();
+    workflow::generate_stale_workflow();
+
+    for name in GENERATED_WORKFLOWS {
+        let generated = std::fs::read_to_string(generated_workflow_path(name))
+            .expect("generated workflow should exist");
+        let parsed = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&generated);
+
+        assert!(parsed.is_ok(), "{name} must remain valid YAML");
+        assert!(
+            generated.contains("forge_ci"),
+            "{name} must identify forge_ci as its generator"
+        );
+        assert!(
+            !generated.contains("gh-workflow"),
+            "{name} must not identify gh-workflow"
+        );
+    }
+
+    let release = std::fs::read_to_string(generated_workflow_path("release.yml"))
+        .expect("generated release workflow");
+    assert!(release.contains("attest_release_assets:"));
+    assert!(release.contains("needs: build_release"));
+
+    let bounty = std::fs::read_to_string(generated_workflow_path("bounty.yml"))
+        .expect("generated bounty workflow");
+    assert!(bounty.contains(
+        "if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'",
+    ));
+}
+
 #[test]
 fn generate() {
     workflow::generate_ci_workflow();
