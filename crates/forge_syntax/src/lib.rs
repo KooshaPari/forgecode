@@ -9,8 +9,22 @@ pub enum Theme {
 
 const RESET: &str = "\x1b[0m";
 
+/// Converts terminal control characters to visible source-code escapes.
+pub fn sanitize_terminal_text(text: &str) -> String {
+    text.chars().fold(String::with_capacity(text.len()), |mut output, character| {
+        if character.is_control() {
+            output.extend(character.escape_default());
+        } else {
+            output.push(character);
+        }
+        output
+    })
+}
+
 /// Highlights one line for supported language tokens; unknown tokens stay literal.
 pub fn highlight_line(line: &str, language: Option<&str>, theme: Theme) -> String {
+    let sanitized = sanitize_terminal_text(line);
+    let line = sanitized.as_str();
     let Some(language) = language.map(str::to_ascii_lowercase) else {
         return line.to_string();
     };
@@ -65,14 +79,10 @@ pub fn highlight_line(line: &str, language: Option<&str>, theme: Theme) -> Strin
     } else {
         "//"
     };
-    let (source, tail) = line
-        .split_once(marker)
-        .map_or((line, None), |(head, rest)| {
-            (head, Some(format!("{marker}{rest}")))
-        });
     let mut output = String::new();
     let mut word = String::new();
     let mut quote = None;
+    let mut escaped = false;
     let flush = |output: &mut String, word: &mut String| {
         if word.is_empty() {
             return;
@@ -115,10 +125,15 @@ pub fn highlight_line(line: &str, language: Option<&str>, theme: Theme) -> Strin
         }
         word.clear();
     };
-    for character in source.chars() {
+    let mut characters = line.chars().peekable();
+    while let Some(character) = characters.next() {
         if let Some(active) = quote {
             word.push(character);
-            if character == active {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == active {
                 output.push_str(string);
                 output.push_str(&word);
                 output.push_str(RESET);
@@ -126,6 +141,21 @@ pub fn highlight_line(line: &str, language: Option<&str>, theme: Theme) -> Strin
                 quote = None;
             }
             continue;
+        }
+        let starts_comment = match marker {
+            "#" => character == '#',
+            "--" => character == '-' && characters.peek().is_some_and(|next| *next == '-'),
+            "//" => character == '/' && characters.peek().is_some_and(|next| *next == '/'),
+            _ => false,
+        };
+        if starts_comment {
+            flush(&mut output, &mut word);
+            let mut tail = character.to_string();
+            tail.extend(characters);
+            output.push_str(comment);
+            output.push_str(&tail);
+            output.push_str(RESET);
+            return output;
         }
         if matches!(character, '\'' | '\"') {
             flush(&mut output, &mut word);
@@ -144,11 +174,6 @@ pub fn highlight_line(line: &str, language: Option<&str>, theme: Theme) -> Strin
         output.push_str(RESET);
     } else {
         flush(&mut output, &mut word);
-    }
-    if let Some(tail) = tail {
-        output.push_str(comment);
-        output.push_str(&tail);
-        output.push_str(RESET);
     }
     output
 }
@@ -188,7 +213,7 @@ pub fn code_wrap(text: &str, width: usize, pretty_broken: bool) -> (usize, Vec<S
 
 #[cfg(test)]
 mod tests {
-    use super::{Theme, code_wrap, highlight_line};
+    use super::{Theme, code_wrap, highlight_line, sanitize_terminal_text};
     use pretty_assertions::assert_eq;
     #[test]
     fn test_unknown_is_literal() {
@@ -206,6 +231,46 @@ mod tests {
                 .map(String::from)
                 .collect(),
         );
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_terminal_controls_are_rendered_as_visible_escapes() {
+        let fixture = "println!(\"ok\");\x1b[2J\r";
+
+        let actual = sanitize_terminal_text(fixture);
+        let expected = "println!(\"ok\");\\u{1b}[2J\\r".to_string();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_comment_marker_inside_string_is_not_a_comment() {
+        let fixture = "let url = \"// literal\"; // comment";
+
+        let actual = highlight_line(fixture, Some("rust"), Theme::Dark);
+        let expected = concat!(
+            "\x1b[38;5;81mlet\x1b[0m url = ",
+            "\x1b[38;5;114m\"// literal\"\x1b[0m; ",
+            "\x1b[38;5;244m// comment\x1b[0m"
+        )
+        .to_string();
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_escaped_quote_stays_inside_string() {
+        let fixture = "let message = \"hello \\\"world\\\"\"; // comment";
+
+        let actual = highlight_line(fixture, Some("rust"), Theme::Dark);
+        let expected = concat!(
+            "\x1b[38;5;81mlet\x1b[0m message = ",
+            "\x1b[38;5;114m\"hello \\\"world\\\"\"\x1b[0m; ",
+            "\x1b[38;5;244m// comment\x1b[0m"
+        )
+        .to_string();
+
         assert_eq!(actual, expected);
     }
 }
