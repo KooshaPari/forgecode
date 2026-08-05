@@ -21,3 +21,20 @@ fn serializes_an_ordered_workflow_with_github_actions_keys() {
     let expected = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(expected).unwrap();
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn serializes_job_permissions_for_label_synchronization() {
+    let fixture = Workflow::new("Labels").add_job(
+        "label-sync",
+        Job::new("label-sync")
+            .permissions(Permissions::default().issues(Level::Write))
+            .add_step(Step::new("Checkout").uses(
+                "actions",
+                "checkout",
+                "d23441a48e516b6c34aea4fa41551a30e30af803",
+            )),
+    );
+
+    let actual = fixture.to_yaml().unwrap();
+    assert!(actual.contains("issues: write"));
+}

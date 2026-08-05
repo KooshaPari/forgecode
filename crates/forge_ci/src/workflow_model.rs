@@ -76,6 +76,11 @@ impl Permissions {
         self
     }
 
+    pub(crate) fn issues(mut self, level: Level) -> Self {
+        self.0.insert("issues".to_string(), level);
+        self
+    }
+
     fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -93,6 +98,8 @@ pub(crate) struct Job {
     name: String,
     #[serde(rename = "runs-on")]
     runs_on: String,
+    #[serde(skip_serializing_if = "Permissions::is_empty")]
+    permissions: Permissions,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     steps: Vec<Step>,
 }
@@ -108,6 +115,11 @@ impl Job {
 
     pub(crate) fn add_step(mut self, step: Step) -> Self {
         self.steps.push(step);
+        self
+    }
+
+    pub(crate) fn permissions(mut self, permissions: Permissions) -> Self {
+        self.permissions = permissions;
         self
     }
 }
