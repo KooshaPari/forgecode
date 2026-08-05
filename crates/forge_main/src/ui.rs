@@ -14,7 +14,7 @@ use forge_api::{
     DeviceCodeRequest, Event, InterruptionReason, ModelId, Provider, ProviderId, TextMessage,
     UserPrompt,
 };
-use forge_app::utils::{format_display_path, truncate_key};
+use forge_app::utils::format_display_path;
 use forge_app::{CommitResult, ToolResolver};
 use forge_config::{ForgeConfig, OutputMode, OutputSettings};
 use forge_display::MarkdownFormat;
@@ -57,6 +57,11 @@ use crate::{TRACKER, banner, tracker};
 // File-specific constants
 const MISSING_AGENT_TITLE: &str = "<missing agent.title>";
 const MAX_AUTO_CONTINUE_ATTEMPTS: usize = 8;
+const REDACTED_API_KEY: &str = "<redacted>";
+
+fn redact_api_key(_key: &str) -> &'static str {
+    REDACTED_API_KEY
+}
 
 fn auto_continue_allowed(attempts: usize) -> bool {
     attempts < MAX_AUTO_CONTINUE_ATTEMPTS
@@ -1977,19 +1982,19 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 // Show both providers if they're different
                 info = info.add_key_value("Agent Provider (URL)", agent_specific.url.as_str());
                 if let Some(api_key) = agent_specific.api_key() {
-                    info = info.add_key_value("Agent API Key", truncate_key(api_key.as_str()));
+                    info = info.add_key_value("Agent API Key", redact_api_key(api_key.as_str()));
                 }
 
                 info = info.add_key_value("Default Provider (URL)", default.url.as_str());
                 if let Some(api_key) = default.api_key() {
-                    info = info.add_key_value("Default API Key", truncate_key(api_key.as_str()));
+                    info = info.add_key_value("Default API Key", redact_api_key(api_key.as_str()));
                 }
             }
             (Some(provider), _) | (_, Some(provider)) => {
                 // Show single provider (either default or agent-specific)
                 info = info.add_key_value("Provider (URL)", provider.url.as_str());
                 if let Some(api_key) = provider.api_key() {
-                    info = info.add_key_value("API Key", truncate_key(api_key.as_str()));
+                    info = info.add_key_value("API Key", redact_api_key(api_key.as_str()));
                 }
             }
             _ => {
@@ -5984,7 +5989,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_AUTO_CONTINUE_ATTEMPTS, auto_continue_allowed};
+    use super::{MAX_AUTO_CONTINUE_ATTEMPTS, auto_continue_allowed, redact_api_key};
 
     #[test]
     fn automatic_continuation_has_a_hard_boundary() {
@@ -5992,6 +5997,16 @@ mod tests {
         assert!(auto_continue_allowed(MAX_AUTO_CONTINUE_ATTEMPTS - 1));
         assert!(!auto_continue_allowed(MAX_AUTO_CONTINUE_ATTEMPTS));
         assert!(!auto_continue_allowed(usize::MAX));
+    }
+
+    #[test]
+    fn info_api_key_display_is_fully_redacted() {
+        let fixture = "sk-super-secret-api-key-1234567890";
+        let actual = redact_api_key(fixture);
+        let expected = "<redacted>";
+
+        assert_eq!(actual, expected);
+        assert!(!actual.contains(fixture));
     }
 
     // Note: Tests for confirm_delete_conversation are disabled because
