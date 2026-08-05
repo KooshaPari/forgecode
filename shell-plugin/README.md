@@ -208,13 +208,13 @@ The plugin provides visual feedback through syntax highlighting:
 Customize the plugin behavior by setting these variables before loading the plugin:
 
 ```bash
-# Custom forge binary location
-export FORGE_BIN="/path/to/custom/forge"
+# Custom Forgecode binary location
+export FORGE_BIN="/path/to/custom/forgecode"
 ```
 
 ### Available Configuration Variables
 
-- `FORGE_BIN`: Path to the forge executable (default: `forge`)
+- `FORGE_BIN`: Path to the Forgecode executable (default: `forgecode`)
 - `FORGE_EDITOR`: Editor command to use for `:edit` command (default: `$EDITOR` or `nano`)
 - `FORGE_SYNC_ENABLED`: Enable/disable automatic workspace sync (default: `true`)
 - `FORGE_MAX_COMMIT_DIFF`: Maximum diff size for commit message generation in bytes (default: `100000`)

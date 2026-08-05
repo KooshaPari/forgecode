@@ -126,9 +126,9 @@ fi
 # 2. Check if forge is installed and in PATH
 print_section "Forge Installation"
 
-# Respect an explicitly configured executable (for example, forgecode on a
-# machine that keeps the legacy forge binary installed alongside it).
-local forge_bin="${FORGE_BIN:-forge}"
+# Respect an explicitly configured executable while defaulting to the
+# Forgecode distribution instead of a legacy forge binary.
+local forge_bin="${FORGE_BIN:-forgecode}"
 
 # Check if forge is in PATH
 if command -v "$forge_bin" &> /dev/null; then

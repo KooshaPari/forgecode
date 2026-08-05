@@ -389,10 +389,10 @@ Configure the ZSH plugin behavior:
 
 ```bash
 # .env
-FORGE_BIN=forge                    # Command to use for forge operations (default: "forge")
+FORGE_BIN=forgecode                # Command to use for Forgecode operations (default: "forgecode")
 ```
 
-The `FORGE_BIN` environment variable allows you to customize the command used by the ZSH plugin when transforming `:` prefixed commands. If not set, it defaults to `"forge"`.
+The `FORGE_BIN` environment variable allows you to customize the command used by the ZSH plugin when transforming `:` prefixed commands. If not set, it defaults to `"forgecode"`.
 
 </details>
 
