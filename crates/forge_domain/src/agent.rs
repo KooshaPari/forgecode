@@ -51,26 +51,26 @@ mod reasoning_config_tests {
     use super::{Effort, ReasoningConfig};
 
     #[test]
-    fn test_reasoning_config_merge_from_overwrites_only_present_other_values() {
+    fn test_reasoning_config_merge_from_fills_only_unset_values() {
         let mut fixture = ReasoningConfig {
             effort: Some(Effort::High),
-            max_tokens: Some(1024),
+            max_tokens: None,
             exclude: Some(true),
-            enabled: Some(true),
+            enabled: None,
         };
         fixture.merge_from(ReasoningConfig {
-            effort: None,
+            effort: Some(Effort::Low),
             max_tokens: Some(2048),
             exclude: Some(false),
-            enabled: None,
+            enabled: Some(false),
         });
         assert_eq!(
             fixture,
             ReasoningConfig {
                 effort: Some(Effort::High),
                 max_tokens: Some(2048),
-                exclude: Some(false),
-                enabled: Some(true),
+                exclude: Some(true),
+                enabled: Some(false),
             }
         );
     }
@@ -102,22 +102,22 @@ pub struct ReasoningConfig {
 }
 
 impl ReasoningConfig {
-    /// Overwrites this configuration only with values explicitly set in `other`.
+    /// Fills fields that are absent from this configuration with values from `other`.
     ///
     /// # Arguments
     ///
-    /// * `other` - The higher-precedence configuration to apply.
+    /// * `other` - The lower-precedence configuration to use as a fallback.
     pub fn merge_from(&mut self, other: Self) {
-        if other.effort.is_some() {
+        if self.effort.is_none() {
             self.effort = other.effort;
         }
-        if other.max_tokens.is_some() {
+        if self.max_tokens.is_none() {
             self.max_tokens = other.max_tokens;
         }
-        if other.exclude.is_some() {
+        if self.exclude.is_none() {
             self.exclude = other.exclude;
         }
-        if other.enabled.is_some() {
+        if self.enabled.is_none() {
             self.enabled = other.enabled;
         }
     }
