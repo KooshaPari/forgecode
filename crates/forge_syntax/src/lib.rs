@@ -15,14 +15,17 @@ const WRAP_PADDING: usize = 4;
 
 /// Converts terminal control characters to visible source-code escapes.
 pub fn sanitize_terminal_text(text: &str) -> String {
-    text.chars().fold(String::with_capacity(text.len()), |mut output, character| {
-        if character.is_control() {
-            output.extend(character.escape_default());
-        } else {
-            output.push(character);
-        }
-        output
-    })
+    text.chars().fold(
+        String::with_capacity(text.len()),
+        |mut output, character| {
+            if character.is_control() {
+                output.extend(character.escape_default());
+            } else {
+                output.push(character);
+            }
+            output
+        },
+    )
 }
 
 /// Highlights one line for supported language tokens; unknown tokens stay literal.
@@ -296,7 +299,10 @@ mod tests {
         let actual = code_wrap(fixture, 10, true);
         let expected = (
             0,
-            vec!["\u{ac00}\u{b098}\u{b2e4}".to_string(), "\u{b77c}\u{b9c8}\u{bc14}".to_string()],
+            vec![
+                "\u{ac00}\u{b098}\u{b2e4}".to_string(),
+                "\u{b77c}\u{b9c8}\u{bc14}".to_string(),
+            ],
         );
 
         assert_eq!(actual, expected);
@@ -309,7 +315,10 @@ mod tests {
         let actual = code_wrap(fixture, 8, true);
         let expected = (
             0,
-            vec!["e\u{301}e\u{301}e\u{301}e\u{301}".to_string(), "e\u{301}".to_string()],
+            vec![
+                "e\u{301}e\u{301}e\u{301}e\u{301}".to_string(),
+                "e\u{301}".to_string(),
+            ],
         );
 
         assert_eq!(actual, expected);

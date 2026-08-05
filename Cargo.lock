@@ -2988,7 +2988,7 @@ dependencies = [
 
 [[package]]
 name = "forge_syntax"
-version = "0.1.1"
+version = "2.9.9"
 dependencies = [
  "pretty_assertions",
  "unicode-segmentation",
