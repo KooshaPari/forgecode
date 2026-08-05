@@ -52,8 +52,8 @@ function setup_output() {
                 zsh:theme) print -r -- "typeset -g _FORGE_THEME_LOADED=1" ;;
             esac
         }
-        forgecode() {
-            print -u2 -r -- "forgecode:$*"
+        helioslite() {
+            print -u2 -r -- "helioslite:$*"
             case "$1:$2" in
                 zsh:plugin) print -r -- "typeset -g _FORGE_PLUGIN_LOADED=1" ;;
                 zsh:theme) print -r -- "typeset -g _FORGE_THEME_LOADED=1" ;;
@@ -73,34 +73,53 @@ function doctor_output() {
                 print -r -- "forge 1.0.0"
             fi
         }
-        forgecode() {
+        helioslite() {
             if [[ "$1" == "--version" ]]; then
-                print -r -- "forgecode 9.9.9"
+                print -r -- "helioslite 9.9.9"
             fi
         }
         source "$1"
     ' _ "${REPO_ROOT}/shell-plugin/doctor.zsh" 2>&1 || true
 }
 
-assert_eq "plugin config defaults to forgecode" \
+function theme_output() {
+    local forge_bin="${1:-}"
+
+    FORGE_BIN="$forge_bin" zsh -dfc '
+        forge() { print -r -- "forge:$*"; }
+        helioslite() { print -r -- "helioslite:$*"; }
+        source "$1"
+        _forge_prompt_info
+    ' _ "${REPO_ROOT}/shell-plugin/forge.theme.zsh"
+}
+
+assert_eq "plugin config defaults to helioslite" \
     "$(zsh -dfc 'source "$1"; print -r -- "$_FORGE_BIN"' _ "${REPO_ROOT}/shell-plugin/lib/config.zsh")" \
-    "forgecode"
+    "helioslite"
 
 assert_eq "plugin config preserves FORGE_BIN override" \
     "$(FORGE_BIN="/opt/custom-forge" zsh -dfc 'source "$1"; print -r -- "$_FORGE_BIN"' _ "${REPO_ROOT}/shell-plugin/lib/config.zsh")" \
     "/opt/custom-forge"
 
-assert_eq "setup loads plugin and theme through forgecode by default" \
+assert_eq "setup loads plugin and theme through helioslite by default" \
     "$(setup_output)" \
-    $'forgecode:zsh plugin\nforgecode:zsh theme\nloaded:1:1'
+    $'helioslite:zsh plugin\nhelioslite:zsh theme\nloaded:1:1'
 
 assert_eq "setup preserves FORGE_BIN override" \
     "$(setup_output "forge")" \
     $'forge:zsh plugin\nforge:zsh theme\nloaded:1:1'
 
+assert_eq "standalone theme defaults to helioslite" \
+    "$(theme_output)" \
+    "helioslite:zsh rprompt"
+
+assert_eq "standalone theme preserves FORGE_BIN override" \
+    "$(theme_output "forge")" \
+    "forge:zsh rprompt"
+
 default_doctor_output="$(doctor_output)"
-assert_contains "doctor checks forgecode by default" "$default_doctor_output" "forgecode: 9.9.9"
-assert_contains "doctor suggests forgecode plugin setup by default" "$default_doctor_output" '"forgecode" zsh plugin'
+assert_contains "doctor checks helioslite by default" "$default_doctor_output" "helioslite: 9.9.9"
+assert_contains "doctor suggests helioslite plugin setup by default" "$default_doctor_output" '"helioslite" zsh plugin'
 
 override_doctor_output="$(doctor_output "forge")"
 assert_contains "doctor preserves FORGE_BIN override" "$override_doctor_output" "forge: 1.0.0"

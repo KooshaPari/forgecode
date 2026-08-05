@@ -127,8 +127,8 @@ fi
 print_section "Forge Installation"
 
 # Respect an explicitly configured executable while defaulting to the
-# Forgecode distribution instead of a legacy forge binary.
-local forge_bin="${FORGE_BIN:-forgecode}"
+# HeliosLite distribution instead of a legacy forge binary.
+local forge_bin="${FORGE_BIN:-helioslite}"
 
 # Check if forge is in PATH
 if command -v "$forge_bin" &> /dev/null; then
