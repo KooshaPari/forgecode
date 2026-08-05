@@ -28,6 +28,11 @@ TARGET_OVERRIDE="${HELIOSLITE_TARGET:-}"
 
 validate_repo() { [[ "$1" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || { echo "Invalid release repo: $1" >&2; exit 1; }; }
 validate_version() { printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$' || { echo "Invalid release version: $1" >&2; exit 1; }; }
+validate_reported_version() {
+    local output="$1"
+    printf '%s\n' "$output" | grep -Eq '(^|[[:space:]])v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?([[:space:]]|$)' \
+        || { echo "Installed binary did not report a semantic version" >&2; exit 1; }
+}
 validate_repo "$REPO"
 
 for arg in "$@"; do
@@ -58,8 +63,12 @@ if [ -z "$VERSION" ] && [ "$LOCAL" = "0" ]; then
         exit 1
     fi
 fi
-validate_version "$VERSION"
-echo -e "  → \033[36mTarget version: $VERSION\033[0m"
+if [ "$LOCAL" = "0" ]; then
+    validate_version "$VERSION"
+    echo -e "  → \033[36mTarget version: $VERSION\033[0m"
+else
+    echo -e "  → \033[36mTarget version: local build\033[0m"
+fi
 
 # 2) Pick install location
 INSTALL_DIR="${HELIOSLITE_INSTALL_DIR:-$HOME/.helioslite/bin}"
@@ -200,6 +209,18 @@ fi
 
 # 6) Verify
 VER_OUTPUT="$("$INSTALL_DIR/helioslite" --version 2>&1 | head -n 1 || true)"
+if [ -z "$VER_OUTPUT" ]; then
+    echo -e "  ✖ \033[31mhelioslite --version returned no output; refusing an unverified install\033[0m" >&2
+    exit 1
+fi
+validate_reported_version "$VER_OUTPUT"
+if [ "$LOCAL" = "0" ]; then
+    EXPECTED_VERSION_PATTERN="${VERSION//./\\.}"
+    if ! printf '%s\n' "$VER_OUTPUT" | grep -Eq "(^|[[:space:]])v?${EXPECTED_VERSION_PATTERN}([[:space:]]|$)"; then
+        echo -e "  ✖ \033[31mInstalled binary version does not match requested version $VERSION\033[0m" >&2
+        exit 1
+    fi
+fi
 echo -e "  ✓ \033[32mhelioslite reports: $VER_OUTPUT\033[0m"
 
 echo ""
