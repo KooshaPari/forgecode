@@ -294,4 +294,15 @@ mod tests {
         let expected = fixture.to_string();
         assert_eq!(actual, expected);
     }
+
+    #[test]
+    fn test_unsupported_language_neutralizes_terminal_controls() {
+        let fixture = "launch\x1b[2J --safe";
+        let highlighter = SyntaxHighlighter::default();
+
+        let actual = highlighter.highlight(fixture, "not-a-language");
+        let expected = "launch\\u{1b}[2J --safe".to_string();
+
+        assert_eq!(actual, expected);
+    }
 }
