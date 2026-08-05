@@ -6,7 +6,6 @@ use forge_domain::{
     ProviderId, ReasoningConfig, ResultStream, Temperature, ToolCallContext, ToolCallFull,
     ToolResult, TopK, TopP,
 };
-use merge::Merge;
 
 use crate::services::AppConfigService;
 use crate::tool_registry::ToolRegistry;
@@ -177,7 +176,7 @@ impl AgentExt for Agent {
                 compression_strategy: format!("{:?}", workflow_compact.compression_strategy),
                 prune_strategy: format!("{:?}", workflow_compact.prune_strategy),
             };
-            merged_compact.merge(agent.compact.clone());
+            merged_compact.merge_from(agent.compact.clone());
             agent.compact = merged_compact;
         }
 
@@ -203,7 +202,7 @@ impl AgentExt for Agent {
             };
             // Start from the agent's own settings and fill unset fields from config.
             let mut merged = agent.reasoning.clone().unwrap_or_default();
-            merged.merge(config_as_domain);
+            merged.merge_from(config_as_domain);
             // If the config explicitly disables reasoning, honour that override
             // regardless of what the agent definition says.
             if config_reasoning.enabled == Some(false) {
