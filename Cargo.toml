@@ -28,6 +28,7 @@ members = [
   "crates/forge_services",
   "crates/forge_snaps",
   "crates/forge_spinner",
+  "crates/forge_syntax",
   "crates/forge_stream",
   "crates/forge_template",
   "crates/forge_test_kit",
@@ -143,7 +144,6 @@ sysinfo = "0.38.3"
 tempfile = "3.27.0"
 termimad = "0.34.1"
 tiny_http = "0.12.0"
-syntect = { version = "5", default-features = false, features = ["default-syntaxes", "default-themes", "regex-onig"] }
 thiserror = "2.0.18"
 toml_edit = { version = "0.25", features = ["serde"] }
 tokio = { version = "1.51.0", features = [
@@ -217,6 +217,7 @@ forge_main = { path = "crates/forge_main" }
 forge_services = { path = "crates/forge_services" }
 forge_snaps = { path = "crates/forge_snaps" }
 forge_spinner = { path = "crates/forge_spinner" }
+forge_syntax = { path = "crates/forge_syntax" }
 forge_stream = { path = "crates/forge_stream" }
 forge_template = { path = "crates/forge_template" }
 forge_tool_macros = { path = "crates/forge_tool_macros" }
