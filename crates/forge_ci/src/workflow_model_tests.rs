@@ -38,3 +38,37 @@ fn serializes_job_permissions_for_label_synchronization() {
     let actual = fixture.to_yaml().unwrap();
     assert!(actual.contains("issues: write"));
 }
+
+#[test]
+fn serializes_release_drafter_event_branches_and_token_environment() {
+    let fixture = Workflow::new("Release Drafter")
+        .on(Event::default().pull_request_target_for_branches(
+            [
+                "opened",
+                "reopened",
+                "synchronize",
+                "labeled",
+                "unlabeled",
+                "closed",
+            ],
+            ["main"],
+        ))
+        .add_job(
+            "update_release_draft",
+            Job::new("update_release_draft").add_step(
+                Step::new("Release Drafter")
+                    .uses(
+                        "release-drafter",
+                        "release-drafter",
+                        "5a60cd8ddda6dc14fce77159675b8fd2cdca4007",
+                    )
+                    .input("config-name", "release-drafter.yml")
+                    .env("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}"),
+            ),
+        );
+
+    let actual = fixture.to_yaml().unwrap();
+    assert!(actual.contains("pull_request_target:"));
+    assert!(actual.contains("branches:"));
+    assert!(actual.contains("GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}"));
+}
