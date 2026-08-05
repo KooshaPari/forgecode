@@ -244,11 +244,15 @@ impl ConversationRepository for ConversationRepositoryImpl {
     ) -> anyhow::Result<Option<Vec<Conversation>>> {
         let parent_id = parent_id.into_string();
         self.run_with_connection(move |connection, wid| {
+            use diesel::dsl::sql;
+
             let workspace_id = wid.id() as i64;
             let records: Vec<ConversationRecord> = conversations::table
                 .filter(conversations::workspace_id.eq(&workspace_id))
                 .filter(conversations::parent_id.eq(&parent_id))
-                .filter(conversations::context.is_not_null())
+                .filter(sql::<diesel::sql_types::Bool>(
+                    "context IS NOT NULL OR is_compressed = 1",
+                ))
                 .order(conversations::updated_at.desc())
                 .load(connection)?;
 
@@ -353,10 +357,14 @@ impl ConversationRepository for ConversationRepositoryImpl {
     ) -> anyhow::Result<Option<Vec<Conversation>>> {
         let source = source.to_string();
         self.run_with_connection(move |connection, wid| {
+            use diesel::dsl::sql;
+
             let workspace_id = wid.id() as i64;
             let mut query = conversations::table
                 .filter(conversations::workspace_id.eq(&workspace_id))
-                .filter(conversations::context.is_not_null())
+                .filter(sql::<diesel::sql_types::Bool>(
+                    "context IS NOT NULL OR is_compressed = 1",
+                ))
                 .filter(conversations::source.eq(&source))
                 .order(conversations::updated_at.desc())
                 .into_boxed();
@@ -625,10 +633,14 @@ impl ConversationRepository for ConversationRepositoryImpl {
     ) -> anyhow::Result<Option<Vec<Conversation>>> {
         let cwd = cwd.to_string();
         self.run_with_connection(move |connection, wid| {
+            use diesel::dsl::sql;
+
             let workspace_id = wid.id() as i64;
             let mut query = conversations::table
                 .filter(conversations::workspace_id.eq(&workspace_id))
-                .filter(conversations::context.is_not_null())
+                .filter(sql::<diesel::sql_types::Bool>(
+                    "context IS NOT NULL OR is_compressed = 1",
+                ))
                 .filter(conversations::cwd.eq(&cwd))
                 .order(conversations::updated_at.desc())
                 .into_boxed();
@@ -713,8 +725,8 @@ impl ConversationRepository for ConversationRepositoryImpl {
             let sql = "SELECT c.* FROM conversations c \
                  WHERE c.workspace_id = ? \
                    AND c.intent_state = 'verified' \
-                   AND c.context IS NOT NULL \
-                 ORDER BY LENGTH(c.context) DESC \
+                   AND (c.context IS NOT NULL OR c.is_compressed = 1) \
+                 ORDER BY COALESCE(LENGTH(c.context), LENGTH(c.context_zstd)) DESC \
                  LIMIT ?";
 
             let records: Vec<ConversationRecord> = diesel::sql_query(sql)
