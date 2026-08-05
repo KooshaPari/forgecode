@@ -1,12 +1,16 @@
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
 use diesel::prelude::*;
 use forge_domain::{
-    Conversation, ConversationId, ConversationRepository, ConversationSummary, WorkspaceHash,
+    Context, Conversation, ConversationId, ConversationRepository, ConversationSummary,
+    ForgeImportReport, WorkspaceHash,
 };
 
-use crate::conversation::conversation_record::{ConversationRecord, ConversationRecordLite};
+use crate::conversation::conversation_record::{
+    ContextRecord, ConversationRecord, ConversationRecordLite, MetricsRecord,
+};
 use crate::database::schema::conversations;
 use crate::database::{DatabasePool, PooledSqliteConnection};
 
@@ -858,6 +862,182 @@ impl ConversationRepository for ConversationRepositoryImpl {
         })
         .await
     }
+
+    async fn import_forge_db(&self, source: PathBuf) -> anyhow::Result<ForgeImportReport> {
+        self.run_with_connection(move |connection, wid| {
+            use diesel::Connection;
+            use diesel::sql_types::{Nullable, Text};
+
+            if !source.is_file() {
+                anyhow::bail!(
+                    "source database not found: {}",
+                    source.display()
+                );
+            }
+
+            // Open the source database and immediately enable SQLite's
+            // `query_only` mode on this connection. No write can succeed
+            // after this point, which guarantees the source is never
+            // modified (a "never writes back" invariant).
+            let source_url = source.to_string_lossy().to_string();
+            let mut src = diesel::sqlite::SqliteConnection::establish(&source_url)?;
+            diesel::sql_query("PRAGMA query_only = ON;").execute(&mut src)?;
+            diesel::sql_query("PRAGMA busy_timeout = 5000;").execute(&mut src)?;
+
+            // Detect the source schema before reading anything.
+            #[derive(diesel::QueryableByName)]
+            struct ColumnName {
+                #[diesel(sql_type = Text)]
+                name: String,
+            }
+            let columns: Vec<ColumnName> =
+                diesel::sql_query("PRAGMA table_info(conversations)").load(&mut src)?;
+            let column_names: Vec<&str> =
+                columns.iter().map(|column| column.name.as_str()).collect();
+
+            if column_names.iter().any(|name| *name == "is_compressed" || *name == "context_zstd")
+            {
+                anyhow::bail!(
+                    "source database {} is already a heliosLite/fork-schema database; \
+                     there is nothing to import",
+                    source.display()
+                );
+            }
+            for required in ["conversation_id", "context", "created_at"] {
+                if !column_names.iter().any(|name| *name == required) {
+                    anyhow::bail!(
+                        "source database {} is not an official forge conversations \
+                         database (missing column `{required}`)",
+                        source.display()
+                    );
+                }
+            }
+
+            #[derive(diesel::QueryableByName)]
+            struct SourceRow {
+                #[diesel(sql_type = Text)]
+                conversation_id: String,
+                #[diesel(sql_type = Nullable<Text>)]
+                title: Option<String>,
+                #[diesel(sql_type = Nullable<Text>)]
+                context: Option<String>,
+                #[diesel(sql_type = Text)]
+                created_at: String,
+                #[diesel(sql_type = Nullable<Text>)]
+                updated_at: Option<String>,
+                #[diesel(sql_type = Nullable<Text>)]
+                metrics: Option<String>,
+            }
+
+            let rows: Vec<SourceRow> = diesel::sql_query(
+                "SELECT conversation_id, title, context, created_at, updated_at, metrics \
+                 FROM conversations",
+            )
+            .load(&mut src)?;
+
+            let mut report = ForgeImportReport {
+                source_total: rows.len(),
+                ..Default::default()
+            };
+
+            for row in rows {
+                let Ok(id) = ConversationId::parse(&row.conversation_id) else {
+                    report.invalid_id += 1;
+                    report.errors += 1;
+                    continue;
+                };
+
+                // Idempotency: skip conversations that already exist in this
+                // repository instead of overwriting them.
+                let existing: i64 = conversations::table
+                    .filter(conversations::conversation_id.eq(&row.conversation_id))
+                    .count()
+                    .get_result(connection)?;
+                if existing > 0 {
+                    report.skipped_existing += 1;
+                    continue;
+                }
+
+                // Parse the plain-text context with the heliosLite record type.
+                // Rows that fail to parse are still imported (title + timestamps)
+                // so the session remains visible; the failure is reported.
+                let mut context_parse_failed = false;
+                let context = match row.context.as_deref() {
+                    Some(json) if !json.trim().is_empty() => {
+                        let parsed = serde_json::from_str::<ContextRecord>(json)
+                            .ok()
+                            .and_then(|record| Context::try_from(record).ok());
+                        if parsed.is_none() {
+                            context_parse_failed = true;
+                        }
+                        parsed
+                    }
+                    _ => None,
+                };
+                if context_parse_failed {
+                    report.context_parse_failed += 1;
+                }
+
+                let created_at = parse_naive_datetime(&row.created_at)
+                    .unwrap_or_else(|| chrono::Utc::now().naive_utc());
+                let updated_at = row.updated_at.as_deref().and_then(parse_naive_datetime);
+
+                let metrics = row
+                    .metrics
+                    .as_deref()
+                    .and_then(|json| serde_json::from_str::<MetricsRecord>(json).ok())
+                    .map(forge_domain::Metrics::from)
+                    .unwrap_or_else(|| {
+                        forge_domain::Metrics::default().started_at(created_at.and_utc())
+                    });
+
+                let conversation = forge_domain::Conversation::new(id)
+                    .context(context)
+                    .title(row.title)
+                    .metrics(metrics)
+                    .source(Some("imported:forge".to_string()))
+                    .metadata(
+                        forge_domain::MetaData::new(created_at.and_utc())
+                            .updated_at(updated_at.map(|timestamp| timestamp.and_utc())),
+                    );
+
+                let record = ConversationRecord::new(conversation, wid);
+                match diesel::insert_into(conversations::table)
+                    .values(&record)
+                    .execute(connection)
+                {
+                    Ok(_) => report.imported += 1,
+                    Err(error) => {
+                        eprintln!(
+                            "Failed to import conversation {}: {}",
+                            row.conversation_id, error
+                        );
+                        report.errors += 1;
+                    }
+                }
+            }
+
+            Ok(report)
+        })
+        .await
+    }
+}
+
+/// Parse a timestamp stored by forge-lineage databases into a
+/// [`chrono::NaiveDateTime`]. Accepts the diesel TEXT serialization
+/// (`%Y-%m-%d %H:%M:%S%.f`) as well as RFC 3339 variants. Returns `None`
+/// when the string is unrecognised so callers can fall back to "now".
+fn parse_naive_datetime(value: &str) -> Option<chrono::NaiveDateTime> {
+    const FORMATS: &[&str] = &[
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S%.fZ",
+        "%Y-%m-%dT%H:%M:%S%.f",
+        "%Y-%m-%dT%H:%M:%SZ",
+    ];
+    FORMATS
+        .iter()
+        .find_map(|format| chrono::NaiveDateTime::parse_from_str(value, format).ok())
 }
 
 /// Find the byte-offset in the context JSON immediately after the last

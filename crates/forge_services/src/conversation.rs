@@ -1,9 +1,10 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
 use forge_app::ConversationService;
 use forge_app::domain::{Conversation, ConversationId, ConversationSummary};
-use forge_domain::ConversationRepository;
+use forge_domain::{ConversationRepository, ForgeImportReport};
 
 /// Service for managing conversations, including creation, retrieval, and
 /// updates
@@ -172,5 +173,9 @@ impl<S: ConversationRepository> ConversationService for ForgeConversationService
         self.conversation_repository
             .compress_uncompressed_contexts()
             .await
+    }
+
+    async fn import_forge_db(&self, source: PathBuf) -> Result<ForgeImportReport> {
+        self.conversation_repository.import_forge_db(source).await
     }
 }

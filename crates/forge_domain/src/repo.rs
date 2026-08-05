@@ -1,8 +1,8 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use url::Url;
-
 use crate::{
     AnyProvider, AuthCredential, ChatCompletionMessage, Context, Conversation, ConversationId,
     ConversationSummary, MigrationResult, Model, ModelId, Provider, ProviderId, ProviderTemplate,
@@ -13,6 +13,40 @@ use crate::{
 pub struct TextPatchBlock {
     pub patch: String,
     pub patched_text: String,
+}
+
+/// Result of importing conversations from a foreign forge installation.
+///
+/// Rows that were parsed and written count toward `imported`. Rows skipped
+/// (no context blob / already-empty shells) count toward `skipped`. Rows
+/// that failed to parse or write count toward `errors` and are not aborted.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForgeImportResult {
+    pub imported: usize,
+    pub skipped: usize,
+    pub errors: usize,
+}
+
+/// Result of a one-way import from an official forge-lineage database.
+///
+/// The source database is opened read-only and is never modified. Rows whose
+/// `conversation_id` already exists in the destination repository are skipped,
+/// which makes re-running the import idempotent.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForgeImportReport {
+    /// Conversations read from the source database.
+    pub source_total: usize,
+    /// Conversations written into the destination repository.
+    pub imported: usize,
+    /// Conversations skipped because their ID already exists.
+    pub skipped_existing: usize,
+    /// Rows skipped because `conversation_id` was not parseable.
+    pub invalid_id: usize,
+    /// Conversations imported without a context blob because the source
+    /// context could not be parsed into the heliosLite schema.
+    pub context_parse_failed: usize,
+    /// Rows skipped due to insert or read errors.
+    pub errors: usize,
 }
 
 /// Repository for managing file snapshots
@@ -383,6 +417,22 @@ pub trait ConversationRepository: Send + Sync {
     /// Returns an error only if the batch query itself fails. Per-row
     /// compression errors are counted in `errors` and do not abort the batch.
     async fn compress_uncompressed_contexts(&self) -> Result<(usize, usize, usize)>;
+
+    /// One-way import of conversations from an official forge-lineage SQLite
+    /// database (plain `context` schema, no zstd compression columns) into
+    /// this repository.
+    ///
+    /// The source database is opened read-only and is never modified.
+    /// Conversations whose `conversation_id` already exists in this
+    /// repository are skipped, making the operation idempotent. Rows whose
+    /// context cannot be parsed into the heliosLite schema are imported
+    /// without a context blob and reported via [`ForgeImportReport`].
+    ///
+    /// # Errors
+    /// Returns an error if the source file is missing, is not a forge
+    /// conversations database, or if it is already a heliosLite/fork-schema
+    /// database (nothing to import).
+    async fn import_forge_db(&self, source: PathBuf) -> Result<ForgeImportReport>;
 }
 
 #[async_trait::async_trait]

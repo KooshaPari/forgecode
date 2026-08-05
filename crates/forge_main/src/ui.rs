@@ -32,8 +32,8 @@ use tokio_stream::StreamExt;
 use url::Url;
 
 use crate::cli::{
-    Cli, CommitCommandGroup, ConversationCommand, ListCommand, MaintenanceSubcommand, McpCommand,
-    SelectCommand, TopLevelCommand,
+    Cli, CommitCommandGroup, ConversationCommand, ImportSubcommand, ListCommand,
+    MaintenanceSubcommand, McpCommand, SelectCommand, TopLevelCommand,
 };
 use crate::conversation_selector::ConversationSelector;
 use crate::display_constants::{CommandType, headers, markers, status};
@@ -1057,6 +1057,26 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                         self.writeln(format!(
                             "zstd compression complete: {} compressed, {} skipped, {} errors",
                             compressed, skipped, errors
+                        ))?;
+                    }
+                }
+                return Ok(());
+            }
+            TopLevelCommand::Import(import_group) => {
+                match import_group.command {
+                    ImportSubcommand::Forge { db } => {
+                        self.spinner.start(Some("Importing"))?;
+                        let report = self.api.import_forge_db(db).await?;
+                        self.spinner.stop(None)?;
+                        self.writeln(format!(
+                            "import complete: {} read, {} imported, {} skipped (already exist), \
+                             {} invalid IDs, {} context parse failures, {} errors",
+                            report.source_total,
+                            report.imported,
+                            report.skipped_existing,
+                            report.invalid_id,
+                            report.context_parse_failed,
+                            report.errors
                         ))?;
                     }
                 }

@@ -165,6 +165,10 @@ pub enum TopLevelCommand {
 
     /// Database maintenance commands. Safe to run at any time; idempotent.
     Maintenance(MaintenanceCommandGroup),
+
+    /// One-way import of conversations from an official forge-lineage SQLite
+    /// database.
+    Import(ImportCommandGroup),
 }
 
 /// Command group for `forge maintenance` sub-commands.
@@ -188,6 +192,29 @@ pub enum MaintenanceSubcommand {
     /// context), and rows that failed compression. Titles and timestamps
     /// remain queryable throughout — only the raw blob column is rewritten.
     Compress,
+}
+
+/// Command group for `forge import` sub-commands.
+#[derive(Parser, Debug, Clone)]
+pub struct ImportCommandGroup {
+    #[command(subcommand)]
+    pub command: ImportSubcommand,
+}
+
+/// Sub-commands for `forge import`.
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum ImportSubcommand {
+    /// Import conversations from an official forge-lineage SQLite database
+    /// (plain `context` schema) into this repository.
+    ///
+    /// The source database is opened **read-only** and is never modified.
+    /// Rows whose `conversation_id` already exists locally are skipped, so
+    /// re-running the import is safe and idempotent.
+    Forge {
+        /// Path to the source `.forge.db` file to import from.
+        #[arg(value_name = "DB_PATH")]
+        db: PathBuf,
+    },
 }
 
 /// Command group for the `forge select` interactive picker.

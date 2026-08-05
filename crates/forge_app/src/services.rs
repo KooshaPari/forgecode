@@ -6,7 +6,8 @@ use derive_setters::Setters;
 use forge_domain::{
     AgentId, AnyProvider, Attachment, AuthContextRequest, AuthContextResponse, AuthMethod,
     ChatCompletionMessage, CommandOutput, Context, Conversation, ConversationId,
-    ConversationSummary, File, FileInfo, FileStatus, Image, McpConfig, McpServers, Model, ModelId,
+    ConversationSummary, File, FileInfo, FileStatus, ForgeImportReport, Image, McpConfig,
+    McpServers, Model, ModelId,
     Node, Provider, ProviderId, ResultStream, Scope, SearchParams, SyncProgress, SyntaxError,
     Template, ToolCallFull, ToolOutput, WorkspaceAuth, WorkspaceId, WorkspaceInfo,
 };
@@ -350,6 +351,14 @@ pub trait ConversationService: Send + Sync {
     ///
     /// Returns `(compressed, skipped, errors)` counts.
     async fn compress_uncompressed_contexts(&self) -> anyhow::Result<(usize, usize, usize)>;
+
+    /// One-way import from an official forge-lineage database.
+    ///
+    /// The source database is opened read-only (`PRAGMA query_only`) and is
+    /// never modified. Conversations whose `conversation_id` already exists
+    /// in this repository are skipped, so re-running the import is
+    /// idempotent. Returns a [`ForgeImportReport`] describing the outcome.
+    async fn import_forge_db(&self, source: PathBuf) -> anyhow::Result<ForgeImportReport>;
 }
 
 #[async_trait::async_trait]
@@ -830,6 +839,10 @@ impl<I: Services> ConversationService for I {
         self.conversation_service()
             .compress_uncompressed_contexts()
             .await
+    }
+
+    async fn import_forge_db(&self, source: PathBuf) -> anyhow::Result<ForgeImportReport> {
+        self.conversation_service().import_forge_db(source).await
     }
 }
 #[async_trait::async_trait]

@@ -12,9 +12,9 @@ use forge_config::ForgeConfig;
 use forge_domain::{
     AnyProvider, AuthCredential, ChatCompletionMessage, ChatRepository, CommandOutput, Context,
     Conversation, ConversationId, ConversationRepository, ConversationSummary, Environment,
-    FileInfo, FuzzySearchRepository, McpServerConfig, MigrationResult, Model, ModelId, Provider,
-    ProviderId, ProviderRepository, ResultStream, SearchMatch, Skill, SkillRepository, Snapshot,
-    SnapshotRepository, TextPatchBlock, TextPatchRepository,
+    FileInfo, ForgeImportReport, FuzzySearchRepository, McpServerConfig, MigrationResult, Model,
+    ModelId, Provider, ProviderId, ProviderRepository, ResultStream, SearchMatch, Skill,
+    SkillRepository, Snapshot, SnapshotRepository, TextPatchBlock, TextPatchRepository,
 };
 use forge_eventsource::EventSource;
 // Re-export CacacheStorage from forge_infra
@@ -278,6 +278,10 @@ impl<F: Send + Sync> ConversationRepository for ForgeRepo<F> {
         self.conversation_repository
             .compress_uncompressed_contexts()
             .await
+    }
+
+    async fn import_forge_db(&self, source: PathBuf) -> anyhow::Result<ForgeImportReport> {
+        self.conversation_repository.import_forge_db(source).await
     }
 }
 

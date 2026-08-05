@@ -647,6 +647,10 @@ impl<
         self.services.compress_uncompressed_contexts().await
     }
 
+    async fn import_forge_db(&self, source: PathBuf) -> Result<ForgeImportReport> {
+        self.services.import_forge_db(source).await
+    }
+
     fn hydrate_channel(&self) -> Result<()> {
         self.infra.hydrate();
         Ok(())
