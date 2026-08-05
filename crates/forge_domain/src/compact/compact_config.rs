@@ -212,6 +212,82 @@ impl Compact {
         self.compression_strategy = other.compression_strategy;
         self.prune_strategy = other.prune_strategy;
     }
+
+    /// Applies only explicitly configured non-default scalar values from an
+    /// agent overlay, preserving workflow values for a freshly constructed
+    /// agent whose compact configuration is the default value.
+    pub fn merge_non_default_from(&mut self, other: Self) {
+        let defaults = Self::default();
+        if other.retention_window != defaults.retention_window {
+            self.retention_window = other.retention_window;
+        }
+        if other.eviction_window != defaults.eviction_window {
+            self.eviction_window = other.eviction_window;
+        }
+        if other.summarization_strategy != defaults.summarization_strategy {
+            self.summarization_strategy = other.summarization_strategy;
+        }
+        if other.summary_timeout_secs != defaults.summary_timeout_secs {
+            self.summary_timeout_secs = other.summary_timeout_secs;
+        }
+        if other.enable_prefilter != defaults.enable_prefilter {
+            self.enable_prefilter = other.enable_prefilter;
+        }
+        if other.enable_adaptive_eviction != defaults.enable_adaptive_eviction {
+            self.enable_adaptive_eviction = other.enable_adaptive_eviction;
+        }
+        if other.enable_importance_scoring != defaults.enable_importance_scoring {
+            self.enable_importance_scoring = other.enable_importance_scoring;
+        }
+        if other.context_compression_level != defaults.context_compression_level {
+            self.context_compression_level = other.context_compression_level;
+        }
+        if other.min_importance_threshold != defaults.min_importance_threshold {
+            self.min_importance_threshold = other.min_importance_threshold;
+        }
+        if other.prune_threshold != defaults.prune_threshold {
+            self.prune_threshold = other.prune_threshold;
+        }
+        if other.enable_semantic_compression != defaults.enable_semantic_compression {
+            self.enable_semantic_compression = other.enable_semantic_compression;
+        }
+        if other.enable_structural_dedup != defaults.enable_structural_dedup {
+            self.enable_structural_dedup = other.enable_structural_dedup;
+        }
+        if other.compression_strategy != defaults.compression_strategy {
+            self.compression_strategy = other.compression_strategy;
+        }
+        if other.prune_strategy != defaults.prune_strategy {
+            self.prune_strategy = other.prune_strategy;
+        }
+        if other.max_tokens.is_some() {
+            self.max_tokens = other.max_tokens;
+        }
+        if other.token_threshold.is_some() {
+            self.token_threshold = other.token_threshold;
+        }
+        if other.token_threshold_percentage.is_some() {
+            self.token_threshold_percentage = other.token_threshold_percentage;
+        }
+        if other.turn_threshold.is_some() {
+            self.turn_threshold = other.turn_threshold;
+        }
+        if other.message_threshold.is_some() {
+            self.message_threshold = other.message_threshold;
+        }
+        if other.model.is_some() {
+            self.model = other.model;
+        }
+        if other.on_turn_end.is_some() {
+            self.on_turn_end = other.on_turn_end;
+        }
+        if other.summary_model.is_some() {
+            self.summary_model = other.summary_model;
+        }
+        if other.summary_max_tokens.is_some() {
+            self.summary_max_tokens = other.summary_max_tokens;
+        }
+    }
 }
 
 fn deserialize_percentage<'de, D>(deserializer: D) -> Result<f64, D::Error>

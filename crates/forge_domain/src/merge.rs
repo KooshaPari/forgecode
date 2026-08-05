@@ -28,8 +28,10 @@ pub mod vec {
                     merge_from(base_agent, other_agent);
                 }
             } else {
+                let key = other_agent.key().clone();
                 // Otherwise, append the other agent to the base list
                 base.push(other_agent);
+                base_map.insert(key, base.len() - 1);
             }
         }
     }
@@ -45,5 +47,35 @@ pub trait Key {
 pub fn hashmap<K: Eq + Hash, V>(base: &mut HashMap<K, V>, other: HashMap<K, V>) {
     for (key, value) in other {
         base.insert(key, value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Key;
+    use super::vec::unify_by_key;
+
+    #[derive(Debug, PartialEq)]
+    struct Item(&'static str, usize);
+
+    impl Key for Item {
+        type Id = &'static str;
+
+        fn key(&self) -> &Self::Id {
+            &self.0
+        }
+    }
+
+    #[test]
+    fn duplicate_incoming_keys_merge_into_the_first_appended_item() {
+        let mut fixture = vec![Item("base", 1)];
+        let other = vec![Item("new", 2), Item("new", 3)];
+
+        unify_by_key(&mut fixture, other, |base, incoming| {
+            base.1 += incoming.1;
+        });
+
+        let expected = vec![Item("base", 1), Item("new", 5)];
+        assert_eq!(fixture, expected);
     }
 }

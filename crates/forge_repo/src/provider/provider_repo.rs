@@ -94,13 +94,21 @@ impl ProviderConfig {
     fn merge_from(&mut self, other: Self) {
         self.id = other.id;
         self.provider_type = other.provider_type;
-        self.api_key_vars = other.api_key_vars;
+        if other.api_key_vars.is_some() {
+            self.api_key_vars = other.api_key_vars;
+        }
         self.url_param_vars.extend(other.url_param_vars);
-        self.response_type = other.response_type;
+        if other.response_type.is_some() {
+            self.response_type = other.response_type;
+        }
         self.url = other.url;
-        self.models = other.models;
+        if other.models.is_some() {
+            self.models = other.models;
+        }
         self.auth_methods.extend(other.auth_methods);
-        self.custom_headers = other.custom_headers;
+        if other.custom_headers.is_some() {
+            self.custom_headers = other.custom_headers;
+        }
     }
 }
 
@@ -711,29 +719,49 @@ mod tests {
             )])),
         };
         fixture.merge_from(other);
-        assert_eq!(fixture.id, ProviderId::from("shared".to_string()));
-        assert_eq!(fixture.provider_type, ProviderType::ContextEngine);
-        assert_eq!(fixture.api_key_vars, Some("OTHER_KEY".to_string()));
-        assert_eq!(fixture.response_type, Some(ProviderResponse::Anthropic));
-        assert_eq!(fixture.url, "https://other.example");
-        assert_eq!(
-            fixture.url_param_vars,
-            vec![
+        let expected = ProviderConfig {
+            id: ProviderId::from("shared".to_string()),
+            provider_type: ProviderType::ContextEngine,
+            api_key_vars: Some("OTHER_KEY".to_string()),
+            url_param_vars: vec![
                 UrlParamVarConfig::Plain("BASE_PARAM".to_string()),
                 UrlParamVarConfig::Plain("OTHER_PARAM".to_string()),
-            ]
-        );
-        assert_eq!(
-            fixture.auth_methods,
-            vec![AuthMethod::ApiKey, AuthMethod::GoogleAdc]
-        );
-        assert_eq!(
-            fixture.custom_headers,
-            Some(std::collections::HashMap::from([(
+            ],
+            response_type: Some(ProviderResponse::Anthropic),
+            url: "https://other.example".to_string(),
+            models: None,
+            auth_methods: vec![AuthMethod::ApiKey, AuthMethod::GoogleAdc],
+            custom_headers: Some(std::collections::HashMap::from([(
                 "X-Other".to_string(),
-                "other".to_string()
-            )]))
-        );
+                "other".to_string(),
+            )])),
+        };
+        assert_eq!(fixture, expected);
+    }
+
+    #[test]
+    fn test_provider_config_merge_from_preserves_absent_optional_fields() {
+        let mut fixture = fixture_provider_config("shared", "https://base.example");
+        let other = ProviderConfig {
+            models: None,
+            api_key_vars: None,
+            response_type: None,
+            custom_headers: None,
+            ..fixture_provider_config("shared", "https://other.example")
+        };
+
+        fixture.merge_from(other);
+
+        let expected = ProviderConfig {
+            url: "https://other.example".to_string(),
+            url_param_vars: vec![
+                UrlParamVarConfig::Plain("BASE_PARAM".to_string()),
+                UrlParamVarConfig::Plain("BASE_PARAM".to_string()),
+            ],
+            auth_methods: vec![AuthMethod::ApiKey, AuthMethod::ApiKey],
+            ..fixture_provider_config("shared", "https://base.example")
+        };
+        assert_eq!(fixture, expected);
     }
 
     #[test]
