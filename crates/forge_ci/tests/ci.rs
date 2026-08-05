@@ -161,13 +161,20 @@ fn test_autofix_workflow() {
 
 #[test]
 fn test_bounty_workflow() {
+    let expected = std::fs::read_to_string(generated_workflow_path("bounty.yml"))
+        .expect("bounty workflow baseline");
     workflow::generate_bounty_workflow();
 
-    let generated = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/bounty.yml"),
-    )
-    .expect("generated bounty workflow");
-    assert!(generated.contains(
+    let actual = std::fs::read_to_string(generated_workflow_path("bounty.yml"))
+        .expect("bounty workflow output");
+    assert!(actual.contains(
         "if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'",
     ));
+    assert!(actual.contains("issues: write"));
+    assert!(actual.contains("pull-requests: write"));
+    assert!(actual.contains("sync-all-issues.ts"));
+
+    let expected = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&expected).unwrap();
+    let actual = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&actual).unwrap();
+    assert_eq!(actual, expected);
 }

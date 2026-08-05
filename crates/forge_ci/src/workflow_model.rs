@@ -66,6 +66,10 @@ pub(crate) struct Event {
     schedule: Vec<Schedule>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pull_request: Option<PullRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pull_request_target: Option<PullRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    issues: Option<Issues>,
 }
 
 impl Event {
@@ -90,6 +94,22 @@ impl Event {
         });
         self
     }
+
+    pub(crate) fn pull_request_target(
+        mut self,
+        types: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.pull_request_target = Some(PullRequest {
+            types: types.into_iter().map(Into::into).collect(),
+            branches: Vec::new(),
+        });
+        self
+    }
+
+    pub(crate) fn issues(mut self, types: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.issues = Some(Issues { types: types.into_iter().map(Into::into).collect() });
+        self
+    }
 }
 
 #[derive(Clone, Serialize)]
@@ -100,7 +120,13 @@ struct Schedule {
 #[derive(Clone, Serialize)]
 struct PullRequest {
     types: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     branches: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct Issues {
+    types: Vec<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -157,6 +183,8 @@ pub(crate) enum Level {
 
 #[derive(Clone, Default, Serialize)]
 pub(crate) struct Job {
+    #[serde(rename = "if", skip_serializing_if = "Option::is_none")]
+    condition: Option<String>,
     name: String,
     #[serde(rename = "runs-on")]
     runs_on: String,
@@ -182,6 +210,11 @@ impl Job {
 
     pub(crate) fn permissions(mut self, permissions: Permissions) -> Self {
         self.permissions = permissions;
+        self
+    }
+
+    pub(crate) fn if_condition(mut self, condition: impl Into<String>) -> Self {
+        self.condition = Some(condition.into());
         self
     }
 }
