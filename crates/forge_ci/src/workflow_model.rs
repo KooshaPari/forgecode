@@ -12,6 +12,8 @@ pub(crate) struct Workflow {
     #[serde(skip_serializing_if = "Permissions::is_empty")]
     permissions: Permissions,
     #[serde(skip_serializing_if = "IndexMap::is_empty")]
+    env: IndexMap<String, String>,
+    #[serde(skip_serializing_if = "IndexMap::is_empty")]
     jobs: IndexMap<String, Job>,
 }
 
@@ -30,6 +32,11 @@ impl Workflow {
         self
     }
 
+    pub(crate) fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env.insert(key.into(), value.into());
+        self
+    }
+
     pub(crate) fn add_job(mut self, id: impl Into<String>, job: Job) -> Self {
         self.jobs.insert(id.into(), job);
         self
@@ -44,6 +51,8 @@ impl Workflow {
 pub(crate) struct Event {
     #[serde(skip_serializing_if = "Option::is_none")]
     push: Option<Push>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    schedule: Vec<Schedule>,
 }
 
 impl Event {
@@ -51,6 +60,16 @@ impl Event {
         self.push = Some(push);
         self
     }
+
+    pub(crate) fn schedule(mut self, cron: impl Into<String>) -> Self {
+        self.schedule.push(Schedule { cron: cron.into() });
+        self
+    }
+}
+
+#[derive(Clone, Serialize)]
+struct Schedule {
+    cron: String,
 }
 
 #[derive(Clone, Default, Serialize)]
@@ -78,6 +97,11 @@ impl Permissions {
 
     pub(crate) fn issues(mut self, level: Level) -> Self {
         self.0.insert("issues".to_string(), level);
+        self
+    }
+
+    pub(crate) fn pull_requests(mut self, level: Level) -> Self {
+        self.0.insert("pull-requests".to_string(), level);
         self
     }
 
@@ -131,6 +155,8 @@ pub(crate) struct Step {
     uses: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     run: Option<String>,
+    #[serde(rename = "with", skip_serializing_if = "IndexMap::is_empty")]
+    inputs: IndexMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[allow(dead_code)]
     value: Option<Value>,
@@ -159,6 +185,11 @@ impl Step {
     #[allow(dead_code)]
     pub(crate) fn run(mut self, command: impl Into<String>) -> Self {
         self.run = Some(command.into());
+        self
+    }
+
+    pub(crate) fn input(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.inputs.insert(key.into(), value.into());
         self
     }
 }

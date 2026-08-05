@@ -126,7 +126,20 @@ fn test_labels_workflow() {
 
 #[test]
 fn test_stale_workflow() {
+    let expected = std::fs::read_to_string(generated_workflow_path("stale.yml"))
+        .expect("stale workflow baseline");
     workflow::generate_stale_workflow();
+    let actual = std::fs::read_to_string(generated_workflow_path("stale.yml"))
+        .expect("stale workflow output");
+
+    assert!(actual.contains("cron: 0 * * * *"));
+    assert!(actual.contains("issues: write"));
+    assert!(actual.contains("pull-requests: write"));
+    assert!(actual.contains("actions/stale@1e223db275d687790206a7acac4d1a11bd6fe629"));
+
+    let expected = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&expected).unwrap();
+    let actual = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&actual).unwrap();
+    assert_eq!(actual, expected);
 }
 
 #[test]

@@ -16,7 +16,7 @@ pub(crate) fn generate_workflow_with_suffix(workflow: Workflow, name: &str, suff
 
 pub(crate) fn generate_private_workflow(workflow: PrivateWorkflow, name: &str) {
     let workflow_yaml = workflow.to_yaml().expect("workflow yaml");
-    write_workflow(name, &workflow_yaml, "", false);
+    write_workflow(name, &workflow_yaml, "", false, true);
 }
 
 fn generate_legacy_workflow_inner(
@@ -26,10 +26,22 @@ fn generate_legacy_workflow_inner(
     normalize_generated_yaml: bool,
 ) {
     let workflow_yaml = workflow.to_string().expect("workflow yaml");
-    write_workflow(name, &workflow_yaml, suffix, normalize_generated_yaml);
+    write_workflow(
+        name,
+        &workflow_yaml,
+        suffix,
+        normalize_generated_yaml,
+        false,
+    );
 }
 
-fn write_workflow(name: &str, workflow_yaml: &str, suffix: &str, normalize_generated_yaml: bool) {
+fn write_workflow(
+    name: &str,
+    workflow_yaml: &str,
+    suffix: &str,
+    normalize_generated_yaml: bool,
+    require_byte_parity: bool,
+) {
     let root = String::from_utf8(
         Command::new("git")
             .args(["rev-parse", "--show-toplevel"])
@@ -65,7 +77,8 @@ fn write_workflow(name: &str, workflow_yaml: &str, suffix: &str, normalize_gener
             path.display()
         );
     } else if normalize_generated_yaml && current.as_deref() != Some(content.as_str())
-        || !normalize_generated_yaml && !equivalent
+        || require_byte_parity && current.as_deref() != Some(content.as_str())
+        || !normalize_generated_yaml && !require_byte_parity && !equivalent
     {
         std::fs::write(&path, content).expect("write workflow");
     }
