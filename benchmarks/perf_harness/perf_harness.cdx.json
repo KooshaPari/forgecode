@@ -2,8 +2,9 @@
   "bomFormat": "CycloneDX",
   "specVersion": "1.3",
   "version": 1,
+  "serialNumber": "urn:uuid:2ff87f9b-81f7-433a-8f1c-845348c8649b",
   "metadata": {
-    "timestamp": "2025-07-29T00:00:00.000000000Z",
+    "timestamp": "2026-08-05T00:08:54.655766000Z",
     "tools": [
       {
         "vendor": "CycloneDX",
@@ -13,7 +14,7 @@
     ],
     "component": {
       "type": "application",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/benchmarks/perf_harness#0.1.0",
+      "bom-ref": "path+file:///private/tmp/forgecode-sbom-refresh-20260804/benchmarks/perf_harness#0.1.0",
       "name": "perf_harness",
       "version": "0.1.0",
       "description": "Per-agent resource-pooling harness (RSS, idle CPU, system-pool count)",
@@ -27,7 +28,7 @@
       "components": [
         {
           "type": "application",
-          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/benchmarks/perf_harness#0.1.0 bin-target-0",
+          "bom-ref": "path+file:///private/tmp/forgecode-sbom-refresh-20260804/benchmarks/perf_harness#0.1.0 bin-target-0",
           "name": "perf_harness",
           "version": "0.1.0",
           "purl": "pkg:cargo/perf_harness@0.1.0?download_url=file://.#src/main.rs"
@@ -44,7 +45,7 @@
   "components": [
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_daemon#0.1.0",
+      "bom-ref": "path+file:///private/tmp/forgecode-sbom-refresh-20260804/crates/forge_daemon#0.1.0",
       "name": "forge_daemon",
       "version": "0.1.0",
       "description": "Zig forge-daemon client (kqueue+posix_spawn density lever)",
@@ -1316,16 +1317,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#tokio-macros@2.7.1",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#tokio-macros@2.7.2",
       "author": "Tokio Contributors <team@tokio.rs>",
       "name": "tokio-macros",
-      "version": "2.7.1",
+      "version": "2.7.2",
       "description": "Tokio's proc macros. ",
       "scope": "required",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "6328af13490e73a9b4694030fafd93f8c8c6a9dede33e821c3fc63eddf8042ba"
+          "content": "78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e"
         }
       ],
       "licenses": [
@@ -1333,7 +1334,7 @@
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:cargo/tokio-macros@2.7.1",
+      "purl": "pkg:cargo/tokio-macros@2.7.2",
       "externalReferences": [
         {
           "type": "website",
@@ -1627,10 +1628,10 @@
   ],
   "dependencies": [
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/benchmarks/perf_harness#0.1.0",
+      "ref": "path+file:///private/tmp/forgecode-sbom-refresh-20260804/benchmarks/perf_harness#0.1.0",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_daemon#0.1.0",
+        "path+file:///private/tmp/forgecode-sbom-refresh-20260804/crates/forge_daemon#0.1.0",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
@@ -1639,7 +1640,7 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_daemon#0.1.0",
+      "ref": "path+file:///private/tmp/forgecode-sbom-refresh-20260804/crates/forge_daemon#0.1.0",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
@@ -1869,11 +1870,11 @@
       ]
     },
     {
-      "ref": "registry+https://github.com/rust-lang/crates.io-index#tokio-macros@2.7.1",
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#tokio-macros@2.7.2",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
         "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
-        "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119"
+        "registry+https://github.com/rust-lang/crates.io-index#syn@3.0.3"
       ]
     },
     {
@@ -1886,7 +1887,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
         "registry+https://github.com/rust-lang/crates.io-index#signal-hook-registry@1.4.8",
         "registry+https://github.com/rust-lang/crates.io-index#socket2@0.6.5",
-        "registry+https://github.com/rust-lang/crates.io-index#tokio-macros@2.7.1"
+        "registry+https://github.com/rust-lang/crates.io-index#tokio-macros@2.7.2"
       ]
     },
     {

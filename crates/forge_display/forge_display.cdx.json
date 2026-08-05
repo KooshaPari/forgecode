@@ -2,8 +2,9 @@
   "bomFormat": "CycloneDX",
   "specVersion": "1.3",
   "version": 1,
+  "serialNumber": "urn:uuid:3f460069-485f-4dd6-a659-e40bc634e83e",
   "metadata": {
-    "timestamp": "2025-07-29T00:00:00.000000000Z",
+    "timestamp": "2026-08-05T00:08:52.140650000Z",
     "tools": [
       {
         "vendor": "CycloneDX",
@@ -13,7 +14,7 @@
     ],
     "component": {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_display#0.1.1",
+      "bom-ref": "path+file:///private/tmp/forgecode-sbom-refresh-20260804/crates/forge_display#0.1.1",
       "name": "forge_display",
       "version": "0.1.1",
       "scope": "required",
@@ -26,7 +27,7 @@
       "components": [
         {
           "type": "library",
-          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_display#0.1.1 bin-target-0",
+          "bom-ref": "path+file:///private/tmp/forgecode-sbom-refresh-20260804/crates/forge_display#0.1.1 bin-target-0",
           "name": "forge_display",
           "version": "0.1.1",
           "purl": "pkg:cargo/forge_display@0.1.1?download_url=file://.#src/lib.rs"
@@ -1304,16 +1305,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#lazy-regex-proc_macros@3.6.0",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#lazy-regex-proc_macros@3.6.1",
       "author": "Canop <cano.petrole@gmail.com>",
       "name": "lazy-regex-proc_macros",
-      "version": "3.6.0",
+      "version": "3.6.1",
       "description": "proc macros for the lazy_regex crate",
       "scope": "required",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "4de9c1e1439d8b7b3061b2d209809f447ca33241733d9a3c01eabf2dc8d94358"
+          "content": "fd97232314824e6dbef1918a871bb93f51070455e3715bf26e19a6d01aa977a0"
         }
       ],
       "licenses": [
@@ -1321,7 +1322,7 @@
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:cargo/lazy-regex-proc_macros@3.6.0",
+      "purl": "pkg:cargo/lazy-regex-proc_macros@3.6.1",
       "externalReferences": [
         {
           "type": "vcs",
@@ -1331,16 +1332,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#lazy-regex@3.6.0",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#lazy-regex@3.6.1",
       "author": "Canop <cano.petrole@gmail.com>",
       "name": "lazy-regex",
-      "version": "3.6.0",
+      "version": "3.6.1",
       "description": "lazy static regular expressions checked at compile time",
       "scope": "required",
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "6bae91019476d3ec7147de9aa291cadb6d870abf2f3015d2da73a90325ac1496"
+          "content": "4994ba703f78b083e2f7946dac9251abd83fd43a0365f030e99b69be5b4b9ef9"
         }
       ],
       "licenses": [
@@ -1348,7 +1349,7 @@
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:cargo/lazy-regex@3.6.0",
+      "purl": "pkg:cargo/lazy-regex@3.6.1",
       "externalReferences": [
         {
           "type": "vcs",
@@ -3347,7 +3348,7 @@
   ],
   "dependencies": [
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode/crates/forge_display#0.1.1",
+      "ref": "path+file:///private/tmp/forgecode-sbom-refresh-20260804/crates/forge_display#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#console@0.16.4",
         "registry+https://github.com/rust-lang/crates.io-index#derive_setters@0.1.9",
@@ -3628,7 +3629,7 @@
       ]
     },
     {
-      "ref": "registry+https://github.com/rust-lang/crates.io-index#lazy-regex-proc_macros@3.6.0",
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#lazy-regex-proc_macros@3.6.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
         "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
@@ -3637,9 +3638,9 @@
       ]
     },
     {
-      "ref": "registry+https://github.com/rust-lang/crates.io-index#lazy-regex@3.6.0",
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#lazy-regex@3.6.1",
       "dependsOn": [
-        "registry+https://github.com/rust-lang/crates.io-index#lazy-regex-proc_macros@3.6.0",
+        "registry+https://github.com/rust-lang/crates.io-index#lazy-regex-proc_macros@3.6.1",
         "registry+https://github.com/rust-lang/crates.io-index#once_cell@1.21.4",
         "registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1"
       ]
@@ -3909,7 +3910,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#coolor@1.1.0",
         "registry+https://github.com/rust-lang/crates.io-index#crokey@1.5.0",
         "registry+https://github.com/rust-lang/crates.io-index#crossbeam@0.8.4",
-        "registry+https://github.com/rust-lang/crates.io-index#lazy-regex@3.6.0",
+        "registry+https://github.com/rust-lang/crates.io-index#lazy-regex@3.6.1",
         "registry+https://github.com/rust-lang/crates.io-index#minimad@0.14.0",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.19",
