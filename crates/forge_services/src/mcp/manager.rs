@@ -21,6 +21,29 @@ fn retain_trusted_servers(
     raw.retain(|name, server| trusted.get(name) == Some(server));
 }
 
+impl<I> ForgeMcpManager<I>
+where
+    I: McpServerInfra + FileReaderInfra + FileInfoInfra + EnvironmentInfra + KVStore,
+{
+    /// Creates a new [`ForgeMcpManager`] wrapping the provided infrastructure.
+    pub fn new(infra: Arc<I>) -> Self {
+        Self { infra }
+    }
+
+    async fn read_config(&self, path: &Path) -> anyhow::Result<McpConfig> {
+        let config = self.infra.read_utf8(path).await?;
+        Ok(serde_json::from_str(&config)?)
+    }
+
+    async fn config_path(&self, scope: &Scope) -> anyhow::Result<PathBuf> {
+        let env = self.infra.get_environment();
+        match scope {
+            Scope::User => Ok(env.mcp_user_config()),
+            Scope::Local => Ok(env.mcp_local_config()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::retain_trusted_servers;
@@ -51,29 +74,6 @@ mod tests {
         retain_trusted_servers(&mut raw.mcp_servers, &trusted.mcp_servers);
 
         assert_eq!(raw, trusted);
-    }
-}
-
-impl<I> ForgeMcpManager<I>
-where
-    I: McpServerInfra + FileReaderInfra + FileInfoInfra + EnvironmentInfra + KVStore,
-{
-    /// Creates a new [`ForgeMcpManager`] wrapping the provided infrastructure.
-    pub fn new(infra: Arc<I>) -> Self {
-        Self { infra }
-    }
-
-    async fn read_config(&self, path: &Path) -> anyhow::Result<McpConfig> {
-        let config = self.infra.read_utf8(path).await?;
-        Ok(serde_json::from_str(&config)?)
-    }
-
-    async fn config_path(&self, scope: &Scope) -> anyhow::Result<PathBuf> {
-        let env = self.infra.get_environment();
-        match scope {
-            Scope::User => Ok(env.mcp_user_config()),
-            Scope::Local => Ok(env.mcp_local_config()),
-        }
     }
 }
 
