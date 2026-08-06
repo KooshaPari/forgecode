@@ -864,6 +864,15 @@ impl ConversationRepository for ConversationRepositoryImpl {
     }
 
     async fn import_forge_db(&self, source: PathBuf) -> anyhow::Result<ForgeImportReport> {
+        self.import_forge_db_with_options(source, &forge_domain::ForgeImportOptions::default())
+            .await
+    }
+
+    async fn import_forge_db_with_options(
+        &self,
+        source: PathBuf,
+        options: &forge_domain::ForgeImportOptions,
+    ) -> anyhow::Result<ForgeImportReport> {
         self.run_with_connection(move |connection, wid| {
             use diesel::Connection;
             use diesel::sql_types::{Nullable, Text};
@@ -913,14 +922,57 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 }
             }
 
+            let rows: Vec<DecodedSourceRow> = diesel::sql_query(
+                "SELECT conversation_id, title, context, created_at, updated_at, metrics \
+                 FROM conversations",
+            )
+            .load(&mut src)?;
+
+            let mut report = ForgeImportReport {
+                source_total: rows.len(),
+                dry_run: options.dry_run,
+                ..Default::default()
+            };
+
+            // Wrap the inserts in a single transaction so a partial import
+            // cannot leave the destination DB in an inconsistent state.
+            // dry_run skips BEGIN entirely (nothing is written).
+            if !options.dry_run {
+                connection.transaction::<_, anyhow::Error, _>(|conn| {
+                    import_rows(conn, wid, &rows, options, &mut report);
+                    Ok(())
+                })?;
+            } else {
+                import_rows(connection, wid, &rows, options, &mut report);
+            }
+
+            Ok(report)
+        })
+        .await
+    }
+
+    async fn export_forge_db(
+        &self,
+        destination: PathBuf,
+        options: &forge_domain::ForgeExportOptions,
+    ) -> anyhow::Result<forge_domain::ForgeExportReport> {
+        self.run_with_connection(move |connection, _wid| {
+            use diesel::Connection;
+            use diesel::sql_types::{Nullable, Text};
+
+            // Read all rows from this heliosLite repository, decompressing
+            // context_zstd where present so the export contains the same
+            // JSON the official lineage would write.
             #[derive(diesel::QueryableByName)]
-            struct SourceRow {
+            struct HeliosExportRow {
                 #[diesel(sql_type = Text)]
                 conversation_id: String,
                 #[diesel(sql_type = Nullable<Text>)]
                 title: Option<String>,
                 #[diesel(sql_type = Nullable<Text>)]
                 context: Option<String>,
+                #[diesel(sql_type = Nullable<Text>)]
+                context_zstd: Option<Vec<u8>>,
                 #[diesel(sql_type = Text)]
                 created_at: String,
                 #[diesel(sql_type = Nullable<Text>)]
@@ -929,97 +981,348 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 metrics: Option<String>,
             }
 
-            let rows: Vec<SourceRow> = diesel::sql_query(
-                "SELECT conversation_id, title, context, created_at, updated_at, metrics \
-                 FROM conversations",
+            let rows: Vec<HeliosExportRow> = diesel::sql_query(
+                "SELECT conversation_id, title, context, context_zstd, created_at, \
+                 updated_at, metrics FROM conversations",
             )
-            .load(&mut src)?;
+            .load(connection)?;
 
-            let mut report = ForgeImportReport {
+            let mut report = forge_domain::ForgeExportReport {
                 source_total: rows.len(),
+                dry_run: options.dry_run,
                 ..Default::default()
             };
 
-            for row in rows {
-                let Ok(id) = ConversationId::parse(&row.conversation_id) else {
-                    report.invalid_id += 1;
-                    continue;
-                };
-
-                // Idempotency: skip conversations that already exist in this
-                // repository instead of overwriting them.
-                let existing: i64 = conversations::table
-                    .filter(conversations::conversation_id.eq(&row.conversation_id))
-                    .count()
-                    .get_result(connection)?;
-                if existing > 0 {
-                    report.skipped_existing += 1;
-                    continue;
-                }
-
-                // Parse the plain-text context with the heliosLite record type.
-                // Rows that fail to parse are still imported (title + timestamps)
-                // so the session remains visible; the failure is reported.
-                let mut context_parse_failed = false;
-                let context = match row.context.as_deref() {
-                    Some(json) if !json.trim().is_empty() => {
-                        let parsed = serde_json::from_str::<ContextRecord>(json)
-                            .ok()
-                            .and_then(|record| Context::try_from(record).ok());
-                        if parsed.is_none() {
-                            context_parse_failed = true;
-                        }
-                        parsed
+            if options.dry_run {
+                // Pre-flight: try to decompress each context so the report
+                // surfaces decompression failures without touching disk.
+                for row in &rows {
+                    match decompress_for_export(row) {
+                        Some(_) => report.exported += 1,
+                        None => report.decompression_failed += 1,
                     }
-                    _ => None,
-                };
-                if context_parse_failed {
-                    report.context_parse_failed += 1;
                 }
+                return Ok(report);
+            }
 
-                let created_at = parse_naive_datetime(&row.created_at)
-                    .unwrap_or_else(|| chrono::Utc::now().naive_utc());
-                let updated_at = row.updated_at.as_deref().and_then(parse_naive_datetime);
-
-                let metrics = row
-                    .metrics
-                    .as_deref()
-                    .and_then(|json| serde_json::from_str::<MetricsRecord>(json).ok())
-                    .map(forge_domain::Metrics::from)
-                    .unwrap_or_else(|| {
-                        forge_domain::Metrics::default().started_at(created_at.and_utc())
-                    });
-
-                let conversation = forge_domain::Conversation::new(id)
-                    .context(context)
-                    .title(row.title)
-                    .metrics(metrics)
-                    .source(Some("imported:forge".to_string()))
-                    .metadata(
-                        forge_domain::MetaData::new(created_at.and_utc())
-                            .updated_at(updated_at.map(|timestamp| timestamp.and_utc())),
-                    );
-
-                let record = ConversationRecord::new(conversation, wid);
-                match diesel::insert_into(conversations::table)
-                    .values(&record)
-                    .execute(connection)
-                {
-                    Ok(_) => report.imported += 1,
-                    Err(error) => {
-                        eprintln!(
-                            "Failed to import conversation {}: {}",
-                            row.conversation_id, error
-                        );
-                        report.errors += 1;
-                    }
+            if let Some(parent) = destination.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
                 }
             }
+            let dest_url = destination.to_string_lossy().to_string();
+            let mut dest = diesel::sqlite::SqliteConnection::establish(&dest_url)?;
+            dest.transaction::<_, anyhow::Error, _>(|dest| {
+                // Official-lineage conversations schema.
+                diesel::sql_query(
+                    "CREATE TABLE IF NOT EXISTS conversations (\
+                     conversation_id TEXT PRIMARY KEY NOT NULL, \
+                     title TEXT, \
+                     context TEXT, \
+                     created_at TEXT NOT NULL, \
+                     updated_at TEXT, \
+                     metrics TEXT, \
+                     parent_id TEXT, \
+                     source TEXT, \
+                     workspace_id TEXT NOT NULL, \
+                     message_count INTEGER NOT NULL DEFAULT 0, \
+                     cwd TEXT\
+                     )",
+                )
+                .execute(dest)?;
+                diesel::sql_query("PRAGMA journal_mode = WAL;").execute(dest)?;
+                Ok(())
+            })?;
+
+            dest.transaction::<_, anyhow::Error, _>(|dest| {
+                #[derive(diesel::QueryableByName)]
+                struct WorkspaceIdRow {
+                    #[diesel(sql_type = Text)]
+                    workspace_id: String,
+                }
+                let workspace_id = diesel::sql_query("SELECT workspace_id FROM conversations LIMIT 1")
+                    .get_result::<WorkspaceIdRow>(connection)
+                    .map(|row| row.workspace_id)
+                    .unwrap_or_else(|_| "imported".to_string());
+
+                for row in &rows {
+                    let plain_context = match decompress_for_export(row) {
+                        Some(s) => s,
+                        None => {
+                            report.decompression_failed += 1;
+                            continue;
+                        }
+                    };
+                    let res = diesel::sql_query(
+                        "INSERT OR REPLACE INTO conversations (\
+                         conversation_id, title, context, created_at, updated_at, metrics, \
+                         workspace_id, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    )
+                    .bind::<Text, _>(&row.conversation_id)
+                    .bind::<Nullable<Text>, _>(row.title.as_deref())
+                    .bind::<Nullable<Text>, _>(plain_context.as_deref())
+                    .bind::<Text, _>(&row.created_at)
+                    .bind::<Nullable<Text>, _>(row.updated_at.as_deref())
+                    .bind::<Nullable<Text>, _>(row.metrics.as_deref())
+                    .bind::<Text, _>(&workspace_id)
+                    .bind::<Nullable<Text>, _>(Some("exported:helioslite"))
+                    .execute(dest);
+                    match res {
+                        Ok(_) => report.exported += 1,
+                        Err(error) => {
+                            eprintln!(
+                                "Failed to export conversation {}: {}",
+                                row.conversation_id, error
+                            );
+                            report.errors += 1;
+                        }
+                    }
+                }
+                Ok(())
+            })?;
 
             Ok(report)
         })
         .await
     }
+
+    async fn database_stats(&self) -> anyhow::Result<forge_domain::HeliosdoctorDbStats> {
+        self.run_with_connection(move |connection, _wid| {
+            use diesel::sql_types::{BigInt, Nullable, Text};
+
+            #[derive(diesel::QueryableByName)]
+            struct Counts {
+                #[diesel(sql_type = BigInt)]
+                total: i64,
+                #[diesel(sql_type = BigInt)]
+                compressed: i64,
+                #[diesel(sql_type = BigInt)]
+                uncompressed: i64,
+                #[diesel(sql_type = BigInt)]
+                empty: i64,
+                #[diesel(sql_type = BigInt)]
+                oversized: i64,
+                #[diesel(sql_type = BigInt)]
+                agent_initiated: i64,
+            }
+            let counts: Counts = diesel::sql_query(
+                "SELECT \
+                     COUNT(*) AS total, \
+                     SUM(CASE WHEN is_compressed = 1 THEN 1 ELSE 0 END) AS compressed, \
+                     SUM(CASE WHEN is_compressed = 0 AND context IS NOT NULL THEN 1 ELSE 0 END) AS uncompressed, \
+                     SUM(CASE WHEN is_compressed = 0 AND context IS NULL THEN 1 ELSE 0 END) AS empty, \
+                     SUM(CASE WHEN length(context) > 1048576 OR length(context_zstd) > 1048576 THEN 1 ELSE 0 END) AS oversized, \
+                     SUM(CASE WHEN json_extract(context, '$.initiator') = 'agent' THEN 1 ELSE 0 END) AS agent_initiated \
+                 FROM conversations",
+            )
+            .get_result(connection)?;
+
+            #[derive(diesel::QueryableByName)]
+            struct IntegrityRow {
+                #[diesel(sql_type = Nullable<Text>)]
+                result: Option<String>,
+            }
+            let integrity: IntegrityRow = diesel::sql_query("PRAGMA integrity_check")
+                .get_result(connection)
+                .unwrap_or(IntegrityRow { result: None });
+
+            Ok(forge_domain::HeliosdoctorDbStats {
+                total_conversations: counts.total.max(0) as u64,
+                compressed_rows: counts.compressed.max(0) as u64,
+                uncompressed_rows: counts.uncompressed.max(0) as u64,
+                empty_rows: counts.empty.max(0) as u64,
+                oversized_rows: counts.oversized.max(0) as u64,
+                agent_initiated_rows: counts.agent_initiated.max(0) as u64,
+                integrity_check: integrity.result.unwrap_or_else(|| "unknown".to_string()),
+            })
+        })
+        .await
+    }
+}
+
+/// Shared row loop used by both the transactional and dry-run import paths.
+/// Performs per-row decoding (idempotency lookup, context parsing) and either
+/// inserts the row (transactional path) or just counts the outcome (dry-run).
+fn import_rows(
+    connection: &mut PooledSqliteConnection,
+    wid: WorkspaceHash,
+    rows: &[DecodedSourceRow],
+    options: &forge_domain::ForgeImportOptions,
+    report: &mut ForgeImportReport,
+) {
+    for row in rows {
+        let Ok(id) = ConversationId::parse(&row.conversation_id) else {
+            report.invalid_id += 1;
+            if options.verbose {
+                eprintln!("[import] skip invalid-id {}", row.conversation_id);
+            }
+            continue;
+        };
+
+        // Idempotency: skip conversations that already exist in this
+        // repository instead of overwriting them.
+        let existing: i64 = conversations::table
+            .filter(conversations::conversation_id.eq(&row.conversation_id))
+            .count()
+            .get_result(connection)
+            .unwrap_or(0);
+        if existing > 0 {
+            report.skipped_existing += 1;
+            if options.verbose {
+                eprintln!("[import] skip existing {}", row.conversation_id);
+            }
+            continue;
+        }
+
+        // Parse the plain-text context with the heliosLite record type.
+        // Rows that fail to parse are still imported (title + timestamps)
+        // so the session remains visible; the failure is reported.
+        let mut context_parse_failed = false;
+        let context = match row.context.as_deref() {
+            Some(json) if !json.trim().is_empty() => {
+                let parsed = serde_json::from_str::<ContextRecord>(json)
+                    .ok()
+                    .and_then(|record| Context::try_from(record).ok());
+                if parsed.is_none() {
+                    context_parse_failed = true;
+                }
+                parsed
+            }
+            _ => None,
+        };
+        if context_parse_failed {
+            report.context_parse_failed += 1;
+        }
+
+        let created_at = parse_naive_datetime(&row.created_at)
+            .unwrap_or_else(|| chrono::Utc::now().naive_utc());
+        let updated_at = row.updated_at.as_deref().and_then(parse_naive_datetime);
+
+        let metrics = row
+            .metrics
+            .as_deref()
+            .and_then(|json| serde_json::from_str::<MetricsRecord>(json).ok())
+            .map(forge_domain::Metrics::from)
+            .unwrap_or_else(|| {
+                forge_domain::Metrics::default().started_at(created_at.and_utc())
+            });
+
+        let conversation = forge_domain::Conversation::new(id)
+            .context(context)
+            .title(row.title.clone())
+            .metrics(metrics)
+            .source(Some("imported:forge".to_string()))
+            .metadata(
+                forge_domain::MetaData::new(created_at.and_utc())
+                    .updated_at(updated_at.map(|timestamp| timestamp.and_utc())),
+            );
+
+        if options.dry_run {
+            report.imported += 1;
+            if options.verbose {
+                eprintln!("[import] (dry-run) would import {}", row.conversation_id);
+            }
+            continue;
+        }
+
+        let record = ConversationRecord::new(conversation, wid);
+        match diesel::insert_into(conversations::table)
+            .values(&record)
+            .execute(connection)
+        {
+            Ok(_) => {
+                report.imported += 1;
+                if options.verbose {
+                    eprintln!("[import] imported {}", row.conversation_id);
+                }
+            }
+            Err(error) => {
+                eprintln!(
+                    "Failed to import conversation {}: {}",
+                    row.conversation_id, error
+                );
+                report.errors += 1;
+            }
+        }
+    }
+}
+
+/// Diesel row type used by `import_forge_db_with_options`. Renamed from
+/// `SourceRow` to avoid collision with the snapshot-history `SourceRow` in
+/// `crate::snapshot::SourceRow` (which lives in the same module tree).
+#[derive(Debug)]
+struct DecodedSourceRow {
+    conversation_id: String,
+    title: Option<String>,
+    context: Option<String>,
+    created_at: String,
+    updated_at: Option<String>,
+    metrics: Option<String>,
+}
+
+impl diesel::QueryableByName<diesel::sqlite::Sqlite> for DecodedSourceRow {
+    fn build<'a>(
+        row: &impl diesel::row::NamedRow<'a, diesel::sqlite::Sqlite>,
+    ) -> diesel::deserialize::Result<Self> {
+        use diesel::row::NamedRow;
+        use diesel::sql_types::{Nullable, Text};
+        Ok(Self {
+            conversation_id: NamedRow::get::<Text, _>(row, "conversation_id")?,
+            title: NamedRow::get::<Nullable<Text>, _>(row, "title")?,
+            context: NamedRow::get::<Nullable<Text>, _>(row, "context")?,
+            created_at: NamedRow::get::<Text, _>(row, "created_at")?,
+            updated_at: NamedRow::get::<Nullable<Text>, _>(row, "updated_at")?,
+            metrics: NamedRow::get::<Nullable<Text>, _>(row, "metrics")?,
+        })
+    }
+}
+
+/// Diesel row type used by `export_forge_db`. Renamed from `HeliosRow` to
+/// avoid collision with the public `HeliosRow` in
+/// `crate::snapshot::HeliosRow`.
+#[derive(Debug)]
+struct HeliosExportRow {
+    conversation_id: String,
+    title: Option<String>,
+    context: Option<String>,
+    context_zstd: Option<Vec<u8>>,
+    created_at: String,
+    updated_at: Option<String>,
+    metrics: Option<String>,
+}
+
+impl diesel::QueryableByName<diesel::sqlite::Sqlite> for HeliosExportRow {
+    fn build<'a>(
+        row: &impl diesel::row::NamedRow<'a, diesel::sqlite::Sqlite>,
+    ) -> diesel::deserialize::Result<Self> {
+        use diesel::row::NamedRow;
+        use diesel::sql_types::{Binary, Nullable, Text};
+        Ok(Self {
+            conversation_id: NamedRow::get::<Text, _>(row, "conversation_id")?,
+            title: NamedRow::get::<Nullable<Text>, _>(row, "title")?,
+            context: NamedRow::get::<Nullable<Text>, _>(row, "context")?,
+            context_zstd: NamedRow::get::<Nullable<Binary>, _>(row, "context_zstd")?,
+            created_at: NamedRow::get::<Text, _>(row, "created_at")?,
+            updated_at: NamedRow::get::<Nullable<Text>, _>(row, "updated_at")?,
+            metrics: NamedRow::get::<Nullable<Text>, _>(row, "metrics")?,
+        })
+    }
+}
+
+/// Decompress a heliosLite export row into a plain-context string suitable
+/// for the official-lineage export schema. Returns `None` when the row has
+/// no context or when zstd decompression fails.
+fn decompress_for_export(row: &HeliosExportRow) -> Option<String> {
+    use crate::codec::zstd::decompress;
+    if let Some(plain) = row.context.as_deref() {
+        if !plain.trim().is_empty() {
+            return Some(plain.to_string());
+        }
+    }
+    row.context_zstd
+        .as_deref()
+        .and_then(|bytes| decompress(bytes).ok())
+        .and_then(|decompressed| String::from_utf8(decompressed).ok())
 }
 
 /// Parse a timestamp stored by forge-lineage databases into a
@@ -2579,6 +2882,149 @@ mod tests {
         assert!(
             format!("{error}").contains("source database not found"),
             "unexpected error: {error}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_import_forge_db_dry_run_does_not_write() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let source = temp.path().join("official.db");
+        seed_official_source_db(&source);
+        let repo = repository()?;
+
+        let options = forge_domain::ForgeImportOptions {
+            dry_run: true,
+            verbose: false,
+        };
+        let report = repo
+            .import_forge_db_with_options(source.clone(), &options)
+            .await?;
+
+        // Dry-run reports the same counts but writes nothing.
+        assert!(report.dry_run, "dry_run flag must be set in report");
+        assert_eq!(report.source_total, 4);
+        assert_eq!(report.imported, 3, "would be imported, but not written");
+        assert_eq!(report.invalid_id, 1);
+        assert_eq!(report.context_parse_failed, 1);
+
+        // No rows should be visible in the destination after a dry run.
+        let all = repo.get_all_conversations(None).await?;
+        assert!(
+            all.map(|v| v.is_empty()).unwrap_or(true),
+            "dry_run must not write to destination"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_import_forge_db_verbose_does_not_change_outcome() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let source = temp.path().join("official.db");
+        seed_official_source_db(&source);
+        let repo = repository()?;
+
+        let options = forge_domain::ForgeImportOptions {
+            dry_run: false,
+            verbose: true,
+        };
+        let report = repo
+            .import_forge_db_with_options(source.clone(), &options)
+            .await?;
+        assert_eq!(report.imported, 3);
+        assert_eq!(report.invalid_id, 1);
+        assert_eq!(report.context_parse_failed, 1);
+        assert!(!report.dry_run);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_export_forge_db_round_trips() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let repo = repository()?;
+
+        // Seed a conversation in the heliosLite repo so the export has data.
+        let conv = forge_domain::Conversation::new(ConversationId::generate())
+            .title(Some("export me".to_string()))
+            .context(Some(Context::default()));
+        repo.upsert_conversation(conv.clone()).await?;
+
+        let dest = temp.path().join("exported.db");
+        let options = forge_domain::ForgeExportOptions::default();
+        let report = repo.export_forge_db(dest.clone(), &options).await?;
+
+        assert_eq!(report.source_total, 1, "all rows read from source");
+        assert_eq!(report.exported, 1, "decompressed + written");
+        assert_eq!(report.decompression_failed, 0);
+        assert_eq!(report.errors, 0);
+        assert!(!report.dry_run);
+
+        // Verify the destination has the official schema and the conversation
+        // is present with plain (uncompressed) context.
+        use diesel::Connection;
+        let url = dest.to_string_lossy().to_string();
+        let mut check = diesel::sqlite::SqliteConnection::establish(&url)?;
+        #[derive(diesel::QueryableByName)]
+        struct ExportRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            conversation_id: String,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            context: Option<String>,
+        }
+        let rows: Vec<ExportRow> = diesel::sql_query(
+            "SELECT conversation_id, context FROM conversations WHERE conversation_id = ?",
+        )
+        .bind::<diesel::sql_types::Text, _>(conv.id.into_string())
+        .load(&mut check)?;
+        assert_eq!(rows.len(), 1, "exported row is present");
+        assert!(
+            rows[0].context.is_some(),
+            "exported context must be plain (not compressed)"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_export_forge_db_dry_run_does_not_create_file() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let repo = repository()?;
+
+        let conv = forge_domain::Conversation::new(ConversationId::generate())
+            .title(Some("do not write".to_string()));
+        repo.upsert_conversation(conv).await?;
+
+        let dest = temp.path().join("never-created.db");
+        let options = forge_domain::ForgeExportOptions { dry_run: true };
+        let report = repo.export_forge_db(dest.clone(), &options).await?;
+
+        assert!(report.dry_run);
+        assert_eq!(report.source_total, 1);
+        assert_eq!(report.exported, 1);
+        assert!(!dest.exists(), "dry_run must not create the destination file");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_database_stats_reports_compression_health() -> anyhow::Result<()> {
+        let repo = repository()?;
+        // Insert one conversation so the totals are non-zero.
+        let conv = forge_domain::Conversation::new(ConversationId::generate())
+            .title(Some("stats test".to_string()))
+            .context(Some(Context::default()));
+        repo.upsert_conversation(conv).await?;
+
+        let stats = repo.database_stats().await?;
+        assert!(
+            stats.total_conversations >= 1,
+            "total includes the inserted row"
+        );
+        assert!(
+            stats.compressed_rows >= 1,
+            "newly inserted rows are compressed via the write path"
+        );
+        assert_eq!(
+            stats.integrity_check, "ok",
+            "PRAGMA integrity_check should report ok"
         );
         Ok(())
     }

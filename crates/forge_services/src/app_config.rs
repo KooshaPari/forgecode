@@ -71,6 +71,13 @@ impl<F: ProviderRepository + EnvironmentInfra<Config = forge_config::ForgeConfig
     }
 
     async fn heliosdoctor(&self) -> anyhow::Result<HeliosdoctorInfo> {
+        self.heliosdoctor_verbose(false).await
+    }
+
+    async fn heliosdoctor_verbose(
+        &self,
+        verbose: bool,
+    ) -> anyhow::Result<HeliosdoctorInfo> {
         // Deliberately resolves the path from forge_config rather than the
         // infra's environment: this is the canonical resolution used by the
         // Gate 5 data-dir split and is identical across all binaries.
@@ -103,6 +110,17 @@ impl<F: ProviderRepository + EnvironmentInfra<Config = forge_config::ForgeConfig
         } else {
             "legacy-forge"
         };
+        let db_stats = if verbose {
+            match self.infra.database_stats().await {
+                Ok(stats) => Some(stats),
+                Err(e) => {
+                    debug!(error = %e, "heliosdoctor: database_stats failed");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         Ok(HeliosdoctorInfo {
             version: forge_config::VERSION.to_string(),
             binary_stem,
@@ -111,6 +129,7 @@ impl<F: ProviderRepository + EnvironmentInfra<Config = forge_config::ForgeConfig
             updater_repo,
             updater_binary,
             config_source: config_source.to_string(),
+            db_stats,
         })
     }
 }

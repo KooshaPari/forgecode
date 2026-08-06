@@ -19,7 +19,8 @@ use forge_app::{CommitResult, ToolResolver};
 use forge_config::{ForgeConfig, OutputMode, OutputSettings};
 use forge_display::MarkdownFormat;
 use forge_domain::{
-    AuthMethod, ChatResponseContent, ConsoleWriter, ContextMessage, Role, TitleFormat, UserCommand,
+    AuthMethod, ChatResponseContent, ConsoleWriter, ContextMessage, ForgeExportOptions,
+    ForgeImportOptions, Role, TitleFormat, UserCommand,
 };
 use forge_fs::ForgeFS;
 use forge_select::{ForgeWidget, SelectRow};
@@ -32,7 +33,7 @@ use tokio_stream::StreamExt;
 use url::Url;
 
 use crate::cli::{
-    Cli, CommitCommandGroup, ConversationCommand, ImportSubcommand, ListCommand,
+    Cli, CommitCommandGroup, ConversationCommand, ExportSubcommand, ImportSubcommand, ListCommand,
     MaintenanceSubcommand, McpCommand, SelectCommand, TopLevelCommand,
 };
 use crate::conversation_selector::ConversationSelector;
@@ -1049,11 +1050,12 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             }
             TopLevelCommand::Heliosdoctor(args) => {
                 self.spinner.start(Some("Diagnosing"))?;
-                let info = self.api.heliosdoctor().await?;
+                let info = self.api.heliosdoctor_verbose(args.verbose).await?;
                 self.spinner.stop(None)?;
                 if args.porcelain {
-                    self.writeln(format!(
-                        "version={}\nbinary={}\nbase_path={}\ndb_path={}\nupdater_repo={}\nupdater_binary={}\nconfig_source={}\n",
+                    let db_stats = info.db_stats.as_ref();
+                    let mut line = format!(
+                        "version={}\nbinary={}\nbase_path={}\ndb_path={}\nupdater_repo={}\nupdater_binary={}\nconfig_source={}",
                         info.version,
                         info.binary_stem,
                         info.base_path.display(),
@@ -1061,7 +1063,21 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                         info.updater_repo,
                         info.updater_binary,
                         info.config_source,
-                    ))?;
+                    );
+                    if let Some(stats) = db_stats {
+                        line.push_str(&format!(
+                            "\ndb_total={}\ndb_compressed={}\ndb_uncompressed={}\ndb_empty={}\ndb_oversized={}\ndb_agent={}\ndb_integrity={}",
+                            stats.total_conversations,
+                            stats.compressed_rows,
+                            stats.uncompressed_rows,
+                            stats.empty_rows,
+                            stats.oversized_rows,
+                            stats.agent_initiated_rows,
+                            stats.integrity_check,
+                        ));
+                    }
+                    line.push('\n');
+                    self.writeln(line)?;
                 } else {
                     self.writeln(format!(
                         "heliosLite/forge diagnostics\n  version            : {}\n  binary identity    : {}\n  config source      : {}\n  base path          : {}\n  db path            : {}\n  updater repo       : {}\n  updater binary tag : {}\n",
@@ -1073,6 +1089,18 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                         info.updater_repo,
                         info.updater_binary,
                     ))?;
+                    if let Some(stats) = info.db_stats.as_ref() {
+                        self.writeln(format!(
+                            "database stats\n  total              : {}\n  compressed         : {}\n  uncompressed       : {}\n  empty              : {}\n  oversized (>1MB)   : {}\n  agent-initiated    : {}\n  integrity check    : {}\n",
+                            stats.total_conversations,
+                            stats.compressed_rows,
+                            stats.uncompressed_rows,
+                            stats.empty_rows,
+                            stats.oversized_rows,
+                            stats.agent_initiated_rows,
+                            stats.integrity_check,
+                        ))?;
+                    }
                 }
                 return Ok(());
             }
@@ -1093,18 +1121,44 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             }
             TopLevelCommand::Import(import_group) => {
                 match import_group.command {
-                    ImportSubcommand::Forge { db } => {
-                        self.spinner.start(Some("Importing"))?;
-                        let report = self.api.import_forge_db(db).await?;
+                    ImportSubcommand::Forge { db, dry_run, verbose } => {
+                        let options = ForgeImportOptions { dry_run, verbose };
+                        self.spinner.start(Some(if dry_run { "Scanning (dry-run)" } else { "Importing" }))?;
+                        let report = self
+                            .api
+                            .import_forge_db_with_options(db, &options)
+                            .await?;
                         self.spinner.stop(None)?;
+                        let prefix = if dry_run { "import (dry-run)" } else { "import" };
                         self.writeln(format!(
-                            "import complete: {} read, {} imported, {} skipped (already exist), \
+                            "{} complete: {} read, {} imported, {} skipped (already exist), \
                              {} invalid IDs, {} context parse failures, {} errors",
+                            prefix,
                             report.source_total,
                             report.imported,
                             report.skipped_existing,
                             report.invalid_id,
                             report.context_parse_failed,
+                            report.errors
+                        ))?;
+                    }
+                }
+                return Ok(());
+            }
+            TopLevelCommand::Export(export_group) => {
+                match export_group.command {
+                    ExportSubcommand::Forge { db, dry_run } => {
+                        let options = ForgeExportOptions { dry_run };
+                        self.spinner.start(Some(if dry_run { "Scanning (dry-run)" } else { "Exporting" }))?;
+                        let report = self.api.export_forge_db(db, &options).await?;
+                        self.spinner.stop(None)?;
+                        let prefix = if dry_run { "export (dry-run)" } else { "export" };
+                        self.writeln(format!(
+                            "{} complete: {} read, {} exported, {} decompression failures, {} errors",
+                            prefix,
+                            report.source_total,
+                            report.exported,
+                            report.decompression_failed,
                             report.errors
                         ))?;
                     }

@@ -46,6 +46,74 @@ pub struct ForgeImportReport {
     pub context_parse_failed: usize,
     /// Rows skipped due to insert or read errors.
     pub errors: usize,
+    /// When `dry_run` was set, the report describes what *would* have been
+    /// written but no inserts were performed.
+    pub dry_run: bool,
+}
+
+/// Options that tune the behaviour of
+/// [`ConversationRepository::import_forge_db`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForgeImportOptions {
+    /// When set, the source DB is scanned exactly as for a real import but
+    /// no rows are inserted. The returned [`ForgeImportReport`] reflects what
+    /// would have been written.
+    pub dry_run: bool,
+    /// Print each row's outcome (imported / skipped / failed) to stderr as
+    /// the import progresses. Useful for very large source databases.
+    pub verbose: bool,
+}
+
+/// Result of a one-way export from a heliosLite database to a freshly-created
+/// official-schema SQLite file.
+///
+/// Compression (`context_zstd`) is reversed: the resulting DB has plain
+/// `context` blobs readable by the official lineage.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForgeExportReport {
+    /// Conversations read from this heliosLite repository.
+    pub source_total: usize,
+    /// Conversations written into the destination DB.
+    pub exported: usize,
+    /// Rows skipped because decompression failed.
+    pub decompression_failed: usize,
+    /// Rows skipped due to write errors.
+    pub errors: usize,
+    /// When `dry_run` was set, no DB file was created.
+    pub dry_run: bool,
+}
+
+/// Options that tune the behaviour of
+/// [`ConversationRepository::export_forge_db`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForgeExportOptions {
+    /// When set, the export scans the same rows but does not create the
+    /// destination DB. The returned report reflects what *would* have been
+    /// written.
+    pub dry_run: bool,
+}
+
+/// Aggregate database statistics surfaced by `heliosdoctor --verbose`.
+///
+/// Used to spot compression regressions (compressed rows missing their
+/// `context_zstd` payload), oversized contexts, and agent-batch fanout.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeliosdoctorDbStats {
+    /// Total conversation rows in the database.
+    pub total_conversations: u64,
+    /// Rows where `is_compressed = 1` (context lives in `context_zstd`).
+    pub compressed_rows: u64,
+    /// Rows where `is_compressed = 0` (plain `context` column populated).
+    pub uncompressed_rows: u64,
+    /// Rows where `context IS NULL` and `is_compressed = 0` (empty shell).
+    pub empty_rows: u64,
+    /// Rows whose context blob is over 1 MB (decompression / render cost).
+    pub oversized_rows: u64,
+    /// Agent-launched rows (`context.initiator = "agent"`).
+    pub agent_initiated_rows: u64,
+    /// `PRAGMA integrity_check` result (`"ok"` when healthy).
+    pub integrity_check: String,
 }
 
 /// Repository for managing file snapshots
@@ -432,6 +500,58 @@ pub trait ConversationRepository: Send + Sync {
     /// conversations database, or if it is already a heliosLite/fork-schema
     /// database (nothing to import).
     async fn import_forge_db(&self, source: PathBuf) -> Result<ForgeImportReport>;
+
+    /// One-way import with explicit [`ForgeImportOptions`].
+    ///
+    /// When `options.dry_run` is `true`, the source DB is scanned exactly
+    /// as for a real import but no rows are inserted. The returned
+    /// [`ForgeImportReport`] reflects what *would* have been written.
+    ///
+    /// When `options.verbose` is `true`, each row's outcome is logged
+    /// (imported / skipped / failed) for visibility on large source DBs.
+    ///
+    /// The inserts are wrapped in a single SQLite transaction so a
+    /// partial import cannot leave the destination in an inconsistent
+    /// state.
+    ///
+    /// # Errors
+    /// Returns an error if the source file is missing, is not a forge
+    /// conversations database, or if it is already a heliosLite/fork-schema
+    /// database (nothing to import). A failure inside the transaction
+    /// also aborts the entire batch.
+    async fn import_forge_db_with_options(
+        &self,
+        source: PathBuf,
+        options: &ForgeImportOptions,
+    ) -> Result<ForgeImportReport>;
+
+    /// One-way export of conversations from this heliosLite repository to a
+    /// freshly-created official-schema SQLite file at `destination`.
+    ///
+    /// The destination DB is created (parents included); any existing file
+    /// at the path is replaced. The schema matches the official forge
+    /// lineage (no `is_compressed`, no `context_zstd`, plain `context`
+    /// column). Compressed rows are decompressed during the export.
+    ///
+    /// This is the inverse of [`import_forge_db`]: it lets you hand off a
+    /// heliosLite DB to the official lineage.
+    ///
+    /// # Errors
+    /// Returns an error if `destination` cannot be created or if a row
+    /// cannot be decompressed / written.
+    async fn export_forge_db(
+        &self,
+        destination: PathBuf,
+        options: &ForgeExportOptions,
+    ) -> Result<ForgeExportReport>;
+
+    /// Aggregate DB stats for `heliosdoctor --verbose`.
+    ///
+    /// Includes compression health, oversized context count, agent
+    /// fanout, and a `PRAGMA integrity_check` result. Implementations
+    /// should execute the counts in a single SQLite query when possible
+    /// to keep this cheap on large DBs.
+    async fn database_stats(&self) -> Result<HeliosdoctorDbStats>;
 }
 
 /// Environment diagnostics produced by `heliosdoctor`.
@@ -449,6 +569,10 @@ pub struct HeliosdoctorInfo {
     pub updater_repo: String,
     pub updater_binary: String,
     pub config_source: String,
+    /// Populated only when `--verbose` is requested. Reports compression
+    /// health, agent fanout, oversized contexts, and a DB integrity check.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub db_stats: Option<HeliosdoctorDbStats>,
 }
 
 #[async_trait::async_trait]

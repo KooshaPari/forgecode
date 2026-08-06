@@ -170,6 +170,10 @@ pub enum TopLevelCommand {
     /// database.
     Import(ImportCommandGroup),
 
+    /// One-way export of conversations from this repository to a freshly-created
+    /// official-schema SQLite file.
+    Export(ExportCommandGroup),
+
     /// Print heliosLite/forge environment diagnostics (base path, db path,
     /// updater channel, binary identity).
     Heliosdoctor(HeliosdoctorArgs),
@@ -181,6 +185,11 @@ pub struct HeliosdoctorArgs {
     /// Output in machine-readable format (key=value, one per line).
     #[arg(long)]
     pub porcelain: bool,
+
+    /// Include database statistics (compression health, agent fanout,
+    /// oversized contexts, integrity check).
+    #[arg(short, long)]
+    pub verbose: bool,
 }
 
 /// Command group for `forge maintenance` sub-commands.
@@ -226,6 +235,44 @@ pub enum ImportSubcommand {
         /// Path to the source `.forge.db` file to import from.
         #[arg(value_name = "DB_PATH")]
         db: PathBuf,
+
+        /// Scan the source and report what would be imported, but do not
+        /// write any rows. Honors `verbose` for per-row output.
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Log each row's outcome (imported / skipped / failed) to stderr.
+        #[arg(short, long)]
+        verbose: bool,
+    },
+}
+
+/// Command group for `forge export` sub-commands.
+#[derive(Parser, Debug, Clone)]
+pub struct ExportCommandGroup {
+    #[command(subcommand)]
+    pub command: ExportSubcommand,
+}
+
+/// Sub-commands for `forge export`.
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum ExportSubcommand {
+    /// Write all conversations from this repository to a freshly-created
+    /// official-schema SQLite file at `destination`. Compressed rows are
+    /// decompressed during the export so the resulting DB is readable by the
+    /// official lineage.
+    ///
+    /// With `--dry-run`, the destination is not created and the report
+    /// reflects what would have been written.
+    Forge {
+        /// Path to the destination `.forge.db` file to write.
+        #[arg(value_name = "DB_PATH")]
+        db: PathBuf,
+
+        /// Scan the source and report what would be exported, but do not
+        /// create the destination file.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
