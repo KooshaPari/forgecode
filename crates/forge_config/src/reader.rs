@@ -57,9 +57,12 @@ impl ConfigReader {
     /// Resolution order:
     /// 1. `FORGE_CONFIG` environment variable, if set.
     /// 2. For the canonical `helioslite` binary (Gate 5):
-    ///    - `~/.helioslite` (canonical data dir), if that directory exists.
     ///    - `~/.forge` (legacy), if that directory exists — the data is
-    ///      honored and read in place and is never auto-migrated.
+    ///      honored and read in place and is never auto-migrated. The legacy
+    ///      dir keeps winning while present so an empty `~/.helioslite` stub
+    ///      can never shadow real data.
+    ///    - `~/.helioslite` (canonical data dir), if that directory exists
+    ///      (i.e. after `~/.forge` has been moved away by a migration).
     ///    - `~/.helioslite` as the default for fresh installs.
     /// 3. For the legacy `forge` / `forge-dev` binaries:
     ///    - `~/forge` (historical legacy path), if that directory exists.
@@ -116,19 +119,21 @@ impl ConfigReader {
         }
 
         if canonical_binary {
-            // Canonical heliosLite data dir. Once it exists it wins; otherwise
-            // the legacy ~/.forge data is honored and read in place (never
-            // auto-migrated), so existing installs are not disrupted.
-            let canonical = home.join(".helioslite");
-            if canonical.exists() {
-                tracing::info!("Using canonical heliosLite path");
-                return canonical;
-            }
-
+            // Legacy ~/.forge data is honored and read in place while it
+            // exists (never auto-migrated). It keeps winning so an empty
+            // ~/.helioslite stub can never shadow the real data. The
+            // canonical dir only becomes active after ~/.forge has been moved
+            // away by an explicit migration, or for fresh installs.
             let legacy = home.join(".forge");
             if legacy.exists() {
                 tracing::info!("Using legacy heliosLite path");
                 return legacy;
+            }
+
+            let canonical = home.join(".helioslite");
+            if canonical.exists() {
+                tracing::info!("Using canonical heliosLite path");
+                return canonical;
             }
 
             tracing::info!("Using canonical heliosLite path (new)");
@@ -311,11 +316,24 @@ mod tests {
     }
 
     #[test]
-    fn test_base_path_canonical_binary_prefers_existing_helioslite_dir() {
+    fn test_base_path_canonical_binary_legacy_forge_wins_while_present() {
+        // When both exist, ~/.forge must win: an empty ~/.helioslite stub
+        // must never shadow real legacy data.
         let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG"]);
         let home = std::env::temp_dir().join(format!("hl-gate5-canon-{}", std::process::id()));
         std::fs::create_dir_all(home.join(".helioslite")).unwrap();
         std::fs::create_dir_all(home.join(".forge")).unwrap();
+        let actual = ConfigReader::resolve_base_path_for(home.clone(), true);
+        std::fs::remove_dir_all(&home).ok();
+        assert_eq!(actual, home.join(".forge"));
+    }
+
+    #[test]
+    fn test_base_path_canonical_binary_uses_helioslite_after_legacy_removed() {
+        // After ~/.forge is moved away (migration), the canonical dir wins.
+        let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG"]);
+        let home = std::env::temp_dir().join(format!("hl-gate5-migrated-{}", std::process::id()));
+        std::fs::create_dir_all(home.join(".helioslite")).unwrap();
         let actual = ConfigReader::resolve_base_path_for(home.clone(), true);
         std::fs::remove_dir_all(&home).ok();
         assert_eq!(actual, home.join(".helioslite"));
