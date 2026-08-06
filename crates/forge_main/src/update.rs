@@ -97,12 +97,12 @@ fn should_check_for_updates(frequency: &UpdateFrequency) -> bool {
     !matches!(frequency, UpdateFrequency::Never)
 }
 
-fn choose_update_source<T>(
+fn choose_update_source<'a, T>(
     primary: Option<T>,
-    primary_repo: &str,
+    primary_repo: &'a str,
     legacy: Option<T>,
-    legacy_repo: &str,
-) -> Option<(T, &str)> {
+    legacy_repo: &'a str,
+) -> Option<(T, &'a str)> {
     primary
         .map(|version| (version, primary_repo))
         .or_else(|| legacy.map(|version| (version, legacy_repo)))
