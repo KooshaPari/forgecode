@@ -44,39 +44,6 @@ where
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::retain_trusted_servers;
-    use forge_app::domain::{McpConfig, McpServerConfig, ServerName};
-    use std::collections::BTreeMap;
-
-    #[test]
-    fn rejected_local_definition_cannot_override_trusted_user_definition() {
-        let name = ServerName::from("shared".to_string());
-        let trusted_server = McpServerConfig::new_stdio("trusted", Vec::new(), None);
-        let rejected_server = McpServerConfig::new_stdio("untrusted", Vec::new(), None);
-        let trusted = McpConfig::from(BTreeMap::from([(name.clone(), trusted_server)]));
-        let mut raw = McpConfig::from(BTreeMap::from([(name, rejected_server)]));
-
-        retain_trusted_servers(&mut raw.mcp_servers, &trusted.mcp_servers);
-
-        let expected = McpConfig::default();
-        assert_eq!(raw, expected);
-    }
-
-    #[test]
-    fn accepted_definition_is_retained_when_it_matches_trusted_value() {
-        let name = ServerName::from("accepted".to_string());
-        let server = McpServerConfig::new_http("https://example.test");
-        let trusted = McpConfig::from(BTreeMap::from([(name.clone(), server.clone())]));
-        let mut raw = McpConfig::from(BTreeMap::from([(name, server)]));
-
-        retain_trusted_servers(&mut raw.mcp_servers, &trusted.mcp_servers);
-
-        assert_eq!(raw, trusted);
-    }
-}
-
 impl<I> ForgeMcpManager<I>
 where
     I: McpServerInfra
@@ -250,5 +217,38 @@ where
         let mut result = raw;
         retain_trusted_servers(&mut result.mcp_servers, &trusted_servers);
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::retain_trusted_servers;
+    use forge_app::domain::{McpConfig, McpServerConfig, ServerName};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn rejected_local_definition_cannot_override_trusted_user_definition() {
+        let name = ServerName::from("shared".to_string());
+        let trusted_server = McpServerConfig::new_stdio("trusted", Vec::new(), None);
+        let rejected_server = McpServerConfig::new_stdio("untrusted", Vec::new(), None);
+        let trusted = McpConfig::from(BTreeMap::from([(name.clone(), trusted_server)]));
+        let mut raw = McpConfig::from(BTreeMap::from([(name, rejected_server)]));
+
+        retain_trusted_servers(&mut raw.mcp_servers, &trusted.mcp_servers);
+
+        let expected = McpConfig::default();
+        assert_eq!(raw, expected);
+    }
+
+    #[test]
+    fn accepted_definition_is_retained_when_it_matches_trusted_value() {
+        let name = ServerName::from("accepted".to_string());
+        let server = McpServerConfig::new_http("https://example.test");
+        let trusted = McpConfig::from(BTreeMap::from([(name.clone(), server.clone())]));
+        let mut raw = McpConfig::from(BTreeMap::from([(name, server)]));
+
+        retain_trusted_servers(&mut raw.mcp_servers, &trusted.mcp_servers);
+
+        assert_eq!(raw, trusted);
     }
 }
