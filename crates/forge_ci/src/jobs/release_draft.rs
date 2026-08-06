@@ -2,7 +2,7 @@ use crate::workflow_model::{Job, Level, Permissions, Step};
 
 /// Create a draft release job for GitHub Actions
 pub fn create_draft_release_job(build_job_id: &str) -> Job {
-    Job::new("draft_release")
+    Job::new("Draft Release")
         .needs(build_job_id)
         .if_condition(
             "github.event_name == 'push' && github.ref == 'refs/heads/main'",

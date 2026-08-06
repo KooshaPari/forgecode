@@ -56,7 +56,7 @@ pub fn generate_bounty_workflow() {
                     "npm ci --ignore-scripts --no-audit --no-fund",
                 ))
                 .add_step(Step::new("Sync bounty labels").run(
-                    "npx -y tsx@4.20.6 .github/scripts/bounty/src/sync-pr.ts --pr ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }}",
+                    "npx -y tsx@4.20.6 .github/scripts/bounty/src/sync-pr.ts --pr ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --execute",
                 )),
         );
 

@@ -2,7 +2,7 @@ use crate::workflow_model::{Job, Step};
 
 /// Create a draft release job for GitHub Actions that runs on PRs
 pub fn create_draft_release_pr_job() -> Job {
-    Job::new("draft_release_pr")
+    Job::new("Draft Release for PR")
         .if_condition(
             "github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci: build all targets')",
         )

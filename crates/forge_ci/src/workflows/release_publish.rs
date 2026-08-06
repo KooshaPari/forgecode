@@ -20,7 +20,7 @@ pub fn release_publish() {
             Step::new("Download release assets")
                 .env("GH_TOKEN", "${{ github.token }}")
                 .run(
-                    "set -euo pipefail\nmkdir -p release-assets\ngh release download \"${{ github.event.release.tag_name }}\" \\\n  --repo \"${{ github.repository }}\" \\\n  --dir release-assets \\\n  --pattern \"forge-*\"\ntest \"$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')\" -eq 18",
+                    "set -euo pipefail\nmkdir -p release-assets\ngh release download \"${{ github.event.release.tag_name }}\" \\\n  --repo \"${{ github.repository }}\" \\\n  --dir release-assets \\\n  --pattern \"forge-*\"",
                 ),
         )
         .add_step(

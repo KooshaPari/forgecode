@@ -4,7 +4,7 @@ use crate::workflow_model::Step;
 ///
 /// This step is reusable across all CI workflows that need protobuf
 /// compilation.
-pub fn setup_protoc() -> Step {
+pub(crate) fn setup_protoc() -> Step {
     Step::new("Setup Protobuf Compiler")
         .uses(
             "arduino",
