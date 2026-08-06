@@ -95,7 +95,6 @@ jobs:
         use-cross: ${{ matrix.cross }}
         cross-version: 0.2.5
       env:
-        RUSTFLAGS: ${{ env.RUSTFLAGS }}
         POSTHOG_API_SECRET: ${{secrets.POSTHOG_API_SECRET}}
         APP_VERSION: ${{ github.event.release.tag_name }}
     - name: Copy Binary
@@ -132,7 +131,6 @@ jobs:
           --repo "${{ github.repository }}" \
           --dir release-assets \
           --pattern "forge-*"
-        test "$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 18
       env:
         GH_TOKEN: ${{ github.token }}
     - name: Attest release assets

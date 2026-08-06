@@ -54,4 +54,4 @@ jobs:
     - name: Install npm packages
       run: npm ci --ignore-scripts --no-audit --no-fund
     - name: Sync bounty labels
-      run: npx -y tsx@4.20.6 .github/scripts/bounty/src/sync-pr.ts --pr ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }}
+      run: npx -y tsx@4.20.6 .github/scripts/bounty/src/sync-pr.ts --pr ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} --execute

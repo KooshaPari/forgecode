@@ -38,7 +38,7 @@ jobs:
       contents: read
     steps:
     - name: Checkout Code
-      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30af803
     - name: Setup Protobuf Compiler
       uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
       with:
@@ -58,7 +58,7 @@ jobs:
       contents: read
     steps:
     - name: Checkout Code
-      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30af803
     - name: Setup Protobuf Compiler
       uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
       with:
@@ -71,7 +71,7 @@ jobs:
       run: ./scripts/benchmark.sh --threshold 60 zsh rprompt
   draft_release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    name: draft_release
+    name: Draft Release
     runs-on: ubuntu-latest
     needs: build
     permissions:
@@ -95,7 +95,7 @@ jobs:
       run: echo "crate_release_id=${{ steps.create_release.outputs.id }}" >> "$GITHUB_OUTPUT" && echo "crate_release_name=${{ steps.create_release.outputs.tag_name }}" >> "$GITHUB_OUTPUT"
   draft_release_pr:
     if: 'github.event_name == ''pull_request'' && contains(github.event.pull_request.labels.*.name, ''ci: build all targets'')'
-    name: draft_release_pr
+    name: Draft Release for PR
     runs-on: ubuntu-latest
     outputs:
       crate_release_name: ${{ steps.set_output.outputs.crate_release_name }}
@@ -188,7 +188,6 @@ jobs:
         use-cross: ${{ matrix.cross }}
         cross-version: 0.2.5
       env:
-        RUSTFLAGS: ${{ env.RUSTFLAGS }}
         POSTHOG_API_SECRET: ${{secrets.POSTHOG_API_SECRET}}
         APP_VERSION: ${{ needs.draft_release.outputs.crate_release_name }}
     - name: Copy Binary
@@ -290,6 +289,5 @@ jobs:
         use-cross: ${{ matrix.cross }}
         cross-version: 0.2.5
       env:
-        RUSTFLAGS: ${{ env.RUSTFLAGS }}
         POSTHOG_API_SECRET: ${{secrets.POSTHOG_API_SECRET}}
         APP_VERSION: ${{ needs.draft_release_pr.outputs.crate_release_name }}
