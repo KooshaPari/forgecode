@@ -823,7 +823,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn failing_zsh_script_is_returned_to_the_caller() {
-        if std::process::Command::new("zsh").arg("--version").output().is_err() {
+        if std::process::Command::new("zsh")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
             return;
         }
         let actual = execute_zsh_script_with_streaming("exit 17", "test");
