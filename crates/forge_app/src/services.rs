@@ -205,6 +205,11 @@ pub trait AppConfigService: Send + Sync {
     /// all configuration changes; use [`forge_domain::ConfigOperation`]
     /// variants to describe each mutation.
     async fn update_config(&self, ops: Vec<forge_domain::ConfigOperation>) -> anyhow::Result<()>;
+
+    /// Returns environment diagnostics: base path, db path, updater channel,
+    /// binary identity, and where the base path was resolved from.
+    /// Cheap — no DB calls, only reads config and argv[0].
+    async fn heliosdoctor(&self) -> anyhow::Result<forge_domain::HeliosdoctorInfo>;
 }
 
 #[async_trait::async_trait]
@@ -1191,6 +1196,10 @@ impl<I: Services> AppConfigService for I {
 
     async fn update_config(&self, ops: Vec<forge_domain::ConfigOperation>) -> anyhow::Result<()> {
         self.config_service().update_config(ops).await
+    }
+
+    async fn heliosdoctor(&self) -> anyhow::Result<forge_domain::HeliosdoctorInfo> {
+        self.config_service().heliosdoctor().await
     }
 }
 

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use forge_app::{AppConfigService, EnvironmentInfra};
-use forge_domain::{ConfigOperation, Effort, ModelConfig, ModelId, ProviderId, ProviderRepository};
+use forge_domain::{ConfigOperation, Effort, HeliosdoctorInfo, ModelConfig, ModelId, ProviderId, ProviderRepository};
 use tracing::debug;
 
 /// Service for managing user preferences for default providers and models.
@@ -68,6 +68,50 @@ impl<F: ProviderRepository + EnvironmentInfra<Config = forge_config::ForgeConfig
     async fn update_config(&self, ops: Vec<ConfigOperation>) -> anyhow::Result<()> {
         debug!(ops = ?ops, "Updating app config");
         self.infra.update_environment(ops).await
+    }
+
+    async fn heliosdoctor(&self) -> anyhow::Result<HeliosdoctorInfo> {
+        // Deliberately resolves the path from forge_config rather than the
+        // infra's environment: this is the canonical resolution used by the
+        // Gate 5 data-dir split and is identical across all binaries.
+        let base_path = forge_config::ConfigReader::base_path();
+        let db_path = base_path.join(".forge.db");
+        let binary_stem = forge_config::ConfigReader::binary_prefix().to_string();
+        let (updater_repo, updater_binary) = if binary_stem == "helioslite" {
+            (
+                std::env::var("HELIOSLITE_REPO")
+                    .unwrap_or_else(|_| "KooshaPari/heliosLite".to_string()),
+                "helioslite".to_string(),
+            )
+        } else {
+            (
+                forge_config::DEFAULT_UPDATE_REPO.to_string(),
+                "forge".to_string(),
+            )
+        };
+        let config_source = if std::env::var_os("FORGE_CONFIG").is_some() {
+            "override-env"
+        } else if binary_stem == "helioslite" {
+            // base_path is already the resolved directory; classify it by its
+            // file name rather than probing subdirectories.
+            match base_path.file_name().and_then(|name| name.to_str()) {
+                Some(".helioslite") if base_path.exists() => "helioslite",
+                Some(".helioslite") => "default",
+                Some(".forge") => "legacy-forge",
+                _ => "default",
+            }
+        } else {
+            "legacy-forge"
+        };
+        Ok(HeliosdoctorInfo {
+            version: forge_config::VERSION.to_string(),
+            binary_stem,
+            base_path,
+            db_path,
+            updater_repo,
+            updater_binary,
+            config_source: config_source.to_string(),
+        })
     }
 }
 

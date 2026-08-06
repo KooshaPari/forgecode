@@ -169,6 +169,18 @@ pub enum TopLevelCommand {
     /// One-way import of conversations from an official forge-lineage SQLite
     /// database.
     Import(ImportCommandGroup),
+
+    /// Print heliosLite/forge environment diagnostics (base path, db path,
+    /// updater channel, binary identity).
+    Heliosdoctor(HeliosdoctorArgs),
+}
+
+/// Arguments for `helioslite heliosdoctor` (or `forge heliosdoctor`).
+#[derive(Parser, Debug, Clone)]
+pub struct HeliosdoctorArgs {
+    /// Output in machine-readable format (key=value, one per line).
+    #[arg(long)]
+    pub porcelain: bool,
 }
 
 /// Command group for `forge maintenance` sub-commands.

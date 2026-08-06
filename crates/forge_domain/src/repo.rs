@@ -434,6 +434,23 @@ pub trait ConversationRepository: Send + Sync {
     async fn import_forge_db(&self, source: PathBuf) -> Result<ForgeImportReport>;
 }
 
+/// Environment diagnostics produced by `heliosdoctor`.
+///
+/// `config_source` describes where the base path was resolved from:
+/// `override-env` (FORGE_CONFIG), `helioslite` (canonical ~/.helioslite),
+/// `legacy-forge` (read-in-place ~/.forge), or `default` (fresh install).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeliosdoctorInfo {
+    pub version: String,
+    pub binary_stem: String,
+    pub base_path: PathBuf,
+    pub db_path: PathBuf,
+    pub updater_repo: String,
+    pub updater_binary: String,
+    pub config_source: String,
+}
+
 #[async_trait::async_trait]
 pub trait ChatRepository: Send + Sync {
     async fn chat(

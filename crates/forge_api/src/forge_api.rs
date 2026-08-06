@@ -651,6 +651,10 @@ impl<
         self.services.import_forge_db(source).await
     }
 
+    async fn heliosdoctor(&self) -> Result<HeliosdoctorInfo> {
+        self.services.heliosdoctor().await
+    }
+
     fn hydrate_channel(&self) -> Result<()> {
         self.infra.hydrate();
         Ok(())

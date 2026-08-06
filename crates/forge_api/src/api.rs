@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use forge_app::dto::ToolsOverview;
 use forge_app::{User, UserUsage};
-use forge_domain::{AgentId, Effort, ForgeImportReport, ModelId, ProviderModels};
+use forge_domain::{AgentId, Effort, ForgeImportReport, HeliosdoctorInfo, ModelId, ProviderModels};
 use forge_stream::MpscStream;
 use futures::stream::BoxStream;
 use url::Url;
@@ -361,4 +361,8 @@ pub trait API: Sync + Send {
     /// The source database is opened read-only and is never modified.
     /// Existing conversation IDs are skipped, making the import idempotent.
     async fn import_forge_db(&self, source: PathBuf) -> Result<ForgeImportReport>;
+
+    /// Returns environment diagnostics (base path, db path, updater channel,
+    /// binary identity). Cheap — no DB calls; reads config and argv[0].
+    async fn heliosdoctor(&self) -> Result<HeliosdoctorInfo>;
 }

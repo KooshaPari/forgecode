@@ -2392,4 +2392,194 @@ mod tests {
 
         Ok(())
     }
+
+    // ---------------------------------------------------------------------
+    // import_forge_db tests
+    // ---------------------------------------------------------------------
+
+    /// Create an *official-lineage* source database (plain `context` schema,
+    /// no `is_compressed`/`context_zstd` columns) at `path` and populate it
+    /// with a deterministic set of rows:
+    ///
+    /// - one row with a well-formed plain JSON context (fully importable),
+    /// - one row with a NULL context (imported, title-only),
+    /// - one row whose context is not valid heliosLite JSON (counted as
+    ///   `context_parse_failed`, still imported),
+    /// - one row with a non-UUID `conversation_id` (counted as `invalid_id`).
+    fn seed_official_source_db(path: &std::path::Path) {
+        use diesel::Connection;
+
+        let url = path.to_string_lossy().to_string();
+        let mut connection =
+            diesel::sqlite::SqliteConnection::establish(&url).expect("open source db");
+        diesel::sql_query(
+            "CREATE TABLE conversations (\
+                 conversation_id TEXT PRIMARY KEY,\
+                 title TEXT,\
+                 context TEXT,\
+                 created_at TEXT NOT NULL,\
+                 updated_at TEXT,\
+                 metrics TEXT\
+             )",
+        )
+        .execute(&mut connection)
+        .expect("create conversations table");
+
+        let mut insert = |id: &str, title: &str, context: Option<&str>| {
+            diesel::sql_query(
+                "INSERT INTO conversations \
+                 (conversation_id, title, context, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?)",
+            )
+            .bind::<diesel::sql_types::Text, _>(id)
+            .bind::<diesel::sql_types::Text, _>(title)
+            .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(context)
+            .bind::<diesel::sql_types::Text, _>("2026-08-05 10:00:00")
+            .bind::<diesel::sql_types::Text, _>("2026-08-05 10:05:00")
+            .execute(&mut connection)
+            .expect("insert row");
+        };
+
+        // A well-formed plain-text context serialized through the record type
+        // exactly as the importer expects to read it back.
+        let well_formed =
+            ContextRecord::from(&forge_domain::Context::default());
+        insert(
+            "11111111-1111-1111-1111-111111111111",
+            "imported fully",
+            Some(&serde_json::to_string(&well_formed).unwrap()),
+        );
+        insert(
+            "22222222-2222-2222-2222-222222222222",
+            "imported title-only",
+            None,
+        );
+        insert(
+            "33333333-3333-3333-3333-333333333333",
+            "imported parse-failed",
+            Some("this is not valid context json"),
+        );
+        insert(
+            "not-a-uuid",
+            "invalid id",
+            None,
+        );
+    }
+
+    #[tokio::test]
+    async fn test_import_forge_db_imports_and_reports() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let source = temp.path().join("official.db");
+        seed_official_source_db(&source);
+        let repo = repository()?;
+
+        let report = repo.import_forge_db(source.clone()).await?;
+
+        // 4 rows read: 3 imported (one of which had a parse failure), 1 invalid id.
+        assert_eq!(report.source_total, 4, "all rows counted");
+        assert_eq!(report.imported, 3, "valid ids import");
+        assert_eq!(report.invalid_id, 1, "non-uuid id is reported separately");
+        assert_eq!(
+            report.context_parse_failed, 1,
+            "unparseable context is counted but the row still imports"
+        );
+        assert_eq!(report.skipped_existing, 0, "first run imports everything new");
+        assert_eq!(report.errors, 0, "no insert errors");
+
+        // The imported conversations are readable through the normal read path.
+        let id = ConversationId::parse("11111111-1111-1111-1111-111111111111")?;
+        let fetched = repo.get_conversation(&id).await?;
+        assert!(fetched.is_some(), "imported row should be readable");
+        assert_eq!(fetched.unwrap().title.as_deref(), Some("imported fully"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_import_forge_db_is_idempotent() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let source = temp.path().join("official.db");
+        seed_official_source_db(&source);
+        let repo = repository()?;
+
+        let first = repo.import_forge_db(source.clone()).await?;
+        assert_eq!(first.imported, 3);
+
+        let second = repo.import_forge_db(source.clone()).await?;
+        assert_eq!(second.imported, 0, "re-run imports nothing");
+        assert_eq!(
+            second.skipped_existing, 3,
+            "previously imported ids are skipped"
+        );
+        assert_eq!(second.invalid_id, 1, "invalid id is re-reported");
+        assert_eq!(second.errors, 0);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_import_forge_db_does_not_modify_source() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let source = temp.path().join("official.db");
+        seed_official_source_db(&source);
+
+        let before = std::fs::read(&source)?;
+        let repo = repository()?;
+        repo.import_forge_db(source.clone()).await?;
+        let after = std::fs::read(&source)?;
+
+        assert_eq!(before, after, "source database bytes must be unchanged");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_import_forge_db_rejects_fork_schema_source() -> anyhow::Result<()> {
+        use diesel::Connection;
+
+        let temp = tempfile::tempdir()?;
+        let source = temp.path().join("fork-schema.db");
+        let url = source.to_string_lossy().to_string();
+        let mut connection =
+            diesel::sqlite::SqliteConnection::establish(&url).expect("open db");
+        // A fork-schema table carries the compression columns the importer
+        // refuses to process.
+        diesel::sql_query(
+            "CREATE TABLE conversations (\
+                 conversation_id TEXT PRIMARY KEY,\
+                 context TEXT,\
+                 context_zstd BLOB,\
+                 is_compressed INTEGER\
+             )",
+        )
+        .execute(&mut connection)?;
+
+        let repo = repository()?;
+        let error = repo
+            .import_forge_db(source.clone())
+            .await
+            .expect_err("fork-schema source must be rejected");
+        assert!(
+            format!("{error}").contains("already a heliosLite/fork-schema"),
+            "unexpected error: {error}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_import_forge_db_missing_source_errors() -> anyhow::Result<()> {
+        let repo = repository()?;
+        let missing = std::env::temp_dir().join(format!(
+            "forge-does-not-exist-{}.db",
+            std::process::id()
+        ));
+        let error = repo
+            .import_forge_db(missing)
+            .await
+            .expect_err("missing file must error");
+        assert!(
+            format!("{error}").contains("source database not found"),
+            "unexpected error: {error}"
+        );
+        Ok(())
+    }
 }

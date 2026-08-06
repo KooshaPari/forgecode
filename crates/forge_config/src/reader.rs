@@ -94,6 +94,19 @@ impl ConfigReader {
             .unwrap_or(false)
     }
 
+    /// Returns the asset/identity prefix for the running executable:
+    /// `helioslite` for the canonical binary, `forge` for the legacy aliases.
+    ///
+    /// Shared by `forge_main` (updater asset naming) and `forge_services`
+    /// (`heliosdoctor` diagnostics) without either depending on the other.
+    pub fn binary_prefix() -> &'static str {
+        if Self::is_helioslite_binary() {
+            "helioslite"
+        } else {
+            "forge"
+        }
+    }
+
     /// Resolves the base path for a given home directory and binary identity.
     ///
     /// Kept as a pure helper so both resolution branches are unit-testable.

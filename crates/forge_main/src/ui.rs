@@ -1047,6 +1047,35 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 }
                 return Ok(());
             }
+            TopLevelCommand::Heliosdoctor(args) => {
+                self.spinner.start(Some("Diagnosing"))?;
+                let info = self.api.heliosdoctor().await?;
+                self.spinner.stop(None)?;
+                if args.porcelain {
+                    self.writeln(format!(
+                        "version={}\nbinary={}\nbase_path={}\ndb_path={}\nupdater_repo={}\nupdater_binary={}\nconfig_source={}\n",
+                        info.version,
+                        info.binary_stem,
+                        info.base_path.display(),
+                        info.db_path.display(),
+                        info.updater_repo,
+                        info.updater_binary,
+                        info.config_source,
+                    ))?;
+                } else {
+                    self.writeln(format!(
+                        "heliosLite/forge diagnostics\n  version            : {}\n  binary identity    : {}\n  config source      : {}\n  base path          : {}\n  db path            : {}\n  updater repo       : {}\n  updater binary tag : {}\n",
+                        info.version,
+                        info.binary_stem,
+                        info.config_source,
+                        info.base_path.display(),
+                        info.db_path.display(),
+                        info.updater_repo,
+                        info.updater_binary,
+                    ))?;
+                }
+                return Ok(());
+            }
             TopLevelCommand::Maintenance(maintenance_group) => {
                 match maintenance_group.command {
                     MaintenanceSubcommand::Compress => {
