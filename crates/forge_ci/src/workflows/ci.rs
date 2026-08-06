@@ -8,7 +8,7 @@ pub fn generate_ci_workflow() {
         .add_step(Step::new("Checkout Code").uses(
             "actions",
             "checkout",
-            "d23441a48e516b6c34aea4fa41551a30af803",
+            "d23441a48e516b6c34aea4fa41551a30e30af803",
         ))
         .add_step(setup_protoc())
         .add_step(
@@ -30,7 +30,7 @@ pub fn generate_ci_workflow() {
         .add_step(Step::new("Checkout Code").uses(
             "actions",
             "checkout",
-            "d23441a48e516b6c34aea4fa41551a30af803",
+            "d23441a48e516b6c34aea4fa41551a30e30af803",
         ))
         .add_step(setup_protoc())
         .add_step(
