@@ -58,7 +58,10 @@ generate hundreds of merge conflicts on every upstream rebase from
 - **Canonical**: `~/.helioslite/`.
 - **Legacy**: `~/.forge/` (still discovered by `helioslite` CLI; data
   is *not* migrated automatically — it remains readable in place to
-  avoid risk on upgrade).
+  avoid risk on upgrade). While `~/.forge/` exists it takes precedence
+  over `~/.helioslite/`, so an empty canonical stub can never shadow
+  real legacy data; the canonical dir activates only after `~/.forge/`
+  is moved away or on a fresh install.
 - **Migration**: a future `helioslite migrate data-dir` command will
   offer a one-shot move (Gate 7).
 
