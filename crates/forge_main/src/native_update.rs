@@ -117,8 +117,8 @@ mod tests {
                 .unwrap();
 
         let actual = (
-            fixture.asset_url().as_str(),
-            fixture.checksum_url().as_str(),
+            fixture.asset_url().as_str().to_string(),
+            fixture.checksum_url().as_str().to_string(),
         );
         let release_base = "https://github.com/nightly-org/forgecode/releases/download/v2.10.2";
         let expected = (

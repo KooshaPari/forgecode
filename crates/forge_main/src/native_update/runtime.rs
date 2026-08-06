@@ -22,10 +22,7 @@ mod tests {
     }
 
     impl NativeUpdateTransport for QueueTransport {
-        fn get<'a>(
-            &'a self,
-            _url: &'a Url,
-        ) -> BoxFuture<'a, Result<NativeUpdateResponse, String>> {
+        fn get<'a>(&'a self, _url: &'a Url) -> BoxFuture<'a, Result<NativeUpdateResponse, String>> {
             Box::pin(async move { self.responses.lock().unwrap().pop_front().unwrap() })
         }
     }
@@ -232,7 +229,10 @@ async fn fetch_release_response(
     let mut current = initial_url.clone();
     let mut redirects = 0;
     loop {
-        let response = transport.get(&current).await.map_err(|_| NativeUpdateError::Transport)?;
+        let response = transport
+            .get(&current)
+            .await
+            .map_err(|_| NativeUpdateError::Transport)?;
         if response.status == 200 {
             if response.body.len() > MAX_DOWNLOAD_BYTES {
                 return Err(NativeUpdateError::ResponseTooLarge);
@@ -261,8 +261,12 @@ fn is_initial_release_url(url: &Url) -> bool {
 }
 
 fn resolve_redirect(current: &Url, location: Option<&str>) -> Result<Url, NativeUpdateError> {
-    let location = location.filter(|value| !value.is_empty()).ok_or(NativeUpdateError::InvalidRedirect)?;
-    let redirect = current.join(location).map_err(|_| NativeUpdateError::InvalidRedirect)?;
+    let location = location
+        .filter(|value| !value.is_empty())
+        .ok_or(NativeUpdateError::InvalidRedirect)?;
+    let redirect = current
+        .join(location)
+        .map_err(|_| NativeUpdateError::InvalidRedirect)?;
     if redirect.scheme() != "https"
         || !redirect.username().is_empty()
         || redirect.password().is_some()
@@ -289,7 +293,11 @@ fn parse_sha256_sidecar(contents: &[u8]) -> Result<[u8; 32], NativeUpdateError> 
     let mut parts = line.split_ascii_whitespace();
     let hash = parts.next().ok_or(NativeUpdateError::MalformedSidecar)?;
     let filename = parts.next().ok_or(NativeUpdateError::MalformedSidecar)?;
-    if parts.next().is_some() || filename.is_empty() || hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if parts.next().is_some()
+        || filename.is_empty()
+        || hash.len() != 64
+        || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
         return Err(NativeUpdateError::MalformedSidecar);
     }
     let mut digest = [0u8; 32];
@@ -313,18 +321,21 @@ fn install_verified_binary(payload: &[u8], destination: &Path) -> std::io::Resul
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        temporary.as_file().set_permissions(fs::Permissions::from_mode(0o755))?;
+        temporary
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o755))?;
     }
     temporary.as_file().sync_all()?;
-    temporary.persist(destination).map_err(|error| error.error)?;
+    temporary
+        .persist(destination)
+        .map_err(|error| error.error)?;
     Ok(())
 }
 
 fn plan_error(error: NativeUpdatePlanError) -> NativeUpdateError {
     match error {
-        NativeUpdatePlanError::WindowsTargetUnsupported | NativeUpdatePlanError::UnsupportedTarget => {
-            NativeUpdateError::UnsupportedTarget
-        }
+        NativeUpdatePlanError::WindowsTargetUnsupported
+        | NativeUpdatePlanError::UnsupportedTarget => NativeUpdateError::UnsupportedTarget,
         NativeUpdatePlanError::InvalidVersion => NativeUpdateError::InvalidPlan,
     }
 }

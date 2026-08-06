@@ -97,6 +97,17 @@ fn should_check_for_updates(frequency: &UpdateFrequency) -> bool {
     !matches!(frequency, UpdateFrequency::Never)
 }
 
+fn choose_update_source<T>(
+    primary: Option<T>,
+    primary_repo: &str,
+    legacy: Option<T>,
+    legacy_repo: &str,
+) -> Option<(T, &str)> {
+    primary
+        .map(|version| (version, primary_repo))
+        .or_else(|| legacy.map(|version| (version, legacy_repo)))
+}
+
 // Phenotype-org: detect non-interactive (agent/CI) invocations to skip the
 // update check entirely.  Avoids a ~220ms GitHub API round-trip on every
 // agent spawn; see profiling notes in perf/profile-zig-hotpath-2026-06-30.
@@ -160,17 +171,19 @@ pub async fn on_update(update: Option<&Update>) {
     let informer_legacy =
         update_informer::new(registry::GitHub, legacy_repo, VERSION).interval(frequency.into());
 
-    if let Some(version) = informer_primary
-        .check_version()
-        .ok()
-        .flatten()
-        .or_else(|| informer_legacy.check_version().ok().flatten())
-    {
+    let primary_version = informer_primary.check_version().ok().flatten();
+    let legacy_version = informer_legacy.check_version().ok().flatten();
+    if let Some((version, source_repo)) = choose_update_source(
+        primary_version,
+        primary_repo.as_str(),
+        legacy_version,
+        legacy_repo,
+    ) {
         let notified_version = version.to_string();
         if auto_update || confirm_update(version).await {
             execute_update_command(
                 &CurrentExecutableNativeUpdateExecutor,
-                &primary_repo,
+                source_repo,
                 &notified_version,
                 auto_update,
             )
@@ -246,8 +259,8 @@ mod tests {
         .unwrap();
 
         let actual = (
-            fixture.asset_url().as_str(),
-            fixture.checksum_url().as_str(),
+            fixture.asset_url().as_str().to_string(),
+            fixture.checksum_url().as_str().to_string(),
         );
         let release_base = "https://github.com/KooshaPari/forgecode/releases/download/v2.10.2";
         let expected = (
@@ -256,6 +269,17 @@ mod tests {
         );
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn fallback_update_uses_the_repository_that_produced_the_version() {
+        let selected = choose_update_source(
+            None::<u8>,
+            "nightly-org/forgecode",
+            Some(7),
+            DEFAULT_UPDATE_REPO,
+        );
+        assert_eq!(selected, Some((7, DEFAULT_UPDATE_REPO)));
     }
 
     #[test]
