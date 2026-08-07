@@ -13,12 +13,11 @@ path = "src/lib.rs"
 streamdown-parser = "0.1.4"
 streamdown-core = "0.1.4"
 streamdown-ansi = "0.1.4"
-streamdown-render = "0.1.4"
-syntect.workspace = true
 colored.workspace = true
 unicode-width = "0.2"
 unicode-segmentation = "1.12"
 terminal-colorsaurus = "1.0.3"
+forge_syntax.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
