@@ -13,30 +13,29 @@ An AI-enhanced terminal development environment — an agentic coding CLI/TUI wi
 > **📣 This project is now distributed as `helioslite`.**
 >
 > `Forgecode` is the upstream (`tailcallhq/forgecode`, MIT/Apache-2.0). This
-> fork (`KooshaPari/forgecode`) is published under the new name
-> **`helioslite`** on crates.io / npm and the **`KooshaPari/forgecode`**
-> GitHub repo. The internal crate identifier `forgecode` and binary name
-> `forge-dev` are preserved as deprecated aliases for upstream-merge safety;
-> new installs should use `helioslite`.
+> fork remains [`KooshaPari/forgecode`](https://github.com/KooshaPari/forgecode)
+> and uses **`helioslite`** as its Phenotype product name. A separate
+> `KooshaPari/heliosLite` repository and crates.io/npm publication have not
+> been verified; package channels remain deferred. The internal crate
+> identifiers and legacy binaries are preserved for upstream-merge safety.
 >
 > |  | old (deprecated) | new (canonical) |
 > |--|------------------|-----------------|
-> | binary | `helioslite` (canonical) | `forge-dev`, `forge` (deprecated aliases) |
-> | crates | `forgecode` workspace | `helioslite` workspace |
+> | binary | `forge`, `forge-dev` (upstream-compatible) | local `helioslite` alias |
+> | crates | `forge_main` and `forge_*` workspace | no separately published `helioslite` crate |
 > | env vars | `FORGE_*`, `FORGE_DEV_*` | `HELIOSLITE_*` (legacy aliased) |
 > | repo | `KooshaPari/forgecode` | `KooshaPari/forgecode` |
-> | install URL | `forgecode.dev/cli` | `helioslite.dev/cli` (legacy alias kept) |
+> | install URL | `forgecode.dev/cli` (legacy/unverified) | `helioslite.dev/cli` (planned/unverified) |
 >
 > ```bash
-> # Migrate in 30 seconds
-> cargo install helioslite --locked
-> helioslite --version          # canonical
-> FORGE_LEGACY=1 forge-dev --version   # legacy alias still works
+> # Build the local HeliosLite-named binary (publication is deferred)
+> cargo build --release --bin helioslite
+> ./target/release/helioslite --version
 > ```
 >
-> Removal window for the legacy aliases is **6 months** after `helioslite` is
-> published as `latest` on crates.io. See `docs/RENAMES-STRATEGY.md` for the
-> full migration matrix and `docs/FORK.md` for fork attribution.
+> Any legacy-alias removal window starts only after an authorized, attested
+> GA release and verified package receipts. See `docs/RENAMES-STRATEGY.md` for
+> the migration matrix and `docs/FORK.md` for fork attribution.
 
 > **Fork of [tailcallhq/forgecode](https://github.com/tailcallhq/forgecode).** This fork (`helioslite`) adds Phenotype-specific features (SQLite session store with WAL checkpointing + zstd compression, conversation FTS/vector search, subagent breadcrumbs, programmatic/semantic/AI-based compression/prune/trunc hooks) on top of upstream.
 
@@ -75,22 +74,18 @@ crates/
 
 See `docs/SSOT.md` for the authoritative state-of-the-repo and `CLAUDE.md`/`AGENTS.md` for contributor governance.
 
-## Install forge-dev
+## Build the local CLI
 
-Grab the latest `forge-dev` binary for your platform:
+No authorized HeliosLite package or fork release is claimed yet. Build from
+this checkout while the release and attestation gates remain open:
 
 ```sh
-curl -sSfL https://github.com/KooshaPari/forgecode/releases/latest/download/install.sh | sh
+cargo build --release --bin helioslite
 ```
 
-This downloads the correct binary for your OS and architecture (macOS ARM/Intel,
-Linux x86_64/ARM64, Windows x86_64), installs it to `/usr/local/bin/forge-dev`
-(or `~/.local/bin/forge-dev` if `/usr/local/bin` is not writable), and makes it
-executable.
-
-> **Source builds:** To build from source instead, use `cargo build --release
-> --features dev-binary --bin forge-dev`. The `forge-dev` binary is the
-> fork-specific build of the CLI with Phenotype enhancements.
+The legacy `forge` and `forge-dev` binaries remain available for upstream
+compatibility. Do not infer a hosted release, package-manager install, or
+attestation from this local build.
 
 ## Quick Start
 
@@ -651,15 +646,15 @@ For comprehensive documentation on all features and capabilities, please visit t
 
 ---
 
-## Installation
+## Installation (source checkout)
 
 ```bash
-# YOLO
-curl -fsSL https://forgecode.dev/cli | sh
-
-# Package managers
-nix run github:tailcallhq/forgecode # for latest dev branch
+# Build the local HeliosLite-named binary
+cargo build --release --bin helioslite
 ```
+
+Homebrew, npm, crates.io, NuGet/Chocolatey, winget, and Nix publication are
+deferred pending a fork-owned release, package receipt, and attestation.
 
 ---
 

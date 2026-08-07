@@ -2,12 +2,13 @@
 
 > **Status (Gate 1b, additive-only):** new `helioslite` binary added;
 > legacy `forge` and `forge-dev` binaries preserved; internal crate
-> names verbatim; deprecation window started. This document is the
+> names verbatim. Hosted rename, package, and deprecation gates are not
+> complete; no GA window has started. This document is the
 > binding reference for every identifier category and its migration
 > order.
 >
 > Companion docs: [`FORK.md`](./FORK.md) (provenance, AI-DD notice),
-> [`PUBLISHING.md`](./PUBLISHING.md) (registry matrix),
+> [`packaging/FORGE_DEV_PACKAGING.md`](./packaging/FORGE_DEV_PACKAGING.md) (registry matrix),
 > [`UPDATE-STRATEGY.md`](./UPDATE-STRATEGY.md) (upgrade flow),
 > [`DEV-CLI.md`](./DEV-CLI.md) (developer CLI).
 
@@ -15,7 +16,7 @@
 
 ## 1. Why additive, not hard
 
-A hard `forge_* → helioslite_*` find-replace across 33 crates would
+A hard `forge_* -> helioslite_*` find-replace across 33 crates would
 generate hundreds of merge conflicts on every upstream rebase from
 `tailcallhq/forgecode`. This fork stays mergeable by adding a new
 `helioslite` binary that shares the same entry point as `forge` /
@@ -30,15 +31,15 @@ generate hundreds of merge conflicts on every upstream rebase from
 | 3 | Bin `forge` (release) | `forge` | preserved | Gate 1b | Done (legacy bin kept) |
 | 4 | Bin `forge-dev` (dev channel) | `forge-dev` | preserved | Gate 1b | Done (legacy bin kept) |
 | 5 | Bin `helioslite` (canonical) | new | added | Gate 1b | Done |
-| 6 | Default data dir | `~/.forge/` | `~/.helioslite/` (legacy still honored) | Gate 1b | Pending (Gate 5) |
-| 7 | Workflow file | `release.yml` | `helioslite-release.yml` | Gate 4 | Pending |
+| 6 | Default data dir | `~/.forge/` | `~/.helioslite/`; Forge source is read-only for import | Gate 1b | Implemented locally; importer gate pending |
+| 7 | Workflow file | `release.yml` | `release.yml` remains authoritative; nightly workflow is artifact-only | Gate 4 | Pending |
 | 8 | Env vars (`FORGE_*`) | preserved | unchanged | Future | Untouched |
 | 9 | Domain `helioslite.phenotype.space` | new | added | Gate 6 | Pending |
 | 10 | Domain `helioslite.pheno.studio` | new | added | Gate 6 | Pending |
-| 11 | crates.io package (binary) | `forge-dev` (currently) | `helioslite` (canonical) | Gate 4 | Pending |
-| 12 | Homebrew formula | `forge-dev` | `helioslite` | Gate 4 | Pending |
-| 13 | Chocolatey package | n/a | `helioslite` | Gate 4 | Pending |
-| 14 | winget manifest | n/a | `KooshaPari.helioslite` | Gate 4 | Pending |
+| 11 | crates.io package (binary) | `forge-dev` (upstream naming) | `helioslite` (planned) | Gate 4 | Deferred; no publication receipt |
+| 12 | Homebrew formula | n/a | `helioslite` (planned) | Gate 4 | Deferred; no authorized tap |
+| 13 | Chocolatey package | n/a | `helioslite` (planned) | Gate 4 | Deferred; no authorized feed |
+| 14 | winget manifest | n/a | `KooshaPari.helioslite` (planned) | Gate 4 | Deferred; no authorized manifest |
 | 15 | Cargo internal identifiers (in `src/`) | preserved | unchanged | Future | Untouched |
 | 16 | DB schema names | preserved | unchanged | Future | Untouched |
 | 17 | Internal config keys | preserved | unchanged | Future | Untouched |
@@ -56,11 +57,11 @@ generate hundreds of merge conflicts on every upstream rebase from
 ### 3.2 Data dir
 
 - **Canonical**: `~/.helioslite/`.
-- **Legacy**: `~/.forge/` (still discovered by `helioslite` CLI; data
-  is *not* migrated automatically — it remains readable in place to
-  avoid risk on upgrade).
-- **Migration**: a future `helioslite migrate data-dir` command will
-  offer a one-shot move (Gate 7).
+- **Legacy source**: `~/.forge/` remains owned by the standard Forge CLI.
+  HeliosLite may open it only through a dedicated read-only snapshot/import
+  boundary; it must not share Forge locks, WAL files, or write paths.
+- **Migration**: an explicit snapshot importer (Gate 5) writes only into
+  HeliosLite-owned folders. There is no implicit move or in-place migration.
 
 ## 4. New artifacts added in Gate 1b
 
@@ -115,12 +116,13 @@ This sequence keeps every gate independently shippable and reversible.
 The `forge` and `forge-dev` binaries, the `~/.forge/` data-dir alias,
 and the `FORGE_*` env-var read-aliase are removed when **all** of:
 
-- 6 months have passed since the first `helioslite@1.0.0` GA release,
+- a verified `helioslite@1.0.0` GA release exists and its six-month window
+  has elapsed,
   AND
 - upstream `tailcallhq/forgecode` has not received a meaningful rebase
   in that window (decision criterion: <5 merges from upstream per
   month), AND
-- no open issue on `KooshaPari/heliosLite` references a blocking
+- no open issue on `KooshaPari/forgecode` references a blocking
   legacy-identifier problem, AND
 - telemetry shows <1% of invocations use legacy identifiers.
 
@@ -129,5 +131,5 @@ Tracked in [`TECH_DEBT.md`](./TECH_DEBT.md) § "Legacy aliases".
 ## 8. Reference
 
 - Upstream: <https://github.com/tailcallhq/forgecode>
-- This fork: <https://github.com/KooshaPari/heliosLite>
+- This fork: <https://github.com/KooshaPari/forgecode> (HeliosLite product name)
 - Domain: <https://helioslite.phenotype.space>

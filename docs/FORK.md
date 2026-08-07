@@ -2,8 +2,10 @@
 
 > **tl;dr.** This repository is a fork of
 > [`tailcallhq/forgecode`](https://github.com/tailcallhq/forgecode) (the
-> open-source release of Forge), maintained as **HeliosLite** under
-> [`KooshaPari/heliosLite`](https://github.com/KooshaPari/heliosLite).
+> open-source release of Forge), with **HeliosLite** as the Phenotype product
+> name. The current canonical fork remote is
+> [`KooshaPari/forgecode`](https://github.com/KooshaPari/forgecode); a separate
+> `KooshaPari/heliosLite` repository has not been provisioned.
 > All upstream work is credited; this fork's divergence is detailed
 > below.
 
@@ -66,11 +68,11 @@ distribution with extra hardening, this fork is the supported path.
 
 | Surface | Upstream | This fork |
 |---------|----------|-----------|
-| Repo | `tailcallhq/forgecode` | `KooshaPari/heliosLite` (future canonical) |
-| Cargo crate | `forge_main` (lib) + bins `forge`, `forge-dev` | same crate + new bin `helioslite` |
-| Default install path | `~/.forge/` | `~/.helioslite/` (legacy `~/.forge/` still honored) |
+| Repo | `tailcallhq/forgecode` | `KooshaPari/forgecode` (current canonical fork; no separate HeliosLite repo) |
+| Cargo crate | `forge_main` (lib) + bins `forge`, `forge-dev` | same crate + local `helioslite` bin; not published as a package |
+| Default data path | `~/.forge/` | `~/.helioslite/`; Forge state is a read-only import source |
 | Domain | (upstream domain) | `helioslite.phenotype.space` (docs) + `helioslite.pheno.studio` (deploy/internal) |
-| Workflow file | `release.yml` | `helioslite-release.yml` (added; old kept) |
+| Workflow file | `release.yml` | `release.yml` remains authoritative; `helios-lite-nightly.yml` is artifact-only |
 
 ### 3.2 Renames strategy — additive, upstream-safe
 
@@ -83,8 +85,9 @@ generate hundreds of merge conflicts on every upstream rebase from
 Migration stages (see [`RENAMES-STRATEGY.md`](./RENAMES-STRATEGY.md)
 for the full table):
 
-1. **Publish surface flips immediately**: new binary `helioslite`,
-   repo URLs, workflow file names, README title, install commands.
+1. **Local publish surface is additive**: the `helioslite` binary, local
+   data root, and documentation are present; hosted release/package gates
+   remain explicitly open.
 2. **Internal crate names stay verbatim** (`forge_main`, `forge_app`,
    etc.). They keep building and resolving.
 3. **All three binaries coexist**: `forge`, `forge-dev`, `helioslite`.
@@ -102,9 +105,9 @@ for the full table):
 - **Phenotype. attribution** — this fork is part of the Phenotype.
   initiative. KooshaPari / Phenotype. is the corporate / DBA owner.
   See [`docs/comparison/`](./comparison) (when present) § Identity.
-- **Multi-registry publishing**: crates.io + GitHub Releases +
-  Homebrew + Chocolatey + winget (this fork); upstream ships to
-  crates.io + GitHub Releases only.
+- **Planned multi-registry publishing**: crates.io, npm, Homebrew,
+  Chocolatey, and winget remain deferred until a fork-owned, signed release
+  and package receipts exist. Do not infer publication from local builds.
 - **Install scripts**: PowerShell (`install.ps1`) and POSIX shell
   (`install.sh`) wrappers that install the `helioslite` binary.
 - **Update strategy**: `update-informer` (already upstream) +
@@ -135,10 +138,9 @@ in a session:
    (`legacy_env_var_fallback` mirrors the upstream `OLLAMA_HOST`
    pattern); a one-time stderr notice recommends migrating to
    `HELIOSLITE_API_KEY`. Set `HELIOSLITE_LEGACY_OFF=1` to silence.
-3. **Update-URL tombstone**: `crates/forge_main/src/update.rs` checks
-   `KooshaPari/heliosLite` releases first, falls back to
-   `KooshaPari/forgecode` releases so pre-rename builds keep getting
-   notified while the rename is in flight.
+3. **Update-URL tombstone**: update checks are scoped to the current
+   `KooshaPari/forgecode` fork (with an explicit repository override). No
+   separate HeliosLite release channel is claimed until its remote exists.
 4. **Doctor banner**: `helioslite doctor` prints the active rename
    channel (repo, update URL, binary) so users always know which fork
    they're on.
@@ -185,8 +187,8 @@ preserved in [`NOTICE.md`](./NOTICE.md).
 
 ## 6. Contact / maintainer
 
-- Repo: <https://github.com/KooshaPari/heliosLite>
-- Issues: <https://github.com/KooshaPari/heliosLite/issues>
+- Repo: <https://github.com/KooshaPari/forgecode>
+- Issues: <https://github.com/KooshaPari/forgecode/issues>
 - Domain: <https://helioslite.phenotype.space>
 
 — KooshaPari / Phenotype.
