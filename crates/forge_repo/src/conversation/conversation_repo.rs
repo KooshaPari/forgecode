@@ -873,9 +873,10 @@ impl ConversationRepository for ConversationRepositoryImpl {
         source: PathBuf,
         options: &forge_domain::ForgeImportOptions,
     ) -> anyhow::Result<ForgeImportReport> {
+        let options = options.clone();
         self.run_with_connection(move |connection, wid| {
             use diesel::Connection;
-            use diesel::sql_types::{Nullable, Text};
+            use diesel::sql_types::Text;
 
             if !source.is_file() {
                 anyhow::bail!(
@@ -939,11 +940,11 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // dry_run skips BEGIN entirely (nothing is written).
             if !options.dry_run {
                 connection.transaction::<_, anyhow::Error, _>(|conn| {
-                    import_rows(conn, wid, &rows, options, &mut report);
+                    import_rows(conn, wid, &rows, &options, &mut report);
                     Ok(())
                 })?;
             } else {
-                import_rows(connection, wid, &rows, options, &mut report);
+                import_rows(connection, wid, &rows, &options, &mut report);
             }
 
             Ok(report)
@@ -956,36 +957,44 @@ impl ConversationRepository for ConversationRepositoryImpl {
         destination: PathBuf,
         options: &forge_domain::ForgeExportOptions,
     ) -> anyhow::Result<forge_domain::ForgeExportReport> {
+        let options = options.clone();
         self.run_with_connection(move |connection, _wid| {
             use diesel::Connection;
             use diesel::sql_types::{Nullable, Text};
 
             // Read all rows from this heliosLite repository, decompressing
             // context_zstd where present so the export contains the same
-            // JSON the official lineage would write.
-            #[derive(diesel::QueryableByName)]
-            struct HeliosExportRow {
-                #[diesel(sql_type = Text)]
-                conversation_id: String,
-                #[diesel(sql_type = Nullable<Text>)]
-                title: Option<String>,
-                #[diesel(sql_type = Nullable<Text>)]
-                context: Option<String>,
-                #[diesel(sql_type = Nullable<Text>)]
-                context_zstd: Option<Vec<u8>>,
-                #[diesel(sql_type = Text)]
-                created_at: String,
-                #[diesel(sql_type = Nullable<Text>)]
-                updated_at: Option<String>,
-                #[diesel(sql_type = Nullable<Text>)]
-                metrics: Option<String>,
-            }
-
-            let rows: Vec<HeliosExportRow> = diesel::sql_query(
+            // JSON the official lineage would write. The row type is the
+            // top-level `HeliosExportRow` defined below in this module.
+            //
+            // Agent-launched rows (`context.initiator = 'agent'`) are
+            // excluded by default to match the TUI picker; the
+            // `include_agent` flag re-includes them.
+            let sql = if options.include_agent {
                 "SELECT conversation_id, title, context, context_zstd, created_at, \
-                 updated_at, metrics FROM conversations",
-            )
-            .load(connection)?;
+                 updated_at, metrics FROM conversations".to_string()
+            } else {
+                "SELECT conversation_id, title, context, context_zstd, created_at, \
+                 updated_at, metrics FROM conversations \
+                 WHERE COALESCE(json_extract(context, '$.initiator'), 'user') != 'agent' \
+                    OR context IS NULL".to_string()
+            };
+            let rows: Vec<HeliosExportRow> = diesel::sql_query(sql).load(connection)?;
+
+            // Dispatch to the format-specific writer if the caller asked
+            // for JSONL or CSV. SQLite is the default and falls through to
+            // the original code path below.
+            if !matches!(
+                options.format,
+                forge_domain::ForgeExportFormat::Sqlite
+            ) {
+                return write_export_non_sqlite(
+                    connection,
+                    &rows,
+                    destination,
+                    &options,
+                );
+            }
 
             let mut report = forge_domain::ForgeExportReport {
                 source_total: rows.len(),
@@ -1060,7 +1069,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
                     )
                     .bind::<Text, _>(&row.conversation_id)
                     .bind::<Nullable<Text>, _>(row.title.as_deref())
-                    .bind::<Nullable<Text>, _>(plain_context.as_deref())
+                    .bind::<Nullable<Text>, _>(Some(plain_context.as_str()))
                     .bind::<Text, _>(&row.created_at)
                     .bind::<Nullable<Text>, _>(row.updated_at.as_deref())
                     .bind::<Nullable<Text>, _>(row.metrics.as_deref())
@@ -1122,9 +1131,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 #[diesel(sql_type = Nullable<Text>)]
                 result: Option<String>,
             }
-            let integrity: IntegrityRow = diesel::sql_query("PRAGMA integrity_check")
-                .get_result(connection)
-                .unwrap_or(IntegrityRow { result: None });
+            let integrity = match diesel::sql_query("PRAGMA integrity_check")
+                .get_result::<IntegrityRow>(connection)
+            {
+                Ok(row) => row.result.unwrap_or_else(|| "ok".to_string()),
+                Err(error) => format!("error: {}", error),
+            };
 
             Ok(forge_domain::HeliosdoctorDbStats {
                 total_conversations: counts.total.max(0) as u64,
@@ -1133,10 +1145,234 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 empty_rows: counts.empty.max(0) as u64,
                 oversized_rows: counts.oversized.max(0) as u64,
                 agent_initiated_rows: counts.agent_initiated.max(0) as u64,
-                integrity_check: integrity.result.unwrap_or_else(|| "unknown".to_string()),
+                integrity_check: integrity,
             })
         })
         .await
+    }
+
+    async fn forget_conversations(
+        &self,
+        options: &forge_domain::ForgeForgetOptions,
+    ) -> anyhow::Result<forge_domain::ForgeForgetReport> {
+        let options = options.clone();
+        self.run_with_connection(move |connection, _wid| {
+            use diesel::sql_types::BigInt;
+
+            // Validate: at least one selector must be set.
+            if options.ids.is_empty()
+                && options.source.is_none()
+                && options.older_than_secs.is_none()
+            {
+                return Err(anyhow::anyhow!(
+                    "at least one filter (--id, --source, --older-than) must be set"
+                ));
+            }
+
+            let mut conditions: Vec<String> = Vec::new();
+            if !options.ids.is_empty() {
+                let id_list: Vec<String> = options
+                    .ids
+                    .iter()
+                    .map(|id| format!("'{}'", id))
+                    .collect();
+                conditions.push(format!("conversation_id IN ({})", id_list.join(",")));
+            }
+            if let Some(source) = &options.source {
+                let escaped = source.replace('\'', "''");
+                conditions.push(format!("source = '{}'", escaped));
+            }
+            if let Some(secs) = options.older_than_secs {
+                let cutoff = chrono::Utc::now().timestamp() - secs;
+                conditions.push(format!(
+                    "updated_at < datetime({}, 'unixepoch')",
+                    cutoff
+                ));
+            }
+            let where_clause = format!("WHERE {}", conditions.join(" AND "));
+
+            #[derive(diesel::QueryableByName)]
+            struct CountRow {
+                #[diesel(sql_type = BigInt)]
+                n: i64,
+            }
+            let matched: usize = diesel::sql_query(format!(
+                "SELECT COUNT(*) AS n FROM conversations {}",
+                where_clause
+            ))
+            .get_result::<CountRow>(connection)?
+            .n.max(0) as usize;
+
+            if options.dry_run {
+                return Ok(forge_domain::ForgeForgetReport {
+                    matched,
+                    deleted: 0,
+                    dry_run: true,
+                });
+            }
+
+            // Use plain `execute` so we read the row count from the
+            // diesel `usize` return value (works on every SQLite version).
+            let deleted: usize = diesel::sql_query(format!(
+                "DELETE FROM conversations {}",
+                where_clause
+            ))
+            .execute(connection)?;
+
+            Ok(forge_domain::ForgeForgetReport {
+                matched,
+                deleted,
+                dry_run: false,
+            })
+        })
+        .await
+    }
+
+    async fn migrate_data_dir(&self) -> anyhow::Result<forge_domain::ForgeMigrateReport> {
+        let db_path = self.pool.database_path().to_path_buf();
+        let source_dir = match db_path.parent() {
+            Some(p) => p.to_path_buf(),
+            None => return Err(anyhow::anyhow!("could not determine parent directory of DB path")),
+        };
+        let source_dir_name = source_dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+
+        if source_dir_name == ".helioslite" {
+            // Already canonical — no-op.
+            return Ok(forge_domain::ForgeMigrateReport {
+                source_path: source_dir.clone(),
+                destination_path: source_dir,
+                outcome: "already_migrated".to_string(),
+                bytes_copied: 0,
+                conversations_verified: 0,
+                renamed_legacy_to: None,
+            });
+        }
+
+        // Find the home directory and append `.helioslite`.
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| source_dir.parent().map(|p| p.to_path_buf()).unwrap_or_default());
+        let destination_dir = home.join(".helioslite");
+
+        let source_db = source_dir.join(".forge.db");
+        let destination_db = destination_dir.join(".forge.db");
+
+        let mut report = forge_domain::ForgeMigrateReport {
+            source_path: source_dir.clone(),
+            destination_path: destination_dir.clone(),
+            outcome: "noop_legacy_missing".to_string(),
+            bytes_copied: 0,
+            conversations_verified: 0,
+            renamed_legacy_to: None,
+        };
+
+        if !source_db.exists() {
+            // No legacy data — just create the canonical dir.
+            std::fs::create_dir_all(&destination_dir)?;
+            return Ok(report);
+        }
+
+        report.outcome = "migrated".to_string();
+        report.bytes_copied = std::fs::metadata(&source_db).map(|m| m.len()).unwrap_or(0);
+
+        // Copy the DB (and WAL/SHM siblings if present).
+        std::fs::create_dir_all(&destination_dir)?;
+
+        let copy_with_wal = |src: &std::path::Path, dst: &std::path::Path| -> std::io::Result<()> {
+            std::fs::copy(src, dst)?;
+            for ext in ["-wal", "-shm", "-journal"] {
+                let s = src.with_extension(ext.trim_start_matches('-'));
+                if s.exists() {
+                    let d = dst.with_extension(ext.trim_start_matches('-'));
+                    let _ = std::fs::copy(&s, &d);
+                }
+            }
+            Ok(())
+        };
+
+        // Copy to a temp path first, then rename atomically.
+        let tmp_dst = {
+            let mut p = destination_db.clone();
+            let fname = p
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| ".forge.db".to_string());
+            let tmp = destination_dir.join(format!(".{}.tmp", fname));
+            copy_with_wal(&source_db, &tmp)?;
+            tmp
+        };
+
+        // Validate the copy by opening it with a one-off diesel connection.
+        let db_count = {
+            use diesel::sql_types::BigInt;
+            use diesel::sqlite::SqliteConnection;
+            #[derive(diesel::QueryableByName)]
+            struct CountRow {
+                #[diesel(sql_type = BigInt)]
+                n: i64,
+            }
+            let tmp_path = tmp_dst.to_string_lossy().to_string();
+            let mut conn = match SqliteConnection::establish(&tmp_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = std::fs::remove_file(&tmp_dst);
+                    return Err(anyhow::anyhow!(
+                        "post-copy validation failed: {}",
+                        e
+                    ));
+                }
+            };
+            let count: i64 = diesel::sql_query("SELECT COUNT(*) AS n FROM conversations")
+                .get_result::<CountRow>(&mut conn)
+                .map(|r| r.n)
+                .unwrap_or(0);
+            count.max(0) as u64
+        };
+
+        // Atomic rename into place.
+        if destination_db.exists() {
+            let _ = std::fs::remove_file(&destination_db);
+        }
+        std::fs::rename(&tmp_dst, &destination_db)?;
+        // WAL/SHM siblings were copied to the tmp name; move them too.
+        for ext in ["-wal", "-shm", "-journal"] {
+            let fname = destination_db
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| ".forge.db".to_string());
+            let tmp = destination_dir.join(format!(".{}.tmp{}", fname, ext));
+            if tmp.exists() {
+                let dst = destination_dir.join(format!("{}{}", fname, ext));
+                let _ = std::fs::rename(&tmp, &dst);
+            }
+        }
+
+        report.conversations_verified = db_count;
+
+        // Rename the legacy directory aside so the user can roll back.
+        let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
+        let renamed = source_dir.with_file_name(format!(
+            "{}.migrated-{}",
+            source_dir_name, timestamp
+        ));
+        if let Err(e) = std::fs::rename(&source_dir, &renamed) {
+            // Non-fatal: the copy succeeded; the legacy rename is a
+            // hint, not a requirement.
+            eprintln!(
+                "migrate: legacy directory could not be renamed ({}): {}",
+                renamed.display(),
+                e
+            );
+        } else {
+            report.renamed_legacy_to = Some(renamed);
+        }
+
+        Ok(report)
     }
 }
 
@@ -1313,7 +1549,7 @@ impl diesel::QueryableByName<diesel::sqlite::Sqlite> for HeliosExportRow {
 /// for the official-lineage export schema. Returns `None` when the row has
 /// no context or when zstd decompression fails.
 fn decompress_for_export(row: &HeliosExportRow) -> Option<String> {
-    use crate::codec::zstd::decompress;
+    use crate::codec::decompress;
     if let Some(plain) = row.context.as_deref() {
         if !plain.trim().is_empty() {
             return Some(plain.to_string());
@@ -1322,7 +1558,107 @@ fn decompress_for_export(row: &HeliosExportRow) -> Option<String> {
     row.context_zstd
         .as_deref()
         .and_then(|bytes| decompress(bytes).ok())
-        .and_then(|decompressed| String::from_utf8(decompressed).ok())
+}
+
+/// Write the export in a non-SQLite format (JSONL or CSV). The output is
+/// always a single file with one record per line. Used by
+/// `export_forge_db` when the format is not `Sqlite`.
+fn write_export_non_sqlite(
+    _connection: &mut PooledSqliteConnection,
+    rows: &[HeliosExportRow],
+    destination: PathBuf,
+    options: &forge_domain::ForgeExportOptions,
+) -> anyhow::Result<forge_domain::ForgeExportReport> {
+    use forge_domain::ForgeExportFormat;
+
+    let mut report = forge_domain::ForgeExportReport {
+        source_total: rows.len(),
+        dry_run: options.dry_run,
+        ..Default::default()
+    };
+
+    if options.dry_run {
+        for row in rows {
+            match decompress_for_export(row) {
+                Some(_) => report.exported += 1,
+                None => report.decompression_failed += 1,
+            }
+        }
+        return Ok(report);
+    }
+
+    if let Some(parent) = destination.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+
+    let mut out = String::new();
+    match options.format {
+        ForgeExportFormat::Jsonl => {
+            for row in rows {
+                let plain_context = match decompress_for_export(row) {
+                    Some(s) => s,
+                    None => {
+                        report.decompression_failed += 1;
+                        continue;
+                    }
+                };
+                let record = serde_json::json!({
+                    "conversation_id": row.conversation_id,
+                    "title": row.title,
+                    "context": serde_json::from_str::<serde_json::Value>(&plain_context)
+                        .unwrap_or(serde_json::Value::String(plain_context)),
+                    "created_at": row.created_at,
+                    "updated_at": row.updated_at,
+                    "metrics": row.metrics,
+                });
+                out.push_str(&serde_json::to_string(&record)?);
+                out.push('\n');
+                report.exported += 1;
+            }
+        }
+        ForgeExportFormat::Csv => {
+            out.push_str("conversation_id,title,created_at,updated_at,context\n");
+            for row in rows {
+                let plain_context = match decompress_for_export(row) {
+                    Some(s) => s,
+                    None => {
+                        report.decompression_failed += 1;
+                        continue;
+                    }
+                };
+                let csv_escape = |s: &str| -> String {
+                    if s.contains(',') || s.contains('"') || s.contains('\n') {
+                        format!("\"{}\"", s.replace('"', "\"\""))
+                    } else {
+                        s.to_string()
+                    }
+                };
+                out.push_str(&csv_escape(&row.conversation_id));
+                out.push(',');
+                out.push_str(&csv_escape(row.title.as_deref().unwrap_or("")));
+                out.push(',');
+                out.push_str(&csv_escape(&row.created_at));
+                out.push(',');
+                out.push_str(&csv_escape(row.updated_at.as_deref().unwrap_or("")));
+                out.push(',');
+                out.push_str(&csv_escape(&plain_context));
+                out.push('\n');
+                report.exported += 1;
+            }
+        }
+        ForgeExportFormat::Sqlite => {
+            // Caller should have dispatched this branch before reaching
+            // here. Defensive: error rather than silently produce empty.
+            return Err(anyhow::anyhow!(
+                "write_export_non_sqlite called with Sqlite format"
+            ));
+        }
+    }
+
+    std::fs::write(&destination, out)?;
+    Ok(report)
 }
 
 /// Parse a timestamp stored by forge-lineage databases into a

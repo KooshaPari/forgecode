@@ -283,6 +283,43 @@ impl<F: Send + Sync> ConversationRepository for ForgeRepo<F> {
     async fn import_forge_db(&self, source: PathBuf) -> anyhow::Result<ForgeImportReport> {
         self.conversation_repository.import_forge_db(source).await
     }
+
+    async fn import_forge_db_with_options(
+        &self,
+        source: PathBuf,
+        options: &forge_domain::ForgeImportOptions,
+    ) -> anyhow::Result<ForgeImportReport> {
+        self.conversation_repository
+            .import_forge_db_with_options(source, options)
+            .await
+    }
+
+    async fn export_forge_db(
+        &self,
+        dest: PathBuf,
+        options: &forge_domain::ForgeExportOptions,
+    ) -> anyhow::Result<forge_domain::ForgeExportReport> {
+        self.conversation_repository
+            .export_forge_db(dest, options)
+            .await
+    }
+
+    async fn database_stats(&self) -> anyhow::Result<forge_domain::HeliosdoctorDbStats> {
+        self.conversation_repository.database_stats().await
+    }
+
+    async fn forget_conversations(
+        &self,
+        options: &forge_domain::ForgeForgetOptions,
+    ) -> anyhow::Result<forge_domain::ForgeForgetReport> {
+        self.conversation_repository
+            .forget_conversations(options)
+            .await
+    }
+
+    async fn migrate_data_dir(&self) -> anyhow::Result<forge_domain::ForgeMigrateReport> {
+        self.conversation_repository.migrate_data_dir().await
+    }
 }
 
 #[async_trait::async_trait]

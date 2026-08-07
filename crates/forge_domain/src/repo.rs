@@ -88,11 +88,33 @@ pub struct ForgeExportReport {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ForgeExportOptions {
     /// When set, the export scans the same rows but does not create the
-    /// destination DB. The returned report reflects what *would* have been
+    /// destination DB. The report reflects what *would* have been
     /// written.
     pub dry_run: bool,
+    /// Output format. Defaults to `Sqlite` (mirrors upstream `forge.db`
+    /// schema). `Jsonl` and `Csv` write one record per line to the
+    /// destination path and are useful for off-system consumption.
+    pub format: ForgeExportFormat,
+    /// By default, agent-launched rows are skipped from the export (the
+    /// TUI picker hides them, so exporting them is rarely useful). Set
+    /// `include_agent` to `true` to include them.
+    pub include_agent: bool,
 }
 
+/// Output format for [`ConversationRepository::export_forge_db`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum ForgeExportFormat {
+    /// SQLite database mirroring the upstream `forge` schema (default).
+    #[default]
+    Sqlite,
+    /// Newline-delimited JSON: one `[title,id,created_at,updated_at,context]`
+    /// tuple per row. `context` is a JSON string (not an object) so the
+    /// downstream parser can re-parse it transparently.
+    Jsonl,
+    /// CSV with header: `conversation_id,title,created_at,updated_at,context`.
+    /// Context is emitted as a single field, double-quote-escaped.
+    Csv,
+}
 /// Aggregate database statistics surfaced by `heliosdoctor --verbose`.
 ///
 /// Used to spot compression regressions (compressed rows missing their
@@ -114,6 +136,53 @@ pub struct HeliosdoctorDbStats {
     pub agent_initiated_rows: u64,
     /// `PRAGMA integrity_check` result (`"ok"` when healthy).
     pub integrity_check: String,
+}
+
+/// Filter for `forget_conversations`. At least one selector must be set.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForgeForgetOptions {
+    /// Delete by exact conversation_id. Any ID that does not match is silently
+    /// ignored (idempotent).
+    pub ids: Vec<ConversationId>,
+    /// Delete all rows whose `source` column equals this value
+    /// (e.g. `imported:forge`, `agent`, `user`).
+    pub source: Option<String>,
+    /// Delete rows where `updated_at` is older than `now - older_than_secs`.
+    pub older_than_secs: Option<i64>,
+    /// When `true`, perform a no-op scan and report the count that *would*
+    /// be deleted. The database is **not** modified.
+    pub dry_run: bool,
+}
+
+/// Result of `forget_conversations`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForgeForgetReport {
+    /// Number of rows that matched the filter.
+    pub matched: usize,
+    /// Number of rows actually removed. Equal to `matched` when
+    /// `dry_run` is `false`.
+    pub deleted: usize,
+    /// When `dry_run` was set, no rows were deleted.
+    pub dry_run: bool,
+}
+
+/// Outcome of `migrate_data_dir`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForgeMigrateReport {
+    /// Resolved source (`~/.forge`) and destination (`~/.helioslite`) paths.
+    pub source_path: PathBuf,
+    pub destination_path: PathBuf,
+    /// High-level outcome (one of `migrated`, `already_migrated`,
+    /// `noop_legacy_missing`). The detailed boolean flags below are
+    /// provided for tool consumption.
+    pub outcome: String,
+    /// Total bytes copied (from the source DB file).
+    pub bytes_copied: u64,
+    /// Number of conversations confirmed readable in the copied DB.
+    pub conversations_verified: u64,
+    /// If `migrated`, the legacy directory was renamed to
+    /// `~/.forge.migrated-YYYYMMDDHHMMSS`. The new path is recorded here.
+    pub renamed_legacy_to: Option<PathBuf>,
 }
 
 /// Repository for managing file snapshots
@@ -552,6 +621,47 @@ pub trait ConversationRepository: Send + Sync {
     /// should execute the counts in a single SQLite query when possible
     /// to keep this cheap on large DBs.
     async fn database_stats(&self) -> Result<HeliosdoctorDbStats>;
+
+    /// Remove conversations matching the supplied filter.
+    ///
+    /// At least one of `ids` / `source` / `older_than_secs` must be set;
+    /// calling with all `None` is an error (prevents accidental full-delete).
+    /// The match is exact, case-sensitive, and applies to the row's
+    /// `source` column (e.g. `imported:forge`, `agent`, `user`).
+    ///
+    /// Set `rows_affected` in the returned report. Deleted rows are
+    /// removed from `conversations` (and dependent rows via foreign keys).
+    /// Snapshots / intent_state rows for the deleted conversations are
+    /// left intentionally — they are inert and can be cleaned by a future
+    /// `forge maintenance` sweep.
+    ///
+    /// # Errors
+    /// Returns an error if no filter is provided, the database update
+    /// fails, or the resolved DB is on a read-only volume.
+    async fn forget_conversations(
+        &self,
+        options: &ForgeForgetOptions,
+    ) -> Result<ForgeForgetReport>;
+
+    /// Atomically migrate the active data directory from `~/.forge` to
+    /// `~/.helioslite` (the canonical heliosLite location).
+    ///
+    /// Returns [`ForgeMigrateReport`] describing what was moved. The
+    /// operation is idempotent: if `~/.helioslite` already exists and
+    /// contains data, the function reports `already_migrated` and exits
+    /// without touching anything. If `~/.forge` is missing, the result
+    /// is `noop_legacy_missing` and the canonical directory is created
+    /// empty (so the launcher treats the install as fresh).
+    ///
+    /// The DB is copied (not moved) to `~/.helioslite/.forge.db` and
+    /// then validated by reopening it. Only after the copy is verified
+    /// does the function rename the legacy `~/.forge` directory to
+    /// `~/.forge.migrated-YYYYMMDDHHMMSS` so the user can roll back.
+    ///
+    /// # Errors
+    /// Returns an error if the source DB is unreadable, the copy fails,
+    /// or the post-copy validation fails.
+    async fn migrate_data_dir(&self) -> Result<ForgeMigrateReport>;
 }
 
 /// Environment diagnostics produced by `heliosdoctor`.

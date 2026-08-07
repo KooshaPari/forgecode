@@ -19,8 +19,8 @@ use forge_app::{CommitResult, ToolResolver};
 use forge_config::{ForgeConfig, OutputMode, OutputSettings};
 use forge_display::MarkdownFormat;
 use forge_domain::{
-    AuthMethod, ChatResponseContent, ConsoleWriter, ContextMessage, ForgeExportOptions,
-    ForgeImportOptions, Role, TitleFormat, UserCommand,
+    AuthMethod, ChatResponseContent, ConsoleWriter, ContextMessage, ForgeExportFormat,
+    ForgeExportOptions, ForgeImportOptions, Role, TitleFormat, UserCommand,
 };
 use forge_fs::ForgeFS;
 use forge_select::{ForgeWidget, SelectRow};
@@ -1148,7 +1148,11 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             TopLevelCommand::Export(export_group) => {
                 match export_group.command {
                     ExportSubcommand::Forge { db, dry_run } => {
-                        let options = ForgeExportOptions { dry_run };
+                        let options = ForgeExportOptions {
+                            dry_run,
+                            format: ForgeExportFormat::Sqlite,
+                            include_agent: false,
+                        };
                         self.spinner.start(Some(if dry_run { "Scanning (dry-run)" } else { "Exporting" }))?;
                         let report = self.api.export_forge_db(db, &options).await?;
                         self.spinner.stop(None)?;

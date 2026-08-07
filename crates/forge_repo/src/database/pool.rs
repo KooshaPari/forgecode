@@ -58,10 +58,16 @@ impl PoolConfig {
 pub struct DatabasePool {
     pool: DbPool,
     retry_config: RetryConfig,
+    database_path: PathBuf,
     _checkpointer: Option<crate::database::checkpoint::WalCheckpointer>,
 }
 
 impl DatabasePool {
+    /// Returns the resolved SQLite database path this pool was built for.
+    /// Used by `migrate_data_dir` to discover the legacy directory.
+    pub fn database_path(&self) -> &std::path::Path {
+        &self.database_path
+    }
     #[cfg(test)]
     pub fn in_memory() -> Result<Self> {
         debug!("Creating in-memory database pool");
@@ -86,6 +92,7 @@ impl DatabasePool {
         Ok(Self {
             pool,
             retry_config: RetryConfig::default(),
+            database_path: PathBuf::from(":memory:"),
             _checkpointer: None,
         })
     }
@@ -265,6 +272,11 @@ impl DatabasePool {
             crate::database::checkpoint::WalCheckpointer::spawn(config.database_path.clone());
 
         debug!(database_path = %config.database_path.display(), "created connection pool");
-        Ok(Self { pool, retry_config, _checkpointer: checkpointer })
+        Ok(Self {
+            pool,
+            retry_config,
+            database_path: config.database_path.clone(),
+            _checkpointer: checkpointer,
+        })
     }
 }
