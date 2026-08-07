@@ -10,6 +10,7 @@ use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::codec;
 use anyhow::{Context, Result, bail};
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
@@ -18,9 +19,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// Version of the HeliosLite Forge-session snapshot contract.
-pub const SNAPSHOT_CONTRACT_VERSION: &str = "helioslite-forge-session-v1";
+pub const SNAPSHOT_CONTRACT_VERSION: &str = "helioslite-forge-session-v2";
+pub const SUPPORTED_SCHEMA_VERSION: &str = "forge-conversations-v3";
 const IMPORTER_VERSION: &str = env!("CARGO_PKG_VERSION");
-const REQUIRED_COLUMNS: [&str; 14] = [
+const REQUIRED_COLUMNS: [&str; 18] = [
     "conversation_id",
     "title",
     "workspace_id",
@@ -35,6 +37,10 @@ const REQUIRED_COLUMNS: [&str; 14] = [
     "created_at",
     "updated_at",
     "intent_state",
+    "metrics",
+    "extracted_at",
+    "memory_id",
+    "intent_hash",
 ];
 
 /// A conversation row copied without interpreting or rewriting its payload.
@@ -55,6 +61,10 @@ pub struct ForgeSnapshotRow {
     pub created_at: NaiveDateTime,
     pub updated_at: Option<NaiveDateTime>,
     pub intent_state: String,
+    pub metrics: Option<String>,
+    pub extracted_at: Option<NaiveDateTime>,
+    pub memory_id: Option<String>,
+    pub intent_hash: Option<String>,
 }
 
 /// Provenance and integrity information for a Forge snapshot.
@@ -66,13 +76,27 @@ pub struct ForgeSnapshotManifest {
     pub source_sha256: String,
     pub source_size: u64,
     pub source_modified_unix_ms: Option<u128>,
+    pub source_before_sha256: String,
+    pub source_before_size: u64,
+    pub source_before_modified_unix_ms: Option<u128>,
+    pub source_after_sha256: String,
+    pub source_after_size: u64,
+    pub source_after_modified_unix_ms: Option<u128>,
     pub source_schema_fingerprint: String,
     pub source_schema_version: String,
+    pub required_columns: Vec<String>,
+    pub export_started_at_unix_ms: u128,
+    pub export_completed_at_unix_ms: u128,
     pub exported_at_unix_ms: u128,
     pub row_count: usize,
     pub content_sha256: String,
+    pub row_digest: String,
+    pub id_digest: String,
     pub source_read_only: bool,
     pub source_unchanged: bool,
+    pub status: String,
+    pub destination_path: Option<String>,
+    pub destination_content_sha256: Option<String>,
 }
 
 /// A serializable snapshot and its manifest.
@@ -126,6 +150,14 @@ struct ConversationRow {
     updated_at: Option<NaiveDateTime>,
     #[diesel(sql_type = Text)]
     intent_state: String,
+    #[diesel(sql_type = Nullable<Text>)]
+    metrics: Option<String>,
+    #[diesel(sql_type = Nullable<Timestamp>)]
+    extracted_at: Option<NaiveDateTime>,
+    #[diesel(sql_type = Nullable<Text>)]
+    memory_id: Option<String>,
+    #[diesel(sql_type = Nullable<Text>)]
+    intent_hash: Option<String>,
 }
 
 #[derive(Debug, QueryableByName)]
@@ -140,6 +172,7 @@ struct QueryOnlyRow {
 /// The source is opened with SQLite `mode=ro&immutable=1`; a pre/post file
 /// fingerprint check additionally fails closed if another process changes it.
 pub fn export_forge_snapshot(source: &Path) -> Result<ForgeSnapshot> {
+    let export_started_at_unix_ms = now_unix_ms();
     let source = source
         .canonicalize()
         .with_context(|| format!("canonicalize Forge source {}", source.display()))?;
@@ -168,7 +201,8 @@ pub fn export_forge_snapshot(source: &Path) -> Result<ForgeSnapshot> {
     let rows: Vec<ForgeSnapshotRow> = diesel::sql_query(
         "SELECT conversation_id, title, workspace_id, context, context_zstd, \
          is_compressed, hidden, parent_id, source, cwd, message_count, \
-         created_at, updated_at, intent_state FROM conversations ORDER BY conversation_id",
+         created_at, updated_at, intent_state, metrics, extracted_at, memory_id, intent_hash \
+         FROM conversations ORDER BY conversation_id",
     )
     .load::<ConversationRow>(&mut connection)
     .context("read Forge conversations")?
@@ -181,22 +215,40 @@ pub fn export_forge_snapshot(source: &Path) -> Result<ForgeSnapshot> {
     if before != after {
         bail!("Forge source changed during read; refusing snapshot");
     }
+    validate_rows(&rows)?;
     let content_sha256 = content_digest(&rows)?;
+    let row_digest = content_sha256.clone();
+    let id_digest = id_digest(&rows);
+    let export_completed_at_unix_ms = now_unix_ms();
     Ok(ForgeSnapshot {
         manifest: ForgeSnapshotManifest {
             contract_version: SNAPSHOT_CONTRACT_VERSION.to_string(),
             importer_version: IMPORTER_VERSION.to_string(),
             source_path: source.display().to_string(),
-            source_sha256: before.sha256,
-            source_size: before.size,
-            source_modified_unix_ms: before.modified_unix_ms,
+            source_sha256: after.sha256.clone(),
+            source_size: after.size,
+            source_modified_unix_ms: after.modified_unix_ms,
+            source_before_sha256: before.sha256,
+            source_before_size: before.size,
+            source_before_modified_unix_ms: before.modified_unix_ms,
+            source_after_sha256: after.sha256,
+            source_after_size: after.size,
+            source_after_modified_unix_ms: after.modified_unix_ms,
             source_schema_fingerprint: schema_fingerprint.clone(),
-            source_schema_version: schema_fingerprint,
-            exported_at_unix_ms: now_unix_ms(),
+            source_schema_version: SUPPORTED_SCHEMA_VERSION.to_string(),
+            required_columns: REQUIRED_COLUMNS.iter().map(|c| (*c).to_string()).collect(),
+            export_started_at_unix_ms,
+            export_completed_at_unix_ms,
+            exported_at_unix_ms: export_completed_at_unix_ms,
             row_count: rows.len(),
             content_sha256,
+            row_digest,
+            id_digest,
             source_read_only: true,
             source_unchanged: true,
+            status: "exported".to_string(),
+            destination_path: None,
+            destination_content_sha256: None,
         },
         rows,
     })
@@ -258,6 +310,10 @@ impl From<ConversationRow> for ForgeSnapshotRow {
             created_at: row.created_at,
             updated_at: row.updated_at,
             intent_state: row.intent_state,
+            metrics: row.metrics,
+            extracted_at: row.extracted_at,
+            memory_id: row.memory_id,
+            intent_hash: row.intent_hash,
         }
     }
 }
@@ -329,6 +385,48 @@ fn validate_schema(schema: &[SchemaRow]) -> Result<()> {
             missing.join(", ")
         );
     }
+    let unknown: Vec<&str> = columns
+        .keys()
+        .copied()
+        .filter(|column| !REQUIRED_COLUMNS.contains(column))
+        .collect();
+    if !unknown.is_empty() {
+        bail!(
+            "unsupported Forge conversations schema; unknown columns: {}",
+            unknown.join(", ")
+        );
+    }
+    let expected_types = [
+        ("conversation_id", "TEXT"),
+        ("title", "TEXT"),
+        ("workspace_id", "BIGINT"),
+        ("context", "TEXT"),
+        ("created_at", "TIMESTAMP"),
+        ("updated_at", "TIMESTAMP"),
+        ("metrics", "TEXT"),
+        ("parent_id", "TEXT"),
+        ("source", "TEXT"),
+        ("cwd", "TEXT"),
+        ("message_count", "INTEGER"),
+        ("intent_state", "TEXT"),
+        ("extracted_at", "TIMESTAMP"),
+        ("memory_id", "TEXT"),
+        ("intent_hash", "TEXT"),
+        ("context_zstd", "BLOB"),
+        ("is_compressed", "INTEGER"),
+        ("hidden", "INTEGER"),
+    ];
+    for (name, expected) in expected_types {
+        let actual = columns
+            .get(name)
+            .with_context(|| format!("schema column disappeared while validating: {name}"))?;
+        if !actual.column_type.eq_ignore_ascii_case(expected) {
+            bail!(
+                "unsupported Forge conversations schema; {name} has type {}, expected {expected}",
+                actual.column_type
+            );
+        }
+    }
     if columns
         .get("conversation_id")
         .is_some_and(|row| row.primary_key != 1)
@@ -361,6 +459,41 @@ fn schema_fingerprint(schema: &[SchemaRow]) -> String {
 fn content_digest(rows: &[ForgeSnapshotRow]) -> Result<String> {
     let bytes = serde_json::to_vec(rows).context("serialize snapshot rows for digest")?;
     Ok(hex::encode(Sha256::digest(bytes)))
+}
+
+fn id_digest(rows: &[ForgeSnapshotRow]) -> String {
+    let ids = rows
+        .iter()
+        .map(|row| row.conversation_id.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    hex::encode(Sha256::digest(ids.as_bytes()))
+}
+
+fn validate_rows(rows: &[ForgeSnapshotRow]) -> Result<()> {
+    for row in rows {
+        if row.is_compressed != 0 && row.is_compressed != 1 {
+            bail!(
+                "invalid is_compressed flag for conversation {}",
+                row.conversation_id
+            );
+        }
+        if row.is_compressed == 1 {
+            let compressed = row.context_zstd.as_deref().with_context(|| {
+                format!(
+                    "compressed conversation {} has no context_zstd",
+                    row.conversation_id
+                )
+            })?;
+            codec::decompress(compressed).with_context(|| {
+                format!(
+                    "invalid compressed context for conversation {}",
+                    row.conversation_id
+                )
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn write_synced(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -408,7 +541,7 @@ mod tests {
                 hidden INTEGER NOT NULL DEFAULT 0, parent_id TEXT, source TEXT,
                 cwd TEXT, message_count INTEGER, created_at TIMESTAMP NOT NULL,
                 updated_at TIMESTAMP, intent_state TEXT NOT NULL DEFAULT '{}',
-                intent_state_extra TEXT
+                metrics TEXT, extracted_at TIMESTAMP, memory_id TEXT, intent_hash TEXT
             )",
         )
         .execute(&mut connection)?;
@@ -417,10 +550,12 @@ mod tests {
              VALUES ('root','Root',7,'plain',0,0,'2026-01-01 00:00:00','{}')",
         )
         .execute(&mut connection)?;
+        let compressed = codec::compress("compressed")?;
         diesel::sql_query(
             "INSERT INTO conversations (conversation_id,title,workspace_id,context_zstd,is_compressed,hidden,parent_id,created_at,intent_state)
-             VALUES ('child',NULL,7,X'28B52FFD',1,1,'root','2026-01-01 00:00:01','{}')",
+             VALUES ('child',NULL,7,?,1,1,'root','2026-01-01 00:00:01','{}')",
         )
+        .bind::<Binary, _>(compressed)
         .execute(&mut connection)?;
         if include_id_only {
             diesel::sql_query("ALTER TABLE conversations RENAME TO old_conversations")
