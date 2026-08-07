@@ -178,17 +178,14 @@ fn execute_zsh_script_with_streaming(script_content: &str, script_name: &str) ->
 ///
 /// Returns error if the doctor script cannot be executed
 pub fn run_zsh_doctor() -> Result<()> {
-    // The Windows release does not bundle zsh.  Doctor is a diagnostic aid,
-    // so report that limitation and leave the command successful instead of
-    // turning an otherwise usable installation into a hard failure.
+    // The Windows release does not bundle zsh. Treat that as a failed
+    // diagnostic rather than reporting a false-positive success to scripts.
     #[cfg(windows)]
     if !zsh_available() {
-        let message = concat!(
+        anyhow::bail!(concat!(
             "Forge doctor skipped: zsh is not available on Windows. ",
             "Install zsh or run `forge zsh doctor` from a zsh-capable environment."
-        );
-        println!("{message}");
-        return Ok(());
+        ));
     }
 
     let script_content = include_str!("../../../../shell-plugin/doctor.zsh");
@@ -821,5 +818,21 @@ mod tests {
                 std::env::remove_var("ZDOTDIR");
             }
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failing_zsh_script_is_returned_to_the_caller() {
+        if std::process::Command::new("zsh")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let actual = execute_zsh_script_with_streaming("exit 17", "test");
+
+        let error = actual.expect_err("a failing zsh script must be an error");
+        assert!(error.to_string().contains("exit code: 17"));
     }
 }
