@@ -28,6 +28,7 @@ members = [
   "crates/forge_services",
   "crates/forge_snaps",
   "crates/forge_spinner",
+  "crates/forge_syntax",
   "crates/forge_stream",
   "crates/forge_template",
   "crates/forge_test_kit",
@@ -218,6 +219,7 @@ forge_main = { path = "crates/forge_main" }
 forge_services = { path = "crates/forge_services" }
 forge_snaps = { path = "crates/forge_snaps" }
 forge_spinner = { path = "crates/forge_spinner" }
+forge_syntax = { path = "crates/forge_syntax" }
 forge_stream = { path = "crates/forge_stream" }
 forge_template = { path = "crates/forge_template" }
 forge_tool_macros = { path = "crates/forge_tool_macros" }
