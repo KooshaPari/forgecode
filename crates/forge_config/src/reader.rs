@@ -31,7 +31,13 @@ static LOAD_DOT_ENV: LazyLock<()> = LazyLock::new(|| {
 });
 
 /// Caches base-path resolution for the process lifetime.
-static BASE_PATH: LazyLock<PathBuf> = LazyLock::new(ConfigReader::resolve_base_path);
+static BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
+    ConfigReader::resolve_base_path_for(
+        ConfigReader::binary_name(),
+        dirs::home_dir().as_deref(),
+        None,
+    )
+});
 
 /// Merges [`ForgeConfig`] from layered sources using a builder pattern.
 #[derive(Default)]
@@ -43,13 +49,43 @@ impl ConfigReader {
     /// Returns the path to the legacy JSON config file
     /// (`~/.forge/.config.json`).
     pub fn config_legacy_path() -> PathBuf {
-        Self::base_path().join(".config.json")
+        Self::config_dir().join(".config.json")
     }
 
     /// Returns the path to the primary TOML config file
     /// (`~/.forge/.forge.toml`).
     pub fn config_path() -> PathBuf {
-        Self::base_path().join(".forge.toml")
+        Self::config_path_for(Self::binary_name(), &Self::base_path())
+    }
+
+    /// Returns the owned configuration directory for the active binary.
+    pub fn config_dir() -> PathBuf {
+        let root = Self::base_path();
+        if Self::binary_name() == "helioslite" {
+            root.join("config")
+        } else {
+            root
+        }
+    }
+
+    /// Returns the runtime cache directory for the active binary.
+    pub fn cache_path() -> PathBuf {
+        Self::base_path().join("cache")
+    }
+
+    /// Returns the runtime logs directory for the active binary.
+    pub fn logs_path() -> PathBuf {
+        Self::base_path().join("logs")
+    }
+
+    /// Returns the runtime lock directory for the active binary.
+    pub fn locks_path() -> PathBuf {
+        Self::base_path().join("locks")
+    }
+
+    /// Returns the runtime session directory for the active binary.
+    pub fn sessions_path() -> PathBuf {
+        Self::base_path().join("sessions")
     }
 
     /// Returns the base directory for all Forge config files.
@@ -65,11 +101,48 @@ impl ConfigReader {
     }
 
     fn resolve_base_path() -> PathBuf {
+        Self::resolve_base_path_for(Self::binary_name(), dirs::home_dir().as_deref(), None)
+    }
+
+    fn binary_name() -> &'static str {
+        static BINARY_NAME: LazyLock<String> = LazyLock::new(|| {
+            std::env::args_os()
+                .next()
+                .and_then(|arg| {
+                    std::path::Path::new(&arg)
+                        .file_stem()
+                        .map(|stem| stem.to_string_lossy().into_owned())
+                })
+                .unwrap_or_else(|| "forge".to_string())
+        });
+        BINARY_NAME.as_str()
+    }
+
+    fn resolve_base_path_for(
+        binary_name: &str,
+        home: Option<&std::path::Path>,
+        explicit_home: Option<&std::path::Path>,
+    ) -> PathBuf {
+        if binary_name == "helioslite" {
+            if let Some(path) = explicit_home {
+                return path.to_path_buf();
+            }
+            if let Ok(path) = std::env::var("HELIOSLITE_HOME") {
+                return PathBuf::from(path);
+            }
+            return home
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join(".helioslite");
+        }
+
+        if let Some(path) = explicit_home {
+            return path.to_path_buf();
+        }
         if let Ok(path) = std::env::var("FORGE_CONFIG") {
             return PathBuf::from(path);
         }
 
-        let base = dirs::home_dir().unwrap_or(PathBuf::from("."));
+        let base = home.unwrap_or_else(|| std::path::Path::new("."));
         let path = base.join("forge");
 
         // Prefer ~/forge (legacy) when it exists so existing users are not
@@ -81,6 +154,30 @@ impl ConfigReader {
 
         tracing::info!("Using new path");
         base.join(".forge")
+    }
+
+    fn config_path_for(binary_name: &str, root: &std::path::Path) -> PathBuf {
+        if binary_name == "helioslite" {
+            root.join("config/.forge.toml")
+        } else {
+            root.join(".forge.toml")
+        }
+    }
+
+    fn cache_path_for(_binary_name: &str, root: &std::path::Path) -> PathBuf {
+        root.join("cache")
+    }
+
+    fn logs_path_for(_binary_name: &str, root: &std::path::Path) -> PathBuf {
+        root.join("logs")
+    }
+
+    fn locks_path_for(_binary_name: &str, root: &std::path::Path) -> PathBuf {
+        root.join("locks")
+    }
+
+    fn sessions_path_for(_binary_name: &str, root: &std::path::Path) -> PathBuf {
+        root.join("sessions")
     }
 
     /// Adds the provided TOML string as a config source without touching the
@@ -225,6 +322,53 @@ mod tests {
             name == "forge" || name == ".forge",
             "Expected base_path to end with 'forge' or '.forge', got: {:?}",
             name
+        );
+    }
+
+    #[test]
+    fn helioslite_uses_owned_root_and_config_subdirectory() {
+        let home = PathBuf::from("/tmp/helios-home");
+        let root = ConfigReader::resolve_base_path_for("helioslite", Some(&home), None);
+        assert_eq!(root, home.join(".helioslite"));
+        assert_eq!(
+            ConfigReader::config_path_for("helioslite", &root),
+            root.join("config/.forge.toml")
+        );
+        assert_eq!(
+            root.join("cache"),
+            ConfigReader::cache_path_for("helioslite", &root)
+        );
+        assert_eq!(
+            root.join("logs"),
+            ConfigReader::logs_path_for("helioslite", &root)
+        );
+        assert_eq!(
+            root.join("locks"),
+            ConfigReader::locks_path_for("helioslite", &root)
+        );
+        assert_eq!(
+            root.join("sessions"),
+            ConfigReader::sessions_path_for("helioslite", &root)
+        );
+    }
+
+    #[test]
+    fn helioslite_explicit_home_is_independent_from_forge_config() {
+        let home = PathBuf::from("/tmp/helios-home");
+        let explicit = PathBuf::from("/tmp/explicit-helioslite");
+        let root = ConfigReader::resolve_base_path_for("helioslite", Some(&home), Some(&explicit));
+        assert_eq!(root, explicit);
+    }
+
+    #[test]
+    fn forge_keeps_legacy_root_and_config_layout() {
+        let home = PathBuf::from("/tmp/forge-home");
+        let explicit = PathBuf::from("/tmp/explicit-forge");
+        let root = ConfigReader::resolve_base_path_for("forge", Some(&home), Some(&explicit));
+        assert_eq!(root, explicit);
+        assert_eq!(
+            ConfigReader::config_path_for("forge", &root),
+            explicit.join(".forge.toml")
         );
     }
 
