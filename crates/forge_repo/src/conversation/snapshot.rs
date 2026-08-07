@@ -179,6 +179,7 @@ pub fn export_forge_snapshot(source: &Path) -> Result<ForgeSnapshot> {
     if !source.is_file() {
         bail!("Forge source is not a regular file: {}", source.display());
     }
+    reject_sqlite_sidecars(&source)?;
 
     let before = fingerprint(&source)?;
     let uri = sqlite_read_only_uri(&source)?;
@@ -359,6 +360,24 @@ fn sqlite_read_only_uri(path: &Path) -> Result<String> {
         .replace('?', "%3F")
         .replace('#', "%23");
     Ok(format!("file:{encoded}?mode=ro&immutable=1"))
+}
+
+fn reject_sqlite_sidecars(source: &Path) -> Result<()> {
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let sidecar = PathBuf::from(format!("{}{suffix}", source.display()));
+        match fs::symlink_metadata(&sidecar) {
+            Ok(_) => bail!(
+                "SQLite sidecar is present beside Forge source; refusing snapshot: {}",
+                sidecar.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("inspect SQLite sidecar {}", sidecar.display()));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn read_schema(connection: &mut diesel::sqlite::SqliteConnection) -> Result<Vec<SchemaRow>> {
@@ -609,6 +628,24 @@ mod tests {
         fixture(&source, true)?;
         let error = export_forge_snapshot(&source).expect_err("legacy id schema must fail");
         assert!(error.to_string().contains("conversation_id"));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_live_sqlite_sidecars_before_reading_source() -> Result<()> {
+        let dir = tempdir()?;
+        let source = dir.path().join("forge.db");
+        fixture(&source, false)?;
+
+        for suffix in ["-wal", "-shm"] {
+            let sidecar = PathBuf::from(format!("{}{}", source.display(), suffix));
+            File::create(&sidecar)?;
+            let error =
+                export_forge_snapshot(&source).expect_err("live SQLite sidecar must fail closed");
+            assert!(error.to_string().contains("SQLite sidecar"));
+            fs::remove_file(sidecar)?;
+        }
+
         Ok(())
     }
 
