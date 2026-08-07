@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,12 +17,13 @@ use forge_api::{
 };
 use forge_app::utils::{format_display_path, truncate_key};
 use forge_app::{CommitResult, ToolResolver};
-use forge_config::{ForgeConfig, OutputMode, OutputSettings};
+use forge_config::{ConfigReader, ForgeConfig, OutputMode, OutputSettings};
 use forge_display::MarkdownFormat;
 use forge_domain::{
     AuthMethod, ChatResponseContent, ConsoleWriter, ContextMessage, Role, TitleFormat, UserCommand,
 };
 use forge_fs::ForgeFS;
+use forge_repo::{export_forge_snapshot, publish_snapshot_atomic};
 use forge_select::{ForgeWidget, SelectRow};
 use forge_spinner::SpinnerManager;
 use forge_tracker::ToolCallPayload;
@@ -69,6 +71,42 @@ fn detect_source(cli: &Cli) -> String {
     } else {
         "interactive".to_string()
     }
+}
+
+fn validate_snapshot_destination(destination: &Path, sessions_root: &Path) -> anyhow::Result<()> {
+    if destination.exists() {
+        return Err(anyhow::anyhow!(
+            "snapshot destination already exists: {}",
+            destination.display()
+        ));
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("snapshot destination must have a parent directory"))?;
+    fs::create_dir_all(sessions_root).with_context(|| {
+        format!(
+            "create HeliosLite sessions root {}",
+            sessions_root.display()
+        )
+    })?;
+    let root = sessions_root.canonicalize().with_context(|| {
+        format!(
+            "canonicalize HeliosLite sessions root {}",
+            sessions_root.display()
+        )
+    })?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("create snapshot parent {}", parent.display()))?;
+    let canonical_parent = parent
+        .canonicalize()
+        .with_context(|| format!("canonicalize snapshot parent {}", parent.display()))?;
+    if !canonical_parent.starts_with(&root) {
+        return Err(anyhow::anyhow!(
+            "snapshot destination must stay under HeliosLite sessions root {}",
+            root.display()
+        ));
+    }
+    Ok(())
 }
 
 /// Conversation dump format used by the /dump command
@@ -836,10 +874,18 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 self.handle_conversation_command(conversation_group).await?;
                 return Ok(());
             }
-            TopLevelCommand::Sessions(_) => {
-                return Err(anyhow::anyhow!(
-                    "HeliosLite session import is not wired in this build"
-                ));
+            TopLevelCommand::Sessions(group) => {
+                let crate::cli::SessionsCommand::ImportForge(args) = group.command;
+                let destination_root = ConfigReader::sessions_path();
+                validate_snapshot_destination(&args.dest, &destination_root)?;
+                let snapshot = export_forge_snapshot(&args.source)?;
+                let row_count = snapshot.manifest.row_count;
+                let source_sha256 = snapshot.manifest.source_sha256.clone();
+                publish_snapshot_atomic(&snapshot, &args.dest)?;
+                self.writeln(format!(
+                    "Imported {row_count} Forge sessions into {}; source sha256={source_sha256}",
+                    args.dest.display()
+                ))?;
             }
             TopLevelCommand::Suggest { prompt } => {
                 self.on_cmd(UserPrompt::from(prompt)).await?;
