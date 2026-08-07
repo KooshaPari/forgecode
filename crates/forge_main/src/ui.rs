@@ -836,6 +836,11 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 self.handle_conversation_command(conversation_group).await?;
                 return Ok(());
             }
+            TopLevelCommand::Sessions(_) => {
+                return Err(anyhow::anyhow!(
+                    "HeliosLite session import is not wired in this build"
+                ));
+            }
             TopLevelCommand::Suggest { prompt } => {
                 self.on_cmd(UserPrompt::from(prompt)).await?;
                 return Ok(());
