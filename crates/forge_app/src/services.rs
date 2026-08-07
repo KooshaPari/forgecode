@@ -6,8 +6,8 @@ use derive_setters::Setters;
 use forge_domain::{
     AgentId, AnyProvider, Attachment, AuthContextRequest, AuthContextResponse, AuthMethod,
     ChatCompletionMessage, CommandOutput, Context, Conversation, ConversationId,
-    ConversationSummary, File, FileInfo, FileStatus, ForgeImportReport, Image, McpConfig,
-    McpServers, Model, ModelId,
+    ConversationSummary, File, FileInfo, FileStatus, ForgeForgetOptions, ForgeForgetReport,
+    ForgeImportReport, Image, McpConfig, McpServers, Model, ModelId,
     Node, Provider, ProviderId, ResultStream, Scope, SearchParams, SyncProgress, SyntaxError,
     Template, ToolCallFull, ToolOutput, WorkspaceAuth, WorkspaceId, WorkspaceInfo,
 };
@@ -398,6 +398,22 @@ pub trait ConversationService: Send + Sync {
 
     /// Aggregate DB stats for `heliosdoctor --verbose`.
     async fn database_stats(&self) -> anyhow::Result<forge_domain::HeliosdoctorDbStats>;
+
+    /// Atomic `~/.forge` → `~/.helioslite` data-dir move.
+    ///
+    /// See `ConversationRepository::migrate_data_dir` for full semantics.
+    async fn migrate_data_dir(
+        &self,
+        options: &forge_domain::MigrateOptions,
+    ) -> anyhow::Result<forge_domain::ForgeMigrateReport>;
+
+    /// Remove conversations matching the given filter.
+    ///
+    /// See `ConversationRepository::forget_conversations` for full semantics.
+    async fn forget_conversations(
+        &self,
+        options: &ForgeForgetOptions,
+    ) -> anyhow::Result<ForgeForgetReport>;
 }
 
 #[async_trait::async_trait]
@@ -906,6 +922,22 @@ impl<I: Services> ConversationService for I {
 
     async fn database_stats(&self) -> anyhow::Result<forge_domain::HeliosdoctorDbStats> {
         self.conversation_service().database_stats().await
+    }
+
+    async fn migrate_data_dir(
+        &self,
+        options: &forge_domain::MigrateOptions,
+    ) -> anyhow::Result<forge_domain::ForgeMigrateReport> {
+        self.conversation_service()
+            .migrate_data_dir(options)
+            .await
+    }
+
+    async fn forget_conversations(
+        &self,
+        options: &ForgeForgetOptions,
+    ) -> anyhow::Result<ForgeForgetReport> {
+        self.conversation_service().forget_conversations(options).await
     }
 }
 #[async_trait::async_trait]

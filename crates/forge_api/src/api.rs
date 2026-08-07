@@ -389,4 +389,16 @@ pub trait API: Sync + Send {
     /// Same as `heliosdoctor`, but with database statistics populated when
     /// `verbose` is `true`.
     async fn heliosdoctor_verbose(&self, verbose: bool) -> Result<HeliosdoctorInfo>;
+
+    /// Atomically migrate the legacy data directory to the canonical
+    /// location. For `helioslite`: `~/.forge` -> `~/.helioslite`. For
+    /// `forge`: `~/forge` -> `~/.forge`.
+    async fn migrate_data_dir(
+        &self,
+        options: &forge_domain::MigrateOptions,
+    ) -> Result<forge_domain::ForgeMigrateReport>;
+
+    /// Delete conversations matching the given filter. Idempotent and safe
+    /// to run while forge is otherwise idle.
+    async fn forget_conversations(&self, options: &ForgeForgetOptions) -> Result<ForgeForgetReport>;
 }

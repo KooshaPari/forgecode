@@ -4,7 +4,11 @@ use std::sync::Arc;
 use anyhow::Result;
 use forge_app::ConversationService;
 use forge_app::domain::{Conversation, ConversationId, ConversationSummary};
-use forge_domain::{ConversationRepository, ForgeImportReport};
+use forge_domain::{
+    ConversationRepository, ForgeExportOptions, ForgeExportReport, ForgeForgetOptions,
+    ForgeForgetReport, ForgeImportOptions, ForgeImportReport, ForgeMigrateReport,
+    HeliosdoctorDbStats,
+};
 
 /// Service for managing conversations, including creation, retrieval, and
 /// updates
@@ -177,5 +181,47 @@ impl<S: ConversationRepository> ConversationService for ForgeConversationService
 
     async fn import_forge_db(&self, source: PathBuf) -> Result<ForgeImportReport> {
         self.conversation_repository.import_forge_db(source).await
+    }
+
+    async fn import_forge_db_with_options(
+        &self,
+        source: PathBuf,
+        options: &ForgeImportOptions,
+    ) -> Result<ForgeImportReport> {
+        self.conversation_repository
+            .import_forge_db_with_options(source, options)
+            .await
+    }
+
+    async fn export_forge_db(
+        &self,
+        destination: PathBuf,
+        options: &ForgeExportOptions,
+    ) -> Result<ForgeExportReport> {
+        self.conversation_repository
+            .export_forge_db(destination, options)
+            .await
+    }
+
+    async fn database_stats(&self) -> Result<HeliosdoctorDbStats> {
+        self.conversation_repository.database_stats().await
+    }
+
+    async fn migrate_data_dir(
+        &self,
+        options: &forge_domain::MigrateOptions,
+    ) -> Result<ForgeMigrateReport> {
+        self.conversation_repository
+            .migrate_data_dir(options)
+            .await
+    }
+
+    async fn forget_conversations(
+        &self,
+        options: &ForgeForgetOptions,
+    ) -> Result<ForgeForgetReport> {
+        self.conversation_repository
+            .forget_conversations(options)
+            .await
     }
 }

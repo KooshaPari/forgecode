@@ -317,8 +317,13 @@ impl<F: Send + Sync> ConversationRepository for ForgeRepo<F> {
             .await
     }
 
-    async fn migrate_data_dir(&self) -> anyhow::Result<forge_domain::ForgeMigrateReport> {
-        self.conversation_repository.migrate_data_dir().await
+    async fn migrate_data_dir(
+        &self,
+        options: &forge_domain::MigrateOptions,
+    ) -> anyhow::Result<forge_domain::ForgeMigrateReport> {
+        self.conversation_repository
+            .migrate_data_dir(options)
+            .await
     }
 }
 

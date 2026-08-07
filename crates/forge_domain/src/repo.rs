@@ -166,6 +166,15 @@ pub struct ForgeForgetReport {
     pub dry_run: bool,
 }
 
+/// Options that tune [`ConversationRepository::migrate_data_dir`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MigrateOptions {
+    /// When set, the migration is computed but no files are moved or
+    /// renamed. The returned [`ForgeMigrateReport`] describes what
+    /// *would* have happened.
+    pub dry_run: bool,
+}
+
 /// Outcome of `migrate_data_dir`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ForgeMigrateReport {
@@ -184,6 +193,9 @@ pub struct ForgeMigrateReport {
     /// `~/.forge.migrated-YYYYMMDDHHMMSS`. The new path is recorded here.
     pub renamed_legacy_to: Option<PathBuf>,
 }
+
+/// Alias used by the CLI layer; canonical name is `ForgeMigrateReport`.
+pub type MigrateReport = ForgeMigrateReport;
 
 /// Repository for managing file snapshots
 ///
@@ -661,7 +673,7 @@ pub trait ConversationRepository: Send + Sync {
     /// # Errors
     /// Returns an error if the source DB is unreadable, the copy fails,
     /// or the post-copy validation fails.
-    async fn migrate_data_dir(&self) -> Result<ForgeMigrateReport>;
+    async fn migrate_data_dir(&self, options: &MigrateOptions) -> Result<ForgeMigrateReport>;
 }
 
 /// Environment diagnostics produced by `heliosdoctor`.

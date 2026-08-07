@@ -1052,7 +1052,10 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 self.spinner.start(Some("Diagnosing"))?;
                 let info = self.api.heliosdoctor_verbose(args.verbose).await?;
                 self.spinner.stop(None)?;
-                if args.porcelain {
+                if args.json {
+                    let json = serde_json::to_string_pretty(&info)?;
+                    self.writeln(json)?;
+                } else if args.porcelain {
                     let db_stats = info.db_stats.as_ref();
                     let mut line = format!(
                         "version={}\nbinary={}\nbase_path={}\ndb_path={}\nupdater_repo={}\nupdater_binary={}\nconfig_source={}",
@@ -1147,11 +1150,11 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             }
             TopLevelCommand::Export(export_group) => {
                 match export_group.command {
-                    ExportSubcommand::Forge { db, dry_run } => {
+                    ExportSubcommand::Forge { db, dry_run, format, include_agent } => {
                         let options = ForgeExportOptions {
                             dry_run,
-                            format: ForgeExportFormat::Sqlite,
-                            include_agent: false,
+                            format: format.into(),
+                            include_agent,
                         };
                         self.spinner.start(Some(if dry_run { "Scanning (dry-run)" } else { "Exporting" }))?;
                         let report = self.api.export_forge_db(db, &options).await?;
@@ -1167,6 +1170,66 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                         ))?;
                     }
                 }
+                return Ok(());
+            }
+            TopLevelCommand::Migrate(args) => {
+                self.spinner.start(Some(if args.dry_run { "Scanning migration" } else { "Migrating" }))?;
+                let options = forge_domain::MigrateOptions {
+                    dry_run: args.dry_run,
+                };
+                let report = self.api.migrate_data_dir(&options).await?;
+                self.spinner.stop(None)?;
+                let prefix = if args.dry_run { "migrate (dry-run)" } else { "migrate" };
+                self.writeln(format!(
+                    "{} complete: source={} destination={} outcome={} bytes_copied={} conversations_verified={} renamed_legacy_to={}",
+                    prefix,
+                    report.source_path.display(),
+                    report.destination_path.display(),
+                    report.outcome,
+                    report.bytes_copied,
+                    report.conversations_verified,
+                    report.renamed_legacy_to.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string())
+                ))?;
+                return Ok(());
+            }
+            TopLevelCommand::Forget(args) => {
+                let ids: Vec<forge_domain::ConversationId> = args
+                    .ids
+                    .iter()
+                    .filter_map(|raw| match forge_domain::ConversationId::parse(raw) {
+                        Ok(id) => Some(id),
+                        Err(err) => {
+                            self.writeln_title(TitleFormat::error(format!(
+                                "Invalid id {raw:?}: {err}"
+                            )))
+                            .ok()?;
+                            None
+                        }
+                    })
+                    .collect();
+                if ids.is_empty() && args.source.is_none() && args.older_than_secs.is_none() {
+                    self.writeln_title(TitleFormat::error(
+                        "must specify at least one of --ids, --source, --older-than-secs",
+                    ))?;
+                    return Ok(());
+                }
+                let options = forge_domain::ForgeForgetOptions {
+                    ids,
+                    source: args.source.clone(),
+                    older_than_secs: args.older_than_secs,
+                    dry_run: args.dry_run,
+                };
+                self.spinner.start(Some(if args.dry_run { "Scanning forget" } else { "Deleting" }))?;
+                let report = self.api.forget_conversations(&options).await?;
+                self.spinner.stop(None)?;
+                let prefix = if args.dry_run { "forget (dry-run)" } else { "forget" };
+                self.writeln(format!(
+                    "{} complete: {} matched, {} deleted (dry_run={})",
+                    prefix,
+                    report.matched,
+                    report.deleted,
+                    report.dry_run
+                ))?;
                 return Ok(());
             }
         }

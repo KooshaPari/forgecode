@@ -1129,12 +1129,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
             #[derive(diesel::QueryableByName)]
             struct IntegrityRow {
                 #[diesel(sql_type = Nullable<Text>)]
-                result: Option<String>,
+                integrity_check: Option<String>,
             }
             let integrity = match diesel::sql_query("PRAGMA integrity_check")
                 .get_result::<IntegrityRow>(connection)
             {
-                Ok(row) => row.result.unwrap_or_else(|| "ok".to_string()),
+                Ok(row) => row.integrity_check.unwrap_or_else(|| "ok".to_string()),
                 Err(error) => format!("error: {}", error),
             };
 
@@ -1228,7 +1228,11 @@ impl ConversationRepository for ConversationRepositoryImpl {
         .await
     }
 
-    async fn migrate_data_dir(&self) -> anyhow::Result<forge_domain::ForgeMigrateReport> {
+    async fn migrate_data_dir(
+        &self,
+        options: &forge_domain::MigrateOptions,
+    ) -> anyhow::Result<forge_domain::ForgeMigrateReport> {
+        let dry_run = options.dry_run;
         let db_path = self.pool.database_path().to_path_buf();
         let source_dir = match db_path.parent() {
             Some(p) => p.to_path_buf(),
@@ -1303,8 +1307,14 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| ".forge.db".to_string());
             let tmp = destination_dir.join(format!(".{}.tmp", fname));
-            copy_with_wal(&source_db, &tmp)?;
-            tmp
+            if dry_run {
+                // In dry-run mode, skip the actual copy and use the source as a
+                // stand-in for the validation query.
+                source_db.clone()
+            } else {
+                copy_with_wal(&source_db, &tmp)?;
+                tmp
+            }
         };
 
         // Validate the copy by opening it with a one-off diesel connection.
@@ -1335,41 +1345,45 @@ impl ConversationRepository for ConversationRepositoryImpl {
         };
 
         // Atomic rename into place.
-        if destination_db.exists() {
-            let _ = std::fs::remove_file(&destination_db);
-        }
-        std::fs::rename(&tmp_dst, &destination_db)?;
-        // WAL/SHM siblings were copied to the tmp name; move them too.
-        for ext in ["-wal", "-shm", "-journal"] {
-            let fname = destination_db
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| ".forge.db".to_string());
-            let tmp = destination_dir.join(format!(".{}.tmp{}", fname, ext));
-            if tmp.exists() {
-                let dst = destination_dir.join(format!("{}{}", fname, ext));
-                let _ = std::fs::rename(&tmp, &dst);
+        if !dry_run {
+            if destination_db.exists() {
+                let _ = std::fs::remove_file(&destination_db);
+            }
+            std::fs::rename(&tmp_dst, &destination_db)?;
+            // WAL/SHM siblings were copied to the tmp name; move them too.
+            for ext in ["-wal", "-shm", "-journal"] {
+                let fname = destination_db
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| ".forge.db".to_string());
+                let tmp = destination_dir.join(format!(".{}.tmp{}", fname, ext));
+                if tmp.exists() {
+                    let dst = destination_dir.join(format!("{}{}", fname, ext));
+                    let _ = std::fs::rename(&tmp, &dst);
+                }
             }
         }
 
         report.conversations_verified = db_count;
 
         // Rename the legacy directory aside so the user can roll back.
-        let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
-        let renamed = source_dir.with_file_name(format!(
-            "{}.migrated-{}",
-            source_dir_name, timestamp
-        ));
-        if let Err(e) = std::fs::rename(&source_dir, &renamed) {
-            // Non-fatal: the copy succeeded; the legacy rename is a
-            // hint, not a requirement.
-            eprintln!(
-                "migrate: legacy directory could not be renamed ({}): {}",
-                renamed.display(),
-                e
-            );
-        } else {
-            report.renamed_legacy_to = Some(renamed);
+        if !dry_run {
+            let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
+            let renamed = source_dir.with_file_name(format!(
+                "{}.migrated-{}",
+                source_dir_name, timestamp
+            ));
+            if let Err(e) = std::fs::rename(&source_dir, &renamed) {
+                // Non-fatal: the copy succeeded; the legacy rename is a
+                // hint, not a requirement.
+                eprintln!(
+                    "migrate: legacy directory could not be renamed ({}): {}",
+                    renamed.display(),
+                    e
+                );
+            } else {
+                report.renamed_legacy_to = Some(renamed);
+            }
         }
 
         Ok(report)
