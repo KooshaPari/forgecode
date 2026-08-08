@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -136,6 +137,23 @@ pub struct HeliosdoctorDbStats {
     pub agent_initiated_rows: u64,
     /// `PRAGMA integrity_check` result (`"ok"` when healthy).
     pub integrity_check: String,
+    /// Whether the legacy DB was successfully ATTACHed for read-fallback
+    /// (only meaningful when split-DB is active).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub legacy_attached: Option<bool>,
+    /// Write-side DB path (the file the current binary writes to).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub write_db_path: Option<String>,
+    /// Legacy read-side DB path (ATTACHed read-only when present).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub legacy_db_path: Option<String>,
+    /// Per-table row counts when split-DB is active.
+    /// `tables["conversations"] = (write_count, legacy_count)`, etc.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub tables: BTreeMap<String, (Option<i64>, Option<i64>)>,
+    /// Error string when stats collection failed (kept for the operator).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub error: Option<String>,
 }
 
 /// Filter for `forget_conversations`. At least one selector must be set.
@@ -695,6 +713,14 @@ pub struct HeliosdoctorInfo {
     /// health, agent fanout, oversized contexts, and a DB integrity check.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub db_stats: Option<HeliosdoctorDbStats>,
+    /// Write-side DB path when split-DB is active. `None` when both paths
+    /// resolve to the same file (the historical single-DB layout).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub write_db_path: Option<PathBuf>,
+    /// Legacy read-side DB path when split-DB is active. `None` when the
+    /// operator hasn't set `FORGE_LEGACY_DB_PATH` / no legacy file exists.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub legacy_db_path: Option<PathBuf>,
 }
 
 #[async_trait::async_trait]

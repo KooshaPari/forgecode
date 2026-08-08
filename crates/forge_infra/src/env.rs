@@ -4,8 +4,37 @@ use std::sync::Arc;
 
 use forge_app::EnvironmentInfra;
 use forge_config::{ConfigReader, ForgeConfig, ModelConfig};
-use forge_domain::{ConfigOperation, Environment};
+use forge_domain::{ConfigOperation, Environment, HeliosdoctorDbStats};
 use tracing::debug;
+
+/// Returns the absolute path to the file the fork writes conversations into.
+///
+/// Mirrors [`forge_domain::Environment::write_database_path`] but resolves
+/// `base_path` from [`ConfigReader`] so callers that don't have a full
+/// `Environment` (e.g. diagnostic helpers) can still locate the file.
+fn database_write_path() -> PathBuf {
+    if let Ok(path) = std::env::var("FORGE_WRITE_DB_PATH") {
+        return PathBuf::from(path);
+    }
+    let base_path = ConfigReader::base_path();
+    let write_path = base_path.join(".forge.writes.db");
+    let legacy_path = base_path.join(".forge.db");
+    if write_path == legacy_path {
+        base_path.join(".forge.writes.db.new")
+    } else {
+        write_path
+    }
+}
+
+/// Returns the path to the legacy `.forge.db` file (or whatever the user
+/// pointed `FORGE_LEGACY_DB_PATH` at). Returns `None` when no legacy file
+/// is configured.
+fn database_legacy_read_path() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("FORGE_LEGACY_DB_PATH") {
+        return Some(PathBuf::from(path));
+    }
+    Some(ConfigReader::base_path().join(".forge.db"))
+}
 
 /// Builds a [`forge_domain::Environment`] from runtime context only.
 ///
@@ -153,6 +182,99 @@ impl EnvironmentInfra for ForgeEnvironmentInfra {
 
         Ok(())
     }
+
+    fn database_stats(&self) -> impl std::future::Future<Output = anyhow::Result<HeliosdoctorDbStats>> + Send {
+        let stats = compute_database_stats();
+        async move { Ok(stats) }
+    }
+}
+
+/// Computes live database row counts from the write DB (and the legacy DB if
+/// it still exists and is reachable).
+///
+/// ATTACHes the legacy DB at `legacy_path` to the write DB at `write_path`,
+/// then queries both via a UNION ALL so legacy rows are still visible from
+/// `/conversations` even though the write path is the new file.
+fn compute_database_stats() -> HeliosdoctorDbStats {
+    use diesel::Connection;
+    use diesel::sqlite::SqliteConnection;
+
+    let write_path = database_write_path();
+    let legacy_path = database_legacy_read_path();
+
+    let mut stats = HeliosdoctorDbStats::default();
+    stats.write_db_path = Some(write_path.to_string_lossy().to_string());
+    stats.legacy_db_path = legacy_path.as_ref().map(|p| p.to_string_lossy().to_string());
+
+    let mut conn = match SqliteConnection::establish(write_path.to_string_lossy().as_ref()) {
+        Ok(c) => c,
+        Err(err) => {
+            stats.error = Some(format!("open write db: {err}"));
+            return stats;
+        }
+    };
+
+    if let Some(legacy) = legacy_path.as_ref() {
+        if legacy.exists() && legacy != &write_path {
+            // ATTACH with read-only so we never accidentally write into legacy
+            let escaped = legacy.to_string_lossy().replace('\'', "''");
+            let attach_sql = format!("ATTACH DATABASE '{}' AS legacy_read (READONLY)", escaped);
+            if let Err(err) = diesel::connection::SimpleConnection::batch_execute(
+                &mut conn,
+                &attach_sql,
+            ) {
+                stats.legacy_attached = Some(false);
+                stats.error = Some(format!("attach legacy: {err}"));
+            } else {
+                stats.legacy_attached = Some(true);
+            }
+        }
+    }
+
+    // Count rows from write DB + legacy DB (when attached) for the four tables
+    // most often affected by legacy compression/roundtrip damage.
+    for (label, write_table, legacy_table) in [
+        ("conversations", "conversations", "legacy_read.conversations"),
+        ("messages", "messages", "legacy_read.messages"),
+        ("context", "context_compressions", "legacy_read.context_compressions"),
+        ("checkpoints", "checkpoints", "legacy_read.checkpoints"),
+    ] {
+        let legacy_count = if stats.legacy_attached == Some(true) {
+            count_table(&mut conn, legacy_table)
+        } else {
+            None
+        };
+        let write_count = count_table(&mut conn, write_table);
+        stats.tables.insert(label.to_string(), (write_count, legacy_count));
+    }
+
+    stats
+}
+
+/// Counts rows in `table` on `conn`. Returns `None` if the table doesn't
+/// exist or the query fails.
+///
+/// `table` must contain only `A-Za-z0-9_.` to prevent SQL injection.
+fn count_table(
+    conn: &mut diesel::sqlite::SqliteConnection,
+    table: &str,
+) -> Option<i64> {
+    use diesel::QueryableByName;
+    use diesel::RunQueryDsl;
+    use diesel::sql_types::BigInt;
+
+    if !table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') {
+        return None;
+    }
+
+    #[derive(QueryableByName)]
+    struct Row {
+        #[diesel(sql_type = BigInt)]
+        n: i64,
+    }
+
+    let sql = format!("SELECT COUNT(*) AS n FROM {}", table);
+    diesel::sql_query(sql).get_result::<Row>(conn).ok().map(|r| r.n)
 }
 
 #[cfg(test)]

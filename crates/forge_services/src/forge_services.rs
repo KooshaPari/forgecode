@@ -383,4 +383,15 @@ impl<
     fn get_env_vars(&self) -> std::collections::BTreeMap<String, String> {
         self.infra.get_env_vars()
     }
+
+    fn database_stats(
+        &self,
+    ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
+    {
+        // Forward via the `ConversationRepository` impl on `F` because
+        // `EnvironmentInfra::database_stats` and
+        // `ConversationRepository::database_stats` share the same name; an
+        // unqualified call hits the multiple-applicable-items error.
+        <F as ConversationRepository>::database_stats(&*self.infra)
+    }
 }

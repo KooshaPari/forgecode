@@ -11,7 +11,7 @@ use forge_domain::{
 use crate::conversation::conversation_record::{
     ContextRecord, ConversationRecord, ConversationRecordLite, MetricsRecord,
 };
-use crate::database::schema::conversations;
+use crate::database::schema::{conversations, conversations_all};
 use crate::database::{DatabasePool, PooledSqliteConnection};
 
 /// Lightweight row type for FTS5 `snippet()` results. The query returns
@@ -595,8 +595,8 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 // a tool call (i.e. last compaction point heuristic) and truncate
                 // the context JSON to that prefix. If no tool call is found,
                 // fall back to clearing context to the most recent user message.
-                let record: Option<ConversationRecord> = conversations::table
-                    .filter(conversations::conversation_id.eq(&conversation_id_str))
+                let record: Option<ConversationRecord> = conversations_all::table
+                    .filter(conversations_all::conversation_id.eq(&conversation_id_str))
                     .first(connection)
                     .optional()?;
 
@@ -620,8 +620,8 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 .execute(connection)?;
 
                 // Re-read the updated record so we can return it.
-                let updated: Option<ConversationRecord> = conversations::table
-                    .filter(conversations::conversation_id.eq(&conversation_id_str))
+                let updated: Option<ConversationRecord> = conversations_all::table
+                    .filter(conversations_all::conversation_id.eq(&conversation_id_str))
                     .first(connection)
                     .optional()?;
                 Ok(updated.and_then(|r| Conversation::try_from(r).ok()))
@@ -640,13 +640,13 @@ impl ConversationRepository for ConversationRepositoryImpl {
             use diesel::dsl::sql;
 
             let workspace_id = wid.id() as i64;
-            let mut query = conversations::table
-                .filter(conversations::workspace_id.eq(&workspace_id))
+            let mut query = conversations_all::table
+                .filter(conversations_all::workspace_id.eq(&workspace_id))
                 .filter(sql::<diesel::sql_types::Bool>(
                     "context IS NOT NULL OR is_compressed = 1",
                 ))
-                .filter(conversations::cwd.eq(&cwd))
-                .order(conversations::updated_at.desc())
+                .filter(conversations_all::cwd.eq(&cwd))
+                .order(conversations_all::updated_at.desc())
                 .into_boxed();
 
             if let Some(limit_value) = limit {
@@ -679,8 +679,8 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
         self.run_with_connection(move |connection, _wid| {
             // Read current state to validate transition
-            let current_record: Option<ConversationRecord> = conversations::table
-                .filter(conversations::conversation_id.eq(&conversation_id))
+            let current_record: Option<ConversationRecord> = conversations_all::table
+                .filter(conversations_all::conversation_id.eq(&conversation_id))
                 .first(connection)
                 .optional()?;
 
@@ -725,8 +725,9 @@ impl ConversationRepository for ConversationRepositoryImpl {
             let limit = limit as i64;
 
             // Use raw SQL to order by context blob size (descending) to prioritize
-            // largest contexts first for maximum space reclamation
-            let sql = "SELECT c.* FROM conversations c \
+            // largest contexts first for maximum space reclamation.
+            // Reads from `conversations_all` so legacy rows are also evaluated.
+            let sql = "SELECT c.* FROM conversations_all c \
                  WHERE c.workspace_id = ? \
                    AND c.intent_state = 'verified' \
                    AND (c.context IS NOT NULL OR c.is_compressed = 1) \
@@ -751,9 +752,10 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let conversation_id = conversation_id.into_string();
 
         self.run_with_connection(move |connection, _wid| {
-            // Read current state to enforce invariant: only prune from 'verified'
-            let current_record: Option<ConversationRecord> = conversations::table
-                .filter(conversations::conversation_id.eq(&conversation_id))
+            // Read current state to enforce invariant: only prune from 'verified'.
+            // Reads from `conversations_all` so legacy rows are also covered.
+            let current_record: Option<ConversationRecord> = conversations_all::table
+                .filter(conversations_all::conversation_id.eq(&conversation_id))
                 .first(connection)
                 .optional()?;
 
@@ -1131,13 +1133,17 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 #[diesel(sql_type = Nullable<Text>)]
                 integrity_check: Option<String>,
             }
-            let integrity = match diesel::sql_query("PRAGMA integrity_check")
+            let integrity_check = match diesel::sql_query("PRAGMA integrity_check")
                 .get_result::<IntegrityRow>(connection)
             {
                 Ok(row) => row.integrity_check.unwrap_or_else(|| "ok".to_string()),
                 Err(error) => format!("error: {}", error),
             };
 
+            // `ConversationRepository::database_stats` only sees the
+            // single-DB view (no ATTACH); the richer cross-DB count is
+            // produced by `EnvironmentInfra::compute_database_stats` in
+            // `forge_infra::env` and surfaced through `heliosdoctor --verbose`.
             Ok(forge_domain::HeliosdoctorDbStats {
                 total_conversations: counts.total.max(0) as u64,
                 compressed_rows: counts.compressed.max(0) as u64,
@@ -1145,7 +1151,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 empty_rows: counts.empty.max(0) as u64,
                 oversized_rows: counts.oversized.max(0) as u64,
                 agent_initiated_rows: counts.agent_initiated.max(0) as u64,
-                integrity_check: integrity,
+                integrity_check,
+                legacy_attached: None,
+                write_db_path: None,
+                legacy_db_path: None,
+                tables: Default::default(),
+                error: None,
             })
         })
         .await
@@ -1409,10 +1420,11 @@ fn import_rows(
             continue;
         };
 
-        // Idempotency: skip conversations that already exist in this
-        // repository instead of overwriting them.
-        let existing: i64 = conversations::table
-            .filter(conversations::conversation_id.eq(&row.conversation_id))
+        // Idempotency: skip conversations that already exist in either the
+        // write DB or the legacy DB (via `conversations_all`) instead of
+        // overwriting them.
+        let existing: i64 = conversations_all::table
+            .filter(conversations_all::conversation_id.eq(&row.conversation_id))
             .count()
             .get_result(connection)
             .unwrap_or(0);

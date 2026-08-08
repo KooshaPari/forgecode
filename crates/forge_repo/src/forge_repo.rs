@@ -63,8 +63,23 @@ impl<
     pub fn new(infra: Arc<F>) -> Self {
         let env = infra.get_environment();
         let file_snapshot_service = Arc::new(ForgeFileSnapshotService::new(env.clone()));
-        let db_pool =
-            Arc::new(DatabasePool::try_from(PoolConfig::new(env.database_path())).unwrap());
+
+        // Split-DB: primary DB is the write path; legacy DB is the historical
+        // path, which the connection customizer ATTACHes read-only on every
+        // acquire. When the two paths differ, the read-side `conversations_all`
+        // TEMP VIEW exposes the UNION of both tables. When they are the same
+        // (e.g. fresh install) the legacy attachment is a no-op.
+        let write_path = env.write_database_path();
+        let legacy_path = env.database_path();
+        let legacy_for_pool = if legacy_path != write_path
+            && legacy_path.exists()
+        {
+            Some(legacy_path.clone())
+        } else {
+            None
+        };
+        let pool_config = PoolConfig::new(write_path).with_legacy_database_path(legacy_for_pool);
+        let db_pool = Arc::new(DatabasePool::try_from(pool_config).unwrap());
         let conversation_repository = Arc::new(ConversationRepositoryImpl::new(
             db_pool.clone(),
             env.workspace_hash(),

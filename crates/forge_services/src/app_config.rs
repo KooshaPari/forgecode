@@ -82,7 +82,15 @@ impl<F: ProviderRepository + EnvironmentInfra<Config = forge_config::ForgeConfig
         // infra's environment: this is the canonical resolution used by the
         // Gate 5 data-dir split and is identical across all binaries.
         let base_path = forge_config::ConfigReader::base_path();
-        let db_path = base_path.join(".forge.db");
+        let legacy_db_path = base_path.join(".forge.db");
+        let write_db_path = if let Ok(path) = std::env::var("FORGE_WRITE_DB_PATH") {
+            std::path::PathBuf::from(path)
+        } else {
+            base_path.join(".forge.writes.db")
+        };
+        // Heliosdoctor reports the path the fork actively writes to so the
+        // operator can confirm the write/read split is in effect.
+        let db_path = write_db_path.clone();
         let binary_stem = forge_config::ConfigReader::binary_prefix().to_string();
         let (updater_repo, updater_binary) = if binary_stem == "helioslite" {
             (
@@ -130,6 +138,16 @@ impl<F: ProviderRepository + EnvironmentInfra<Config = forge_config::ForgeConfig
             updater_binary,
             config_source: config_source.to_string(),
             db_stats,
+            // Surface both the write and legacy read paths so the operator
+            // can verify the fork is using a separate DB. The fields are
+            // optional in the domain model so older binaries that don't
+            // know about the split still parse this struct cleanly.
+            legacy_db_path: if legacy_db_path == write_db_path {
+                None
+            } else {
+                Some(legacy_db_path)
+            },
+            write_db_path: Some(write_db_path),
         })
     }
 }
@@ -280,6 +298,13 @@ mod tests {
 
         fn get_env_vars(&self) -> std::collections::BTreeMap<String, String> {
             std::collections::BTreeMap::new()
+        }
+
+        fn database_stats(
+            &self,
+        ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
+        {
+            async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
         }
     }
 

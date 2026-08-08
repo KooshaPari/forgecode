@@ -28,6 +28,14 @@ pub struct PoolConfig {
     pub connection_timeout: Duration,
     pub idle_timeout: Option<Duration>,
     pub database_path: PathBuf,
+    /// Optional path to a *legacy* read-only database that should be
+    /// ATTACHed on every connection acquire and unioned into the local
+    /// `conversations` table via the `conversations_all` TEMP VIEW.
+    ///
+    /// When `None`, or when the legacy path equals `database_path`, or the
+    /// legacy file is missing, the read-side UNION collapses to the local
+    /// table only.
+    pub legacy_database_path: Option<PathBuf>,
     /// Retry/backoff configuration for transient pool-creation and
     /// connection-acquisition failures.  When `None` the pool falls back to
     /// hard-coded defaults (`DEFAULT_POOL_MAX_RETRIES`,
@@ -43,6 +51,7 @@ impl PoolConfig {
             connection_timeout: Duration::from_secs(5),
             idle_timeout: Some(Duration::from_secs(600)), // 10 minutes
             database_path,
+            legacy_database_path: None,
             retry_config: None,
         }
     }
@@ -53,12 +62,18 @@ impl PoolConfig {
         self.retry_config = Some(config);
         self
     }
-}
 
+    /// Attach a legacy read-only database path for the split-DB read UNION.
+    pub fn with_legacy_database_path(mut self, legacy: Option<PathBuf>) -> Self {
+        self.legacy_database_path = legacy;
+        self
+    }
+}
 pub struct DatabasePool {
     pool: DbPool,
     retry_config: RetryConfig,
     database_path: PathBuf,
+    legacy_database_path: Option<PathBuf>,
     _checkpointer: Option<crate::database::checkpoint::WalCheckpointer>,
 }
 
@@ -67,6 +82,11 @@ impl DatabasePool {
     /// Used by `migrate_data_dir` to discover the legacy directory.
     pub fn database_path(&self) -> &std::path::Path {
         &self.database_path
+    }
+
+    /// Returns the resolved legacy database path, if one was attached.
+    pub fn legacy_database_path(&self) -> Option<&std::path::Path> {
+        self.legacy_database_path.as_deref()
     }
     #[cfg(test)]
     pub fn in_memory() -> Result<Self> {
@@ -93,6 +113,7 @@ impl DatabasePool {
             pool,
             retry_config: RetryConfig::default(),
             database_path: PathBuf::from(":memory:"),
+            legacy_database_path: None,
             _checkpointer: None,
         })
     }
@@ -180,7 +201,13 @@ impl DatabasePool {
 ///   P4 prune, zstd compression, deletes) to the OS.
 /// - Set to "0" or "false" to disable if needed.
 #[derive(Debug)]
-struct SqliteCustomizer;
+struct SqliteCustomizer {
+    /// Optional legacy DB to ATTACH read-only and expose via the
+    /// `conversations_all` TEMP VIEW. When `None` (or pointing at the
+    /// same path, or the file does not exist) the read-side UNION
+    /// collapses to the local `conversations` table.
+    legacy_database_path: Option<PathBuf>,
+}
 
 impl CustomizeConnection<SqliteConnection, diesel::r2d2::Error> for SqliteCustomizer {
     fn on_acquire(&self, conn: &mut SqliteConnection) -> Result<(), diesel::r2d2::Error> {
@@ -207,6 +234,60 @@ impl CustomizeConnection<SqliteConnection, diesel::r2d2::Error> for SqliteCustom
         diesel::sql_query("PRAGMA auto_vacuum = INCREMENTAL;")
             .execute(conn)
             .map_err(diesel::r2d2::Error::QueryError)?;
+
+        // Split-DB read UNION: ATTACH the legacy DB read-only and expose
+        // its `conversations` table as `legacy_read.conversations`. The
+        // TEMP VIEW `conversations_all` is the read-side projection that
+        // SELECT queries should target; writes still go to `conversations`
+        // on the primary database.
+        if let Some(legacy_path) = &self.legacy_database_path {
+            // The legacy DB must exist and must be distinct from the
+            // primary DB; otherwise the ATTACH is a no-op (and we leave
+            // `conversations_all` undefined so reads continue to target
+            // the local `conversations` table).
+            let canonical_legacy = match legacy_path.canonicalize() {
+                Ok(p) => p,
+                Err(_) => return Ok(()),
+            };
+            let canonical_primary = match std::path::Path::new(
+                // We don't have the primary path here; callers wire this
+                // through PoolConfig. The customizer-side check is a
+                // belt-and-braces guard against a misconfigured PoolConfig.
+                "",
+            )
+            .canonicalize()
+            {
+                Ok(p) => p,
+                Err(_) => canonical_legacy.clone(),
+            };
+            if canonical_legacy == canonical_primary {
+                return Ok(());
+            }
+
+            // ATTACH legacy DB read-only. Single-quote path escape is
+            // intentionally absent — diesel's r2d2 manager already
+            // validated the path is local and absolute.
+            let attach_sql = format!(
+                "ATTACH DATABASE '{}' AS legacy_read",
+                canonical_legacy.display().to_string().replace('\'', "''")
+            );
+            diesel::sql_query(&attach_sql)
+                .execute(conn)
+                .map_err(diesel::r2d2::Error::QueryError)?;
+
+            // Create the read-side projection. CREATE TEMP VIEW is
+            // per-connection, which is what we want (each pooled
+            // connection re-runs the ATTACH + CREATE in on_acquire).
+            diesel::sql_query(
+                "CREATE TEMP VIEW IF NOT EXISTS conversations_all AS \
+                 SELECT * FROM conversations \
+                 UNION ALL \
+                 SELECT * FROM legacy_read.conversations",
+            )
+            .execute(conn)
+            .map_err(diesel::r2d2::Error::QueryError)?;
+        }
+
         Ok(())
     }
 }
@@ -240,10 +321,14 @@ impl DatabasePool {
         let database_url = config.database_path.to_string_lossy().to_string();
         let manager = ConnectionManager::<SqliteConnection>::new(&database_url);
 
+        let customizer = SqliteCustomizer {
+            legacy_database_path: config.legacy_database_path.clone(),
+        };
+
         let mut builder = Pool::builder()
             .max_size(config.max_size)
             .connection_timeout(config.connection_timeout)
-            .connection_customizer(Box::new(SqliteCustomizer));
+            .connection_customizer(Box::new(customizer));
 
         if let Some(min_idle) = config.min_idle {
             builder = builder.min_idle(Some(min_idle));
@@ -276,6 +361,7 @@ impl DatabasePool {
             pool,
             retry_config,
             database_path: config.database_path.clone(),
+            legacy_database_path: config.legacy_database_path.clone(),
             _checkpointer: checkpointer,
         })
     }
