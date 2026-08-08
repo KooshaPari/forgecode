@@ -16,19 +16,13 @@ fn database_write_path() -> PathBuf {
     if let Ok(path) = std::env::var("FORGE_WRITE_DB_PATH") {
         return PathBuf::from(path);
     }
-    let base_path = ConfigReader::base_path();
-    let write_path = base_path.join(".forge.writes.db");
-    let legacy_path = base_path.join(".forge.db");
-    // Default: write to .forge.writes.db (split-DB). But for users with
-    // legacy data only and no writes.db yet, fall back to legacy so existing
-    // history stays visible + writable.
-    if write_path.exists() {
-        write_path
-    } else if legacy_path.exists() {
-        legacy_path
-    } else {
-        write_path
-    }
+    // Backward-compatible default: writes go to `.forge.db` (the legacy file)
+    // unless the user explicitly opts into the split-DB via FORGE_WRITE_DB_PATH.
+    // This mirrors `forge_domain::Environment::write_database_path()` so the
+    // infra stats helper and the pool always agree on the primary file.
+    // Deliberately NOT keyed on `write_path.exists()`: a stale/empty
+    // `.forge.writes.db` stub would otherwise shadow real legacy data.
+    ConfigReader::base_path().join(".forge.db")
 }
 
 /// Returns the path to the legacy `.forge.db` file (or whatever the user
