@@ -35,6 +35,9 @@ attacks on `cargo` dependencies (tracked separately via `cargo audit` / SBOM).
 A supporting surface is the **local daemon** `forge_dbd` (Unix domain socket at
 `~/.forge/.forge.db.sock`, SQLite store at `~/.forge/forge.db`); it is analyzed
 inline within S1/S2 (DoS) since it shares the credential-directory trust model.
+Client conversation storage is split by default: writes go to
+`~/.forge/.forge.writes.db` and reads union the legacy `~/.forge/.forge.db`
+via the `conversations_all` TEMP VIEW.
 
 ---
 

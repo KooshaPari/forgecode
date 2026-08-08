@@ -82,6 +82,11 @@ Shortcuts: `just build`, `just test`, `just lint`, `just fmt`, `just ci`
 - Secrets: credentials are stored locally in `~/.forge/.credentials.json`
   (`0o600`, gitignored). Never commit credentials; use env vars or the local
   store.
+- Storage (split-DB default): conversation writes go to
+  `~/.forge/.forge.writes.db`; reads union the legacy `~/.forge/.forge.db`
+  via the `conversations_all` TEMP VIEW (ATTACHed read-only by
+  `SqliteCustomizer`). Override the write target with `FORGE_WRITE_DB_PATH`
+  and the legacy read source with `FORGE_LEGACY_DB_PATH`.
 
 ## Questions
 

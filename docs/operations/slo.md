@@ -41,8 +41,10 @@ miss the target before it is treated as a regression.**
 
 `forge_dbd` is a **best-effort persistence accelerator** (conversation storage
 via SQLite at `~/.forge/forge.db`, Unix socket at `~/.forge/.forge.db.sock` —
-`crates/forge_dbd/src/main.rs:15-23`). forge is designed to degrade gracefully
-when the daemon is absent. The availability SLO applies only while the daemon is
+`crates/forge_dbd/src/main.rs:15-23`). Client-side conversation storage is
+split by default: writes land in `~/.forge/.forge.writes.db` and reads union
+the legacy `~/.forge/.forge.db` via the `conversations_all` TEMP VIEW. forge is
+designed to degrade gracefully when the daemon is absent. The availability SLO applies only while the daemon is
 *expected* to be running; a deliberately-disabled daemon does not consume the
 budget. A daemon that is *supposed* to be up but unreachable **does** (see the
 runbook for the "daemon down" procedure).

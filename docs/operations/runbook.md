@@ -13,6 +13,11 @@ Key local artifacts:
 - `~/.forge/forge.db` — SQLite conversation store (daemon).
 - `~/.forge/.forge.db.sock` — Unix domain socket for `forge_dbd`
   (`crates/forge_dbd/src/main.rs:15-23`).
+- `~/.forge/.forge.db` — legacy client conversation store (read side of the
+  split-DB union).
+- `~/.forge/.forge.writes.db` — client conversation write target (split-DB
+  default; reads union the legacy `.forge.db` via the `conversations_all`
+  TEMP VIEW).
 - `~/.forge/.credentials.json` — provider credentials (mode 0o600).
 - `~/.forge/.mcp-credentials.json` — MCP OAuth state (mode 0o600).
 - `.mcp.json` — MCP server configuration.
