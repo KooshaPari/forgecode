@@ -989,15 +989,20 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // JSON the official lineage would write. The row type is the
             // top-level `HeliosExportRow` defined below in this module.
             //
+            // Reads go through the `conversations_all` TEMP VIEW (installed
+            // by SqliteCustomizer on every pool connection acquire) so
+            // split-DB installs export legacy `.forge.db` rows too, not just
+            // the primary `.forge.writes.db`.
+            //
             // Agent-launched rows (`context.initiator = 'agent'`) are
             // excluded by default to match the TUI picker; the
             // `include_agent` flag re-includes them.
             let sql = if options.include_agent {
                 "SELECT conversation_id, title, context, context_zstd, created_at, \
-                 updated_at, metrics FROM conversations".to_string()
+                 updated_at, metrics FROM conversations_all".to_string()
             } else {
                 "SELECT conversation_id, title, context, context_zstd, created_at, \
-                 updated_at, metrics FROM conversations \
+                 updated_at, metrics FROM conversations_all \
                  WHERE COALESCE(json_extract(context, '$.initiator'), 'user') != 'agent' \
                     OR context IS NULL".to_string()
             };
@@ -1071,10 +1076,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
                     #[diesel(sql_type = Text)]
                     workspace_id: String,
                 }
-                let workspace_id = diesel::sql_query("SELECT workspace_id FROM conversations LIMIT 1")
-                    .get_result::<WorkspaceIdRow>(connection)
-                    .map(|row| row.workspace_id)
-                    .unwrap_or_else(|_| "imported".to_string());
+                let workspace_id = diesel::sql_query(
+                    "SELECT workspace_id FROM conversations_all LIMIT 1",
+                )
+                .get_result::<WorkspaceIdRow>(connection)
+                .map(|row| row.workspace_id)
+                .unwrap_or_else(|_| "imported".to_string());
 
                 for row in &rows {
                     let plain_context = match decompress_for_export(row) {
