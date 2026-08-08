@@ -222,9 +222,13 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
     if !only_legacy {
         if let Some(legacy) = legacy_path.as_ref() {
             if legacy.exists() && legacy != &write_path {
-                // ATTACH with read-only so we never accidentally write into legacy
+                // ATTACH the legacy DB read-only. The bundled SQLite does not
+                // accept a READ ONLY keyword here (both `READ ONLY` and
+                // `(READONLY)` fail), so use a plain ATTACH like the pool's
+                // SqliteCustomizer fallback. Read-only is enforced
+                // structurally: no code path ever writes to `legacy_read`.
                 let escaped = legacy.to_string_lossy().replace('\'', "''");
-                let attach_sql = format!("ATTACH DATABASE '{}' AS legacy_read (READONLY)", escaped);
+                let attach_sql = format!("ATTACH DATABASE '{}' AS legacy_read", escaped);
                 if let Err(err) = diesel::connection::SimpleConnection::batch_execute(
                     &mut conn,
                     &attach_sql,
