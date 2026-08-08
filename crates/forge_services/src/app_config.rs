@@ -83,14 +83,14 @@ impl<F: ProviderRepository + EnvironmentInfra<Config = forge_config::ForgeConfig
         // Gate 5 data-dir split and is identical across all binaries.
         let base_path = forge_config::ConfigReader::base_path();
         let legacy_db_path = base_path.join(".forge.db");
-        // Mirrors forge_domain::Environment::write_database_path: the split
-        // (".forge.writes.db") is strictly opt-in via FORGE_WRITE_DB_PATH.
-        // Without it, writes go to the legacy ".forge.db" so existing installs
-        // see zero change (a stale 0-byte stub must never shadow real data).
+        // Mirrors forge_domain::Environment::write_database_path: the fork
+        // writes to a separate ".forge.writes.db" by default while the read
+        // side unions in legacy ".forge.db". FORGE_WRITE_DB_PATH overrides
+        // the write target for callers that want a different file.
         let write_db_path = if let Ok(path) = std::env::var("FORGE_WRITE_DB_PATH") {
             std::path::PathBuf::from(path)
         } else {
-            base_path.join(".forge.db")
+            base_path.join(".forge.writes.db")
         };
         // Heliosdoctor reports the path the fork actively writes to so the
         // operator can confirm the write/read split is in effect.

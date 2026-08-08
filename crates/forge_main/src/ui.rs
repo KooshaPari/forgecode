@@ -19,8 +19,8 @@ use forge_app::{CommitResult, ToolResolver};
 use forge_config::{ForgeConfig, OutputMode, OutputSettings};
 use forge_display::MarkdownFormat;
 use forge_domain::{
-    AuthMethod, ChatResponseContent, ConsoleWriter, ContextMessage, ForgeExportFormat,
-    ForgeExportOptions, ForgeImportOptions, Role, TitleFormat, UserCommand,
+    AuthMethod, ChatResponseContent, ConsoleWriter, ContextMessage, ForgeExportOptions,
+    ForgeImportOptions, Role, TitleFormat, UserCommand,
 };
 use forge_fs::ForgeFS;
 use forge_select::{ForgeWidget, SelectRow};

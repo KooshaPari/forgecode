@@ -13,7 +13,7 @@ permissions:
 jobs:
   build-and-attest:
     name: Build and Attest (SLSA Build L2)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       id-token: write
@@ -76,6 +76,19 @@ jobs:
           EOF
           echo "=== Release artifacts ==="
           ls -la release-artifacts/
+
+      - name: Emit CycloneDX SBOMs
+        # Per-crate CycloneDX SBOMs regenerated on every release and shipped
+        # inside release-artifacts (uploaded + covered by the SLSA attestation
+        # subject-path below). Tool pinned to 0.5.9 to match the committed
+        # *.cdx.json provenance (cargo-cyclonedx 0.5.9). SOURCE_DATE_EPOCH is
+        # honored by cargo-cyclonedx for reproducible SBOM timestamps.
+        working-directory: ${{ env.CARGO_WORKDIR }}
+        run: |
+          set -euo pipefail
+          cargo install cargo-cyclonedx --version 0.5.9
+          SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" cargo cyclonedx --format json --all
+          find crates benchmarks -name "*.cdx.json" -exec cp --parents {} release-artifacts/ \;
 
       - name: Upload artifacts for provenance
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

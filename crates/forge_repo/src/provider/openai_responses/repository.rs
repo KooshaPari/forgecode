@@ -612,6 +612,13 @@ mod tests {
         ) -> anyhow::Result<()> {
             Ok(())
         }
+
+        fn database_stats(
+            &self,
+        ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
+        {
+            async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
+        }
     }
 
     /// Test fixture for creating a sample OpenAI Responses API response.

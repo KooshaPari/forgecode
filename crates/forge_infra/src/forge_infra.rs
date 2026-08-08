@@ -145,6 +145,13 @@ impl EnvironmentInfra for ForgeInfra {
     ) -> anyhow::Result<()> {
         self.config_infra.update_environment(ops).await
     }
+
+    fn database_stats(
+        &self,
+    ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
+    {
+        self.config_infra.database_stats()
+    }
 }
 
 #[async_trait::async_trait]

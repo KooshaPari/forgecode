@@ -1077,6 +1077,13 @@ mod env_tests {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect()
         }
+
+        fn database_stats(
+            &self,
+        ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
+        {
+            async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
+        }
     }
 
     #[async_trait::async_trait]
@@ -1847,6 +1854,13 @@ mod env_tests {
                     .iter()
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect()
+            }
+
+            fn database_stats(
+                &self,
+            ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
+            {
+                async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
             }
         }
 

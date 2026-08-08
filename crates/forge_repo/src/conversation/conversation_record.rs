@@ -1118,8 +1118,14 @@ impl ConversationRecord {
 ///
 /// Selects only metadata columns — no `context` / `context_zstd` blobs.
 /// Used by [`super::conversation_repo::ConversationRepositoryImpl::get_parent_conversations_lite`].
+///
+/// `table_name = conversations_all` so `as_select()` reads from the
+/// split-DB `conversations_all` view (TEMP VIEW installed by
+/// `SqliteCustomizer` on every connection acquire). The view unions
+/// the primary write DB with the legacy read-only DB, so picker
+/// queries see legacy rows transparently.
 #[derive(Debug, diesel::Queryable, diesel::Selectable)]
-#[diesel(table_name = crate::database::schema::conversations)]
+#[diesel(table_name = crate::database::schema::conversations_all)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub(super) struct ConversationRecordLite {
     pub conversation_id: String,

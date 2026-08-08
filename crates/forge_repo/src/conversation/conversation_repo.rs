@@ -153,8 +153,14 @@ impl ConversationRepository for ConversationRepositoryImpl {
     ) -> anyhow::Result<Option<Conversation>> {
         let conversation_id = *conversation_id;
         self.run_with_connection(move |connection, _wid| {
-            let record: Option<ConversationRecord> = conversations::table
-                .filter(conversations::conversation_id.eq(conversation_id.into_string()))
+            // Read from `conversations_all` so legacy rows are visible.
+            // We use explicit column selection (rather than `ConversationRecord::as_select()`)
+            // because `ConversationRecord::table_name = conversations` (it is also used
+            // for writes). The TEMP VIEW has identical column types so the SELECT … load
+            // works regardless.
+            let record: Option<ConversationRecord> = conversations_all::table
+                .filter(conversations_all::conversation_id.eq(conversation_id.into_string()))
+                .select(conversations_all::all_columns)
                 .first(connection)
                 .optional()?;
 
@@ -171,26 +177,26 @@ impl ConversationRepository for ConversationRepositoryImpl {
         limit: Option<usize>,
     ) -> anyhow::Result<Option<Vec<Conversation>>> {
         self.run_with_connection(move |connection, wid| {
-            use diesel::dsl::sql;
             use diesel::prelude::*;
 
             let workspace_id = wid.id() as i64;
-            // Filter for rows with context data: either plain context column OR compressed
-            // context_zstd Using raw SQL to express: context IS NOT NULL OR
-            // is_compressed = 1
-            let mut query = conversations::table
-                .filter(conversations::workspace_id.eq(&workspace_id))
-                .filter(sql::<diesel::sql_types::Bool>(
-                    "context IS NOT NULL OR is_compressed = 1",
-                ))
-                .order(conversations::updated_at.desc())
+            // Read from `conversations_all` so legacy rows are visible. The
+            // legacy DB has rows whose `context` and `context_zstd` columns
+            // are both NULL — those rows have titles + timestamps but no
+            // message history. We must not filter them out at the SQL layer
+            // or the picker will hide them.
+            let mut query = conversations_all::table
+                .filter(conversations_all::workspace_id.eq(&workspace_id))
+                .order(conversations_all::updated_at.desc())
                 .into_boxed();
 
             if let Some(limit_value) = limit {
                 query = query.limit(limit_value as i64);
             }
 
-            let records: Vec<ConversationRecord> = query.load(connection)?;
+            let records: Vec<ConversationRecord> = query
+                .select(conversations_all::all_columns)
+                .load(connection)?;
 
             if records.is_empty() {
                 return Ok(None);
@@ -205,16 +211,18 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
     async fn get_last_conversation(&self) -> anyhow::Result<Option<Conversation>> {
         self.run_with_connection(move |connection, wid| {
-            use diesel::dsl::sql;
             use diesel::prelude::*;
 
             let workspace_id = wid.id() as i64;
-            let record: Option<ConversationRecord> = conversations::table
-                .filter(conversations::workspace_id.eq(&workspace_id))
-                .filter(sql::<diesel::sql_types::Bool>(
-                    "context IS NOT NULL OR is_compressed = 1",
-                ))
-                .order(conversations::updated_at.desc())
+            // Read from `conversations_all` so legacy rows are visible. The
+            // legacy DB has rows whose `context` and `context_zstd` columns
+            // are both NULL — those rows have titles + timestamps but no
+            // message history. We must not filter them out at the SQL layer
+            // or the picker will hide them.
+            let record: Option<ConversationRecord> = conversations_all::table
+                .filter(conversations_all::workspace_id.eq(&workspace_id))
+                .order(conversations_all::updated_at.desc())
+                .select(conversations_all::all_columns)
                 .first(connection)
                 .optional()?;
             let conversation = match record {
@@ -248,16 +256,15 @@ impl ConversationRepository for ConversationRepositoryImpl {
     ) -> anyhow::Result<Option<Vec<Conversation>>> {
         let parent_id = parent_id.into_string();
         self.run_with_connection(move |connection, wid| {
-            use diesel::dsl::sql;
+            use diesel::prelude::*;
 
             let workspace_id = wid.id() as i64;
-            let records: Vec<ConversationRecord> = conversations::table
-                .filter(conversations::workspace_id.eq(&workspace_id))
-                .filter(conversations::parent_id.eq(&parent_id))
-                .filter(sql::<diesel::sql_types::Bool>(
-                    "context IS NOT NULL OR is_compressed = 1",
-                ))
-                .order(conversations::updated_at.desc())
+            // Read from `conversations_all` so legacy rows are visible.
+            let records: Vec<ConversationRecord> = conversations_all::table
+                .filter(conversations_all::workspace_id.eq(&workspace_id))
+                .filter(conversations_all::parent_id.eq(&parent_id))
+                .order(conversations_all::updated_at.desc())
+                .select(conversations_all::all_columns)
                 .load(connection)?;
 
             if records.is_empty() {
@@ -276,23 +283,23 @@ impl ConversationRepository for ConversationRepositoryImpl {
         limit: Option<usize>,
     ) -> anyhow::Result<Option<Vec<Conversation>>> {
         self.run_with_connection(move |connection, wid| {
-            use diesel::dsl::sql;
+            use diesel::prelude::*;
 
             let workspace_id = wid.id() as i64;
-            let mut query = conversations::table
-                .filter(conversations::workspace_id.eq(&workspace_id))
-                .filter(sql::<diesel::sql_types::Bool>(
-                    "context IS NOT NULL OR is_compressed = 1",
-                ))
-                .filter(conversations::parent_id.is_null())
-                .order(conversations::updated_at.desc())
+            // Read from `conversations_all` so legacy rows are visible.
+            let mut query = conversations_all::table
+                .filter(conversations_all::workspace_id.eq(&workspace_id))
+                .filter(conversations_all::parent_id.is_null())
+                .order(conversations_all::updated_at.desc())
                 .into_boxed();
 
             if let Some(limit_value) = limit {
                 query = query.limit(limit_value as i64);
             }
 
-            let records: Vec<ConversationRecord> = query.load(connection)?;
+            let records: Vec<ConversationRecord> = query
+                .select(conversations_all::all_columns)
+                .load(connection)?;
 
             if records.is_empty() {
                 return Ok(None);
@@ -313,28 +320,28 @@ impl ConversationRepository for ConversationRepositoryImpl {
         self.run_with_connection(move |connection, wid| {
             use diesel::dsl::sql;
 
-            let mut query = conversations::table
-                .filter(conversations::parent_id.is_null())
-                // Match rows with context data: either the plain `context`
-                // column OR the compressed `context_zstd` payload.
-                .filter(sql::<diesel::sql_types::Bool>(
-                    "context IS NOT NULL OR is_compressed = 1",
-                ))
-                // Hide agent-launched (subagent / `forge -p`) conversations from
-                // interactive pickers, mirroring `forge conversation list` which
-                // filters `context.initiator == "agent"` in memory. Compressed
-                // rows have no plain `context`, so json_extract yields NULL and
-                // they pass through.
+            // Read from `conversations_all` so legacy rows are visible. The
+            // legacy DB has rows whose `context` and `context_zstd` columns
+            // are both NULL — those rows have titles + timestamps but no
+            // message history. We must not filter them out at the SQL layer
+            // or the picker will hide them.
+            //
+            // We still hide agent-launched (subagent / `forge -p`) conversations
+            // because the interactive picker should not show ephemeral
+            // subagent runs. Compressed rows have no plain `context`, so
+            // json_extract yields NULL and they pass through.
+            let mut query = conversations_all::table
+                .filter(conversations_all::parent_id.is_null())
                 .filter(sql::<diesel::sql_types::Bool>(
                     "COALESCE(json_extract(context, '$.initiator'), 'user') <> 'agent'",
                 ))
                 .select(ConversationRecordLite::as_select())
-                .order(conversations::updated_at.desc())
+                .order(conversations_all::updated_at.desc())
                 .into_boxed();
 
             if !all_workspaces {
                 let workspace_id = wid.id() as i64;
-                query = query.filter(conversations::workspace_id.eq(workspace_id));
+                query = query.filter(conversations_all::workspace_id.eq(workspace_id));
             }
 
             if let Some(limit_value) = limit {
@@ -361,23 +368,23 @@ impl ConversationRepository for ConversationRepositoryImpl {
     ) -> anyhow::Result<Option<Vec<Conversation>>> {
         let source = source.to_string();
         self.run_with_connection(move |connection, wid| {
-            use diesel::dsl::sql;
+            use diesel::prelude::*;
 
             let workspace_id = wid.id() as i64;
-            let mut query = conversations::table
-                .filter(conversations::workspace_id.eq(&workspace_id))
-                .filter(sql::<diesel::sql_types::Bool>(
-                    "context IS NOT NULL OR is_compressed = 1",
-                ))
-                .filter(conversations::source.eq(&source))
-                .order(conversations::updated_at.desc())
+            // Read from `conversations_all` so legacy rows are visible.
+            let mut query = conversations_all::table
+                .filter(conversations_all::workspace_id.eq(&workspace_id))
+                .filter(conversations_all::source.eq(&source))
+                .order(conversations_all::updated_at.desc())
                 .into_boxed();
 
             if let Some(limit_value) = limit {
                 query = query.limit(limit_value as i64);
             }
 
-            let records: Vec<ConversationRecord> = query.load(connection)?;
+            let records: Vec<ConversationRecord> = query
+                .select(conversations_all::all_columns)
+                .load(connection)?;
 
             if records.is_empty() {
                 return Ok(None);
@@ -403,6 +410,13 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // `rowid` (now explicit `rowid` column in external-content FTS5).
             // `bm25()` returns a negative number where lower = more relevant, so `ORDER BY
             // rank_score` (ascending) yields "best match first".
+            //
+            // We read from the primary `conversations` table: the FTS5 index
+            // is populated by `refresh_fts_index` from the primary table's
+            // rows only, and the `rowid` join requires a real table (SQLite
+            // views do not expose `rowid`). Legacy rows are searchable only
+            // once they are re-indexed into the primary FTS5 index (e.g. by
+            // re-running the FTS refresh with the legacy DB attached).
             //
             // We do NOT include `snippet()` here because it would force
             // the SELECT to return a column not in `ConversationRecord`.
@@ -637,14 +651,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
     ) -> anyhow::Result<Option<Vec<Conversation>>> {
         let cwd = cwd.to_string();
         self.run_with_connection(move |connection, wid| {
-            use diesel::dsl::sql;
+            use diesel::prelude::*;
 
             let workspace_id = wid.id() as i64;
+            // Read from `conversations_all` so legacy rows are visible.
             let mut query = conversations_all::table
                 .filter(conversations_all::workspace_id.eq(&workspace_id))
-                .filter(sql::<diesel::sql_types::Bool>(
-                    "context IS NOT NULL OR is_compressed = 1",
-                ))
                 .filter(conversations_all::cwd.eq(&cwd))
                 .order(conversations_all::updated_at.desc())
                 .into_boxed();
@@ -653,7 +665,9 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 query = query.limit(limit_value as i64);
             }
 
-            let records: Vec<ConversationRecord> = query.load(connection)?;
+            let records: Vec<ConversationRecord> = query
+                .select(conversations_all::all_columns)
+                .load(connection)?;
 
             if records.is_empty() {
                 return Ok(None);
@@ -727,6 +741,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // Use raw SQL to order by context blob size (descending) to prioritize
             // largest contexts first for maximum space reclamation.
             // Reads from `conversations_all` so legacy rows are also evaluated.
+            //
+            // We deliberately keep the `(context IS NOT NULL OR is_compressed = 1)`
+            // filter here because pruning operates on the actual context payload
+            // (rows without a context cannot be pruned further) — but the picker
+            // and other read APIs no longer apply this filter (they show all
+            // rows, including tombstone rows whose context was damaged).
             let sql = "SELECT c.* FROM conversations_all c \
                  WHERE c.workspace_id = ? \
                    AND c.intent_state = 'verified' \
@@ -1312,7 +1332,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
         // Copy to a temp path first, then rename atomically.
         let tmp_dst = {
-            let mut p = destination_db.clone();
+            let p = destination_db.clone();
             let fname = p
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
@@ -1773,7 +1793,7 @@ mod tests {
 
     use super::*;
     use crate::conversation::conversation_record::{ContextRecord, MetricsRecord};
-    use crate::database::DatabasePool;
+    use crate::database::{DatabasePool, PoolConfig};
 
     fn repository() -> anyhow::Result<ConversationRepositoryImpl> {
         let pool = Arc::new(DatabasePool::in_memory()?);
@@ -1909,6 +1929,7 @@ mod tests {
     async fn test_find_last_active_conversation_no_context() -> anyhow::Result<()> {
         let conversation_without_context = Conversation::new(ConversationId::generate())
             .title(Some("Test Conversation".to_string()));
+        let expected_id = conversation_without_context.id;
         let repo = repository()?;
 
         repo.upsert_conversation(conversation_without_context)
@@ -1916,7 +1937,10 @@ mod tests {
 
         let actual = repo.get_last_conversation().await?;
 
-        assert!(actual.is_none());
+        // Rows without a context payload (tombstone/damaged rows) must stay
+        // visible — the read layer no longer filters them out at the SQL
+        // layer so the picker can show them.
+        assert_eq!(actual.map(|c| c.id), Some(expected_id));
         Ok(())
     }
 
@@ -1936,7 +1960,11 @@ mod tests {
 
         let actual = repo.get_last_conversation().await?;
 
-        assert!(actual.is_none()); // Should not find conversations with empty contexts
+        // Empty-context rows are visible; the most recently updated row wins.
+        assert!(
+            actual.is_some(),
+            "empty-context conversation must remain visible"
+        );
         Ok(())
     }
 
@@ -3305,10 +3333,13 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let repo = repository()?;
 
-        // Seed a conversation in the heliosLite repo so the export has data.
+        // Seed a conversation with an actual message payload so the export
+        // has a context to decompress and write.
+        let msg = ContextMessage::user("export me payload", None);
+        let context = Context::default().messages(vec![msg.into()]);
         let conv = forge_domain::Conversation::new(ConversationId::generate())
             .title(Some("export me".to_string()))
-            .context(Some(Context::default()));
+            .context(Some(context));
         repo.upsert_conversation(conv.clone()).await?;
 
         let dest = temp.path().join("exported.db");
@@ -3352,11 +3383,18 @@ mod tests {
         let repo = repository()?;
 
         let conv = forge_domain::Conversation::new(ConversationId::generate())
-            .title(Some("do not write".to_string()));
+            .title(Some("do not write".to_string()))
+            .context(Some(
+                Context::default().messages(vec![ContextMessage::user(
+                    "do not write payload",
+                    None,
+                )
+                .into()]),
+            ));
         repo.upsert_conversation(conv).await?;
 
         let dest = temp.path().join("never-created.db");
-        let options = forge_domain::ForgeExportOptions { dry_run: true };
+        let options = forge_domain::ForgeExportOptions { dry_run: true, ..Default::default() };
         let report = repo.export_forge_db(dest.clone(), &options).await?;
 
         assert!(report.dry_run);
@@ -3369,10 +3407,13 @@ mod tests {
     #[tokio::test]
     async fn test_database_stats_reports_compression_health() -> anyhow::Result<()> {
         let repo = repository()?;
-        // Insert one conversation so the totals are non-zero.
+        // Insert one conversation (with a message payload, so the write path
+        // compresses it) so the totals are non-zero.
         let conv = forge_domain::Conversation::new(ConversationId::generate())
             .title(Some("stats test".to_string()))
-            .context(Some(Context::default()));
+            .context(Some(
+                Context::default().messages(vec![ContextMessage::user("stats payload", None).into()]),
+            ));
         repo.upsert_conversation(conv).await?;
 
         let stats = repo.database_stats().await?;
@@ -3388,6 +3429,68 @@ mod tests {
             stats.integrity_check, "ok",
             "PRAGMA integrity_check should report ok"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_split_db_union_reads_legacy_rows() -> anyhow::Result<()> {
+        // Proves the split-DB read path: a pool whose primary (write) DB is
+        // separate from a legacy DB sees rows from BOTH via the
+        // `conversations_all` TEMP VIEW (legacy ATTACHed read-only).
+        use crate::database::DatabasePool;
+        let temp = tempfile::tempdir()?;
+        let legacy_db = temp.path().join("legacy.db");
+        let write_db = temp.path().join("write.db");
+
+        // Seed the legacy DB through a standalone pool, then close it.
+        {
+            let legacy_pool = Arc::new(DatabasePool::try_from(
+                PoolConfig::new(legacy_db.clone()).with_legacy_database_path(None),
+            )?);
+            let legacy_repo =
+                ConversationRepositoryImpl::new(legacy_pool, WorkspaceHash::new(0));
+            let conv = Conversation::new(ConversationId::generate())
+                .title(Some("legacy row".to_string()))
+                .context(Some(
+                    Context::default().messages(vec![
+                        ContextMessage::user("legacy payload", None).into(),
+                    ]),
+                ));
+            legacy_repo.upsert_conversation(conv.clone()).await?;
+        }
+
+        // Open a fresh write DB with the legacy DB attached read-only.
+        let pool = Arc::new(DatabasePool::try_from(
+            PoolConfig::new(write_db.clone()).with_legacy_database_path(Some(legacy_db.clone())),
+        )?);
+        let repo = ConversationRepositoryImpl::new(pool, WorkspaceHash::new(0));
+
+        let all = repo.get_all_conversations(None).await?;
+        assert!(
+            all.as_ref().is_some_and(|v| v.len() == 1),
+            "legacy row must be visible through the union view"
+        );
+        assert_eq!(
+            all.unwrap()[0].title.as_deref(),
+            Some("legacy row"),
+            "row comes from the legacy DB"
+        );
+
+        // A new write to the split pool lands in the write DB, and a fresh
+        // pool still sees both rows.
+        let new_conv = Conversation::new(ConversationId::generate())
+            .title(Some("write row".to_string()))
+            .context(Some(
+                Context::default().messages(vec![ContextMessage::user("write payload", None).into()]),
+            ));
+        repo.upsert_conversation(new_conv).await?;
+
+        let pool2 = Arc::new(DatabasePool::try_from(
+            PoolConfig::new(write_db.clone()).with_legacy_database_path(Some(legacy_db)),
+        )?);
+        let repo2 = ConversationRepositoryImpl::new(pool2, WorkspaceHash::new(0));
+        let all2 = repo2.get_all_conversations(None).await?.unwrap();
+        assert_eq!(all2.len(), 2, "union shows legacy + write rows");
         Ok(())
     }
 }

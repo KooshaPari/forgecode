@@ -174,6 +174,13 @@ pub enum TopLevelCommand {
     /// official-schema SQLite file.
     Export(ExportCommandGroup),
 
+    /// Migrate the legacy ~/.forge data directory into the canonical
+    /// ~/.helioslite data directory.
+    Migrate(MigrateArgs),
+
+    /// Delete conversations by exact id, source, or age.
+    Forget(ForgetArgs),
+
     /// Print heliosLite/forge environment diagnostics (base path, db path,
     /// updater channel, binary identity).
     Heliosdoctor(HeliosdoctorArgs),
@@ -186,10 +193,66 @@ pub struct HeliosdoctorArgs {
     #[arg(long)]
     pub porcelain: bool,
 
+    /// Output the full diagnostics report as JSON.
+    #[arg(long)]
+    pub json: bool,
+
     /// Include database statistics (compression health, agent fanout,
     /// oversized contexts, integrity check).
     #[arg(short, long)]
     pub verbose: bool,
+}
+
+/// Arguments for `helioslite migrate` (or `forge migrate`).
+#[derive(Parser, Debug, Clone)]
+pub struct MigrateArgs {
+    /// Compute the migration and report what would happen, but do not move
+    /// or rename anything.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// Arguments for `helioslite forget` (or `forge forget`).
+#[derive(Parser, Debug, Clone)]
+pub struct ForgetArgs {
+    /// Exact conversation IDs to delete (repeatable).
+    #[arg(long, value_name = "ID")]
+    pub ids: Vec<String>,
+
+    /// Delete all rows whose `source` column equals this value
+    /// (e.g. `imported:forge`, `agent`, `user`).
+    #[arg(long)]
+    pub source: Option<String>,
+
+    /// Delete rows where `updated_at` is older than `now - SECONDS`.
+    #[arg(long, value_name = "SECONDS")]
+    pub older_than_secs: Option<i64>,
+
+    /// Report what would be deleted without deleting anything.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// Output format for `helioslite export forge` (or `forge export forge`).
+#[derive(clap::ValueEnum, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ForgeExportFormatArg {
+    /// SQLite database mirroring the upstream forge schema (default).
+    #[default]
+    Sqlite,
+    /// Newline-delimited JSON.
+    Jsonl,
+    /// CSV with header row.
+    Csv,
+}
+
+impl From<ForgeExportFormatArg> for forge_domain::ForgeExportFormat {
+    fn from(value: ForgeExportFormatArg) -> Self {
+        match value {
+            ForgeExportFormatArg::Sqlite => forge_domain::ForgeExportFormat::Sqlite,
+            ForgeExportFormatArg::Jsonl => forge_domain::ForgeExportFormat::Jsonl,
+            ForgeExportFormatArg::Csv => forge_domain::ForgeExportFormat::Csv,
+        }
+    }
 }
 
 /// Command group for `forge maintenance` sub-commands.
@@ -257,15 +320,14 @@ pub struct ExportCommandGroup {
 /// Sub-commands for `forge export`.
 #[derive(clap::Subcommand, Debug, Clone)]
 pub enum ExportSubcommand {
-    /// Write all conversations from this repository to a freshly-created
-    /// official-schema SQLite file at `destination`. Compressed rows are
-    /// decompressed during the export so the resulting DB is readable by the
-    /// official lineage.
+    /// Write conversations from this repository to a freshly-created database
+    /// at `destination`. Compressed rows are decompressed during the export so
+    /// the resulting file is readable by the official lineage.
     ///
     /// With `--dry-run`, the destination is not created and the report
     /// reflects what would have been written.
     Forge {
-        /// Path to the destination `.forge.db` file to write.
+        /// Path to the destination database file to write.
         #[arg(value_name = "DB_PATH")]
         db: PathBuf,
 
@@ -273,6 +335,16 @@ pub enum ExportSubcommand {
         /// create the destination file.
         #[arg(long)]
         dry_run: bool,
+
+        /// Output format: `sqlite` (default, upstream forge schema), `jsonl`,
+        /// or `csv`.
+        #[arg(long, value_enum, default_value = "sqlite")]
+        format: ForgeExportFormatArg,
+
+        /// Include agent-launched conversations in the export (skipped by
+        /// default, matching the interactive picker).
+        #[arg(long)]
+        include_agent: bool,
     },
 }
 
