@@ -114,6 +114,30 @@ impl Environment {
         self.base_path.join(".forge.db")
     }
 
+    /// Returns the path where the fork WRITES conversations and other DB
+    /// tables.
+    ///
+    /// Resolution order:
+    /// 1. `FORGE_WRITE_DB_PATH` environment variable, if set. Allows callers
+    ///    to point writes at any file (including a brand-new directory) so
+    ///    the existing `.forge.db` is left untouched.
+    /// 2. Otherwise, the legacy `.forge.db` is returned (this preserves
+    ///    backwards compatibility for users who have only ever had
+    ///    `.forge.db` — they see no behavioral change).
+    ///
+    /// Split-DB mode (writes to `.forge.writes.db`, reads unioned with
+    /// legacy `.forge.db`) is opt-in via the `FORGE_WRITE_DB_PATH` env var.
+    /// Until that is set, the fork writes to and reads from `.forge.db`
+    /// directly. The split-DB foundation is laid in the pool layer
+    /// (`DatabasePool::SqliteCustomizer`) so future work can activate it
+    /// without further code changes to the env-resolution path.
+    pub fn write_database_path(&self) -> PathBuf {
+        if let Ok(path) = std::env::var("FORGE_WRITE_DB_PATH") {
+            return PathBuf::from(path);
+        }
+        self.database_path()
+    }
+
     /// Returns the path to the cache directory
     pub fn cache_dir(&self) -> PathBuf {
         self.base_path.join("cache")

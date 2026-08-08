@@ -388,10 +388,10 @@ impl<
         &self,
     ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
     {
-        // Forward via the `ConversationRepository` impl on `F` because
-        // `EnvironmentInfra::database_stats` and
-        // `ConversationRepository::database_stats` share the same name; an
-        // unqualified call hits the multiple-applicable-items error.
-        <F as ConversationRepository>::database_stats(&*self.infra)
+        // Forward via the `EnvironmentInfra` impl on `F` because that's the
+        // richer, ATTACH-aware impl. The `ConversationRepository::database_stats`
+        // method shares the same name and an unqualified call would hit the
+        // multiple-applicable-items error.
+        <F as EnvironmentInfra>::database_stats(&*self.infra)
     }
 }

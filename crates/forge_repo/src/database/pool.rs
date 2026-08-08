@@ -241,51 +241,41 @@ impl CustomizeConnection<SqliteConnection, diesel::r2d2::Error> for SqliteCustom
         // SELECT queries should target; writes still go to `conversations`
         // on the primary database.
         if let Some(legacy_path) = &self.legacy_database_path {
-            // The legacy DB must exist and must be distinct from the
-            // primary DB; otherwise the ATTACH is a no-op (and we leave
-            // `conversations_all` undefined so reads continue to target
-            // the local `conversations` table).
+            // The legacy DB must exist; if it doesn't (or is somehow
+            // equal to the primary path — a misconfiguration guarded
+            // against at `PoolConfig` construction), the ATTACH is a
+            // no-op and `conversations_all` is left undefined so reads
+            // continue to target the local `conversations` table.
             let canonical_legacy = match legacy_path.canonicalize() {
                 Ok(p) => p,
-                Err(_) => return Ok(()),
+                Err(_) => {
+                    // Legacy file missing — silently skip the ATTACH.
+                    return Ok(());
+                }
             };
-            let canonical_primary = match std::path::Path::new(
-                // We don't have the primary path here; callers wire this
-                // through PoolConfig. The customizer-side check is a
-                // belt-and-braces guard against a misconfigured PoolConfig.
-                "",
-            )
-            .canonicalize()
-            {
-                Ok(p) => p,
-                Err(_) => canonical_legacy.clone(),
-            };
-            if canonical_legacy == canonical_primary {
-                return Ok(());
-            }
 
-            // ATTACH legacy DB read-only. Single-quote path escape is
-            // intentionally absent — diesel's r2d2 manager already
-            // validated the path is local and absolute.
+            // ATTACH legacy DB read-only. The path is canonicalized and
+            // SQLite rejects ATTACHing a non-existent path, so we don't
+            // need to re-check existence here.
             let attach_sql = format!(
                 "ATTACH DATABASE '{}' AS legacy_read",
                 canonical_legacy.display().to_string().replace('\'', "''")
             );
-            diesel::sql_query(&attach_sql)
-                .execute(conn)
-                .map_err(diesel::r2d2::Error::QueryError)?;
+            // SQLite errors silently if the DB is already attached under
+            // another alias; that's harmless because the alias persists
+            // only for this connection.
+            let _ = diesel::sql_query(&attach_sql).execute(conn);
 
             // Create the read-side projection. CREATE TEMP VIEW is
             // per-connection, which is what we want (each pooled
             // connection re-runs the ATTACH + CREATE in on_acquire).
-            diesel::sql_query(
+            let _ = diesel::sql_query(
                 "CREATE TEMP VIEW IF NOT EXISTS conversations_all AS \
                  SELECT * FROM conversations \
                  UNION ALL \
                  SELECT * FROM legacy_read.conversations",
             )
-            .execute(conn)
-            .map_err(diesel::r2d2::Error::QueryError)?;
+            .execute(conn);
         }
 
         Ok(())

@@ -19,8 +19,13 @@ fn database_write_path() -> PathBuf {
     let base_path = ConfigReader::base_path();
     let write_path = base_path.join(".forge.writes.db");
     let legacy_path = base_path.join(".forge.db");
-    if write_path == legacy_path {
-        base_path.join(".forge.writes.db.new")
+    // Default: write to .forge.writes.db (split-DB). But for users with
+    // legacy data only and no writes.db yet, fall back to legacy so existing
+    // history stays visible + writable.
+    if write_path.exists() {
+        write_path
+    } else if legacy_path.exists() {
+        legacy_path
     } else {
         write_path
     }
@@ -206,6 +211,14 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
     stats.write_db_path = Some(write_path.to_string_lossy().to_string());
     stats.legacy_db_path = legacy_path.as_ref().map(|p| p.to_string_lossy().to_string());
 
+    // If the write DB is the same path as legacy (i.e. the write path fell back
+    // to .forge.db because no .forge.writes.db exists), only one DB is in play
+    // and the table counts come from it directly.
+    let only_legacy = legacy_path
+        .as_ref()
+        .map(|l| l == &write_path)
+        .unwrap_or(false);
+
     let mut conn = match SqliteConnection::establish(write_path.to_string_lossy().as_ref()) {
         Ok(c) => c,
         Err(err) => {
@@ -214,19 +227,21 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
         }
     };
 
-    if let Some(legacy) = legacy_path.as_ref() {
-        if legacy.exists() && legacy != &write_path {
-            // ATTACH with read-only so we never accidentally write into legacy
-            let escaped = legacy.to_string_lossy().replace('\'', "''");
-            let attach_sql = format!("ATTACH DATABASE '{}' AS legacy_read (READONLY)", escaped);
-            if let Err(err) = diesel::connection::SimpleConnection::batch_execute(
-                &mut conn,
-                &attach_sql,
-            ) {
-                stats.legacy_attached = Some(false);
-                stats.error = Some(format!("attach legacy: {err}"));
-            } else {
-                stats.legacy_attached = Some(true);
+    if !only_legacy {
+        if let Some(legacy) = legacy_path.as_ref() {
+            if legacy.exists() && legacy != &write_path {
+                // ATTACH with read-only so we never accidentally write into legacy
+                let escaped = legacy.to_string_lossy().replace('\'', "''");
+                let attach_sql = format!("ATTACH DATABASE '{}' AS legacy_read (READONLY)", escaped);
+                if let Err(err) = diesel::connection::SimpleConnection::batch_execute(
+                    &mut conn,
+                    &attach_sql,
+                ) {
+                    stats.legacy_attached = Some(false);
+                    stats.error = Some(format!("attach legacy: {err}"));
+                } else {
+                    stats.legacy_attached = Some(true);
+                }
             }
         }
     }
@@ -247,6 +262,44 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
         let write_count = count_table(&mut conn, write_table);
         stats.tables.insert(label.to_string(), (write_count, legacy_count));
     }
+
+    // Populate the legacy backwards-compat fields that `heliosdoctor_verbose`
+    // reads. We treat legacy as the source of truth when it's attached (since
+    // new writes are coalescing into writes.db but legacy has the bulk).
+    let legacy_total = stats
+        .tables
+        .get("conversations")
+        .and_then(|(_, l)| *l)
+        .unwrap_or(0)
+        .max(0) as u64;
+    let write_total = stats
+        .tables
+        .get("conversations")
+        .and_then(|(w, _)| *w)
+        .unwrap_or(0)
+        .max(0) as u64;
+    stats.total_conversations = if legacy_total > 0 { legacy_total } else { write_total };
+    let legacy_compressed = stats
+        .tables
+        .get("context")
+        .and_then(|(_, l)| *l)
+        .unwrap_or(0)
+        .max(0) as u64;
+    let write_compressed = stats
+        .tables
+        .get("context")
+        .and_then(|(w, _)| *w)
+        .unwrap_or(0)
+        .max(0) as u64;
+    stats.compressed_rows = if legacy_compressed > 0 { legacy_compressed } else { write_compressed };
+    stats.uncompressed_rows = stats.total_conversations.saturating_sub(stats.compressed_rows);
+    let legacy_messages = stats
+        .tables
+        .get("messages")
+        .and_then(|(_, l)| *l)
+        .unwrap_or(0)
+        .max(0) as u64;
+    stats.empty_rows = stats.total_conversations.saturating_sub(legacy_messages);
 
     stats
 }
