@@ -16,13 +16,11 @@ fn database_write_path() -> PathBuf {
     if let Ok(path) = std::env::var("FORGE_WRITE_DB_PATH") {
         return PathBuf::from(path);
     }
-    // Backward-compatible default: writes go to `.forge.db` (the legacy file)
-    // unless the user explicitly opts into the split-DB via FORGE_WRITE_DB_PATH.
+    // Split-DB default: writes go to `.forge.writes.db` while the read side
+    // unions in the legacy `.forge.db` via the `conversations_all` TEMP VIEW.
     // This mirrors `forge_domain::Environment::write_database_path()` so the
     // infra stats helper and the pool always agree on the primary file.
-    // Deliberately NOT keyed on `write_path.exists()`: a stale/empty
-    // `.forge.writes.db` stub would otherwise shadow real legacy data.
-    ConfigReader::base_path().join(".forge.db")
+    ConfigReader::base_path().join(".forge.writes.db")
 }
 
 /// Returns the path to the legacy `.forge.db` file (or whatever the user
@@ -257,9 +255,9 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
         stats.tables.insert(label.to_string(), (write_count, legacy_count));
     }
 
-    // Populate the fields that `heliosdoctor_verbose` reads. We treat legacy
-    // as the source of truth when it's attached (since new writes are
-    // coalescing into writes.db but legacy has the bulk).
+    // Populate the fields that `heliosdoctor_verbose` reads. In split mode
+    // (write DB distinct from legacy) the true total is the union: rows in
+    // the write DB plus rows in the legacy DB.
     let write_total = stats
         .tables
         .get("conversations")
@@ -272,7 +270,7 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
         .and_then(|(_, l)| *l)
         .unwrap_or(0)
         .max(0) as u64;
-    let total = if legacy_total > 0 { legacy_total } else { write_total };
+    let total = write_total + legacy_total;
     stats.total_conversations = total;
 
     // Compressed / empty / uncompressed / agent-initiated / oversized rows all
@@ -281,17 +279,26 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
     // `messages` / `checkpoints` counts above are informational only; the fork
     // schema carries the compression state directly on the row
     // (`is_compressed`, `context_zstd`), so count against those columns.
-    let conv_table = if legacy_total > 0 { "legacy_read.conversations" } else { "conversations" };
-    let count = |conn: &mut diesel::sqlite::SqliteConnection, predicate: &str| -> u64 {
-        count_where(conn, conv_table, predicate).unwrap_or(0).max(0) as u64
+    // In split mode the per-category counts sum the write DB and the legacy
+    // DB so the report matches what `conversations_all` exposes to reads.
+    let count_both = |conn: &mut diesel::sqlite::SqliteConnection, predicate: &str| -> u64 {
+        let write = count_where(conn, "conversations", predicate).unwrap_or(0).max(0) as u64;
+        let legacy = if stats.legacy_attached == Some(true) {
+            count_where(conn, "legacy_read.conversations", predicate)
+                .unwrap_or(0)
+                .max(0) as u64
+        } else {
+            0
+        };
+        write + legacy
     };
-    stats.compressed_rows = count(&mut conn, "is_compressed = 1");
-    stats.empty_rows = count(&mut conn, "context IS NULL AND context_zstd IS NULL");
-    stats.uncompressed_rows = count(&mut conn, "is_compressed IS NOT 1 AND (context IS NOT NULL OR context_zstd IS NOT NULL)");
-    stats.agent_initiated_rows = count(&mut conn, "COALESCE(json_extract(context, '$.initiator'), 'user') = 'agent'");
-    stats.oversized_rows = count(&mut conn, "length(context_zstd) > 1048576 OR length(context) > 1048576");
+    stats.compressed_rows = count_both(&mut conn, "is_compressed = 1");
+    stats.empty_rows = count_both(&mut conn, "context IS NULL AND context_zstd IS NULL");
+    stats.uncompressed_rows = count_both(&mut conn, "is_compressed IS NOT 1 AND (context IS NOT NULL OR context_zstd IS NOT NULL)");
+    stats.agent_initiated_rows = count_both(&mut conn, "COALESCE(json_extract(context, '$.initiator'), 'user') = 'agent'");
+    stats.oversized_rows = count_both(&mut conn, "length(context_zstd) > 1048576 OR length(context) > 1048576");
 
-    // Real integrity check on the primary DB.
+    // Real integrity check: primary DB always; legacy DB too when attached.
     use diesel::RunQueryDsl;
     use diesel::sql_types::Text;
     #[derive(diesel::QueryableByName)]
@@ -299,11 +306,31 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
         #[diesel(sql_type = Text)]
         integrity_check: String,
     }
-    let integrity = diesel::sql_query("PRAGMA integrity_check")
-        .get_result::<IntegrityRow>(&mut conn)
-        .map(|r| r.integrity_check)
-        .unwrap_or_else(|_| "unknown".to_string());
-    stats.integrity_check = if integrity == "ok" { "ok".to_string() } else { integrity };
+    let check = |conn: &mut diesel::sqlite::SqliteConnection| -> String {
+        diesel::sql_query("PRAGMA integrity_check")
+            .get_result::<IntegrityRow>(conn)
+            .map(|r| r.integrity_check)
+            .unwrap_or_else(|_| "unknown".to_string())
+    };
+    let mut checks: Vec<(String, String)> = vec![("primary".to_string(), check(&mut conn))];
+    if stats.legacy_attached == Some(true) {
+        if let Some(legacy) = legacy_path.as_ref() {
+            if let Ok(mut legacy_conn) =
+                SqliteConnection::establish(legacy.to_string_lossy().as_ref())
+            {
+                checks.push(("legacy".to_string(), check(&mut legacy_conn)));
+            }
+        }
+    }
+    stats.integrity_check = if checks.iter().all(|(_, c)| c == "ok") {
+        "ok".to_string()
+    } else {
+        checks
+            .iter()
+            .map(|(name, c)| format!("{name}: {c}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
 
     stats
 }
