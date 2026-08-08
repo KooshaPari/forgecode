@@ -1,0 +1,35 @@
+heliosLite binary swap / release record
+========================================
+Tracked marker for binary installations and build verification, so each
+installed state is traceable to a commit and verified result.
+
+2026-08-08 02:52  Swap 1: installed external split-DB build (helioslite.exe /
+                  forge.exe, mtime 02:52). Reported version 0.1.1 (APP_VERSION
+                  missing) -> regression noted.
+2026-08-08 ~03:30 Swap 2: installed release build of c30e21dac (split-DB
+                  completion) + 87b4fbf43 (infra stats) with APP_VERSION=2.10.5.
+                  Version 2.10.5 confirmed; stats collapsed (ATTACH READ ONLY
+                  syntax invalid on bundled SQLite).
+2026-08-08 ~04:00 Swap 3: installed release build of 13cfd711f (plain ATTACH
+                  fix). Doctor verified: total 458, compressed 28, uncompressed
+                  165, empty 265, oversized 0, agent 156, integrity ok.
+2026-08-08 ~05:00 Swap 4: installed release build of f2118f8b7 (export reads
+                  conversations_all union + empty-row export semantics).
+                  Verified: version 2.10.5; export dry-run and real both
+                  "302 read, 302 exported, 0 decompression failures, 0 errors";
+                  exported DB 302 rows (265 null-context, metadata preserved);
+                  heliosdoctor 458/28/165/265/0/156, integrity ok.
+
+Commits covered by the 2026-08-08 swaps:
+  c30e21dac  feat(splitdb): complete read/write DB split with union reads by default
+  87b4fbf43  fix(doctor): align infra stats with split-DB defaults
+  13cfd711f  fix(doctor): plain ATTACH for legacy read in split stats
+  59abeddf1  fix(export): read through conversations_all union view
+  16ff1fc04  docs: document split-DB default storage layout
+  f2118f8b7  fix(export): export empty-context rows instead of dropping them
+  f32d93eb7  test: harden executor, repo, and skill tests for cross-platform flakiness
+
+Verification commands (installed binaries, no env overrides):
+  helioslite.exe --version                 -> 2.10.5
+  helioslite.exe heliosdoctor --verbose    -> total 458, integrity ok
+  helioslite.exe export forge <dest>       -> 302 read, 302 exported, 0 failures
