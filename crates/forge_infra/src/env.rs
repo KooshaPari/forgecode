@@ -275,46 +275,21 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
     let total = if legacy_total > 0 { legacy_total } else { write_total };
     stats.total_conversations = total;
 
-    let write_compressed = stats
-        .tables
-        .get("context")
-        .and_then(|(w, _)| *w)
-        .unwrap_or(0)
-        .max(0) as u64;
-    let legacy_compressed = stats
-        .tables
-        .get("context")
-        .and_then(|(_, l)| *l)
-        .unwrap_or(0)
-        .max(0) as u64;
-    let compressed = if legacy_compressed > 0 { legacy_compressed } else { write_compressed };
-    stats.compressed_rows = compressed;
-
-    let write_messages = stats
-        .tables
-        .get("messages")
-        .and_then(|(w, _)| *w)
-        .unwrap_or(0)
-        .max(0) as u64;
-    let legacy_messages = stats
-        .tables
-        .get("messages")
-        .and_then(|(_, l)| *l)
-        .unwrap_or(0)
-        .max(0) as u64;
-    let messages = if legacy_messages > 0 { legacy_messages } else { write_messages };
-    stats.empty_rows = total.saturating_sub(messages);
-    stats.uncompressed_rows = total
-        .saturating_sub(compressed)
-        .saturating_sub(stats.empty_rows);
-
-    // Agent-initiated and oversized rows come from the conversations table of
-    // whichever file holds the bulk (legacy when attached, else the primary).
+    // Compressed / empty / uncompressed / agent-initiated / oversized rows all
+    // come from the `conversations` table (of whichever file holds the bulk —
+    // legacy when attached, else the primary). The `context_compressions` /
+    // `messages` / `checkpoints` counts above are informational only; the fork
+    // schema carries the compression state directly on the row
+    // (`is_compressed`, `context_zstd`), so count against those columns.
     let conv_table = if legacy_total > 0 { "legacy_read.conversations" } else { "conversations" };
-    let agent_predicate = "COALESCE(json_extract(context, '$.initiator'), 'user') = 'agent'";
-    stats.agent_initiated_rows = count_where(&mut conn, conv_table, agent_predicate).unwrap_or(0).max(0) as u64;
-    let oversized_predicate = "length(context_zstd) > 1048576 OR length(context) > 1048576";
-    stats.oversized_rows = count_where(&mut conn, conv_table, oversized_predicate).unwrap_or(0).max(0) as u64;
+    let count = |conn: &mut diesel::sqlite::SqliteConnection, predicate: &str| -> u64 {
+        count_where(conn, conv_table, predicate).unwrap_or(0).max(0) as u64
+    };
+    stats.compressed_rows = count(&mut conn, "is_compressed = 1");
+    stats.empty_rows = count(&mut conn, "context IS NULL AND context_zstd IS NULL");
+    stats.uncompressed_rows = count(&mut conn, "is_compressed IS NOT 1 AND (context IS NOT NULL OR context_zstd IS NOT NULL)");
+    stats.agent_initiated_rows = count(&mut conn, "COALESCE(json_extract(context, '$.initiator'), 'user') = 'agent'");
+    stats.oversized_rows = count(&mut conn, "length(context_zstd) > 1048576 OR length(context) > 1048576");
 
     // Real integrity check on the primary DB.
     use diesel::RunQueryDsl;
@@ -373,7 +348,28 @@ fn count_where(
     use diesel::RunQueryDsl;
     use diesel::sql_types::BigInt;
 
-    let allowed = |s: &str| s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == ' ' || c == '=' || c == '\'');
+    // Whitelist covers the fixed predicate literals used by compute_database_stats
+    // (is_compressed/context_zstd comparisons, json_extract initiator checks,
+    // length() size thresholds). Predicates are compile-time constants, not user
+    // input, so this stays injection-safe while permitting the needed operators.
+    let allowed = |s: &str| {
+        s.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || c == '_'
+                || c == '.'
+                || c == ' '
+                || c == '='
+                || c == '\''
+                || c == '('
+                || c == ')'
+                || c == '>'
+                || c == '<'
+                || c == ','
+                || c == '$'
+                || c == '!'
+                || c == '-'
+        })
+    };
     if !allowed(table) || !allowed(predicate) {
         return None;
     }
