@@ -89,6 +89,8 @@ pub struct ForgeSnapshotManifest {
     pub export_completed_at_unix_ms: u128,
     pub exported_at_unix_ms: u128,
     pub row_count: usize,
+    /// SHA-256 of the canonical serialized `rows` payload. This excludes the
+    /// manifest so it remains stable when publication metadata is finalized.
     pub content_sha256: String,
     pub row_digest: String,
     pub id_digest: String,
@@ -255,33 +257,39 @@ pub fn export_forge_snapshot(source: &Path) -> Result<ForgeSnapshot> {
     })
 }
 
-/// Publish a snapshot bundle into a new destination directory atomically.
+/// Publish a snapshot bundle into a destination directory atomically.
 ///
-/// The destination must not already exist. A staging directory is created next
-/// to it, fsynced, and renamed only after both JSON files are complete.
+/// The published manifest is finalized before it is written: `status` becomes
+/// `published`, and both destination fields are populated. The destination
+/// content digest is deliberately the digest of the canonical serialized row
+/// payload (`content_sha256`), not a digest of either JSON file. This makes the
+/// digest non-circular: the manifest can contain it without changing the
+/// bytes it describes.
+///
+/// A matching, already-published destination is an idempotent no-op. An
+/// existing destination with different source or content provenance is always
+/// rejected and is never overwritten.
 pub fn publish_snapshot_atomic(snapshot: &ForgeSnapshot, destination: &Path) -> Result<()> {
     if destination.exists() {
-        bail!(
-            "snapshot destination already exists: {}",
-            destination.display()
-        );
+        return verify_existing_publication(snapshot, destination);
     }
     let parent = destination
         .parent()
         .context("snapshot destination must have a parent directory")?;
     fs::create_dir_all(parent)
         .with_context(|| format!("create snapshot parent {}", parent.display()))?;
+    let published = finalized_snapshot(snapshot, destination);
     let stage = unique_staging_dir(parent, destination.file_name().unwrap_or_default())?;
     fs::create_dir(&stage)
         .with_context(|| format!("create snapshot staging directory {}", stage.display()))?;
     let result = (|| -> Result<()> {
         write_synced(
             &stage.join("snapshot.json"),
-            &serde_json::to_vec_pretty(snapshot)?,
+            &serde_json::to_vec_pretty(&published)?,
         )?;
         write_synced(
             &stage.join("manifest.json"),
-            &serde_json::to_vec_pretty(&snapshot.manifest)?,
+            &serde_json::to_vec_pretty(&published.manifest)?,
         )?;
         File::open(&stage)?.sync_all()?;
         fs::rename(&stage, destination)
@@ -292,6 +300,61 @@ pub fn publish_snapshot_atomic(snapshot: &ForgeSnapshot, destination: &Path) -> 
         let _ = fs::remove_dir_all(&stage);
     }
     result
+}
+
+fn finalized_snapshot(snapshot: &ForgeSnapshot, destination: &Path) -> ForgeSnapshot {
+    let mut published = snapshot.clone();
+    published.manifest.status = "published".to_string();
+    published.manifest.destination_path = Some(destination.display().to_string());
+    // content_sha256 is computed only from `rows` during export. Reusing it
+    // here avoids a self-referential hash over the manifest containing it.
+    published.manifest.destination_content_sha256 = Some(published.manifest.content_sha256.clone());
+    published
+}
+
+fn verify_existing_publication(snapshot: &ForgeSnapshot, destination: &Path) -> Result<()> {
+    let manifest_path = destination.join("manifest.json");
+    let snapshot_path = destination.join("snapshot.json");
+    let manifest_bytes = fs::read(&manifest_path).with_context(|| {
+        format!(
+            "read existing snapshot manifest {}; refusing overwrite",
+            manifest_path.display()
+        )
+    })?;
+    let stored_manifest: ForgeSnapshotManifest = serde_json::from_slice(&manifest_bytes)
+        .with_context(|| {
+            format!(
+                "parse existing snapshot manifest {}",
+                manifest_path.display()
+            )
+        })?;
+    let snapshot_bytes = fs::read(&snapshot_path).with_context(|| {
+        format!(
+            "read existing snapshot payload {}; refusing overwrite",
+            snapshot_path.display()
+        )
+    })?;
+    let stored_snapshot: ForgeSnapshot =
+        serde_json::from_slice(&snapshot_bytes).with_context(|| {
+            format!(
+                "parse existing snapshot payload {}",
+                snapshot_path.display()
+            )
+        })?;
+    let expected = finalized_snapshot(snapshot, destination);
+    let stored_digest = content_digest(&stored_snapshot.rows)?;
+    let matches = stored_manifest == stored_snapshot.manifest
+        && stored_manifest == expected.manifest
+        && stored_digest == expected.manifest.content_sha256
+        && id_digest(&stored_snapshot.rows) == expected.manifest.id_digest
+        && stored_snapshot.rows.len() == expected.manifest.row_count;
+    if !matches {
+        bail!(
+            "snapshot destination exists with different or invalid provenance: {}",
+            destination.display()
+        );
+    }
+    Ok(())
 }
 
 impl From<ConversationRow> for ForgeSnapshotRow {
@@ -659,9 +722,39 @@ mod tests {
         publish_snapshot_atomic(&snapshot, &destination)?;
         assert!(destination.join("snapshot.json").is_file());
         assert!(destination.join("manifest.json").is_file());
-        let duplicate =
-            publish_snapshot_atomic(&snapshot, &destination).expect_err("must not overwrite");
-        assert!(duplicate.to_string().contains("already exists"));
+        let published: ForgeSnapshot =
+            serde_json::from_slice(&fs::read(destination.join("snapshot.json"))?)?;
+        let stored_manifest: ForgeSnapshotManifest =
+            serde_json::from_slice(&fs::read(destination.join("manifest.json"))?)?;
+        assert_eq!(published.manifest.status, "published");
+        assert_eq!(published.manifest, stored_manifest);
+        assert_eq!(
+            published.manifest.destination_content_sha256.as_deref(),
+            Some(published.manifest.content_sha256.as_str())
+        );
+        let expected_destination = destination.to_string_lossy().to_string();
+        assert_eq!(
+            published.manifest.destination_path.as_deref(),
+            Some(expected_destination.as_str())
+        );
+
+        // Repeating the exact import is a safe no-op and must not rewrite the
+        // finalized files.
+        let snapshot_bytes = fs::read(destination.join("snapshot.json"))?;
+        let manifest_bytes = fs::read(destination.join("manifest.json"))?;
+        publish_snapshot_atomic(&snapshot, &destination)?;
+        assert_eq!(snapshot_bytes, fs::read(destination.join("snapshot.json"))?);
+        assert_eq!(manifest_bytes, fs::read(destination.join("manifest.json"))?);
+
+        let mut conflicting = snapshot.clone();
+        conflicting.manifest.source_sha256 = "different-source".to_string();
+        let duplicate = publish_snapshot_atomic(&conflicting, &destination)
+            .expect_err("different source must not overwrite");
+        assert!(
+            duplicate
+                .to_string()
+                .contains("different or invalid provenance")
+        );
         Ok(())
     }
 }
