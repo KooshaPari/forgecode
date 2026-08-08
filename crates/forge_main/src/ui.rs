@@ -124,7 +124,53 @@ fn nearest_existing_ancestor(path: &Path) -> anyhow::Result<PathBuf> {
     Ok(candidate)
 }
 
+fn canonicalize_for_validation(path: &Path) -> anyhow::Result<PathBuf> {
+    let absolute = lexical_absolute(path)?;
+    let ancestor = nearest_existing_ancestor(&absolute)?;
+    let canonical_ancestor = ancestor
+        .canonicalize()
+        .with_context(|| format!("canonicalize existing ancestor {}", ancestor.display()))?;
+    let suffix = absolute.strip_prefix(&ancestor).with_context(|| {
+        format!(
+            "derive non-existent suffix for {} from {}",
+            absolute.display(),
+            ancestor.display()
+        )
+    })?;
+    Ok(canonical_ancestor.join(suffix))
+}
+
+fn validate_helioslite_sessions_root(sessions_root: &Path) -> anyhow::Result<()> {
+    let absolute_root = lexical_absolute(sessions_root)?;
+    if fs::symlink_metadata(&absolute_root)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        anyhow::bail!(
+            "HeliosLite sessions root must not be a symlink: {}",
+            absolute_root.display()
+        );
+    }
+
+    let canonical_root = canonicalize_for_validation(&absolute_root)?;
+    if let Some(home) = dirs::home_dir() {
+        let forge_root = home.join(".forge");
+        let canonical_forge = canonicalize_for_validation(&forge_root)?;
+        if canonical_root.starts_with(&canonical_forge)
+            || canonical_forge.starts_with(&canonical_root)
+        {
+            anyhow::bail!(
+                "HeliosLite sessions root must not overlap ~/.forge (root {}, Forge {})",
+                canonical_root.display(),
+                canonical_forge.display()
+            );
+        }
+    }
+    Ok(())
+}
+
 fn validate_snapshot_destination(destination: &Path, sessions_root: &Path) -> anyhow::Result<()> {
+    validate_helioslite_sessions_root(sessions_root)?;
     if destination.exists() {
         return Err(anyhow::anyhow!(
             "snapshot destination already exists: {}",
@@ -6069,7 +6115,9 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
 
 #[cfg(test)]
 mod tests {
-    use super::{is_helioslite_binary_name, validate_snapshot_destination};
+    use super::{
+        is_helioslite_binary_name, validate_helioslite_sessions_root, validate_snapshot_destination,
+    };
     use std::fs;
     use tempfile::tempdir;
 
@@ -6083,6 +6131,30 @@ mod tests {
         assert!(is_helioslite_binary_name("helioslite"));
         assert!(is_helioslite_binary_name("HeLiOsLiTe"));
         assert!(!is_helioslite_binary_name("forge"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sessions_root_rejects_root_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("target");
+        fs::create_dir_all(&target).unwrap();
+        let root = dir.path().join("sessions");
+        symlink(&target, &root).unwrap();
+
+        let error = validate_helioslite_sessions_root(&root).unwrap_err();
+        assert!(error.to_string().contains("must not be a symlink"));
+    }
+
+    #[test]
+    fn sessions_root_rejects_overlap_with_forge_root() {
+        let forge_root = dirs::home_dir().unwrap().join(".forge");
+        let root = forge_root.join("helioslite-sessions");
+
+        let error = validate_helioslite_sessions_root(&root).unwrap_err();
+        assert!(error.to_string().contains("must not overlap ~/.forge"));
     }
 
     #[test]
