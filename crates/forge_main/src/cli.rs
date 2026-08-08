@@ -117,6 +117,9 @@ pub enum TopLevelCommand {
     #[command(alias = "session")]
     Conversation(ConversationCommandGroup),
 
+    /// Import standard Forge sessions into the isolated HeliosLite store.
+    Sessions(SessionsCommandGroup),
+
     /// Generate and optionally commit changes with AI-generated message
     Commit(CommitCommandGroup),
 
@@ -747,6 +750,33 @@ pub struct ConversationCommandGroup {
     #[command(subcommand)]
     pub command: ConversationCommand,
 }
+
+/// Command group for HeliosLite session synchronization.
+#[derive(Parser, Debug, Clone)]
+pub struct SessionsCommandGroup {
+    #[command(subcommand)]
+    pub command: SessionsCommand,
+}
+
+/// Explicit one-way session synchronization commands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum SessionsCommand {
+    /// Import a read-only snapshot of standard Forge sessions.
+    ImportForge(ImportForgeArgs),
+}
+
+/// Paths for a read-only Forge session snapshot import.
+#[derive(Parser, Debug, Clone)]
+pub struct ImportForgeArgs {
+    /// Existing standard Forge SQLite database to read.
+    #[arg(long)]
+    pub source: PathBuf,
+
+    /// New HeliosLite-owned destination snapshot directory.
+    #[arg(long)]
+    pub dest: PathBuf,
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum ConversationCommand {
     /// List conversation history.
@@ -1135,6 +1165,36 @@ mod tests {
             _ => false,
         };
         assert_eq!(is_list, true);
+    }
+
+    #[test]
+    fn test_helioslite_sessions_import_forge_paths() {
+        let fixture = Cli::parse_from([
+            "helioslite",
+            "sessions",
+            "import-forge",
+            "--source",
+            "/tmp/forge.db",
+            "--dest",
+            "/tmp/helioslite/sessions/snapshot",
+        ]);
+        let actual = match fixture.subcommands {
+            Some(TopLevelCommand::Sessions(group)) => match group.command {
+                SessionsCommand::ImportForge(args) => Some((args.source, args.dest)),
+            },
+            _ => None,
+        };
+        let expected = Some((
+            PathBuf::from("/tmp/forge.db"),
+            PathBuf::from("/tmp/helioslite/sessions/snapshot"),
+        ));
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_helioslite_sessions_requires_explicit_paths() {
+        let result = Cli::try_parse_from(["helioslite", "sessions", "import-forge"]);
+        assert!(result.is_err());
     }
 
     #[test]
