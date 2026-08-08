@@ -1030,12 +1030,14 @@ impl ConversationRepository for ConversationRepositoryImpl {
             };
 
             if options.dry_run {
-                // Pre-flight: try to decompress each context so the report
-                // surfaces decompression failures without touching disk.
+                // Pre-flight: resolve each row's context so the report
+                // surfaces genuine decompression failures without touching
+                // disk. Rows without any payload export with NULL context
+                // and still count as exported.
                 for row in &rows {
-                    match decompress_for_export(row) {
-                        Some(_) => report.exported += 1,
-                        None => report.decompression_failed += 1,
+                    match export_context(row) {
+                        Ok(_) => report.exported += 1,
+                        Err(()) => report.decompression_failed += 1,
                     }
                 }
                 return Ok(report);
@@ -1084,9 +1086,10 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 .unwrap_or_else(|_| "imported".to_string());
 
                 for row in &rows {
-                    let plain_context = match decompress_for_export(row) {
-                        Some(s) => s,
-                        None => {
+                    let plain_context = match export_context(row) {
+                        Ok(Some(s)) => Some(s),
+                        Ok(None) => None,
+                        Err(()) => {
                             report.decompression_failed += 1;
                             continue;
                         }
@@ -1098,7 +1101,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
                     )
                     .bind::<Text, _>(&row.conversation_id)
                     .bind::<Nullable<Text>, _>(row.title.as_deref())
-                    .bind::<Nullable<Text>, _>(Some(plain_context.as_str()))
+                    .bind::<Nullable<Text>, _>(plain_context.as_deref())
                     .bind::<Text, _>(&row.created_at)
                     .bind::<Nullable<Text>, _>(row.updated_at.as_deref())
                     .bind::<Nullable<Text>, _>(row.metrics.as_deref())
@@ -1598,19 +1601,31 @@ impl diesel::QueryableByName<diesel::sqlite::Sqlite> for HeliosExportRow {
     }
 }
 
-/// Decompress a heliosLite export row into a plain-context string suitable
-/// for the official-lineage export schema. Returns `None` when the row has
-/// no context or when zstd decompression fails.
-fn decompress_for_export(row: &HeliosExportRow) -> Option<String> {
+/// Resolve an export row's context into a plain (uncompressed) string.
+///
+/// Returns:
+/// - `Ok(Some(plain))` — the row has a context payload (plain or zstd) that
+///   decompressed successfully.
+/// - `Ok(None)` — the row has **no** context payload at all. This is not a
+///   failure: the row is exported with a NULL context so its metadata
+///   (id, title, timestamps) is preserved in the export.
+/// - `Err(())` — the row has a payload but zstd decompression failed. Only
+///   these count as `decompression_failed` in export reports.
+fn export_context(row: &HeliosExportRow) -> Result<Option<String>, ()> {
     use crate::codec::decompress;
     if let Some(plain) = row.context.as_deref() {
         if !plain.trim().is_empty() {
-            return Some(plain.to_string());
+            return Ok(Some(plain.to_string()));
         }
     }
-    row.context_zstd
-        .as_deref()
-        .and_then(|bytes| decompress(bytes).ok())
+    if let Some(bytes) = row.context_zstd.as_deref() {
+        match decompress(bytes) {
+            Ok(plain) => Ok(Some(plain)),
+            Err(_) => Err(()),
+        }
+    } else {
+        Ok(None)
+    }
 }
 
 /// Write the export in a non-SQLite format (JSONL or CSV). The output is
@@ -1632,9 +1647,9 @@ fn write_export_non_sqlite(
 
     if options.dry_run {
         for row in rows {
-            match decompress_for_export(row) {
-                Some(_) => report.exported += 1,
-                None => report.decompression_failed += 1,
+            match export_context(row) {
+                Ok(_) => report.exported += 1,
+                Err(()) => report.decompression_failed += 1,
             }
         }
         return Ok(report);
@@ -1650,9 +1665,10 @@ fn write_export_non_sqlite(
     match options.format {
         ForgeExportFormat::Jsonl => {
             for row in rows {
-                let plain_context = match decompress_for_export(row) {
-                    Some(s) => s,
-                    None => {
+                let plain_context = match export_context(row) {
+                    Ok(Some(s)) => s,
+                    Ok(None) => String::new(),
+                    Err(()) => {
                         report.decompression_failed += 1;
                         continue;
                     }
@@ -1660,8 +1676,12 @@ fn write_export_non_sqlite(
                 let record = serde_json::json!({
                     "conversation_id": row.conversation_id,
                     "title": row.title,
-                    "context": serde_json::from_str::<serde_json::Value>(&plain_context)
-                        .unwrap_or(serde_json::Value::String(plain_context)),
+                    "context": if plain_context.is_empty() {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::from_str::<serde_json::Value>(&plain_context)
+                            .unwrap_or(serde_json::Value::String(plain_context))
+                    },
                     "created_at": row.created_at,
                     "updated_at": row.updated_at,
                     "metrics": row.metrics,
@@ -1674,9 +1694,10 @@ fn write_export_non_sqlite(
         ForgeExportFormat::Csv => {
             out.push_str("conversation_id,title,created_at,updated_at,context\n");
             for row in rows {
-                let plain_context = match decompress_for_export(row) {
-                    Some(s) => s,
-                    None => {
+                let plain_context = match export_context(row) {
+                    Ok(Some(s)) => s,
+                    Ok(None) => String::new(),
+                    Err(()) => {
                         report.decompression_failed += 1;
                         continue;
                     }
