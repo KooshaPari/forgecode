@@ -431,6 +431,14 @@ impl<F: EnvironmentInfra<Config = forge_config::ForgeConfig> + Send + Sync> Envi
     fn get_env_vars(&self) -> BTreeMap<String, String> {
         self.infra.get_env_vars()
     }
+
+    fn database_stats(
+        &self,
+    ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>>
+        + Send
+    {
+        self.infra.database_stats()
+    }
 }
 
 #[async_trait::async_trait]
