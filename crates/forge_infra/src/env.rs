@@ -257,43 +257,78 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
         stats.tables.insert(label.to_string(), (write_count, legacy_count));
     }
 
-    // Populate the legacy backwards-compat fields that `heliosdoctor_verbose`
-    // reads. We treat legacy as the source of truth when it's attached (since
-    // new writes are coalescing into writes.db but legacy has the bulk).
-    let legacy_total = stats
-        .tables
-        .get("conversations")
-        .and_then(|(_, l)| *l)
-        .unwrap_or(0)
-        .max(0) as u64;
+    // Populate the fields that `heliosdoctor_verbose` reads. We treat legacy
+    // as the source of truth when it's attached (since new writes are
+    // coalescing into writes.db but legacy has the bulk).
     let write_total = stats
         .tables
         .get("conversations")
         .and_then(|(w, _)| *w)
         .unwrap_or(0)
         .max(0) as u64;
-    stats.total_conversations = if legacy_total > 0 { legacy_total } else { write_total };
-    let legacy_compressed = stats
+    let legacy_total = stats
         .tables
-        .get("context")
+        .get("conversations")
         .and_then(|(_, l)| *l)
         .unwrap_or(0)
         .max(0) as u64;
+    let total = if legacy_total > 0 { legacy_total } else { write_total };
+    stats.total_conversations = total;
+
     let write_compressed = stats
         .tables
         .get("context")
         .and_then(|(w, _)| *w)
         .unwrap_or(0)
         .max(0) as u64;
-    stats.compressed_rows = if legacy_compressed > 0 { legacy_compressed } else { write_compressed };
-    stats.uncompressed_rows = stats.total_conversations.saturating_sub(stats.compressed_rows);
+    let legacy_compressed = stats
+        .tables
+        .get("context")
+        .and_then(|(_, l)| *l)
+        .unwrap_or(0)
+        .max(0) as u64;
+    let compressed = if legacy_compressed > 0 { legacy_compressed } else { write_compressed };
+    stats.compressed_rows = compressed;
+
+    let write_messages = stats
+        .tables
+        .get("messages")
+        .and_then(|(w, _)| *w)
+        .unwrap_or(0)
+        .max(0) as u64;
     let legacy_messages = stats
         .tables
         .get("messages")
         .and_then(|(_, l)| *l)
         .unwrap_or(0)
         .max(0) as u64;
-    stats.empty_rows = stats.total_conversations.saturating_sub(legacy_messages);
+    let messages = if legacy_messages > 0 { legacy_messages } else { write_messages };
+    stats.empty_rows = total.saturating_sub(messages);
+    stats.uncompressed_rows = total
+        .saturating_sub(compressed)
+        .saturating_sub(stats.empty_rows);
+
+    // Agent-initiated and oversized rows come from the conversations table of
+    // whichever file holds the bulk (legacy when attached, else the primary).
+    let conv_table = if legacy_total > 0 { "legacy_read.conversations" } else { "conversations" };
+    let agent_predicate = "COALESCE(json_extract(context, '$.initiator'), 'user') = 'agent'";
+    stats.agent_initiated_rows = count_where(&mut conn, conv_table, agent_predicate).unwrap_or(0).max(0) as u64;
+    let oversized_predicate = "length(context_zstd) > 1048576 OR length(context) > 1048576";
+    stats.oversized_rows = count_where(&mut conn, conv_table, oversized_predicate).unwrap_or(0).max(0) as u64;
+
+    // Real integrity check on the primary DB.
+    use diesel::RunQueryDsl;
+    use diesel::sql_types::Text;
+    #[derive(diesel::QueryableByName)]
+    struct IntegrityRow {
+        #[diesel(sql_type = Text)]
+        integrity_check: String,
+    }
+    let integrity = diesel::sql_query("PRAGMA integrity_check")
+        .get_result::<IntegrityRow>(&mut conn)
+        .map(|r| r.integrity_check)
+        .unwrap_or_else(|_| "unknown".to_string());
+    stats.integrity_check = if integrity == "ok" { "ok".to_string() } else { integrity };
 
     stats
 }
@@ -321,6 +356,35 @@ fn count_table(
     }
 
     let sql = format!("SELECT COUNT(*) AS n FROM {}", table);
+    diesel::sql_query(sql).get_result::<Row>(conn).ok().map(|r| r.n)
+}
+
+/// Counts rows in `table` on `conn` where `predicate` holds. Returns `None`
+/// if the query fails.
+///
+/// `table` and `predicate` must contain only `A-Za-z0-9_. ' =` (plus the
+/// literal predicate text) to keep this to a controlled whitelist.
+fn count_where(
+    conn: &mut diesel::sqlite::SqliteConnection,
+    table: &str,
+    predicate: &str,
+) -> Option<i64> {
+    use diesel::QueryableByName;
+    use diesel::RunQueryDsl;
+    use diesel::sql_types::BigInt;
+
+    let allowed = |s: &str| s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == ' ' || c == '=' || c == '\'');
+    if !allowed(table) || !allowed(predicate) {
+        return None;
+    }
+
+    #[derive(QueryableByName)]
+    struct Row {
+        #[diesel(sql_type = BigInt)]
+        n: i64,
+    }
+
+    let sql = format!("SELECT COUNT(*) AS n FROM {} WHERE {}", table, predicate);
     diesel::sql_query(sql).get_result::<Row>(conn).ok().map(|r| r.n)
 }
 
