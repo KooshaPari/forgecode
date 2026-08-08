@@ -315,7 +315,15 @@ mod tests {
             expected.stdout = format!("'{}'", expected.stdout);
         }
 
-        assert_eq!(actual.stdout.trim(), expected.stdout.trim());
+        // cmd.exe emits the quotes literally and terminates the line with CRLF
+        // *after* the closing quote, while the expected string keeps the
+        // newline inside the quotes; strip line endings from both sides so
+        // the comparison is line-ending agnostic.
+        let strip_newlines = |s: &str| s.replace("\r", "").replace("\n", "");
+        assert_eq!(
+            strip_newlines(&actual.stdout.trim()),
+            strip_newlines(&expected.stdout.trim())
+        );
         assert_eq!(actual.stderr, expected.stderr);
         assert_eq!(actual.success(), expected.success());
     }
@@ -457,8 +465,14 @@ mod tests {
             expected.stdout = format!("'{}'", expected.stdout);
         }
 
-        // The output should still be captured in the CommandOutput
-        assert_eq!(actual.stdout.trim(), expected.stdout.trim());
+        // The output should still be captured in the CommandOutput. cmd.exe
+        // terminates the quoted output with CRLF *after* the closing quote,
+        // so strip line endings from both sides before comparing.
+        let strip_newlines = |s: &str| s.replace("\r", "").replace("\n", "");
+        assert_eq!(
+            strip_newlines(&actual.stdout.trim()),
+            strip_newlines(&expected.stdout.trim())
+        );
         assert_eq!(actual.stderr, expected.stderr);
         assert_eq!(actual.success(), expected.success());
     }

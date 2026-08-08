@@ -2710,6 +2710,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_concurrent_operations_dont_block_runtime() -> anyhow::Result<()> {
+        use std::sync::Mutex;
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::time::{Duration, Instant};
 
@@ -2719,16 +2720,35 @@ mod tests {
         // in-memory SQLite pool).
         const TICK: Duration = Duration::from_millis(10);
         const MIN_WINDOW: Duration = Duration::from_millis(200);
+        // A runtime that is genuinely blocked by synchronous DB work stalls
+        // heartbeats for tens/hundreds of milliseconds. Ordinary OS scheduling
+        // only ever drifts the ticker by a tick or two, so a 5-tick cap is a
+        // wide margin that only a true block can exceed.
+        const MAX_ACCEPTABLE_GAP: Duration = Duration::from_millis(50);
 
         let repo = Arc::new(repository()?);
         let heartbeat = Arc::new(AtomicUsize::new(0));
+        let prev_tick = Arc::new(Mutex::new(Instant::now()));
+        let max_gap = Arc::new(Mutex::new(Duration::ZERO));
 
-        // Heartbeat task - if runtime is blocked, this won't increment.
+        // Heartbeat task - if the runtime is blocked, ticks pause and the
+        // inter-tick gap balloons past `MAX_ACCEPTABLE_GAP`.
         let heartbeat_clone = heartbeat.clone();
+        let prev_tick_clone = prev_tick.clone();
+        let max_gap_clone = max_gap.clone();
         let heartbeat_handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(TICK).await;
                 heartbeat_clone.fetch_add(1, Ordering::Relaxed);
+                let now = Instant::now();
+                let mut prev = prev_tick_clone.lock().unwrap();
+                let gap = now.duration_since(*prev);
+                *prev = now;
+                drop(prev);
+                let mut max = max_gap_clone.lock().unwrap();
+                if gap > *max {
+                    *max = gap;
+                }
             }
         });
 
@@ -2771,20 +2791,33 @@ mod tests {
         // Stop heartbeat.
         heartbeat_handle.abort();
 
-        // Verify runtime wasn't blocked: heartbeat should have fired at least
-        // 80% of the theoretical max for the elapsed window. The threshold is
-        // clamped to at least 1 to keep the assertion well-defined.
+        // A blocked runtime shows up as one or more multi-tick gaps (the
+        // heartbeat cannot fire while synchronous DB work holds the runtime
+        // thread); scheduling jitter only ever shaves a tick here and there,
+        // which the count floor below tolerates.
+        let max_gap = *max_gap.lock().unwrap();
+        assert!(
+            max_gap <= MAX_ACCEPTABLE_GAP,
+            "Runtime was blocked! Longest heartbeat gap was {:?} (limit {:?}) over a {:?} window",
+            max_gap,
+            MAX_ACCEPTABLE_GAP,
+            elapsed
+        );
+
+        // Secondary sanity check: the heartbeat should still have fired a
+        // reasonable fraction of the theoretical maximum. Deliberately lenient
+        // (50%) — total-count dropouts are dominated by OS scheduling under
+        // load, not by runtime blocking (which the gap check catches).
         let heartbeat_count = heartbeat.load(Ordering::Relaxed);
         let expected_heartbeats = (elapsed.as_millis() as usize) / (TICK.as_millis() as usize);
-        let threshold = (expected_heartbeats * 8 / 10).max(1);
+        let floor = (expected_heartbeats / 2).max(1);
 
         assert!(
-            heartbeat_count >= threshold,
-            "Runtime was blocked! Expected at least {} heartbeats (~{} theoretical) in {:?}, got {}",
-            threshold,
+            heartbeat_count >= floor,
+            "Runtime stalled: only {} heartbeats (~{} theoretical) in {:?}",
+            heartbeat_count,
             expected_heartbeats,
-            elapsed,
-            heartbeat_count
+            elapsed
         );
 
         Ok(())
