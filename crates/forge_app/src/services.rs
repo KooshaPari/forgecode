@@ -6,7 +6,8 @@ use derive_setters::Setters;
 use forge_domain::{
     AgentId, AnyProvider, Attachment, AuthContextRequest, AuthContextResponse, AuthMethod,
     ChatCompletionMessage, CommandOutput, Context, Conversation, ConversationId,
-    ConversationSummary, File, FileInfo, FileStatus, Image, McpConfig, McpServers, Model, ModelId,
+    ConversationSummary, File, FileInfo, FileStatus, ForgeForgetOptions, ForgeForgetReport,
+    ForgeImportReport, Image, McpConfig, McpServers, Model, ModelId,
     Node, Provider, ProviderId, ResultStream, Scope, SearchParams, SyncProgress, SyntaxError,
     Template, ToolCallFull, ToolOutput, WorkspaceAuth, WorkspaceId, WorkspaceInfo,
 };
@@ -204,6 +205,22 @@ pub trait AppConfigService: Send + Sync {
     /// all configuration changes; use [`forge_domain::ConfigOperation`]
     /// variants to describe each mutation.
     async fn update_config(&self, ops: Vec<forge_domain::ConfigOperation>) -> anyhow::Result<()>;
+
+    /// Returns environment diagnostics: base path, db path, updater channel,
+    /// binary identity, and where the base path was resolved from.
+    /// Cheap — no DB calls, only reads config and argv[0].
+    async fn heliosdoctor(&self) -> anyhow::Result<forge_domain::HeliosdoctorInfo>;
+
+    /// Same as [`heliosdoctor`] but with database statistics populated.
+    ///
+    /// When `verbose` is `true`, the returned `HeliosdoctorInfo` includes
+    /// aggregate DB stats (compression health, agent fanout, oversized
+    /// contexts, integrity check) sourced from
+    /// `ConversationRepository::database_stats`.
+    async fn heliosdoctor_verbose(
+        &self,
+        verbose: bool,
+    ) -> anyhow::Result<forge_domain::HeliosdoctorInfo>;
 }
 
 #[async_trait::async_trait]
@@ -350,6 +367,53 @@ pub trait ConversationService: Send + Sync {
     ///
     /// Returns `(compressed, skipped, errors)` counts.
     async fn compress_uncompressed_contexts(&self) -> anyhow::Result<(usize, usize, usize)>;
+
+    /// One-way import from an official forge-lineage database.
+    ///
+    /// The source database is opened read-only (`PRAGMA query_only`) and is
+    /// never modified. Conversations whose `conversation_id` already exists
+    /// in this repository are skipped, so re-running the import is
+    /// idempotent. Returns a [`ForgeImportReport`] describing the outcome.
+    async fn import_forge_db(&self, source: PathBuf) -> anyhow::Result<ForgeImportReport>;
+
+    /// One-way import with explicit [`forge_domain::ForgeImportOptions`].
+    ///
+    /// See `ConversationRepository::import_forge_db_with_options` for full
+    /// semantics (`dry_run`, `verbose`, transaction-wrapped inserts).
+    async fn import_forge_db_with_options(
+        &self,
+        source: PathBuf,
+        options: &forge_domain::ForgeImportOptions,
+    ) -> anyhow::Result<ForgeImportReport>;
+
+    /// One-way export from this heliosLite repository to a freshly-created
+    /// official-schema SQLite file at `destination`.
+    ///
+    /// See `ConversationRepository::export_forge_db` for full semantics.
+    async fn export_forge_db(
+        &self,
+        destination: PathBuf,
+        options: &forge_domain::ForgeExportOptions,
+    ) -> anyhow::Result<forge_domain::ForgeExportReport>;
+
+    /// Aggregate DB stats for `heliosdoctor --verbose`.
+    async fn database_stats(&self) -> anyhow::Result<forge_domain::HeliosdoctorDbStats>;
+
+    /// Atomic `~/.forge` → `~/.helioslite` data-dir move.
+    ///
+    /// See `ConversationRepository::migrate_data_dir` for full semantics.
+    async fn migrate_data_dir(
+        &self,
+        options: &forge_domain::MigrateOptions,
+    ) -> anyhow::Result<forge_domain::ForgeMigrateReport>;
+
+    /// Remove conversations matching the given filter.
+    ///
+    /// See `ConversationRepository::forget_conversations` for full semantics.
+    async fn forget_conversations(
+        &self,
+        options: &ForgeForgetOptions,
+    ) -> anyhow::Result<ForgeForgetReport>;
 }
 
 #[async_trait::async_trait]
@@ -831,6 +895,50 @@ impl<I: Services> ConversationService for I {
             .compress_uncompressed_contexts()
             .await
     }
+
+    async fn import_forge_db(&self, source: PathBuf) -> anyhow::Result<ForgeImportReport> {
+        self.conversation_service().import_forge_db(source).await
+    }
+
+    async fn import_forge_db_with_options(
+        &self,
+        source: PathBuf,
+        options: &forge_domain::ForgeImportOptions,
+    ) -> anyhow::Result<ForgeImportReport> {
+        self.conversation_service()
+            .import_forge_db_with_options(source, options)
+            .await
+    }
+
+    async fn export_forge_db(
+        &self,
+        destination: PathBuf,
+        options: &forge_domain::ForgeExportOptions,
+    ) -> anyhow::Result<forge_domain::ForgeExportReport> {
+        self.conversation_service()
+            .export_forge_db(destination, options)
+            .await
+    }
+
+    async fn database_stats(&self) -> anyhow::Result<forge_domain::HeliosdoctorDbStats> {
+        self.conversation_service().database_stats().await
+    }
+
+    async fn migrate_data_dir(
+        &self,
+        options: &forge_domain::MigrateOptions,
+    ) -> anyhow::Result<forge_domain::ForgeMigrateReport> {
+        self.conversation_service()
+            .migrate_data_dir(options)
+            .await
+    }
+
+    async fn forget_conversations(
+        &self,
+        options: &ForgeForgetOptions,
+    ) -> anyhow::Result<ForgeForgetReport> {
+        self.conversation_service().forget_conversations(options).await
+    }
 }
 #[async_trait::async_trait]
 impl<I: Services> ProviderService for I {
@@ -1178,6 +1286,17 @@ impl<I: Services> AppConfigService for I {
 
     async fn update_config(&self, ops: Vec<forge_domain::ConfigOperation>) -> anyhow::Result<()> {
         self.config_service().update_config(ops).await
+    }
+
+    async fn heliosdoctor(&self) -> anyhow::Result<forge_domain::HeliosdoctorInfo> {
+        self.config_service().heliosdoctor().await
+    }
+
+    async fn heliosdoctor_verbose(
+        &self,
+        verbose: bool,
+    ) -> anyhow::Result<forge_domain::HeliosdoctorInfo> {
+        self.config_service().heliosdoctor_verbose(verbose).await
     }
 }
 

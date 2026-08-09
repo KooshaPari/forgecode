@@ -112,7 +112,7 @@ crates/
 
 ## CI / GitHub Actions
 
-- `cargo-deny.yml` runs `cargo deny check advisories licenses` on every PR
+- `cargo-deny.yml` runs `cargo deny check advisories licenses sources` on every PR
 - `deny.toml` defines allowlist rules for crates and licenses
 - Run `cargo deny check` locally before opening PRs
 

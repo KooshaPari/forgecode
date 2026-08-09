@@ -20,7 +20,8 @@ use forge_app::{CommitResult, ToolResolver};
 use forge_config::{ConfigReader, ForgeConfig, OutputMode, OutputSettings};
 use forge_display::MarkdownFormat;
 use forge_domain::{
-    AuthMethod, ChatResponseContent, ConsoleWriter, ContextMessage, Role, TitleFormat, UserCommand,
+    AuthMethod, ChatResponseContent, ConsoleWriter, ContextMessage, ForgeExportOptions,
+    ForgeImportOptions, Role, TitleFormat, UserCommand,
 };
 use forge_fs::ForgeFS;
 use forge_repo::{export_forge_snapshot, publish_snapshot_atomic};
@@ -34,8 +35,8 @@ use tokio_stream::StreamExt;
 use url::Url;
 
 use crate::cli::{
-    Cli, CommitCommandGroup, ConversationCommand, ListCommand, MaintenanceSubcommand, McpCommand,
-    SelectCommand, TopLevelCommand,
+    Cli, CommitCommandGroup, ConversationCommand, ExportSubcommand, ImportSubcommand, ListCommand,
+    MaintenanceSubcommand, McpCommand, SelectCommand, TopLevelCommand,
 };
 use crate::conversation_selector::ConversationSelector;
 use crate::display_constants::{CommandType, headers, markers, status};
@@ -1238,6 +1239,65 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 }
                 return Ok(());
             }
+            TopLevelCommand::Heliosdoctor(args) => {
+                self.spinner.start(Some("Diagnosing"))?;
+                let info = self.api.heliosdoctor_verbose(args.verbose).await?;
+                self.spinner.stop(None)?;
+                if args.json {
+                    let json = serde_json::to_string_pretty(&info)?;
+                    self.writeln(json)?;
+                } else if args.porcelain {
+                    let db_stats = info.db_stats.as_ref();
+                    let mut line = format!(
+                        "version={}\nbinary={}\nbase_path={}\ndb_path={}\nupdater_repo={}\nupdater_binary={}\nconfig_source={}",
+                        info.version,
+                        info.binary_stem,
+                        info.base_path.display(),
+                        info.db_path.display(),
+                        info.updater_repo,
+                        info.updater_binary,
+                        info.config_source,
+                    );
+                    if let Some(stats) = db_stats {
+                        line.push_str(&format!(
+                            "\ndb_total={}\ndb_compressed={}\ndb_uncompressed={}\ndb_empty={}\ndb_oversized={}\ndb_agent={}\ndb_integrity={}",
+                            stats.total_conversations,
+                            stats.compressed_rows,
+                            stats.uncompressed_rows,
+                            stats.empty_rows,
+                            stats.oversized_rows,
+                            stats.agent_initiated_rows,
+                            stats.integrity_check,
+                        ));
+                    }
+                    line.push('\n');
+                    self.writeln(line)?;
+                } else {
+                    self.writeln(format!(
+                        "heliosLite/forge diagnostics\n  version            : {}\n  binary identity    : {}\n  config source      : {}\n  base path          : {}\n  db path            : {}\n  updater repo       : {}\n  updater binary tag : {}\n",
+                        info.version,
+                        info.binary_stem,
+                        info.config_source,
+                        info.base_path.display(),
+                        info.db_path.display(),
+                        info.updater_repo,
+                        info.updater_binary,
+                    ))?;
+                    if let Some(stats) = info.db_stats.as_ref() {
+                        self.writeln(format!(
+                            "database stats\n  total              : {}\n  compressed         : {}\n  uncompressed       : {}\n  empty              : {}\n  oversized (>1MB)   : {}\n  agent-initiated    : {}\n  integrity check    : {}\n",
+                            stats.total_conversations,
+                            stats.compressed_rows,
+                            stats.uncompressed_rows,
+                            stats.empty_rows,
+                            stats.oversized_rows,
+                            stats.agent_initiated_rows,
+                            stats.integrity_check,
+                        ))?;
+                    }
+                }
+                return Ok(());
+            }
             TopLevelCommand::Maintenance(maintenance_group) => {
                 match maintenance_group.command {
                     MaintenanceSubcommand::Compress => {
@@ -1251,6 +1311,116 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                         ))?;
                     }
                 }
+                return Ok(());
+            }
+            TopLevelCommand::Import(import_group) => {
+                match import_group.command {
+                    ImportSubcommand::Forge { db, dry_run, verbose } => {
+                        let options = ForgeImportOptions { dry_run, verbose };
+                        self.spinner.start(Some(if dry_run { "Scanning (dry-run)" } else { "Importing" }))?;
+                        let report = self
+                            .api
+                            .import_forge_db_with_options(db, &options)
+                            .await?;
+                        self.spinner.stop(None)?;
+                        let prefix = if dry_run { "import (dry-run)" } else { "import" };
+                        self.writeln(format!(
+                            "{} complete: {} read, {} imported, {} skipped (already exist), \
+                             {} invalid IDs, {} context parse failures, {} errors",
+                            prefix,
+                            report.source_total,
+                            report.imported,
+                            report.skipped_existing,
+                            report.invalid_id,
+                            report.context_parse_failed,
+                            report.errors
+                        ))?;
+                    }
+                }
+                return Ok(());
+            }
+            TopLevelCommand::Export(export_group) => {
+                match export_group.command {
+                    ExportSubcommand::Forge { db, dry_run, format, include_agent } => {
+                        let options = ForgeExportOptions {
+                            dry_run,
+                            format: format.into(),
+                            include_agent,
+                        };
+                        self.spinner.start(Some(if dry_run { "Scanning (dry-run)" } else { "Exporting" }))?;
+                        let report = self.api.export_forge_db(db, &options).await?;
+                        self.spinner.stop(None)?;
+                        let prefix = if dry_run { "export (dry-run)" } else { "export" };
+                        self.writeln(format!(
+                            "{} complete: {} read, {} exported, {} decompression failures, {} errors",
+                            prefix,
+                            report.source_total,
+                            report.exported,
+                            report.decompression_failed,
+                            report.errors
+                        ))?;
+                    }
+                }
+                return Ok(());
+            }
+            TopLevelCommand::Migrate(args) => {
+                self.spinner.start(Some(if args.dry_run { "Scanning migration" } else { "Migrating" }))?;
+                let options = forge_domain::MigrateOptions {
+                    dry_run: args.dry_run,
+                };
+                let report = self.api.migrate_data_dir(&options).await?;
+                self.spinner.stop(None)?;
+                let prefix = if args.dry_run { "migrate (dry-run)" } else { "migrate" };
+                self.writeln(format!(
+                    "{} complete: source={} destination={} outcome={} bytes_copied={} conversations_verified={} renamed_legacy_to={}",
+                    prefix,
+                    report.source_path.display(),
+                    report.destination_path.display(),
+                    report.outcome,
+                    report.bytes_copied,
+                    report.conversations_verified,
+                    report.renamed_legacy_to.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "-".to_string())
+                ))?;
+                return Ok(());
+            }
+            TopLevelCommand::Forget(args) => {
+                let ids: Vec<forge_domain::ConversationId> = args
+                    .ids
+                    .iter()
+                    .filter_map(|raw| match forge_domain::ConversationId::parse(raw) {
+                        Ok(id) => Some(id),
+                        Err(err) => {
+                            self.writeln_title(TitleFormat::error(format!(
+                                "Invalid id {raw:?}: {err}"
+                            )))
+                            .ok()?;
+                            None
+                        }
+                    })
+                    .collect();
+                if ids.is_empty() && args.source.is_none() && args.older_than_secs.is_none() {
+                    self.writeln_title(TitleFormat::error(
+                        "must specify at least one of --ids, --source, --older-than-secs",
+                    ))?;
+                    return Ok(());
+                }
+                let options = forge_domain::ForgeForgetOptions {
+                    ids,
+                    source: args.source.clone(),
+                    older_than_secs: args.older_than_secs,
+                    dry_run: args.dry_run,
+                };
+                self.spinner.start(Some(if args.dry_run { "Scanning forget" } else { "Deleting" }))?;
+                let report = self.api.forget_conversations(&options).await?;
+                self.spinner.stop(None)?;
+                let prefix = if args.dry_run { "forget (dry-run)" } else { "forget" };
+                self.writeln(format!(
+                    "{} complete: {} matched, {} deleted (dry_run={})",
+                    prefix,
+                    report.matched,
+                    report.deleted,
+                    report.dry_run
+                ))?;
                 return Ok(());
             }
         }

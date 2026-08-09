@@ -12,9 +12,9 @@ use forge_config::ForgeConfig;
 use forge_domain::{
     AnyProvider, AuthCredential, ChatCompletionMessage, ChatRepository, CommandOutput, Context,
     Conversation, ConversationId, ConversationRepository, ConversationSummary, Environment,
-    FileInfo, FuzzySearchRepository, McpServerConfig, MigrationResult, Model, ModelId, Provider,
-    ProviderId, ProviderRepository, ResultStream, SearchMatch, Skill, SkillRepository, Snapshot,
-    SnapshotRepository, TextPatchBlock, TextPatchRepository,
+    FileInfo, ForgeImportReport, FuzzySearchRepository, McpServerConfig, MigrationResult, Model,
+    ModelId, Provider, ProviderId, ProviderRepository, ResultStream, SearchMatch, Skill,
+    SkillRepository, Snapshot, SnapshotRepository, TextPatchBlock, TextPatchRepository,
 };
 use forge_eventsource::EventSource;
 // Re-export CacacheStorage from forge_infra
@@ -63,8 +63,23 @@ impl<
     pub fn new(infra: Arc<F>) -> Self {
         let env = infra.get_environment();
         let file_snapshot_service = Arc::new(ForgeFileSnapshotService::new(env.clone()));
-        let db_pool =
-            Arc::new(DatabasePool::try_from(PoolConfig::new(env.database_path())).unwrap());
+
+        // Split-DB: primary DB is the write path; legacy DB is the historical
+        // path, which the connection customizer ATTACHes read-only on every
+        // acquire. When the two paths differ, the read-side `conversations_all`
+        // TEMP VIEW exposes the UNION of both tables. When they are the same
+        // (e.g. fresh install) the legacy attachment is a no-op.
+        let write_path = env.write_database_path();
+        let legacy_path = env.database_path();
+        let legacy_for_pool = if legacy_path != write_path
+            && legacy_path.exists()
+        {
+            Some(legacy_path.clone())
+        } else {
+            None
+        };
+        let pool_config = PoolConfig::new(write_path).with_legacy_database_path(legacy_for_pool);
+        let db_pool = Arc::new(DatabasePool::try_from(pool_config).unwrap());
         let conversation_repository = Arc::new(ConversationRepositoryImpl::new(
             db_pool.clone(),
             env.workspace_hash(),
@@ -279,6 +294,52 @@ impl<F: Send + Sync> ConversationRepository for ForgeRepo<F> {
             .compress_uncompressed_contexts()
             .await
     }
+
+    async fn import_forge_db(&self, source: PathBuf) -> anyhow::Result<ForgeImportReport> {
+        self.conversation_repository.import_forge_db(source).await
+    }
+
+    async fn import_forge_db_with_options(
+        &self,
+        source: PathBuf,
+        options: &forge_domain::ForgeImportOptions,
+    ) -> anyhow::Result<ForgeImportReport> {
+        self.conversation_repository
+            .import_forge_db_with_options(source, options)
+            .await
+    }
+
+    async fn export_forge_db(
+        &self,
+        dest: PathBuf,
+        options: &forge_domain::ForgeExportOptions,
+    ) -> anyhow::Result<forge_domain::ForgeExportReport> {
+        self.conversation_repository
+            .export_forge_db(dest, options)
+            .await
+    }
+
+    async fn database_stats(&self) -> anyhow::Result<forge_domain::HeliosdoctorDbStats> {
+        self.conversation_repository.database_stats().await
+    }
+
+    async fn forget_conversations(
+        &self,
+        options: &forge_domain::ForgeForgetOptions,
+    ) -> anyhow::Result<forge_domain::ForgeForgetReport> {
+        self.conversation_repository
+            .forget_conversations(options)
+            .await
+    }
+
+    async fn migrate_data_dir(
+        &self,
+        options: &forge_domain::MigrateOptions,
+    ) -> anyhow::Result<forge_domain::ForgeMigrateReport> {
+        self.conversation_repository
+            .migrate_data_dir(options)
+            .await
+    }
 }
 
 #[async_trait::async_trait]
@@ -369,6 +430,14 @@ impl<F: EnvironmentInfra<Config = forge_config::ForgeConfig> + Send + Sync> Envi
 
     fn get_env_vars(&self) -> BTreeMap<String, String> {
         self.infra.get_env_vars()
+    }
+
+    fn database_stats(
+        &self,
+    ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>>
+        + Send
+    {
+        self.infra.database_stats()
     }
 }
 

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use forge_app::{AppConfigService, EnvironmentInfra};
-use forge_domain::{ConfigOperation, Effort, ModelConfig, ModelId, ProviderId, ProviderRepository};
+use forge_domain::{ConfigOperation, Effort, HeliosdoctorInfo, ModelConfig, ModelId, ProviderId, ProviderRepository};
 use tracing::debug;
 
 /// Service for managing user preferences for default providers and models.
@@ -68,6 +68,91 @@ impl<F: ProviderRepository + EnvironmentInfra<Config = forge_config::ForgeConfig
     async fn update_config(&self, ops: Vec<ConfigOperation>) -> anyhow::Result<()> {
         debug!(ops = ?ops, "Updating app config");
         self.infra.update_environment(ops).await
+    }
+
+    async fn heliosdoctor(&self) -> anyhow::Result<HeliosdoctorInfo> {
+        self.heliosdoctor_verbose(false).await
+    }
+
+    async fn heliosdoctor_verbose(
+        &self,
+        verbose: bool,
+    ) -> anyhow::Result<HeliosdoctorInfo> {
+        // Deliberately resolves the path from forge_config rather than the
+        // infra's environment: this is the canonical resolution used by the
+        // Gate 5 data-dir split and is identical across all binaries.
+        let base_path = forge_config::ConfigReader::base_path();
+        let legacy_db_path = base_path.join(".forge.db");
+        // Mirrors forge_domain::Environment::write_database_path: the fork
+        // writes to a separate ".forge.writes.db" by default while the read
+        // side unions in legacy ".forge.db". FORGE_WRITE_DB_PATH overrides
+        // the write target for callers that want a different file.
+        let write_db_path = if let Ok(path) = std::env::var("FORGE_WRITE_DB_PATH") {
+            std::path::PathBuf::from(path)
+        } else {
+            base_path.join(".forge.writes.db")
+        };
+        // Heliosdoctor reports the path the fork actively writes to so the
+        // operator can confirm the write/read split is in effect.
+        let db_path = write_db_path.clone();
+        let binary_stem = forge_config::ConfigReader::binary_prefix().to_string();
+        let (updater_repo, updater_binary) = if binary_stem == "helioslite" {
+            (
+                std::env::var("HELIOSLITE_REPO")
+                    .unwrap_or_else(|_| "KooshaPari/heliosLite".to_string()),
+                "helioslite".to_string(),
+            )
+        } else {
+            (
+                forge_config::DEFAULT_UPDATE_REPO.to_string(),
+                "forge".to_string(),
+            )
+        };
+        let config_source = if std::env::var_os("FORGE_CONFIG").is_some() {
+            "override-env"
+        } else if binary_stem == "helioslite" {
+            // base_path is already the resolved directory; classify it by its
+            // file name rather than probing subdirectories.
+            match base_path.file_name().and_then(|name| name.to_str()) {
+                Some(".helioslite") if base_path.exists() => "helioslite",
+                Some(".helioslite") => "default",
+                Some(".forge") => "legacy-forge",
+                _ => "default",
+            }
+        } else {
+            "legacy-forge"
+        };
+        let db_stats = if verbose {
+            match self.infra.database_stats().await {
+                Ok(stats) => Some(stats),
+                Err(e) => {
+                    debug!(error = %e, "heliosdoctor: database_stats failed");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        Ok(HeliosdoctorInfo {
+            version: forge_config::VERSION.to_string(),
+            binary_stem,
+            base_path,
+            db_path,
+            updater_repo,
+            updater_binary,
+            config_source: config_source.to_string(),
+            db_stats,
+            // Surface both the write and legacy read paths so the operator
+            // can verify the fork is using a separate DB. The fields are
+            // optional in the domain model so older binaries that don't
+            // know about the split still parse this struct cleanly.
+            legacy_db_path: if legacy_db_path == write_db_path {
+                None
+            } else {
+                Some(legacy_db_path)
+            },
+            write_db_path: Some(write_db_path),
+        })
     }
 }
 
@@ -217,6 +302,13 @@ mod tests {
 
         fn get_env_vars(&self) -> std::collections::BTreeMap<String, String> {
             std::collections::BTreeMap::new()
+        }
+
+        fn database_stats(
+            &self,
+        ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
+        {
+            async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
         }
     }
 

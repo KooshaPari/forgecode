@@ -30,7 +30,7 @@ generate hundreds of merge conflicts on every upstream rebase from
 | 3 | Bin `forge` (release) | `forge` | preserved | Gate 1b | Done (legacy bin kept) |
 | 4 | Bin `forge-dev` (dev channel) | `forge-dev` | preserved | Gate 1b | Done (legacy bin kept) |
 | 5 | Bin `helioslite` (canonical) | new | added | Gate 1b | Done |
-| 6 | Default data dir | `~/.forge/` | `~/.helioslite/` (legacy still honored) | Gate 1b | Pending (Gate 5) |
+| 6 | Default data dir | `~/.forge/` | `~/.helioslite/` (legacy still honored) | Gate 5 | Done (Gate 5) |
 | 7 | Workflow file | `release.yml` | `helioslite-release.yml` | Gate 4 | Pending |
 | 8 | Env vars (`FORGE_*`) | preserved | unchanged | Future | Untouched |
 | 9 | Domain `helioslite.phenotype.space` | new | added | Gate 6 | Pending |
@@ -58,7 +58,10 @@ generate hundreds of merge conflicts on every upstream rebase from
 - **Canonical**: `~/.helioslite/`.
 - **Legacy**: `~/.forge/` (still discovered by `helioslite` CLI; data
   is *not* migrated automatically — it remains readable in place to
-  avoid risk on upgrade).
+  avoid risk on upgrade). While `~/.forge/` exists it takes precedence
+  over `~/.helioslite/`, so an empty canonical stub can never shadow
+  real legacy data; the canonical dir activates only after `~/.forge/`
+  is moved away or on a fresh install.
 - **Migration**: a future `helioslite migrate data-dir` command will
   offer a one-shot move (Gate 7).
 

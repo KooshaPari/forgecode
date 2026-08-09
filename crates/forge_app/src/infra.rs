@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use bytes::Bytes;
 use forge_domain::{
-    AuthCodeParams, CommandOutput, ConfigOperation, Environment, FileInfo, McpServerConfig,
-    OAuthConfig, OAuthTokenResponse, ToolDefinition, ToolName, ToolOutput,
+    AuthCodeParams, CommandOutput, ConfigOperation, Environment, FileInfo, HeliosdoctorDbStats,
+    McpServerConfig, OAuthConfig, OAuthTokenResponse, ToolDefinition, ToolName, ToolOutput,
 };
 use forge_eventsource::EventSource;
 use reqwest::Response;
@@ -46,13 +46,25 @@ pub trait EnvironmentInfra: Send + Sync {
         &self,
         ops: Vec<ConfigOperation>,
     ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send;
+
+    /// Aggregate database stats surfaced by `heliosdoctor --verbose`.
+    ///
+    /// Implementations typically forward this to
+    /// [`forge_domain::ConversationRepository::database_stats`] on the same
+    /// infra handle so the result reflects the live conversations DB.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying DB query fails.
+    fn database_stats(
+        &self,
+    ) -> impl std::future::Future<Output = anyhow::Result<HeliosdoctorDbStats>> + Send;
 }
 
 /// Repository for accessing system environment information
 /// This uses the EnvironmentService trait from forge_domain
 /// A service for reading files from the filesystem.
 ///
-/// This trait provides an abstraction over file reading operations, allowing
+/// This trait provides an abstraction for file reading operations, allowing
 /// for both real file system access and test mocking.
 #[async_trait::async_trait]
 pub trait FileReaderInfra: Send + Sync {

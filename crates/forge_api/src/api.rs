@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use anyhow::Result;
 use forge_app::dto::ToolsOverview;
 use forge_app::{User, UserUsage};
-use forge_domain::{AgentId, Effort, ModelId, ProviderModels};
+use forge_domain::{
+    AgentId, Effort, ForgeExportOptions, ForgeExportReport, ForgeImportOptions, ForgeImportReport,
+    HeliosdoctorInfo, ModelId, ProviderModels,
+};
 use forge_stream::MpscStream;
 use futures::stream::BoxStream;
 use url::Url;
@@ -355,4 +358,47 @@ pub trait API: Sync + Send {
     ///
     /// Returns `(compressed, skipped, errors)` counts.
     async fn compress_uncompressed_contexts(&self) -> Result<(usize, usize, usize)>;
+
+    /// One-way import from an official forge-lineage database.
+    ///
+    /// The source database is opened read-only and is never modified.
+    /// Existing conversation IDs are skipped, making the import idempotent.
+    async fn import_forge_db(&self, source: PathBuf) -> Result<ForgeImportReport>;
+
+    /// One-way import with explicit options (`dry_run`, `verbose`).
+    /// When `dry_run` is set, the source DB is scanned but no rows are
+    /// inserted. The inserts are wrapped in a single transaction.
+    async fn import_forge_db_with_options(
+        &self,
+        source: PathBuf,
+        options: &ForgeImportOptions,
+    ) -> Result<ForgeImportReport>;
+
+    /// One-way export to a freshly-created official-schema SQLite file.
+    /// Compressed rows are decompressed during the export.
+    async fn export_forge_db(
+        &self,
+        destination: PathBuf,
+        options: &ForgeExportOptions,
+    ) -> Result<ForgeExportReport>;
+
+    /// Returns environment diagnostics (base path, db path, updater channel,
+    /// binary identity). Cheap — no DB calls; reads config and argv[0].
+    async fn heliosdoctor(&self) -> Result<HeliosdoctorInfo>;
+
+    /// Same as `heliosdoctor`, but with database statistics populated when
+    /// `verbose` is `true`.
+    async fn heliosdoctor_verbose(&self, verbose: bool) -> Result<HeliosdoctorInfo>;
+
+    /// Atomically migrate the legacy data directory to the canonical
+    /// location. For `helioslite`: `~/.forge` -> `~/.helioslite`. For
+    /// `forge`: `~/forge` -> `~/.forge`.
+    async fn migrate_data_dir(
+        &self,
+        options: &forge_domain::MigrateOptions,
+    ) -> Result<forge_domain::ForgeMigrateReport>;
+
+    /// Delete conversations matching the given filter. Idempotent and safe
+    /// to run while forge is otherwise idle.
+    async fn forget_conversations(&self, options: &ForgeForgetOptions) -> Result<ForgeForgetReport>;
 }

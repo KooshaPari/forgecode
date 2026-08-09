@@ -647,6 +647,48 @@ impl<
         self.services.compress_uncompressed_contexts().await
     }
 
+    async fn import_forge_db(&self, source: PathBuf) -> Result<ForgeImportReport> {
+        self.services.import_forge_db(source).await
+    }
+
+    async fn import_forge_db_with_options(
+        &self,
+        source: PathBuf,
+        options: &ForgeImportOptions,
+    ) -> Result<ForgeImportReport> {
+        self.services.import_forge_db_with_options(source, options).await
+    }
+
+    async fn export_forge_db(
+        &self,
+        destination: PathBuf,
+        options: &ForgeExportOptions,
+    ) -> Result<ForgeExportReport> {
+        self.services.export_forge_db(destination, options).await
+    }
+
+    async fn heliosdoctor(&self) -> Result<HeliosdoctorInfo> {
+        self.services.heliosdoctor().await
+    }
+
+    async fn heliosdoctor_verbose(&self, verbose: bool) -> Result<HeliosdoctorInfo> {
+        self.services.heliosdoctor_verbose(verbose).await
+    }
+
+    async fn migrate_data_dir(
+        &self,
+        options: &forge_domain::MigrateOptions,
+    ) -> Result<forge_domain::ForgeMigrateReport> {
+        self.services.migrate_data_dir(options).await
+    }
+
+    async fn forget_conversations(
+        &self,
+        options: &ForgeForgetOptions,
+    ) -> Result<ForgeForgetReport> {
+        self.services.forget_conversations(options).await
+    }
+
     fn hydrate_channel(&self) -> Result<()> {
         self.infra.hydrate();
         Ok(())

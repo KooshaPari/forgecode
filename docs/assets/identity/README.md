@@ -1,6 +1,6 @@
 # forgecode — Identity Demo Media (L105)
 
-Animated SVG + MP4 showcasing the [Terminal-Forge palette](../../assets/tokens.css) in motion.
+Animated SVG + MP4 showcasing the [Terminal-Forge palette](../../../assets/tokens.css) in motion.
 
 ## Files
 
@@ -32,6 +32,6 @@ python /tmp/svg2mp4.py demo.svg demo.mp4 480 270 24 5
 
 ## Source of truth
 
-- Tokens: [`../../assets/tokens.css`](../../assets/tokens.css)
+- Tokens: [`../../../assets/tokens.css`](../../../assets/tokens.css)
 - Source icon: [`../../assets/brand/forgecode-icon.svg`](../../assets/brand/forgecode-icon.svg)
 - Scorecard: `.claude/audit/.vision/L96-L107.md`

@@ -90,11 +90,18 @@ impl ConfigReader {
     /// Returns the base directory for the active binary's configuration files.
     ///
     /// Resolution order:
-    /// 1. `FORGE_CONFIG` environment variable, if set.
-    /// 2. `~/forge` (legacy path), if that directory exists, so users who have
-    ///    not yet run `forge config migrate` continue to read from their
-    ///    existing directory without disruption.
-    /// 3. `~/.forge` as the default path.
+    /// 1. For the canonical `helioslite` binary:
+    ///    - `HELIOSLITE_HOME`, if set (rejected when it overlaps `~/.forge`).
+    ///    - `~/.forge` (legacy), if that directory exists — the data is
+    ///      honored and read in place and is never auto-migrated. The legacy
+    ///      dir keeps winning while present so an empty `~/.helioslite` stub
+    ///      can never shadow real data.
+    ///    - `~/.helioslite` (canonical data dir), as the default for fresh
+    ///      installs and after `~/.forge` has been moved away by a migration.
+    /// 2. For the legacy `forge` / `forge-dev` binaries:
+    ///    - `FORGE_CONFIG` environment variable, if set.
+    ///    - `~/forge` (historical legacy path), if that directory exists.
+    ///    - `~/.forge` as the default path.
     pub fn base_path() -> PathBuf {
         BASE_PATH.clone()
     }
@@ -122,6 +129,19 @@ impl ConfigReader {
         BINARY_NAME.as_str()
     }
 
+    /// Returns the asset/identity prefix for the running executable:
+    /// `helioslite` for the canonical binary, `forge` for the legacy aliases.
+    ///
+    /// Shared by `forge_main` (updater asset naming) and `forge_services`
+    /// (`heliosdoctor` diagnostics) without either depending on the other.
+    pub fn binary_prefix() -> &'static str {
+        if Self::is_helioslite(Self::binary_name()) {
+            "helioslite"
+        } else {
+            "forge"
+        }
+    }
+
     fn resolve_base_path_for(
         binary_name: &str,
         home: Option<&std::path::Path>,
@@ -137,6 +157,17 @@ impl ConfigReader {
                 Self::validate_helioslite_home(&path, home)?;
                 return Ok(path);
             }
+            // Gate 5: legacy ~/.forge data is honored and read in place while
+            // it exists (never auto-migrated). It keeps winning so an empty
+            // ~/.helioslite stub can never shadow the real data; the canonical
+            // dir only becomes active after ~/.forge has been moved away by an
+            // explicit migration, or for fresh installs.
+            if let Some(home) = home {
+                let legacy = home.join(".forge");
+                if legacy.exists() {
+                    return Ok(legacy);
+                }
+            }
             return Ok(home
                 .unwrap_or_else(|| std::path::Path::new("."))
                 .join(".helioslite"));
@@ -151,11 +182,7 @@ impl ConfigReader {
 
         let base = home.unwrap_or_else(|| std::path::Path::new("."));
         let path = base.join("forge");
-
-        // Prefer ~/forge (legacy) when it exists so existing users are not
-        // disrupted; fall back to ~/.forge as the default.
         if path.exists() {
-            tracing::info!("Using legacy path");
             return Ok(path);
         }
 
@@ -345,7 +372,6 @@ mod tests {
             root.join("config/.helioslite.toml")
         );
     }
-
     #[test]
     fn helioslite_explicit_home_is_independent_from_forge_config() {
         let home = PathBuf::from("/tmp/helios-home");
@@ -353,7 +379,6 @@ mod tests {
         let root = ConfigReader::resolve_base_path_for("helioslite", Some(&home), Some(&explicit));
         assert_eq!(root.unwrap(), explicit);
     }
-
     #[test]
     fn forge_keeps_legacy_root_and_config_layout() {
         let home = PathBuf::from("/tmp/forge-home");
@@ -366,7 +391,6 @@ mod tests {
             explicit.join(".forge.toml")
         );
     }
-
     #[test]
     fn helioslite_detection_is_case_insensitive() {
         let home = PathBuf::from("/tmp/helios-home");
@@ -377,7 +401,6 @@ mod tests {
             root.join("config/.helioslite.toml")
         );
     }
-
     #[test]
     fn helioslite_home_rejects_overlap_with_forge_root() {
         let home = PathBuf::from("/tmp/helios-home");
@@ -392,7 +415,6 @@ mod tests {
             assert!(error.to_string().contains("must not overlap ~/.forge"));
         }
     }
-
     #[test]
     fn helioslite_env_home_rejects_overlap_with_forge_root() {
         let home = PathBuf::from("/tmp/helios-home");
@@ -402,6 +424,50 @@ mod tests {
         let error = ConfigReader::resolve_base_path_for("HeLiOsLiTe", Some(&home), None)
             .expect_err("overlapping HELIOSLITE_HOME must be rejected");
         assert!(error.to_string().contains("must not overlap ~/.forge"));
+    }
+
+    #[test]
+    fn test_base_path_canonical_binary_honors_legacy_forge_dir() {
+        // Gate 5: the legacy ~/.forge dir keeps winning while present, so an
+        // empty ~/.helioslite stub can never shadow real data.
+        let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG"]);
+        let home = std::env::temp_dir().join(format!("hl-gate5-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(home.join(".forge")).unwrap();
+        let actual = ConfigReader::resolve_base_path_for("helioslite", Some(&home), None).unwrap();
+        std::fs::remove_dir_all(&home).ok();
+        assert_eq!(actual, home.join(".forge"));
+    }
+
+    #[test]
+    fn test_base_path_canonical_binary_legacy_forge_wins_while_present() {
+        // When both exist, ~/.forge must win: an empty ~/.helioslite stub
+        // must never shadow real legacy data.
+        let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG"]);
+        let home = std::env::temp_dir().join(format!("hl-gate5-canon-{}", std::process::id()));
+        std::fs::create_dir_all(home.join(".helioslite")).unwrap();
+        std::fs::create_dir_all(home.join(".forge")).unwrap();
+        let actual = ConfigReader::resolve_base_path_for("helioslite", Some(&home), None).unwrap();
+        std::fs::remove_dir_all(&home).ok();
+        assert_eq!(actual, home.join(".forge"));
+    }
+
+    #[test]
+    fn test_base_path_canonical_binary_uses_helioslite_after_legacy_removed() {
+        // After ~/.forge is moved away (migration), the canonical dir wins.
+        let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG"]);
+        let home = std::env::temp_dir().join(format!("hl-gate5-migrated-{}", std::process::id()));
+        std::fs::create_dir_all(home.join(".helioslite")).unwrap();
+        let actual = ConfigReader::resolve_base_path_for("helioslite", Some(&home), None).unwrap();
+        std::fs::remove_dir_all(&home).ok();
+        assert_eq!(actual, home.join(".helioslite"));
+    }
+
+    #[test]
+    fn test_base_path_legacy_binary_defaults_to_dot_forge() {
+        let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG"]);
+        let home = PathBuf::from("/home/nonexistent-user");
+        let actual = ConfigReader::resolve_base_path_for("forge", Some(&home), None).unwrap();
+        assert_eq!(actual, home.join(".forge"));
     }
 
     #[test]

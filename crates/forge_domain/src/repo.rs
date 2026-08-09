@@ -1,8 +1,8 @@
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use url::Url;
-
 use crate::{
     AnyProvider, AuthCredential, ChatCompletionMessage, Context, Conversation, ConversationId,
     ConversationSummary, MigrationResult, Model, ModelId, Provider, ProviderId, ProviderTemplate,
@@ -14,6 +14,206 @@ pub struct TextPatchBlock {
     pub patch: String,
     pub patched_text: String,
 }
+
+/// Result of importing conversations from a foreign forge installation.
+///
+/// Rows that were parsed and written count toward `imported`. Rows skipped
+/// (no context blob / already-empty shells) count toward `skipped`. Rows
+/// that failed to parse or write count toward `errors` and are not aborted.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForgeImportResult {
+    pub imported: usize,
+    pub skipped: usize,
+    pub errors: usize,
+}
+
+/// Result of a one-way import from an official forge-lineage database.
+///
+/// The source database is opened read-only and is never modified. Rows whose
+/// `conversation_id` already exists in the destination repository are skipped,
+/// which makes re-running the import idempotent.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForgeImportReport {
+    /// Conversations read from the source database.
+    pub source_total: usize,
+    /// Conversations written into the destination repository.
+    pub imported: usize,
+    /// Conversations skipped because their ID already exists.
+    pub skipped_existing: usize,
+    /// Rows skipped because `conversation_id` was not parseable.
+    pub invalid_id: usize,
+    /// Conversations imported without a context blob because the source
+    /// context could not be parsed into the heliosLite schema.
+    pub context_parse_failed: usize,
+    /// Rows skipped due to insert or read errors.
+    pub errors: usize,
+    /// When `dry_run` was set, the report describes what *would* have been
+    /// written but no inserts were performed.
+    pub dry_run: bool,
+}
+
+/// Options that tune the behaviour of
+/// [`ConversationRepository::import_forge_db`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForgeImportOptions {
+    /// When set, the source DB is scanned exactly as for a real import but
+    /// no rows are inserted. The returned [`ForgeImportReport`] reflects what
+    /// would have been written.
+    pub dry_run: bool,
+    /// Print each row's outcome (imported / skipped / failed) to stderr as
+    /// the import progresses. Useful for very large source databases.
+    pub verbose: bool,
+}
+
+/// Result of a one-way export from a heliosLite database to a freshly-created
+/// official-schema SQLite file.
+///
+/// Compression (`context_zstd`) is reversed: the resulting DB has plain
+/// `context` blobs readable by the official lineage.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForgeExportReport {
+    /// Conversations read from this heliosLite repository.
+    pub source_total: usize,
+    /// Conversations written into the destination DB.
+    pub exported: usize,
+    /// Rows skipped because decompression failed.
+    pub decompression_failed: usize,
+    /// Rows skipped due to write errors.
+    pub errors: usize,
+    /// When `dry_run` was set, no DB file was created.
+    pub dry_run: bool,
+}
+
+/// Options that tune the behaviour of
+/// [`ConversationRepository::export_forge_db`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForgeExportOptions {
+    /// When set, the export scans the same rows but does not create the
+    /// destination DB. The report reflects what *would* have been
+    /// written.
+    pub dry_run: bool,
+    /// Output format. Defaults to `Sqlite` (mirrors upstream `forge.db`
+    /// schema). `Jsonl` and `Csv` write one record per line to the
+    /// destination path and are useful for off-system consumption.
+    pub format: ForgeExportFormat,
+    /// By default, agent-launched rows are skipped from the export (the
+    /// TUI picker hides them, so exporting them is rarely useful). Set
+    /// `include_agent` to `true` to include them.
+    pub include_agent: bool,
+}
+
+/// Output format for [`ConversationRepository::export_forge_db`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum ForgeExportFormat {
+    /// SQLite database mirroring the upstream `forge` schema (default).
+    #[default]
+    Sqlite,
+    /// Newline-delimited JSON: one `[title,id,created_at,updated_at,context]`
+    /// tuple per row. `context` is a JSON string (not an object) so the
+    /// downstream parser can re-parse it transparently.
+    Jsonl,
+    /// CSV with header: `conversation_id,title,created_at,updated_at,context`.
+    /// Context is emitted as a single field, double-quote-escaped.
+    Csv,
+}
+/// Aggregate database statistics surfaced by `heliosdoctor --verbose`.
+///
+/// Used to spot compression regressions (compressed rows missing their
+/// `context_zstd` payload), oversized contexts, and agent-batch fanout.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeliosdoctorDbStats {
+    /// Total conversation rows in the database.
+    pub total_conversations: u64,
+    /// Rows where `is_compressed = 1` (context lives in `context_zstd`).
+    pub compressed_rows: u64,
+    /// Rows where `is_compressed = 0` (plain `context` column populated).
+    pub uncompressed_rows: u64,
+    /// Rows where `context IS NULL` and `is_compressed = 0` (empty shell).
+    pub empty_rows: u64,
+    /// Rows whose context blob is over 1 MB (decompression / render cost).
+    pub oversized_rows: u64,
+    /// Agent-launched rows (`context.initiator = "agent"`).
+    pub agent_initiated_rows: u64,
+    /// `PRAGMA integrity_check` result (`"ok"` when healthy).
+    pub integrity_check: String,
+    /// Whether the legacy DB was successfully ATTACHed for read-fallback
+    /// (only meaningful when split-DB is active).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub legacy_attached: Option<bool>,
+    /// Write-side DB path (the file the current binary writes to).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub write_db_path: Option<String>,
+    /// Legacy read-side DB path (ATTACHed read-only when present).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub legacy_db_path: Option<String>,
+    /// Per-table row counts when split-DB is active.
+    /// `tables["conversations"] = (write_count, legacy_count)`, etc.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub tables: BTreeMap<String, (Option<i64>, Option<i64>)>,
+    /// Error string when stats collection failed (kept for the operator).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub error: Option<String>,
+}
+
+/// Filter for `forget_conversations`. At least one selector must be set.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForgeForgetOptions {
+    /// Delete by exact conversation_id. Any ID that does not match is silently
+    /// ignored (idempotent).
+    pub ids: Vec<ConversationId>,
+    /// Delete all rows whose `source` column equals this value
+    /// (e.g. `imported:forge`, `agent`, `user`).
+    pub source: Option<String>,
+    /// Delete rows where `updated_at` is older than `now - older_than_secs`.
+    pub older_than_secs: Option<i64>,
+    /// When `true`, perform a no-op scan and report the count that *would*
+    /// be deleted. The database is **not** modified.
+    pub dry_run: bool,
+}
+
+/// Result of `forget_conversations`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForgeForgetReport {
+    /// Number of rows that matched the filter.
+    pub matched: usize,
+    /// Number of rows actually removed. Equal to `matched` when
+    /// `dry_run` is `false`.
+    pub deleted: usize,
+    /// When `dry_run` was set, no rows were deleted.
+    pub dry_run: bool,
+}
+
+/// Options that tune [`ConversationRepository::migrate_data_dir`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MigrateOptions {
+    /// When set, the migration is computed but no files are moved or
+    /// renamed. The returned [`ForgeMigrateReport`] describes what
+    /// *would* have happened.
+    pub dry_run: bool,
+}
+
+/// Outcome of `migrate_data_dir`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ForgeMigrateReport {
+    /// Resolved source (`~/.forge`) and destination (`~/.helioslite`) paths.
+    pub source_path: PathBuf,
+    pub destination_path: PathBuf,
+    /// High-level outcome (one of `migrated`, `already_migrated`,
+    /// `noop_legacy_missing`). The detailed boolean flags below are
+    /// provided for tool consumption.
+    pub outcome: String,
+    /// Total bytes copied (from the source DB file).
+    pub bytes_copied: u64,
+    /// Number of conversations confirmed readable in the copied DB.
+    pub conversations_verified: u64,
+    /// If `migrated`, the legacy directory was renamed to
+    /// `~/.forge.migrated-YYYYMMDDHHMMSS`. The new path is recorded here.
+    pub renamed_legacy_to: Option<PathBuf>,
+}
+
+/// Alias used by the CLI layer; canonical name is `ForgeMigrateReport`.
+pub type MigrateReport = ForgeMigrateReport;
 
 /// Repository for managing file snapshots
 ///
@@ -383,6 +583,144 @@ pub trait ConversationRepository: Send + Sync {
     /// Returns an error only if the batch query itself fails. Per-row
     /// compression errors are counted in `errors` and do not abort the batch.
     async fn compress_uncompressed_contexts(&self) -> Result<(usize, usize, usize)>;
+
+    /// One-way import of conversations from an official forge-lineage SQLite
+    /// database (plain `context` schema, no zstd compression columns) into
+    /// this repository.
+    ///
+    /// The source database is opened read-only and is never modified.
+    /// Conversations whose `conversation_id` already exists in this
+    /// repository are skipped, making the operation idempotent. Rows whose
+    /// context cannot be parsed into the heliosLite schema are imported
+    /// without a context blob and reported via [`ForgeImportReport`].
+    ///
+    /// # Errors
+    /// Returns an error if the source file is missing, is not a forge
+    /// conversations database, or if it is already a heliosLite/fork-schema
+    /// database (nothing to import).
+    async fn import_forge_db(&self, source: PathBuf) -> Result<ForgeImportReport>;
+
+    /// One-way import with explicit [`ForgeImportOptions`].
+    ///
+    /// When `options.dry_run` is `true`, the source DB is scanned exactly
+    /// as for a real import but no rows are inserted. The returned
+    /// [`ForgeImportReport`] reflects what *would* have been written.
+    ///
+    /// When `options.verbose` is `true`, each row's outcome is logged
+    /// (imported / skipped / failed) for visibility on large source DBs.
+    ///
+    /// The inserts are wrapped in a single SQLite transaction so a
+    /// partial import cannot leave the destination in an inconsistent
+    /// state.
+    ///
+    /// # Errors
+    /// Returns an error if the source file is missing, is not a forge
+    /// conversations database, or if it is already a heliosLite/fork-schema
+    /// database (nothing to import). A failure inside the transaction
+    /// also aborts the entire batch.
+    async fn import_forge_db_with_options(
+        &self,
+        source: PathBuf,
+        options: &ForgeImportOptions,
+    ) -> Result<ForgeImportReport>;
+
+    /// One-way export of conversations from this heliosLite repository to a
+    /// freshly-created official-schema SQLite file at `destination`.
+    ///
+    /// The destination DB is created (parents included); any existing file
+    /// at the path is replaced. The schema matches the official forge
+    /// lineage (no `is_compressed`, no `context_zstd`, plain `context`
+    /// column). Compressed rows are decompressed during the export.
+    ///
+    /// This is the inverse of [`import_forge_db`]: it lets you hand off a
+    /// heliosLite DB to the official lineage.
+    ///
+    /// # Errors
+    /// Returns an error if `destination` cannot be created or if a row
+    /// cannot be decompressed / written.
+    async fn export_forge_db(
+        &self,
+        destination: PathBuf,
+        options: &ForgeExportOptions,
+    ) -> Result<ForgeExportReport>;
+
+    /// Aggregate DB stats for `heliosdoctor --verbose`.
+    ///
+    /// Includes compression health, oversized context count, agent
+    /// fanout, and a `PRAGMA integrity_check` result. Implementations
+    /// should execute the counts in a single SQLite query when possible
+    /// to keep this cheap on large DBs.
+    async fn database_stats(&self) -> Result<HeliosdoctorDbStats>;
+
+    /// Remove conversations matching the supplied filter.
+    ///
+    /// At least one of `ids` / `source` / `older_than_secs` must be set;
+    /// calling with all `None` is an error (prevents accidental full-delete).
+    /// The match is exact, case-sensitive, and applies to the row's
+    /// `source` column (e.g. `imported:forge`, `agent`, `user`).
+    ///
+    /// Set `rows_affected` in the returned report. Deleted rows are
+    /// removed from `conversations` (and dependent rows via foreign keys).
+    /// Snapshots / intent_state rows for the deleted conversations are
+    /// left intentionally — they are inert and can be cleaned by a future
+    /// `forge maintenance` sweep.
+    ///
+    /// # Errors
+    /// Returns an error if no filter is provided, the database update
+    /// fails, or the resolved DB is on a read-only volume.
+    async fn forget_conversations(
+        &self,
+        options: &ForgeForgetOptions,
+    ) -> Result<ForgeForgetReport>;
+
+    /// Atomically migrate the active data directory from `~/.forge` to
+    /// `~/.helioslite` (the canonical heliosLite location).
+    ///
+    /// Returns [`ForgeMigrateReport`] describing what was moved. The
+    /// operation is idempotent: if `~/.helioslite` already exists and
+    /// contains data, the function reports `already_migrated` and exits
+    /// without touching anything. If `~/.forge` is missing, the result
+    /// is `noop_legacy_missing` and the canonical directory is created
+    /// empty (so the launcher treats the install as fresh).
+    ///
+    /// The DB is copied (not moved) to `~/.helioslite/.forge.db` and
+    /// then validated by reopening it. Only after the copy is verified
+    /// does the function rename the legacy `~/.forge` directory to
+    /// `~/.forge.migrated-YYYYMMDDHHMMSS` so the user can roll back.
+    ///
+    /// # Errors
+    /// Returns an error if the source DB is unreadable, the copy fails,
+    /// or the post-copy validation fails.
+    async fn migrate_data_dir(&self, options: &MigrateOptions) -> Result<ForgeMigrateReport>;
+}
+
+/// Environment diagnostics produced by `heliosdoctor`.
+///
+/// `config_source` describes where the base path was resolved from:
+/// `override-env` (FORGE_CONFIG), `helioslite` (canonical ~/.helioslite),
+/// `legacy-forge` (read-in-place ~/.forge), or `default` (fresh install).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeliosdoctorInfo {
+    pub version: String,
+    pub binary_stem: String,
+    pub base_path: PathBuf,
+    pub db_path: PathBuf,
+    pub updater_repo: String,
+    pub updater_binary: String,
+    pub config_source: String,
+    /// Populated only when `--verbose` is requested. Reports compression
+    /// health, agent fanout, oversized contexts, and a DB integrity check.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub db_stats: Option<HeliosdoctorDbStats>,
+    /// Write-side DB path when split-DB is active. `None` when both paths
+    /// resolve to the same file (the historical single-DB layout).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub write_db_path: Option<PathBuf>,
+    /// Legacy read-side DB path when split-DB is active. `None` when the
+    /// operator hasn't set `FORGE_LEGACY_DB_PATH` / no legacy file exists.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub legacy_db_path: Option<PathBuf>,
 }
 
 #[async_trait::async_trait]

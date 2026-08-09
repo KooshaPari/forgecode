@@ -114,6 +114,27 @@ impl Environment {
         self.base_path.join(".forge.db")
     }
 
+    /// Returns the path where the fork WRITES conversations and other DB
+    /// tables.
+    ///
+    /// Resolution order:
+    /// 1. `FORGE_WRITE_DB_PATH` environment variable, if set. Allows callers
+    ///    to point writes at any file (including a brand-new directory) so
+    ///    the existing `.forge.db` is left untouched.
+    /// 2. Otherwise `.forge.writes.db` — the split-DB default. The fork
+    ///    always writes new data into the separate write DB while reads go
+    ///    through the `conversations_all` UNION (legacy `.forge.db` +
+    ///    write DB), so pre-existing conversations remain visible.
+    ///
+    /// Point `FORGE_LEGACY_DB_PATH` at a different file to change which
+    /// legacy database the read-side UNION pulls from.
+    pub fn write_database_path(&self) -> PathBuf {
+        if let Ok(path) = std::env::var("FORGE_WRITE_DB_PATH") {
+            return PathBuf::from(path);
+        }
+        self.base_path.join(".forge.writes.db")
+    }
+
     /// Returns the path to the cache directory
     pub fn cache_dir(&self) -> PathBuf {
         self.base_path.join("cache")

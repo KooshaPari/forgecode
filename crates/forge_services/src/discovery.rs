@@ -112,6 +112,13 @@ mod tests {
         fn get_env_vars(&self) -> std::collections::BTreeMap<String, String> {
             std::collections::BTreeMap::new()
         }
+
+        fn database_stats(
+            &self,
+        ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
+        {
+            async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
+        }
     }
 
     #[async_trait::async_trait]

@@ -8,7 +8,7 @@ Document key flows with journey manifests in `docs/journeys/manifests/`.
 
 ## Status
 
-- [ ] Identify key user-facing flows
+- [x] Identify key user-facing flows (onboarding seeded — see `docs/journeys/README.md`)
+- [x] Author manifests in `docs/journeys/manifests/` (first: onboarding-journey)
 - [ ] Record VHS tapes for each flow
-- [ ] Author manifests in `docs/journeys/manifests/`
 - [ ] Run `phenotype-journey verify` in CI
