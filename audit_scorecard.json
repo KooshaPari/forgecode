@@ -1,8 +1,8 @@
 {
   "repo": "forgecode",
   "rubric": "audit-v38",
-  "date": "2026-08-01",
-  "commit_audited": "3e1d574406981db71c8215d6c15dae4ea3498069",
+  "date": "2026-08-08",
+  "commit_audited": "121a2a5e68ea012eab5620c699c567664e2b584f",
   "repo_type": "CLI+TUI (Rust workspace, 39 crates)",
   "overall": 54,
   "grade": "D",

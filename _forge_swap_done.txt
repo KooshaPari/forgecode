@@ -19,6 +19,25 @@ installed state is traceable to a commit and verified result.
                   "302 read, 302 exported, 0 decompression failures, 0 errors";
                   exported DB 302 rows (265 null-context, metadata preserved);
                   heliosdoctor 458/28/165/265/0/156, integrity ok.
+2026-08-08 ~21:30 Swap 5: installed release build of 121a2a5e6 (v2.10.7, local
+                  main merged with origin/main PRs #124-#149) built from a
+                  detached worktree at HEAD (no uncommitted WIP compiled in).
+                  Verified: version 2.10.7 (both helioslite.exe and forge.exe);
+                  export dry-run and real both "302 read, 302 exported, 0
+                  decompression failures, 0 errors"; exported DB 302 rows
+                  (265 null-context); heliosdoctor 458/28/165/265/0/156,
+                  integrity ok; `conversation list` shows real sessions
+                  (union reads incl. legacy rows).
+2026-08-08 ~23:30 Swap 6: installed release build of 7e97f39b7 (swap-5 state
+                  + d6e394ab3 FORGE_LEGACY_DB_PATH / 8d565f9d4 updater /
+                  9016da614 portability), detached worktree at HEAD.
+                  Verified: version 2.10.7 both binaries; heliosdoctor
+                  460/29/165/266/0/156, integrity ok (live DB grew +2 rows
+                  since swap 5); export dry-run and real "304 read, 304
+                  exported, 0 failures", dest 304 rows (266 null-context);
+                  FORGE_LEGACY_DB_PATH override honored (copy of legacy DB ->
+                  total 460; bogus path -> 2 write-DB rows, no crash);
+                  conversation list shows real sessions.
 
 Commits covered by the 2026-08-08 swaps:
   c30e21dac  feat(splitdb): complete read/write DB split with union reads by default
@@ -28,8 +47,15 @@ Commits covered by the 2026-08-08 swaps:
   16ff1fc04  docs: document split-DB default storage layout
   f2118f8b7  fix(export): export empty-context rows instead of dropping them
   f32d93eb7  test: harden executor, repo, and skill tests for cross-platform flakiness
+  121a2a5e6  merge state incl. PRs #124-#149 (updater, CI, SBOM policy,
+             session snapshot import); workspace version 2.10.7
+  d6e394ab3  fix(splitdb): honor FORGE_LEGACY_DB_PATH and migrate both DBs
+  8d565f9d4  fix(updater): drop dead asset helper, publish helioslite assets
+  9016da614  fix(portability): cross-platform drift db path and preview shell
 
 Verification commands (installed binaries, no env overrides):
-  helioslite.exe --version                 -> 2.10.5
-  helioslite.exe heliosdoctor --verbose    -> total 458, integrity ok
-  helioslite.exe export forge <dest>       -> 302 read, 302 exported, 0 failures
+  helioslite.exe --version                 -> 2.10.5 (swaps 1-4), 2.10.7 (swaps 5-6)
+  helioslite.exe heliosdoctor --verbose    -> total 458 (swap 5) / 460 (swap 6), integrity ok
+  helioslite.exe export forge <dest>       -> 302/302 (swap 5), 304/304 (swap 6), 0 failures
+  helioslite.exe conversation list         -> real sessions visible
+  FORGE_LEGACY_DB_PATH=<path>              -> honored (swap 6)

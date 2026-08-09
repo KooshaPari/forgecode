@@ -859,12 +859,22 @@ fn render_preview(command: &str, row: &SelectRow) -> String {
     }
 
     let substituted = substitute_preview_command(command, row);
-    let output = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(&substituted)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output();
+
+    // `/bin/sh` is POSIX-only; it does not exist on Windows, so spawning it
+    // there would always fail. The preview shell is unsupported on Windows.
+    let output = if cfg!(target_os = "windows") {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "forge_select preview is POSIX-only (/bin/sh)",
+        ))
+    } else {
+        Command::new("/bin/sh")
+            .arg("-c")
+            .arg(&substituted)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+    };
 
     match output {
         Ok(output) => {

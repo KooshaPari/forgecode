@@ -114,6 +114,20 @@ impl Environment {
         self.base_path.join(".forge.db")
     }
 
+    /// Returns the path of the legacy read-only database whose conversations
+    /// are unioned into the read-side projection.
+    ///
+    /// Resolution order:
+    /// 1. `FORGE_LEGACY_DB_PATH` environment variable, if set. Allows callers
+    ///    to point the read-side UNION at a different legacy file.
+    /// 2. Otherwise `.forge.db` — the default legacy path.
+    pub fn legacy_database_path(&self) -> PathBuf {
+        if let Ok(path) = std::env::var("FORGE_LEGACY_DB_PATH") {
+            return PathBuf::from(path);
+        }
+        self.database_path()
+    }
+
     /// Returns the path where the fork WRITES conversations and other DB
     /// tables.
     ///
@@ -405,6 +419,54 @@ mod tests {
 
         let actual = fixture.provider_config_path();
         let expected = PathBuf::from("/home/user/.forge/provider.json");
+
+        assert_eq!(actual, expected);
+    }
+
+    /// Serializes tests that mutate `FORGE_LEGACY_DB_PATH` so they cannot
+    /// race when run in parallel.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn test_legacy_database_path_defaults_to_database_path() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let fixture: Environment = Faker.fake();
+        let fixture = fixture.base_path(PathBuf::from("/home/user/.forge"));
+
+        // Arrange: ensure FORGE_LEGACY_DB_PATH is not set.
+        let previous = std::env::var("FORGE_LEGACY_DB_PATH").ok();
+        unsafe { std::env::remove_var("FORGE_LEGACY_DB_PATH") };
+
+        let actual = fixture.legacy_database_path();
+        let expected = fixture.database_path();
+
+        // Cleanup: restore the previous value, if any.
+        match previous {
+            Some(value) => unsafe { std::env::set_var("FORGE_LEGACY_DB_PATH", value) },
+            None => unsafe { std::env::remove_var("FORGE_LEGACY_DB_PATH") },
+        }
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_legacy_database_path_honors_env_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let fixture: Environment = Faker.fake();
+        let fixture = fixture.base_path(PathBuf::from("/home/user/.forge"));
+
+        // Arrange: point FORGE_LEGACY_DB_PATH at a custom legacy file.
+        let previous = std::env::var("FORGE_LEGACY_DB_PATH").ok();
+        unsafe { std::env::set_var("FORGE_LEGACY_DB_PATH", "/custom/legacy.db") };
+
+        let actual = fixture.legacy_database_path();
+        let expected = PathBuf::from("/custom/legacy.db");
+
+        // Cleanup: restore the previous value, if any.
+        match previous {
+            Some(value) => unsafe { std::env::set_var("FORGE_LEGACY_DB_PATH", value) },
+            None => unsafe { std::env::remove_var("FORGE_LEGACY_DB_PATH") },
+        }
 
         assert_eq!(actual, expected);
     }
