@@ -1,27 +1,22 @@
-use gh_workflow::*;
-
 use crate::jobs::draft_release_update_job;
+use crate::workflow_model::{Event, Level, Permissions, Push, Workflow};
 
 /// Generate release drafter workflow
 pub fn generate_release_drafter_workflow() {
-    let release_drafter = Workflow::default()
-        .name("Release Drafter")
-        .on(Event {
-            push: Some(Push { branches: vec!["main".to_string()], ..Push::default() }),
-            pull_request_target: Some(PullRequestTarget {
-                types: vec![
-                    PullRequestType::Opened,
-                    PullRequestType::Reopened,
-                    PullRequestType::Synchronize,
-                    PullRequestType::Labeled,
-                    PullRequestType::Unlabeled,
-                    PullRequestType::Closed,
+    let release_drafter = Workflow::new("Release Drafter")
+        .on(Event::default()
+            .push(Push::default().add_branch("main"))
+            .pull_request_target(
+                [
+                    "opened",
+                    "reopened",
+                    "synchronize",
+                    "labeled",
+                    "unlabeled",
+                    "closed",
                 ],
-                branches: vec!["main".to_string()],
-                ..PullRequestTarget::default()
-            }),
-            ..Event::default()
-        })
+                ["main"],
+            ))
         .permissions(
             Permissions::default()
                 .contents(Level::Read)
@@ -36,5 +31,5 @@ pub fn generate_release_drafter_workflow() {
             ),
         );
 
-    super::generate_workflow(release_drafter, "release-drafter.yml");
+    super::generate_private_workflow(release_drafter, "release-drafter.yml");
 }
