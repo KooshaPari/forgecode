@@ -53,6 +53,22 @@ and is triggered:
 7. **Attest** — generate SLSA Build L2 provenance with
    `slsa-framework/slsa-github-generator/attest-build-provenance@v1`.
 
+### CycloneDX SBOM regeneration policy
+
+The repository checks in one CycloneDX JSON SBOM for every workspace package.
+Regenerate the full set only through the version-pinned helper:
+
+```bash
+SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" ./scripts/generate-sbom.sh
+```
+
+The helper requires `cargo-cyclonedx` **0.5.9**, requires a numeric
+`SOURCE_DATE_EPOCH`, and runs `cargo cyclonedx --format json --all`. The epoch
+prevents wall-clock time from becoming an untracked generation input. The
+resulting `*.cdx.json` files are reviewed with the dependency update that
+changed them. This policy does not itself attach an SBOM to a release or alter
+the provenance workflow; release attachment remains a separate workflow change.
+
 ## Verification
 
 Consumers can verify a release artifact's provenance using the
