@@ -106,11 +106,6 @@ impl ConfigReader {
         BASE_PATH.clone()
     }
 
-    fn resolve_base_path() -> PathBuf {
-        Self::resolve_base_path_for(Self::binary_name(), dirs::home_dir().as_deref(), None)
-            .unwrap_or_else(|error| panic!("unable to resolve configuration root: {error}"))
-    }
-
     fn is_helioslite(binary_name: &str) -> bool {
         binary_name.eq_ignore_ascii_case("helioslite")
     }
@@ -340,7 +335,9 @@ mod tests {
     #[test]
     fn test_base_path_uses_forge_config_env_var() {
         let _guard = EnvGuard::set(&[("FORGE_CONFIG", "/custom/forge/dir")]);
-        let actual = ConfigReader::resolve_base_path();
+        let actual =
+            ConfigReader::resolve_base_path_for("forge", dirs::home_dir().as_deref(), None)
+                .unwrap();
         let expected = PathBuf::from("/custom/forge/dir");
         assert_eq!(actual, expected);
     }
@@ -351,7 +348,9 @@ mod tests {
         // cannot race with test_base_path_uses_forge_config_env_var.
         let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG"]);
 
-        let actual = ConfigReader::resolve_base_path();
+        let actual =
+            ConfigReader::resolve_base_path_for("forge", dirs::home_dir().as_deref(), None)
+                .unwrap();
         // Without FORGE_CONFIG set the path must be either "forge" (legacy,
         // preferred when ~/forge exists) or ".forge" (default new path).
         let name = actual.file_name().unwrap();
@@ -364,6 +363,7 @@ mod tests {
 
     #[test]
     fn helioslite_uses_owned_root_and_config_subdirectory() {
+        let _guard = EnvGuard::set_and_remove(&[], &["HELIOSLITE_HOME"]);
         let home = PathBuf::from("/tmp/helios-home");
         let root = ConfigReader::resolve_base_path_for("helioslite", Some(&home), None).unwrap();
         assert_eq!(root, home.join(".helioslite"));
@@ -393,6 +393,7 @@ mod tests {
     }
     #[test]
     fn helioslite_detection_is_case_insensitive() {
+        let _guard = EnvGuard::set_and_remove(&[], &["HELIOSLITE_HOME"]);
         let home = PathBuf::from("/tmp/helios-home");
         let root = ConfigReader::resolve_base_path_for("HeLiOsLiTe", Some(&home), None).unwrap();
         assert_eq!(root, home.join(".helioslite"));
@@ -430,7 +431,7 @@ mod tests {
     fn test_base_path_canonical_binary_honors_legacy_forge_dir() {
         // Gate 5: the legacy ~/.forge dir keeps winning while present, so an
         // empty ~/.helioslite stub can never shadow real data.
-        let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG"]);
+        let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG", "HELIOSLITE_HOME"]);
         let home = std::env::temp_dir().join(format!("hl-gate5-legacy-{}", std::process::id()));
         std::fs::create_dir_all(home.join(".forge")).unwrap();
         let actual = ConfigReader::resolve_base_path_for("helioslite", Some(&home), None).unwrap();
@@ -442,7 +443,7 @@ mod tests {
     fn test_base_path_canonical_binary_legacy_forge_wins_while_present() {
         // When both exist, ~/.forge must win: an empty ~/.helioslite stub
         // must never shadow real legacy data.
-        let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG"]);
+        let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG", "HELIOSLITE_HOME"]);
         let home = std::env::temp_dir().join(format!("hl-gate5-canon-{}", std::process::id()));
         std::fs::create_dir_all(home.join(".helioslite")).unwrap();
         std::fs::create_dir_all(home.join(".forge")).unwrap();
@@ -454,7 +455,7 @@ mod tests {
     #[test]
     fn test_base_path_canonical_binary_uses_helioslite_after_legacy_removed() {
         // After ~/.forge is moved away (migration), the canonical dir wins.
-        let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG"]);
+        let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG", "HELIOSLITE_HOME"]);
         let home = std::env::temp_dir().join(format!("hl-gate5-migrated-{}", std::process::id()));
         std::fs::create_dir_all(home.join(".helioslite")).unwrap();
         let actual = ConfigReader::resolve_base_path_for("helioslite", Some(&home), None).unwrap();
