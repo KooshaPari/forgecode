@@ -1,3 +1,8 @@
+// The conversation-write request variants are placeholders for the forge_app
+// integration: nothing in this crate constructs them yet. Allow dead_code
+// until the daemon is wired in.
+#![allow(dead_code)]
+
 use std::io;
 
 use forge_domain::{Conversation, ConversationId};

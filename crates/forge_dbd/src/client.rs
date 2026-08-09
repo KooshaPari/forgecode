@@ -1,3 +1,8 @@
+// Public client skeleton for the Unix-socket daemon. Nothing in the crate
+// uses it yet (forge_app has not wired the daemon in), so it is all dead code
+// until that integration lands.
+#![allow(dead_code)]
+
 use std::path::Path;
 
 #[cfg(unix)]
