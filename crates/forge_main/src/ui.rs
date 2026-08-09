@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,13 +17,14 @@ use forge_api::{
 };
 use forge_app::utils::format_display_path;
 use forge_app::{CommitResult, ToolResolver};
-use forge_config::{ForgeConfig, OutputMode, OutputSettings};
+use forge_config::{ConfigReader, ForgeConfig, OutputMode, OutputSettings};
 use forge_display::MarkdownFormat;
 use forge_domain::{
     AuthMethod, ChatResponseContent, ConsoleWriter, ContextMessage, ForgeExportOptions,
     ForgeImportOptions, Role, TitleFormat, UserCommand,
 };
 use forge_fs::ForgeFS;
+use forge_repo::{export_forge_snapshot, publish_snapshot_atomic};
 use forge_select::{ForgeWidget, SelectRow};
 use forge_spinner::SpinnerManager;
 use forge_tracker::ToolCallPayload;
@@ -80,6 +82,176 @@ fn detect_source(cli: &Cli) -> String {
     } else {
         "interactive".to_string()
     }
+}
+
+fn is_helioslite_binary_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("helioslite")
+}
+
+fn require_helioslite_binary() -> anyhow::Result<()> {
+    let binary = std::env::args_os()
+        .next()
+        .and_then(|arg| {
+            Path::new(&arg)
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+    if !is_helioslite_binary_name(&binary) {
+        anyhow::bail!(
+            "sessions import-forge is HeliosLite-only; invoke the helioslite binary (detected {binary})"
+        );
+    }
+    Ok(())
+}
+
+fn lexical_absolute(path: &Path) -> anyhow::Result<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    Ok(normalized)
+}
+
+fn nearest_existing_ancestor(path: &Path) -> anyhow::Result<PathBuf> {
+    let mut candidate = path.to_path_buf();
+    while !candidate.exists() {
+        candidate = candidate
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("path has no existing ancestor: {}", path.display()))?
+            .to_path_buf();
+    }
+    Ok(candidate)
+}
+
+fn canonicalize_for_validation(path: &Path) -> anyhow::Result<PathBuf> {
+    let absolute = lexical_absolute(path)?;
+    let ancestor = nearest_existing_ancestor(&absolute)?;
+    let canonical_ancestor = ancestor
+        .canonicalize()
+        .with_context(|| format!("canonicalize existing ancestor {}", ancestor.display()))?;
+    let suffix = absolute.strip_prefix(&ancestor).with_context(|| {
+        format!(
+            "derive non-existent suffix for {} from {}",
+            absolute.display(),
+            ancestor.display()
+        )
+    })?;
+    Ok(canonical_ancestor.join(suffix))
+}
+
+fn validate_helioslite_sessions_root(sessions_root: &Path) -> anyhow::Result<()> {
+    let absolute_root = lexical_absolute(sessions_root)?;
+    if fs::symlink_metadata(&absolute_root)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        anyhow::bail!(
+            "HeliosLite sessions root must not be a symlink: {}",
+            absolute_root.display()
+        );
+    }
+
+    let canonical_root = canonicalize_for_validation(&absolute_root)?;
+    if let Some(home) = dirs::home_dir() {
+        let forge_root = home.join(".forge");
+        let canonical_forge = canonicalize_for_validation(&forge_root)?;
+        if canonical_root.starts_with(&canonical_forge)
+            || canonical_forge.starts_with(&canonical_root)
+        {
+            anyhow::bail!(
+                "HeliosLite sessions root must not overlap ~/.forge (root {}, Forge {})",
+                canonical_root.display(),
+                canonical_forge.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_snapshot_destination(destination: &Path, sessions_root: &Path) -> anyhow::Result<()> {
+    validate_helioslite_sessions_root(sessions_root)?;
+    if destination.exists() {
+        return Err(anyhow::anyhow!(
+            "snapshot destination already exists: {}",
+            destination.display()
+        ));
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("snapshot destination must have a parent directory"))?;
+
+    // Reject traversal before creating anything. This lexical check is also
+    // necessary when the sessions root itself has not been created yet.
+    let absolute_root = lexical_absolute(sessions_root)?;
+    let absolute_parent = lexical_absolute(parent)?;
+    if !absolute_parent.starts_with(&absolute_root) {
+        return Err(anyhow::anyhow!(
+            "snapshot destination must stay under HeliosLite sessions root {}",
+            absolute_root.display()
+        ));
+    }
+
+    // Resolve existing ancestors before mkdir so a symlink cannot redirect a
+    // newly-created parent outside the owned HeliosLite tree.
+    let root_ancestor = nearest_existing_ancestor(&absolute_root)?
+        .canonicalize()
+        .with_context(|| {
+            format!(
+                "canonicalize sessions root ancestor {}",
+                absolute_root.display()
+            )
+        })?;
+    let parent_ancestor = nearest_existing_ancestor(&absolute_parent)?
+        .canonicalize()
+        .with_context(|| {
+            format!(
+                "canonicalize snapshot parent ancestor {}",
+                absolute_parent.display()
+            )
+        })?;
+    if !parent_ancestor.starts_with(&root_ancestor) {
+        return Err(anyhow::anyhow!(
+            "snapshot destination resolves outside HeliosLite sessions root {}",
+            root_ancestor.display()
+        ));
+    }
+
+    fs::create_dir_all(sessions_root).with_context(|| {
+        format!(
+            "create HeliosLite sessions root {}",
+            sessions_root.display()
+        )
+    })?;
+    let root = sessions_root.canonicalize().with_context(|| {
+        format!(
+            "canonicalize HeliosLite sessions root {}",
+            sessions_root.display()
+        )
+    })?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("create snapshot parent {}", parent.display()))?;
+    let canonical_parent = parent
+        .canonicalize()
+        .with_context(|| format!("canonicalize snapshot parent {}", parent.display()))?;
+    if !canonical_parent.starts_with(&root) {
+        return Err(anyhow::anyhow!(
+            "snapshot destination must stay under HeliosLite sessions root {}",
+            root.display()
+        ));
+    }
+    Ok(())
 }
 
 /// Conversation dump format used by the /dump command
@@ -849,6 +1021,20 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             TopLevelCommand::Conversation(conversation_group) => {
                 self.handle_conversation_command(conversation_group).await?;
                 return Ok(());
+            }
+            TopLevelCommand::Sessions(group) => {
+                require_helioslite_binary()?;
+                let crate::cli::SessionsCommand::ImportForge(args) = group.command;
+                let destination_root = ConfigReader::sessions_path();
+                validate_snapshot_destination(&args.dest, &destination_root)?;
+                let snapshot = export_forge_snapshot(&args.source)?;
+                let row_count = snapshot.manifest.row_count;
+                let source_sha256 = snapshot.manifest.source_sha256.clone();
+                publish_snapshot_atomic(&snapshot, &args.dest)?;
+                self.writeln(format!(
+                    "Imported {row_count} Forge sessions into {}; source sha256={source_sha256}",
+                    args.dest.display()
+                ))?;
             }
             TopLevelCommand::Suggest { prompt } => {
                 self.on_cmd(UserPrompt::from(prompt)).await?;
@@ -6159,7 +6345,12 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_AUTO_CONTINUE_ATTEMPTS, auto_continue_allowed, redact_api_key};
+    use super::{
+        MAX_AUTO_CONTINUE_ATTEMPTS, auto_continue_allowed, is_helioslite_binary_name,
+        redact_api_key, validate_helioslite_sessions_root, validate_snapshot_destination,
+    };
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn automatic_continuation_has_a_hard_boundary() {
@@ -6183,4 +6374,77 @@ mod tests {
     // ForgeSelect::confirm is not easily mockable in the current
     // architecture. The functionality is tested through integration tests
     // instead.
+
+    #[test]
+    fn import_is_helioslite_only_case_insensitively() {
+        assert!(is_helioslite_binary_name("helioslite"));
+        assert!(is_helioslite_binary_name("HeLiOsLiTe"));
+        assert!(!is_helioslite_binary_name("forge"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sessions_root_rejects_root_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("target");
+        fs::create_dir_all(&target).unwrap();
+        let root = dir.path().join("sessions");
+        symlink(&target, &root).unwrap();
+
+        let error = validate_helioslite_sessions_root(&root).unwrap_err();
+        assert!(error.to_string().contains("must not be a symlink"));
+    }
+
+    #[test]
+    fn sessions_root_rejects_overlap_with_forge_root() {
+        let forge_root = dirs::home_dir().unwrap().join(".forge");
+        let root = forge_root.join("helioslite-sessions");
+
+        let error = validate_helioslite_sessions_root(&root).unwrap_err();
+        assert!(error.to_string().contains("must not overlap ~/.forge"));
+    }
+
+    #[test]
+    fn destination_rejects_traversal_before_creating_parent() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("helioslite/sessions");
+        let outside = dir.path().join("outside");
+        let destination = root.join("../outside/snapshot");
+
+        let error = validate_snapshot_destination(&destination, &root).unwrap_err();
+        assert!(error.to_string().contains("must stay under"));
+        assert!(!outside.exists());
+        assert!(!root.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn destination_rejects_symlink_parent_before_writing_through_it() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("helioslite/sessions");
+        fs::create_dir_all(&root).unwrap();
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, root.join("link")).unwrap();
+
+        let destination = root.join("link/snapshot");
+        let error = validate_snapshot_destination(&destination, &root).unwrap_err();
+        assert!(error.to_string().contains("resolves outside"));
+        assert!(!outside.join("snapshot").exists());
+    }
+
+    #[test]
+    fn destination_creates_only_valid_helioslite_parent() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("helioslite/sessions");
+        let destination = root.join("imports/snapshot");
+
+        validate_snapshot_destination(&destination, &root).unwrap();
+        assert!(destination.parent().unwrap().is_dir());
+        assert!(!destination.exists());
+    }
 }
