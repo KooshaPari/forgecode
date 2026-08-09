@@ -426,6 +426,43 @@ mod tests {
         assert!(error.to_string().contains("must not overlap ~/.forge"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn helioslite_env_home_rejects_relative_and_symlink_forge_aliases() {
+        use std::os::unix::fs::symlink;
+
+        let relative_home = std::env::current_dir().unwrap();
+        let relative_guard = EnvGuard::set(&[("HELIOSLITE_HOME", ".forge")]);
+        let relative_error =
+            ConfigReader::resolve_base_path_for("helioslite", Some(&relative_home), None)
+                .expect_err("relative Forge alias must be rejected");
+        assert!(relative_error
+            .to_string()
+            .contains("must not overlap ~/.forge"));
+        drop(relative_guard);
+
+        let fixture = std::env::temp_dir().join(format!(
+            "helioslite-home-alias-{}",
+            std::process::id()
+        ));
+        let home = fixture.join("home");
+        let forge_root = home.join(".forge");
+        let alias = fixture.join("helioslite-alias");
+        std::fs::create_dir_all(&forge_root).unwrap();
+        symlink(&forge_root, &alias).unwrap();
+        let alias_value = alias.to_string_lossy().into_owned();
+        let alias_guard = EnvGuard::set(&[("HELIOSLITE_HOME", &alias_value)]);
+
+        let alias_error = ConfigReader::resolve_base_path_for("helioslite", Some(&home), None)
+            .expect_err("symlink Forge alias must be rejected");
+
+        assert!(alias_error
+            .to_string()
+            .contains("must not overlap ~/.forge"));
+        drop(alias_guard);
+        std::fs::remove_dir_all(fixture).unwrap();
+    }
+
     #[test]
     fn test_base_path_canonical_binary_honors_legacy_forge_dir() {
         // Gate 5: the legacy ~/.forge dir keeps winning while present, so an

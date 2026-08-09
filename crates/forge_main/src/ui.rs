@@ -6438,6 +6438,23 @@ mod tests {
     }
 
     #[test]
+    fn destination_allows_existing_bundle_for_idempotent_publisher_verification() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("helioslite/sessions");
+        let destination = root.join("imports/snapshot");
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(destination.join("snapshot.json"), "{}\n").unwrap();
+        fs::write(destination.join("manifest.json"), "{}\n").unwrap();
+
+        let actual = validate_snapshot_destination(&destination, &root);
+
+        assert!(
+            actual.is_ok(),
+            "the publisher must receive existing destinations to verify idempotency"
+        );
+    }
+
+    #[test]
     fn destination_creates_only_valid_helioslite_parent() {
         let dir = tempdir().unwrap();
         let root = dir.path().join("helioslite/sessions");
