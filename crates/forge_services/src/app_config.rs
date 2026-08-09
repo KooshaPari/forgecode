@@ -82,7 +82,14 @@ impl<F: ProviderRepository + EnvironmentInfra<Config = forge_config::ForgeConfig
         // infra's environment: this is the canonical resolution used by the
         // Gate 5 data-dir split and is identical across all binaries.
         let base_path = forge_config::ConfigReader::base_path();
-        let legacy_db_path = base_path.join(".forge.db");
+        // Mirrors forge_domain::Environment::legacy_database_path: the read
+        // side unions in the legacy `.forge.db` by default, and
+        // FORGE_LEGACY_DB_PATH overrides which legacy file is reported.
+        let legacy_db_path = if let Ok(path) = std::env::var("FORGE_LEGACY_DB_PATH") {
+            std::path::PathBuf::from(path)
+        } else {
+            base_path.join(".forge.db")
+        };
         // Mirrors forge_domain::Environment::write_database_path: the fork
         // writes to a separate ".forge.writes.db" by default while the read
         // side unions in legacy ".forge.db". FORGE_WRITE_DB_PATH overrides
