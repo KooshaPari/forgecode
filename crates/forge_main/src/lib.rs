@@ -26,7 +26,7 @@ mod vscode;
 mod zsh;
 
 mod update;
-pub use update::{current_binary_prefix, DEFAULT_UPDATE_REPO};
+pub use update::{DEFAULT_UPDATE_REPO, current_binary_prefix};
 
 use std::sync::LazyLock;
 

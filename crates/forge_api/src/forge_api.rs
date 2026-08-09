@@ -656,7 +656,9 @@ impl<
         source: PathBuf,
         options: &ForgeImportOptions,
     ) -> Result<ForgeImportReport> {
-        self.services.import_forge_db_with_options(source, options).await
+        self.services
+            .import_forge_db_with_options(source, options)
+            .await
     }
 
     async fn export_forge_db(

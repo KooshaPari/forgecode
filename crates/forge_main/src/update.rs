@@ -57,11 +57,7 @@ fn release_asset_url(version: &str, target: &str) -> Option<Url> {
     release_asset_url_with_prefix(version, target, current_binary_prefix())
 }
 
-fn release_asset_url_with_prefix(
-    version: &str,
-    target: &str,
-    prefix: &str,
-) -> Option<Url> {
+fn release_asset_url_with_prefix(version: &str, target: &str, prefix: &str) -> Option<Url> {
     let version = version.strip_prefix('v').unwrap_or(version);
     if version.is_empty()
         || version.starts_with('v')
@@ -417,7 +413,10 @@ mod tests {
                 "aarch64-pc-windows-msvc",
                 "helioslite-aarch64-pc-windows-msvc.exe",
             ),
-            ("x86_64-pc-windows-msvc", "helioslite-x86_64-pc-windows-msvc.exe"),
+            (
+                "x86_64-pc-windows-msvc",
+                "helioslite-x86_64-pc-windows-msvc.exe",
+            ),
         ] {
             assert_eq!(
                 release_asset_for_target_with_prefix(target, "helioslite").as_deref(),
@@ -451,13 +450,9 @@ mod tests {
             "https://github.com/KooshaPari/forgecode/releases/download/v2.10.2/helioslite-aarch64-apple-darwin"
         );
         assert_eq!(
-            release_asset_url_with_prefix(
-                "v2.10.2",
-                "x86_64-pc-windows-msvc",
-                "helioslite",
-            )
-            .unwrap()
-            .as_str(),
+            release_asset_url_with_prefix("v2.10.2", "x86_64-pc-windows-msvc", "helioslite",)
+                .unwrap()
+                .as_str(),
             "https://github.com/KooshaPari/forgecode/releases/download/v2.10.2/helioslite-x86_64-pc-windows-msvc.exe"
         );
     }
@@ -471,13 +466,9 @@ mod tests {
             "https://github.com/KooshaPari/forgecode/releases/download/v2.10.2/forge-aarch64-apple-darwin"
         );
         assert_eq!(
-            release_asset_url_with_prefix(
-                "v2.10.2",
-                "x86_64-pc-windows-msvc",
-                "forge",
-            )
-            .unwrap()
-            .as_str(),
+            release_asset_url_with_prefix("v2.10.2", "x86_64-pc-windows-msvc", "forge",)
+                .unwrap()
+                .as_str(),
             "https://github.com/KooshaPari/forgecode/releases/download/v2.10.2/forge-x86_64-pc-windows-msvc.exe"
         );
     }
@@ -494,11 +485,11 @@ mod tests {
             "2.10.2#x",
         ] {
             assert!(
-                release_asset_url_with_prefix(version, "aarch64-apple-darwin", "forge")
-                    .is_none()
+                release_asset_url_with_prefix(version, "aarch64-apple-darwin", "forge").is_none()
             );
         }
-        assert!(release_asset_url_with_prefix("2.10.2", "x86_64-pc-windows-gnu", "forge")
-            .is_none());
+        assert!(
+            release_asset_url_with_prefix("2.10.2", "x86_64-pc-windows-gnu", "forge").is_none()
+        );
     }
 }

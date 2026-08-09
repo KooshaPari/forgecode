@@ -180,7 +180,9 @@ impl EnvironmentInfra for ForgeEnvironmentInfra {
         Ok(())
     }
 
-    fn database_stats(&self) -> impl std::future::Future<Output = anyhow::Result<HeliosdoctorDbStats>> + Send {
+    fn database_stats(
+        &self,
+    ) -> impl std::future::Future<Output = anyhow::Result<HeliosdoctorDbStats>> + Send {
         let stats = compute_database_stats();
         async move { Ok(stats) }
     }
@@ -199,9 +201,13 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
     let write_path = database_write_path();
     let legacy_path = database_legacy_read_path();
 
-    let mut stats = HeliosdoctorDbStats::default();
-    stats.write_db_path = Some(write_path.to_string_lossy().to_string());
-    stats.legacy_db_path = legacy_path.as_ref().map(|p| p.to_string_lossy().to_string());
+    let mut stats = HeliosdoctorDbStats {
+        write_db_path: Some(write_path.to_string_lossy().to_string()),
+        legacy_db_path: legacy_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string()),
+        ..Default::default()
+    };
 
     // If the write DB is the same path as legacy (i.e. the write path fell back
     // to .forge.db because no .forge.writes.db exists), only one DB is in play
@@ -219,35 +225,42 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
         }
     };
 
-    if !only_legacy {
-        if let Some(legacy) = legacy_path.as_ref() {
-            if legacy.exists() && legacy != &write_path {
-                // ATTACH the legacy DB read-only. The bundled SQLite does not
-                // accept a READ ONLY keyword here (both `READ ONLY` and
-                // `(READONLY)` fail), so use a plain ATTACH like the pool's
-                // SqliteCustomizer fallback. Read-only is enforced
-                // structurally: no code path ever writes to `legacy_read`.
-                let escaped = legacy.to_string_lossy().replace('\'', "''");
-                let attach_sql = format!("ATTACH DATABASE '{}' AS legacy_read", escaped);
-                if let Err(err) = diesel::connection::SimpleConnection::batch_execute(
-                    &mut conn,
-                    &attach_sql,
-                ) {
-                    stats.legacy_attached = Some(false);
-                    stats.error = Some(format!("attach legacy: {err}"));
-                } else {
-                    stats.legacy_attached = Some(true);
-                }
-            }
+    if !only_legacy
+        && let Some(legacy) = legacy_path.as_ref()
+        && legacy.exists()
+        && legacy != &write_path
+    {
+        // ATTACH the legacy DB read-only. The bundled SQLite does not
+        // accept a READ ONLY keyword here (both `READ ONLY` and
+        // `(READONLY)` fail), so use a plain ATTACH like the pool's
+        // SqliteCustomizer fallback. Read-only is enforced
+        // structurally: no code path ever writes to `legacy_read`.
+        let escaped = legacy.to_string_lossy().replace('\'', "''");
+        let attach_sql = format!("ATTACH DATABASE '{}' AS legacy_read", escaped);
+        if let Err(err) =
+            diesel::connection::SimpleConnection::batch_execute(&mut conn, &attach_sql)
+        {
+            stats.legacy_attached = Some(false);
+            stats.error = Some(format!("attach legacy: {err}"));
+        } else {
+            stats.legacy_attached = Some(true);
         }
     }
 
     // Count rows from write DB + legacy DB (when attached) for the four tables
     // most often affected by legacy compression/roundtrip damage.
     for (label, write_table, legacy_table) in [
-        ("conversations", "conversations", "legacy_read.conversations"),
+        (
+            "conversations",
+            "conversations",
+            "legacy_read.conversations",
+        ),
         ("messages", "messages", "legacy_read.messages"),
-        ("context", "context_compressions", "legacy_read.context_compressions"),
+        (
+            "context",
+            "context_compressions",
+            "legacy_read.context_compressions",
+        ),
         ("checkpoints", "checkpoints", "legacy_read.checkpoints"),
     ] {
         let legacy_count = if stats.legacy_attached == Some(true) {
@@ -256,7 +269,9 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
             None
         };
         let write_count = count_table(&mut conn, write_table);
-        stats.tables.insert(label.to_string(), (write_count, legacy_count));
+        stats
+            .tables
+            .insert(label.to_string(), (write_count, legacy_count));
     }
 
     // Populate the fields that `heliosdoctor_verbose` reads. In split mode
@@ -286,7 +301,9 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
     // In split mode the per-category counts sum the write DB and the legacy
     // DB so the report matches what `conversations_all` exposes to reads.
     let count_both = |conn: &mut diesel::sqlite::SqliteConnection, predicate: &str| -> u64 {
-        let write = count_where(conn, "conversations", predicate).unwrap_or(0).max(0) as u64;
+        let write = count_where(conn, "conversations", predicate)
+            .unwrap_or(0)
+            .max(0) as u64;
         let legacy = if stats.legacy_attached == Some(true) {
             count_where(conn, "legacy_read.conversations", predicate)
                 .unwrap_or(0)
@@ -298,9 +315,18 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
     };
     stats.compressed_rows = count_both(&mut conn, "is_compressed = 1");
     stats.empty_rows = count_both(&mut conn, "context IS NULL AND context_zstd IS NULL");
-    stats.uncompressed_rows = count_both(&mut conn, "is_compressed IS NOT 1 AND (context IS NOT NULL OR context_zstd IS NOT NULL)");
-    stats.agent_initiated_rows = count_both(&mut conn, "COALESCE(json_extract(context, '$.initiator'), 'user') = 'agent'");
-    stats.oversized_rows = count_both(&mut conn, "length(context_zstd) > 1048576 OR length(context) > 1048576");
+    stats.uncompressed_rows = count_both(
+        &mut conn,
+        "is_compressed IS NOT 1 AND (context IS NOT NULL OR context_zstd IS NOT NULL)",
+    );
+    stats.agent_initiated_rows = count_both(
+        &mut conn,
+        "COALESCE(json_extract(context, '$.initiator'), 'user') = 'agent'",
+    );
+    stats.oversized_rows = count_both(
+        &mut conn,
+        "length(context_zstd) > 1048576 OR length(context) > 1048576",
+    );
 
     // Real integrity check: primary DB always; legacy DB too when attached.
     use diesel::RunQueryDsl;
@@ -317,14 +343,11 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
             .unwrap_or_else(|_| "unknown".to_string())
     };
     let mut checks: Vec<(String, String)> = vec![("primary".to_string(), check(&mut conn))];
-    if stats.legacy_attached == Some(true) {
-        if let Some(legacy) = legacy_path.as_ref() {
-            if let Ok(mut legacy_conn) =
-                SqliteConnection::establish(legacy.to_string_lossy().as_ref())
-            {
-                checks.push(("legacy".to_string(), check(&mut legacy_conn)));
-            }
-        }
+    if stats.legacy_attached == Some(true)
+        && let Some(legacy) = legacy_path.as_ref()
+        && let Ok(mut legacy_conn) = SqliteConnection::establish(legacy.to_string_lossy().as_ref())
+    {
+        checks.push(("legacy".to_string(), check(&mut legacy_conn)));
     }
     stats.integrity_check = if checks.iter().all(|(_, c)| c == "ok") {
         "ok".to_string()
@@ -343,15 +366,15 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
 /// exist or the query fails.
 ///
 /// `table` must contain only `A-Za-z0-9_.` to prevent SQL injection.
-fn count_table(
-    conn: &mut diesel::sqlite::SqliteConnection,
-    table: &str,
-) -> Option<i64> {
+fn count_table(conn: &mut diesel::sqlite::SqliteConnection, table: &str) -> Option<i64> {
     use diesel::QueryableByName;
     use diesel::RunQueryDsl;
     use diesel::sql_types::BigInt;
 
-    if !table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') {
+    if !table
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+    {
         return None;
     }
 
@@ -362,7 +385,10 @@ fn count_table(
     }
 
     let sql = format!("SELECT COUNT(*) AS n FROM {}", table);
-    diesel::sql_query(sql).get_result::<Row>(conn).ok().map(|r| r.n)
+    diesel::sql_query(sql)
+        .get_result::<Row>(conn)
+        .ok()
+        .map(|r| r.n)
 }
 
 /// Counts rows in `table` on `conn` where `predicate` holds. Returns `None`
@@ -412,7 +438,10 @@ fn count_where(
     }
 
     let sql = format!("SELECT COUNT(*) AS n FROM {} WHERE {}", table, predicate);
-    diesel::sql_query(sql).get_result::<Row>(conn).ok().map(|r| r.n)
+    diesel::sql_query(sql)
+        .get_result::<Row>(conn)
+        .ok()
+        .map(|r| r.n)
 }
 
 #[cfg(test)]
