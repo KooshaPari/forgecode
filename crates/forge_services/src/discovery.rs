@@ -102,7 +102,8 @@ mod tests {
         }
 
         async fn update_environment(&self, _ops: Vec<ConfigOperation>) -> anyhow::Result<()> {
-            unimplemented!()
+            // Test double: no environment to persist.
+            Ok(())
         }
 
         fn get_env_var(&self, _key: &str) -> Option<String> {

@@ -200,7 +200,8 @@ mod tests {
             &self,
             _ops: Vec<forge_domain::ConfigOperation>,
         ) -> anyhow::Result<()> {
-            unimplemented!()
+            // Test double: no environment to persist.
+            Ok(())
         }
 
         fn get_env_var(&self, key: &str) -> Option<String> {
@@ -209,6 +210,13 @@ mod tests {
 
         fn get_env_vars(&self) -> std::collections::BTreeMap<String, String> {
             self.env_vars.clone()
+        }
+
+        fn database_stats(
+            &self,
+        ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
+        {
+            async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
         }
     }
 
@@ -320,6 +328,28 @@ mod tests {
 
         async fn update_config(&self, _ops: Vec<forge_domain::ConfigOperation>) -> Result<()> {
             Ok(())
+        }
+
+        async fn heliosdoctor(&self) -> anyhow::Result<forge_domain::HeliosdoctorInfo> {
+            self.heliosdoctor_verbose(false).await
+        }
+
+        async fn heliosdoctor_verbose(
+            &self,
+            _verbose: bool,
+        ) -> anyhow::Result<forge_domain::HeliosdoctorInfo> {
+            Ok(forge_domain::HeliosdoctorInfo {
+                version: "test".to_string(),
+                binary_stem: "test".to_string(),
+                base_path: std::path::PathBuf::new(),
+                db_path: std::path::PathBuf::new(),
+                updater_repo: "test".to_string(),
+                updater_binary: "test".to_string(),
+                config_source: "default".to_string(),
+                db_stats: None,
+                write_db_path: None,
+                legacy_db_path: None,
+            })
         }
     }
 
