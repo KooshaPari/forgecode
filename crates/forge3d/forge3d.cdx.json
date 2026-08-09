@@ -3,7 +3,7 @@
   "specVersion": "1.3",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-05T09:20:21.000000000Z",
+    "timestamp": "2026-08-08T07:01:26.000000000Z",
     "tools": [
       {
         "vendor": "CycloneDX",
@@ -13,30 +13,30 @@
     ],
     "component": {
       "type": "application",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge3d#2.9.9",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge3d#2.10.7",
       "name": "forge3d",
-      "version": "2.9.9",
+      "version": "2.10.7",
       "scope": "required",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:cargo/forge3d@2.9.9?download_url=file://.",
+      "purl": "pkg:cargo/forge3d@2.10.7?download_url=file://.",
       "components": [
         {
           "type": "library",
-          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge3d#2.9.9 bin-target-0",
+          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge3d#2.10.7 bin-target-0",
           "name": "forge3d",
-          "version": "2.9.9",
-          "purl": "pkg:cargo/forge3d@2.9.9?download_url=file://.#src/lib.rs"
+          "version": "2.10.7",
+          "purl": "pkg:cargo/forge3d@2.10.7?download_url=file://.#src/lib.rs"
         },
         {
           "type": "application",
-          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge3d#2.9.9 bin-target-1",
+          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge3d#2.10.7 bin-target-1",
           "name": "forge3d",
-          "version": "2.9.9",
-          "purl": "pkg:cargo/forge3d@2.9.9?download_url=file://.#src/main.rs"
+          "version": "2.10.7",
+          "purl": "pkg:cargo/forge3d@2.10.7?download_url=file://.#src/main.rs"
         }
       ]
     },
@@ -50,7 +50,7 @@
   "components": [
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_app#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_app#0.1.1",
       "name": "forge_app",
       "version": "0.1.1",
       "scope": "required",
@@ -63,7 +63,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_config#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_config#0.1.1",
       "name": "forge_config",
       "version": "0.1.1",
       "scope": "required",
@@ -76,7 +76,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_display#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_display#0.1.1",
       "name": "forge_display",
       "version": "0.1.1",
       "scope": "required",
@@ -89,7 +89,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_domain#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_domain#0.1.1",
       "name": "forge_domain",
       "version": "0.1.1",
       "scope": "required",
@@ -102,7 +102,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_drift#0.1.0",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_drift#0.1.0",
       "name": "forge_drift",
       "version": "0.1.0",
       "description": "drift detection — hash + Jaccard word-set similarity for multi-agent overlap",
@@ -116,7 +116,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_embed#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_embed#0.1.1",
       "name": "forge_embed",
       "version": "0.1.1",
       "scope": "required",
@@ -129,7 +129,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_eventsource#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_eventsource#0.1.1",
       "name": "forge_eventsource",
       "version": "0.1.1",
       "scope": "required",
@@ -142,7 +142,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_eventsource_stream#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_eventsource_stream#0.1.1",
       "name": "forge_eventsource_stream",
       "version": "0.1.1",
       "scope": "required",
@@ -155,7 +155,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_fs#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_fs#0.1.1",
       "name": "forge_fs",
       "version": "0.1.1",
       "scope": "required",
@@ -168,7 +168,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_infra#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_infra#0.1.1",
       "name": "forge_infra",
       "version": "0.1.1",
       "scope": "required",
@@ -181,7 +181,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_json_repair#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_json_repair#0.1.1",
       "name": "forge_json_repair",
       "version": "0.1.1",
       "scope": "required",
@@ -194,7 +194,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_select#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_select#0.1.1",
       "name": "forge_select",
       "version": "0.1.1",
       "scope": "required",
@@ -207,7 +207,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_services#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_services#0.1.1",
       "name": "forge_services",
       "version": "0.1.1",
       "scope": "required",
@@ -220,7 +220,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_similarity#0.1.0",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_similarity#0.1.0",
       "name": "forge_similarity",
       "version": "0.1.0",
       "description": "similarity scoring — trait + hash-only + hosted fallback",
@@ -234,7 +234,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_snaps#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_snaps#0.1.1",
       "name": "forge_snaps",
       "version": "0.1.1",
       "scope": "required",
@@ -247,7 +247,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_stream#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_stream#0.1.1",
       "name": "forge_stream",
       "version": "0.1.1",
       "scope": "required",
@@ -260,20 +260,20 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_syntax#2.9.9",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.10.7",
       "name": "forge_syntax",
-      "version": "2.9.9",
+      "version": "2.10.7",
       "scope": "required",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:cargo/forge_syntax@2.9.9?download_url=file://../forge_syntax"
+      "purl": "pkg:cargo/forge_syntax@2.10.7?download_url=file://../forge_syntax"
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_template#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_template#0.1.1",
       "name": "forge_template",
       "version": "0.1.1",
       "scope": "required",
@@ -286,7 +286,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_tool_macros#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_tool_macros#0.1.1",
       "name": "forge_tool_macros",
       "version": "0.1.1",
       "scope": "required",
@@ -299,7 +299,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_walker#0.1.1",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_walker#0.1.1",
       "name": "forge_walker",
       "version": "0.1.1",
       "scope": "required",
@@ -7773,68 +7773,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#merge@0.2.0",
-      "author": "Robin Krahl <robin.krahl@ireas.org>",
-      "name": "merge",
-      "version": "0.2.0",
-      "description": "Merge multiple values into one",
-      "scope": "required",
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "56e520ba58faea3487f75df198b1d079644ec226ea3b0507d002c6fa4b8cf93a"
-        }
-      ],
-      "licenses": [
-        {
-          "expression": "Apache-2.0 OR MIT"
-        }
-      ],
-      "purl": "pkg:cargo/merge@0.2.0",
-      "externalReferences": [
-        {
-          "type": "documentation",
-          "url": "https://docs.rs/merge"
-        },
-        {
-          "type": "website",
-          "url": "https://sr.ht/~ireas/merge-rs"
-        },
-        {
-          "type": "vcs",
-          "url": "https://git.sr.ht/~ireas/merge-rs"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#merge_derive@0.2.0",
-      "author": "Robin Krahl <robin.krahl@ireas.org>",
-      "name": "merge_derive",
-      "version": "0.2.0",
-      "description": "Derive macro for the merge::Merge trait",
-      "scope": "required",
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "5c8f8ce6efff81cbc83caf4af0905c46e58cb46892f63ad3835e81b47eaf7968"
-        }
-      ],
-      "licenses": [
-        {
-          "expression": "Apache-2.0 OR MIT"
-        }
-      ],
-      "purl": "pkg:cargo/merge_derive@0.2.0",
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://git.sr.ht/~ireas/merge-rs/tree/master/merge_derive"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#miette-derive@5.10.0",
       "author": "Kat Marchán <kzm@zkat.tech>",
       "name": "miette-derive",
@@ -9353,60 +9291,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/rust-pretty-assertions/rust-pretty-assertions"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#proc-macro-error-attr2@2.0.0",
-      "author": "CreepySkeleton <creepy-skeleton@yandex.ru>, GnomedDev <david2005thomas@gmail.com>",
-      "name": "proc-macro-error-attr2",
-      "version": "2.0.0",
-      "description": "Attribute macro for the proc-macro-error2 crate",
-      "scope": "required",
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "96de42df36bb9bba5542fe9f1a054b8cc87e172759a1868aa05c1f3acc89dfc5"
-        }
-      ],
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "purl": "pkg:cargo/proc-macro-error-attr2@2.0.0",
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/GnomedDev/proc-macro-error-2"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#proc-macro-error2@2.0.1",
-      "author": "CreepySkeleton <creepy-skeleton@yandex.ru>, GnomedDev <david2005thomas@gmail.com>",
-      "name": "proc-macro-error2",
-      "version": "2.0.1",
-      "description": "Almost drop-in replacement to panics in proc-macros",
-      "scope": "required",
-      "hashes": [
-        {
-          "alg": "SHA-256",
-          "content": "11ec05c52be0a07b08061f7dd003e7d7092e0472bc731b4af7bb1ef876109802"
-        }
-      ],
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "purl": "pkg:cargo/proc-macro-error2@2.0.1",
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/GnomedDev/proc-macro-error-2"
         }
       ]
     },
@@ -14969,14 +14853,14 @@
   ],
   "dependencies": [
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge3d#2.9.9",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge3d#2.10.7",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#chrono@0.4.45",
         "registry+https://github.com/rust-lang/crates.io-index#clap@4.6.4",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_drift#0.1.0",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_infra#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_similarity#0.1.0",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_snaps#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_drift#0.1.0",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_infra#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_similarity#0.1.0",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_snaps#0.1.1",
         "registry+https://github.com/rust-lang/crates.io-index#fs2@0.4.3",
         "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.189",
         "registry+https://github.com/rust-lang/crates.io-index#parking_lot@0.12.5",
@@ -14993,7 +14877,7 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_app#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_app#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
         "registry+https://github.com/rust-lang/crates.io-index#async-recursion@1.1.1",
@@ -15006,21 +14890,20 @@
         "registry+https://github.com/rust-lang/crates.io-index#dashmap@7.0.0-rc2",
         "registry+https://github.com/rust-lang/crates.io-index#derive_more@2.1.1",
         "registry+https://github.com/rust-lang/crates.io-index#derive_setters@0.1.9",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_config#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_display#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_domain#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_embed#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_eventsource#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_json_repair#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_stream#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_template#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_config#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_display#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_domain#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_embed#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_eventsource#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_json_repair#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_stream#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_template#0.1.1",
         "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.33",
         "registry+https://github.com/rust-lang/crates.io-index#glob@0.3.4",
         "registry+https://github.com/rust-lang/crates.io-index#handlebars@6.4.3",
         "registry+https://github.com/rust-lang/crates.io-index#hex@0.4.3",
         "registry+https://github.com/rust-lang/crates.io-index#include_dir@0.7.4",
         "registry+https://github.com/rust-lang/crates.io-index#lazy_static@1.5.0",
-        "registry+https://github.com/rust-lang/crates.io-index#merge@0.2.0",
         "registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1",
         "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
         "registry+https://github.com/rust-lang/crates.io-index#schemars@1.2.2",
@@ -15039,14 +14922,14 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_config#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_config#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#config@0.15.25",
         "registry+https://github.com/rust-lang/crates.io-index#derive_setters@0.1.9",
         "registry+https://github.com/rust-lang/crates.io-index#dirs@6.0.0",
         "registry+https://github.com/rust-lang/crates.io-index#dotenvy@0.15.7",
         "registry+https://github.com/rust-lang/crates.io-index#fake@5.1.0",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_domain#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_domain#0.1.1",
         "registry+https://github.com/rust-lang/crates.io-index#schemars@1.2.2",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
@@ -15058,11 +14941,11 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_display#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_display#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#console@0.16.4",
         "registry+https://github.com/rust-lang/crates.io-index#derive_setters@0.1.9",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_syntax#2.9.9",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.10.7",
         "registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1",
         "registry+https://github.com/rust-lang/crates.io-index#similar@3.1.1",
         "registry+https://github.com/rust-lang/crates.io-index#termimad@0.34.1",
@@ -15070,7 +14953,7 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_domain#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_domain#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
         "registry+https://github.com/rust-lang/crates.io-index#async-trait@0.1.91",
@@ -15083,13 +14966,12 @@
         "registry+https://github.com/rust-lang/crates.io-index#eserde@0.1.7",
         "registry+https://github.com/rust-lang/crates.io-index#fake@5.1.0",
         "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_json_repair#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_template#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_tool_macros#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_json_repair#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_template#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_tool_macros#0.1.1",
         "registry+https://github.com/rust-lang/crates.io-index#glob@0.3.4",
         "registry+https://github.com/rust-lang/crates.io-index#indexmap@2.14.0",
         "registry+https://github.com/rust-lang/crates.io-index#lazy_static@1.5.0",
-        "registry+https://github.com/rust-lang/crates.io-index#merge@0.2.0",
         "registry+https://github.com/rust-lang/crates.io-index#nom@8.0.0",
         "registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1",
         "registry+https://github.com/rust-lang/crates.io-index#schemars@1.2.2",
@@ -15107,9 +14989,9 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_drift#0.1.0",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_drift#0.1.0",
       "dependsOn": [
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_similarity#0.1.0",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_similarity#0.1.0",
         "registry+https://github.com/rust-lang/crates.io-index#parking_lot@0.12.5",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
@@ -15120,7 +15002,7 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_embed#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_embed#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
         "registry+https://github.com/rust-lang/crates.io-index#handlebars@6.4.3",
@@ -15128,9 +15010,9 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_eventsource#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_eventsource#0.1.1",
       "dependsOn": [
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_eventsource_stream#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_eventsource_stream#0.1.1",
         "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.33",
         "registry+https://github.com/rust-lang/crates.io-index#futures-timer@3.0.4",
         "registry+https://github.com/rust-lang/crates.io-index#mime@0.3.17",
@@ -15141,7 +15023,7 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_eventsource_stream#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_eventsource_stream#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.33",
         "registry+https://github.com/rust-lang/crates.io-index#nom@8.0.0",
@@ -15149,11 +15031,11 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_fs#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_fs#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
         "registry+https://github.com/rust-lang/crates.io-index#bstr@1.13.0",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_domain#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_domain#0.1.1",
         "registry+https://github.com/rust-lang/crates.io-index#hex@0.4.3",
         "registry+https://github.com/rust-lang/crates.io-index#infer@0.19.0",
         "registry+https://github.com/rust-lang/crates.io-index#sha2@0.11.0",
@@ -15162,7 +15044,7 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_infra#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_infra#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
         "registry+https://github.com/rust-lang/crates.io-index#async-trait@0.1.91",
@@ -15178,15 +15060,15 @@
         "registry+https://github.com/rust-lang/crates.io-index#diesel_migrations@2.3.2",
         "registry+https://github.com/rust-lang/crates.io-index#dirs@6.0.0",
         "registry+https://github.com/rust-lang/crates.io-index#dotenvy@0.15.7",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_app#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_config#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_domain#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_eventsource#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_fs#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_select#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_services#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_snaps#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_walker#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_app#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_config#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_domain#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_eventsource#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_fs#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_select#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_services#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_snaps#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_walker#0.1.1",
         "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.33",
         "registry+https://github.com/rust-lang/crates.io-index#glob@0.3.4",
         "registry+https://github.com/rust-lang/crates.io-index#google-cloud-auth@1.15.0",
@@ -15210,7 +15092,7 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_json_repair#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_json_repair#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1",
         "registry+https://github.com/rust-lang/crates.io-index#schemars@1.2.2",
@@ -15221,7 +15103,7 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_select#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_select#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
         "registry+https://github.com/rust-lang/crates.io-index#bstr@1.13.0",
@@ -15237,7 +15119,7 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_services#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_services#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
         "registry+https://github.com/rust-lang/crates.io-index#async-recursion@1.1.1",
@@ -15251,13 +15133,13 @@
         "registry+https://github.com/rust-lang/crates.io-index#dashmap@7.0.0-rc2",
         "registry+https://github.com/rust-lang/crates.io-index#derive_more@2.1.1",
         "registry+https://github.com/rust-lang/crates.io-index#derive_setters@0.1.9",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_app#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_config#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_domain#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_eventsource#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_fs#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_snaps#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_stream#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_app#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_config#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_domain#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_eventsource#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_fs#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_snaps#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_stream#0.1.1",
         "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.33",
         "registry+https://github.com/rust-lang/crates.io-index#glob@0.3.4",
         "registry+https://github.com/rust-lang/crates.io-index#gray_matter@0.3.2",
@@ -15270,7 +15152,6 @@
         "registry+https://github.com/rust-lang/crates.io-index#ignore@0.4.31",
         "registry+https://github.com/rust-lang/crates.io-index#infer@0.19.0",
         "registry+https://github.com/rust-lang/crates.io-index#lazy_static@1.5.0",
-        "registry+https://github.com/rust-lang/crates.io-index#merge@0.2.0",
         "registry+https://github.com/rust-lang/crates.io-index#oauth2@5.0.0",
         "registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1",
         "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.12.28",
@@ -15291,7 +15172,7 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_similarity#0.1.0",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_similarity#0.1.0",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#async-trait@0.1.91",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
@@ -15300,40 +15181,40 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_snaps#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_snaps#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
         "registry+https://github.com/rust-lang/crates.io-index#chrono@0.4.45",
         "registry+https://github.com/rust-lang/crates.io-index#fnv@1.0.7",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_domain#0.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_fs#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_domain#0.1.1",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_fs#0.1.1",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
         "registry+https://github.com/rust-lang/crates.io-index#uuid@1.24.0"
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_stream#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_stream#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#futures@0.3.33",
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1"
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_syntax#2.9.9",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.10.7",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#unicode-segmentation@1.13.3",
         "registry+https://github.com/rust-lang/crates.io-index#unicode-width@0.2.2"
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_template#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_template#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#html-escape@0.2.14"
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_tool_macros#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_tool_macros#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
         "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
@@ -15341,7 +15222,7 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_walker#0.1.1",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_walker#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
         "registry+https://github.com/rust-lang/crates.io-index#derive_setters@0.1.9",
@@ -17265,22 +17146,6 @@
       ]
     },
     {
-      "ref": "registry+https://github.com/rust-lang/crates.io-index#merge@0.2.0",
-      "dependsOn": [
-        "registry+https://github.com/rust-lang/crates.io-index#merge_derive@0.2.0",
-        "registry+https://github.com/rust-lang/crates.io-index#num-traits@0.2.19"
-      ]
-    },
-    {
-      "ref": "registry+https://github.com/rust-lang/crates.io-index#merge_derive@0.2.0",
-      "dependsOn": [
-        "registry+https://github.com/rust-lang/crates.io-index#proc-macro-error2@2.0.1",
-        "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
-        "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
-        "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119"
-      ]
-    },
-    {
       "ref": "registry+https://github.com/rust-lang/crates.io-index#miette-derive@5.10.0",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
@@ -17591,22 +17456,6 @@
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#diff@0.1.13",
         "registry+https://github.com/rust-lang/crates.io-index#yansi@1.0.1"
-      ]
-    },
-    {
-      "ref": "registry+https://github.com/rust-lang/crates.io-index#proc-macro-error-attr2@2.0.0",
-      "dependsOn": [
-        "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
-        "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47"
-      ]
-    },
-    {
-      "ref": "registry+https://github.com/rust-lang/crates.io-index#proc-macro-error2@2.0.1",
-      "dependsOn": [
-        "registry+https://github.com/rust-lang/crates.io-index#proc-macro-error-attr2@2.0.0",
-        "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
-        "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
-        "registry+https://github.com/rust-lang/crates.io-index#syn@2.0.119"
       ]
     },
     {

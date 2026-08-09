@@ -3,7 +3,7 @@
   "specVersion": "1.3",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-05T09:20:21.000000000Z",
+    "timestamp": "2026-08-08T07:01:26.000000000Z",
     "tools": [
       {
         "vendor": "CycloneDX",
@@ -13,7 +13,7 @@
     ],
     "component": {
       "type": "application",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/benchmarks/perf_harness#0.1.0",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/benchmarks/perf_harness#0.1.0",
       "name": "perf_harness",
       "version": "0.1.0",
       "description": "Per-agent resource-pooling harness (RSS, idle CPU, system-pool count)",
@@ -27,7 +27,7 @@
       "components": [
         {
           "type": "application",
-          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/benchmarks/perf_harness#0.1.0 bin-target-0",
+          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/benchmarks/perf_harness#0.1.0 bin-target-0",
           "name": "perf_harness",
           "version": "0.1.0",
           "purl": "pkg:cargo/perf_harness@0.1.0?download_url=file://.#src/main.rs"
@@ -44,7 +44,7 @@
   "components": [
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_daemon#0.1.0",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_daemon#0.1.0",
       "name": "forge_daemon",
       "version": "0.1.0",
       "description": "Zig forge-daemon client (kqueue+posix_spawn density lever)",
@@ -1627,10 +1627,10 @@
   ],
   "dependencies": [
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/benchmarks/perf_harness#0.1.0",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/benchmarks/perf_harness#0.1.0",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_daemon#0.1.0",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_daemon#0.1.0",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.1",
@@ -1639,7 +1639,7 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-syntect-lineage-retirement-recovery/crates/forge_daemon#0.1.0",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_daemon#0.1.0",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
