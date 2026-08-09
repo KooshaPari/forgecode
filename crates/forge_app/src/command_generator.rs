@@ -210,6 +210,13 @@ mod tests {
         fn get_env_vars(&self) -> std::collections::BTreeMap<String, String> {
             self.env_vars.clone()
         }
+
+        fn database_stats(
+            &self,
+        ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
+        {
+            async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
+        }
     }
 
     #[async_trait::async_trait]
@@ -320,6 +327,28 @@ mod tests {
 
         async fn update_config(&self, _ops: Vec<forge_domain::ConfigOperation>) -> Result<()> {
             Ok(())
+        }
+
+        async fn heliosdoctor(&self) -> anyhow::Result<forge_domain::HeliosdoctorInfo> {
+            self.heliosdoctor_verbose(false).await
+        }
+
+        async fn heliosdoctor_verbose(
+            &self,
+            verbose: bool,
+        ) -> anyhow::Result<forge_domain::HeliosdoctorInfo> {
+            Ok(forge_domain::HeliosdoctorInfo {
+                version: "test".to_string(),
+                binary_stem: "forge".to_string(),
+                base_path: "/test".into(),
+                db_path: "/test/forge.db".into(),
+                updater_repo: "test/repo".to_string(),
+                updater_binary: "forge".to_string(),
+                config_source: "test".to_string(),
+                db_stats: verbose.then(forge_domain::HeliosdoctorDbStats::default),
+                write_db_path: None,
+                legacy_db_path: None,
+            })
         }
     }
 
