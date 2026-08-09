@@ -291,7 +291,7 @@ pub fn publish_snapshot_atomic(snapshot: &ForgeSnapshot, destination: &Path) -> 
             &stage.join("manifest.json"),
             &serde_json::to_vec_pretty(&published.manifest)?,
         )?;
-        File::open(&stage)?.sync_all()?;
+        sync_staging_dir(&stage)?;
         fs::rename(&stage, destination)
             .with_context(|| format!("publish snapshot {}", destination.display()))?;
         Ok(())
@@ -582,6 +582,24 @@ fn write_synced(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
     file.write_all(bytes)?;
     file.sync_all()?;
+    Ok(())
+}
+
+/// Flush the staging directory's own entries so the subsequent rename is
+/// crash-consistent. On POSIX this is done by opening the directory and
+/// syncing its file descriptor; on Windows `File::open` on a directory fails
+/// with EACCES (it would require `FILE_FLAG_BACKUP_SEMANTICS`, which std does
+/// not expose). Windows directory renames are already atomic, and the per-file
+/// `sync_all` done by `write_synced` above covers the data, so the directory
+/// sync can be skipped there without losing durability.
+#[cfg(not(target_os = "windows"))]
+fn sync_staging_dir(stage: &Path) -> Result<()> {
+    File::open(stage)?.sync_all()?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn sync_staging_dir(_stage: &Path) -> Result<()> {
     Ok(())
 }
 
