@@ -16,4 +16,8 @@ mod proto_generated {
 }
 
 // Only expose forge_repo container
+pub use conversation::{
+    ForgeSnapshot, ForgeSnapshotManifest, ForgeSnapshotRow, SNAPSHOT_CONTRACT_VERSION,
+    export_forge_snapshot, publish_snapshot_atomic,
+};
 pub use forge_repo::*;

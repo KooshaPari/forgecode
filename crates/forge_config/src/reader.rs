@@ -31,7 +31,14 @@ static LOAD_DOT_ENV: LazyLock<()> = LazyLock::new(|| {
 });
 
 /// Caches base-path resolution for the process lifetime.
-static BASE_PATH: LazyLock<PathBuf> = LazyLock::new(ConfigReader::resolve_base_path);
+static BASE_PATH: LazyLock<PathBuf> = LazyLock::new(|| {
+    ConfigReader::resolve_base_path_for(
+        ConfigReader::binary_name(),
+        dirs::home_dir().as_deref(),
+        None,
+    )
+    .unwrap_or_else(|error| panic!("unable to resolve configuration root: {error}"))
+});
 
 /// Merges [`ForgeConfig`] from layered sources using a builder pattern.
 #[derive(Default)]
@@ -40,19 +47,47 @@ pub struct ConfigReader {
 }
 
 impl ConfigReader {
-    /// Returns the path to the legacy JSON config file
-    /// (`~/.forge/.config.json`).
+    /// Returns the path to the legacy JSON config file for the active binary.
     pub fn config_legacy_path() -> PathBuf {
-        Self::base_path().join(".config.json")
+        Self::config_dir().join(".config.json")
     }
 
-    /// Returns the path to the primary TOML config file
-    /// (`~/.forge/.forge.toml`).
+    /// Returns the path to the primary TOML config file for the active binary.
     pub fn config_path() -> PathBuf {
-        Self::base_path().join(".forge.toml")
+        Self::config_path_for(Self::binary_name(), &Self::base_path())
     }
 
-    /// Returns the base directory for all Forge config files.
+    /// Returns the owned configuration directory for the active binary.
+    pub fn config_dir() -> PathBuf {
+        let root = Self::base_path();
+        if Self::is_helioslite(Self::binary_name()) {
+            root.join("config")
+        } else {
+            root
+        }
+    }
+
+    /// Returns the runtime cache directory for the active binary.
+    pub fn cache_path() -> PathBuf {
+        Self::base_path().join("cache")
+    }
+
+    /// Returns the runtime logs directory for the active binary.
+    pub fn logs_path() -> PathBuf {
+        Self::base_path().join("logs")
+    }
+
+    /// Returns the runtime lock directory for the active binary.
+    pub fn locks_path() -> PathBuf {
+        Self::base_path().join("locks")
+    }
+
+    /// Returns the runtime session directory for the active binary.
+    pub fn sessions_path() -> PathBuf {
+        Self::base_path().join("sessions")
+    }
+
+    /// Returns the base directory for the active binary's configuration files.
     ///
     /// Resolution order:
     /// 1. `FORGE_CONFIG` environment variable, if set.
@@ -65,22 +100,94 @@ impl ConfigReader {
     }
 
     fn resolve_base_path() -> PathBuf {
-        if let Ok(path) = std::env::var("FORGE_CONFIG") {
-            return PathBuf::from(path);
+        Self::resolve_base_path_for(Self::binary_name(), dirs::home_dir().as_deref(), None)
+            .unwrap_or_else(|error| panic!("unable to resolve configuration root: {error}"))
+    }
+
+    fn is_helioslite(binary_name: &str) -> bool {
+        binary_name.eq_ignore_ascii_case("helioslite")
+    }
+
+    fn binary_name() -> &'static str {
+        static BINARY_NAME: LazyLock<String> = LazyLock::new(|| {
+            std::env::args_os()
+                .next()
+                .and_then(|arg| {
+                    std::path::Path::new(&arg)
+                        .file_stem()
+                        .map(|stem| stem.to_string_lossy().into_owned())
+                })
+                .unwrap_or_else(|| "forge".to_string())
+        });
+        BINARY_NAME.as_str()
+    }
+
+    fn resolve_base_path_for(
+        binary_name: &str,
+        home: Option<&std::path::Path>,
+        explicit_home: Option<&std::path::Path>,
+    ) -> crate::Result<PathBuf> {
+        if Self::is_helioslite(binary_name) {
+            if let Some(path) = explicit_home {
+                Self::validate_helioslite_home(path, home)?;
+                return Ok(path.to_path_buf());
+            }
+            if let Ok(path) = std::env::var("HELIOSLITE_HOME") {
+                let path = PathBuf::from(path);
+                Self::validate_helioslite_home(&path, home)?;
+                return Ok(path);
+            }
+            return Ok(home
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join(".helioslite"));
         }
 
-        let base = dirs::home_dir().unwrap_or(PathBuf::from("."));
+        if let Some(path) = explicit_home {
+            return Ok(path.to_path_buf());
+        }
+        if let Ok(path) = std::env::var("FORGE_CONFIG") {
+            return Ok(PathBuf::from(path));
+        }
+
+        let base = home.unwrap_or_else(|| std::path::Path::new("."));
         let path = base.join("forge");
 
         // Prefer ~/forge (legacy) when it exists so existing users are not
         // disrupted; fall back to ~/.forge as the default.
         if path.exists() {
             tracing::info!("Using legacy path");
-            return path;
+            return Ok(path);
         }
 
         tracing::info!("Using new path");
-        base.join(".forge")
+        Ok(base.join(".forge"))
+    }
+
+    fn validate_helioslite_home(
+        candidate: &std::path::Path,
+        home: Option<&std::path::Path>,
+    ) -> crate::Result<()> {
+        let Some(home) = home else {
+            return Ok(());
+        };
+        let forge_root = home.join(".forge");
+        if candidate == forge_root
+            || candidate.starts_with(&forge_root)
+            || forge_root.starts_with(candidate)
+        {
+            return Err(crate::Error::Config(config::ConfigError::Message(
+                "HELIOSLITE_HOME must not overlap ~/.forge".to_string(),
+            )));
+        }
+        Ok(())
+    }
+
+    fn config_path_for(binary_name: &str, root: &std::path::Path) -> PathBuf {
+        if Self::is_helioslite(binary_name) {
+            root.join("config/.helioslite.toml")
+        } else {
+            root.join(".forge.toml")
+        }
     }
 
     /// Adds the provided TOML string as a config source without touching the
@@ -226,6 +333,75 @@ mod tests {
             "Expected base_path to end with 'forge' or '.forge', got: {:?}",
             name
         );
+    }
+
+    #[test]
+    fn helioslite_uses_owned_root_and_config_subdirectory() {
+        let home = PathBuf::from("/tmp/helios-home");
+        let root = ConfigReader::resolve_base_path_for("helioslite", Some(&home), None).unwrap();
+        assert_eq!(root, home.join(".helioslite"));
+        assert_eq!(
+            ConfigReader::config_path_for("helioslite", &root),
+            root.join("config/.helioslite.toml")
+        );
+    }
+
+    #[test]
+    fn helioslite_explicit_home_is_independent_from_forge_config() {
+        let home = PathBuf::from("/tmp/helios-home");
+        let explicit = PathBuf::from("/tmp/explicit-helioslite");
+        let root = ConfigReader::resolve_base_path_for("helioslite", Some(&home), Some(&explicit));
+        assert_eq!(root.unwrap(), explicit);
+    }
+
+    #[test]
+    fn forge_keeps_legacy_root_and_config_layout() {
+        let home = PathBuf::from("/tmp/forge-home");
+        let explicit = PathBuf::from("/tmp/explicit-forge");
+        let root =
+            ConfigReader::resolve_base_path_for("forge", Some(&home), Some(&explicit)).unwrap();
+        assert_eq!(root, explicit);
+        assert_eq!(
+            ConfigReader::config_path_for("forge", &root),
+            explicit.join(".forge.toml")
+        );
+    }
+
+    #[test]
+    fn helioslite_detection_is_case_insensitive() {
+        let home = PathBuf::from("/tmp/helios-home");
+        let root = ConfigReader::resolve_base_path_for("HeLiOsLiTe", Some(&home), None).unwrap();
+        assert_eq!(root, home.join(".helioslite"));
+        assert_eq!(
+            ConfigReader::config_path_for("HELIOSLITE", &root),
+            root.join("config/.helioslite.toml")
+        );
+    }
+
+    #[test]
+    fn helioslite_home_rejects_overlap_with_forge_root() {
+        let home = PathBuf::from("/tmp/helios-home");
+        for candidate in [
+            home.join(".forge"),
+            home.join(".forge/sessions"),
+            home.clone(),
+        ] {
+            let error =
+                ConfigReader::resolve_base_path_for("helioslite", Some(&home), Some(&candidate))
+                    .expect_err("overlapping HeliosLite root must be rejected");
+            assert!(error.to_string().contains("must not overlap ~/.forge"));
+        }
+    }
+
+    #[test]
+    fn helioslite_env_home_rejects_overlap_with_forge_root() {
+        let home = PathBuf::from("/tmp/helios-home");
+        let forge_root = home.join(".forge");
+        let value = forge_root.to_str().unwrap();
+        let _guard = EnvGuard::set(&[("HELIOSLITE_HOME", value)]);
+        let error = ConfigReader::resolve_base_path_for("HeLiOsLiTe", Some(&home), None)
+            .expect_err("overlapping HELIOSLITE_HOME must be rejected");
+        assert!(error.to_string().contains("must not overlap ~/.forge"));
     }
 
     #[test]
