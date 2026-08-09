@@ -138,9 +138,14 @@ backbone for the [journey manifests](docs/journeys/README.md) and the
 - **Status:** implemented
 - **Description:** Conversations persist to a SQLite session store with WAL
   checkpointing, zstd compression of context blobs, FTS/vector search, and
-  subagent breadcrumbs. `forge conversation` lists/resumes history;
-  `--conversation-id` resumes a specific session; `forge maintenance compress`
-  compresses remaining plaintext blobs (idempotent).
+  subagent breadcrumbs. New conversation data is written to a dedicated write
+  DB (`~/.forge/.forge.writes.db`); reads union the legacy
+  `~/.forge/.forge.db` via a `conversations_all` TEMP VIEW so pre-existing
+  sessions remain visible. Override the write target with `FORGE_WRITE_DB_PATH`
+  and the legacy read source with `FORGE_LEGACY_DB_PATH`. `forge conversation`
+  lists/resumes history; `--conversation-id` resumes a specific session;
+  `forge maintenance compress` compresses remaining plaintext blobs
+  (idempotent).
 - **Acceptance criteria:**
   - A completed session is listed by `forge conversation list` and resumable
     via `--conversation-id`.

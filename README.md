@@ -40,6 +40,17 @@ An AI-enhanced terminal development environment — an agentic coding CLI/TUI wi
 
 > **Fork of [tailcallhq/forgecode](https://github.com/tailcallhq/forgecode).** This fork (`helioslite`) adds Phenotype-specific features (SQLite session store with WAL checkpointing + zstd compression, conversation FTS/vector search, subagent breadcrumbs, programmatic/semantic/AI-based compression/prune/trunc hooks) on top of upstream.
 
+### Session store (split-DB)
+
+New conversation data is written to a separate SQLite database,
+`~/.forge/.forge.writes.db`, instead of the legacy `~/.forge/.forge.db`.
+Reads union both files through a temporary `conversations_all` view, so
+pre-existing conversations stay visible in the picker while the legacy store
+is left untouched. Override the write target with `FORGE_WRITE_DB_PATH` and
+the legacy read source with `FORGE_LEGACY_DB_PATH`.
+`heliosdoctor --verbose` reports per-category store stats (total/compressed/
+uncompressed/empty/oversized/agent-initiated/integrity).
+
 ## Status
 
 | Check | State |
