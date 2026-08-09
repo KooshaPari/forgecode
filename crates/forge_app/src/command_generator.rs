@@ -325,6 +325,55 @@ mod tests {
         async fn update_config(&self, _ops: Vec<forge_domain::ConfigOperation>) -> Result<()> {
             Ok(())
         }
+
+        async fn heliosdoctor(&self) -> Result<forge_domain::HeliosdoctorInfo> {
+            self.heliosdoctor_verbose(false).await
+        }
+
+        async fn heliosdoctor_verbose(
+            &self,
+            verbose: bool,
+        ) -> Result<forge_domain::HeliosdoctorInfo> {
+            let base_path = self
+                .environment
+                .home
+                .clone()
+                .unwrap_or_else(|| std::path::PathBuf::from("/home/test"))
+                .join(".forge");
+            let db_path = base_path.join(".forge.writes.db");
+
+            Ok(forge_domain::HeliosdoctorInfo {
+                version: "test".to_string(),
+                binary_stem: "forge".to_string(),
+                base_path,
+                db_path: db_path.clone(),
+                updater_repo: forge_config::DEFAULT_UPDATE_REPO.to_string(),
+                updater_binary: "forge".to_string(),
+                config_source: "test".to_string(),
+                db_stats: verbose.then(forge_domain::HeliosdoctorDbStats::default),
+                write_db_path: Some(db_path),
+                legacy_db_path: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn mock_heliosdoctor_is_deterministic_and_populates_verbose_stats() {
+        let fixture = MockServices::new(r#"{"command": "pwd"}"#, vec![]);
+
+        let normal = fixture.heliosdoctor().await.unwrap();
+        let verbose = fixture.heliosdoctor_verbose(true).await.unwrap();
+
+        assert_eq!(
+            normal.base_path,
+            std::path::PathBuf::from("/home/test/.forge")
+        );
+        assert_eq!(normal.db_stats, None);
+        assert_eq!(verbose.base_path, normal.base_path);
+        assert_eq!(
+            verbose.db_stats,
+            Some(forge_domain::HeliosdoctorDbStats::default())
+        );
     }
 
     #[tokio::test]
