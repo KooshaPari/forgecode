@@ -99,6 +99,7 @@ impl ConfigReader {
         BASE_PATH.clone()
     }
 
+    #[cfg(test)]
     fn resolve_base_path() -> PathBuf {
         Self::resolve_base_path_for(Self::binary_name(), dirs::home_dir().as_deref(), None)
             .unwrap_or_else(|error| panic!("unable to resolve configuration root: {error}"))
