@@ -155,6 +155,10 @@ mod tests {
         fn get_env_vars(&self) -> std::collections::BTreeMap<String, String> {
             std::collections::BTreeMap::new()
         }
+
+        async fn database_stats(&self) -> anyhow::Result<forge_domain::HeliosdoctorDbStats> {
+            Ok(forge_domain::HeliosdoctorDbStats::default())
+        }
     }
 
     fn fixture(

@@ -289,4 +289,8 @@ impl EnvironmentInfra for Runner {
     ) -> anyhow::Result<()> {
         Ok(())
     }
+
+    async fn database_stats(&self) -> anyhow::Result<forge_domain::HeliosdoctorDbStats> {
+        Ok(forge_domain::HeliosdoctorDbStats::default())
+    }
 }

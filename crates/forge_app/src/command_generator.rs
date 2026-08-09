@@ -210,6 +210,10 @@ mod tests {
         fn get_env_vars(&self) -> std::collections::BTreeMap<String, String> {
             self.env_vars.clone()
         }
+
+        async fn database_stats(&self) -> anyhow::Result<forge_domain::HeliosdoctorDbStats> {
+            Ok(forge_domain::HeliosdoctorDbStats::default())
+        }
     }
 
     #[async_trait::async_trait]
