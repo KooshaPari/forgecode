@@ -55,7 +55,9 @@ impl Default for DriftConfig {
         Self {
             tier: Tier::T1,
             approval: ApprovalMode::Alert,
-            db_path: std::path::PathBuf::from("/tmp/forge_drift.sqlite"),
+            // Use the OS temp dir so the default is portable (there is no
+            // `/tmp` on Windows).
+            db_path: std::env::temp_dir().join("forge_drift.sqlite"),
             embeddings_enabled: false,
             local_embeddings_enabled: false,
             retention_days: 30,

@@ -17,16 +17,6 @@ use url::Url;
 /// report the same channel without depending back on `forge_main`.
 pub const DEFAULT_UPDATE_REPO: &str = forge_config::DEFAULT_UPDATE_REPO;
 
-/// Return the release asset name produced for a Rust target triple.
-///
-/// Release artifacts are intentionally named after their complete target
-/// triple, matching the matrix in `.github/workflows/release.yml`. Keeping
-/// this mapping explicit prevents an updater from guessing an asset for an
-/// unsupported platform.
-fn release_asset_for_target(target: &str) -> Option<String> {
-    release_asset_for_target_with_prefix(target, current_binary_prefix())
-}
-
 /// Return the asset name for a given target under a specific binary prefix
 /// (`forge` vs `helioslite`). Exposed so the binary-aware updater can pull
 /// assets that match the running executable, keeping the two identities'
