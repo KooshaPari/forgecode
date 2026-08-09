@@ -657,6 +657,50 @@ mod tests {
         Ok(())
     }
 
+    fn current_schema_fixture(path: &Path) -> Result<()> {
+        let mut connection = diesel::sqlite::SqliteConnection::establish(path.to_str().unwrap())?;
+        diesel::sql_query(
+            "CREATE TABLE conversations (
+                conversation_id TEXT PRIMARY KEY NOT NULL,
+                title TEXT, workspace_id BIGINT NOT NULL, context TEXT,
+                created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP, metrics TEXT,
+                parent_id TEXT, source TEXT, cwd TEXT, message_count INTEGER,
+                intent_state TEXT NOT NULL DEFAULT '{}', extracted_at TIMESTAMP,
+                memory_id TEXT, intent_hash TEXT, context_zstd BLOB,
+                is_compressed INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&mut connection)?;
+        diesel::sql_query(
+            "INSERT INTO conversations (conversation_id,title,workspace_id,context,created_at,intent_state)
+             VALUES ('current','Current',7,'plain','2026-01-01 00:00:00','{}')",
+        )
+        .execute(&mut connection)?;
+        connection
+            .batch_execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            .ok();
+        Ok(())
+    }
+
+    #[test]
+    fn exports_current_forge_schema_without_hidden_column() -> Result<()> {
+        let dir = tempdir()?;
+        let source = dir.path().join("forge.db");
+        current_schema_fixture(&source)?;
+
+        let actual = export_forge_snapshot(&source)?;
+        let expected = vec!["current".to_string()];
+        let ids = actual
+            .rows
+            .iter()
+            .map(|row| row.conversation_id.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(ids, expected);
+        assert_eq!(actual.rows[0].hidden, 0);
+        Ok(())
+    }
+
     #[test]
     fn exports_live_columns_without_mutating_source() -> Result<()> {
         let dir = tempdir()?;
