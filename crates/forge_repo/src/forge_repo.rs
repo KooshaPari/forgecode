@@ -70,7 +70,7 @@ impl<
         // TEMP VIEW exposes the UNION of both tables. When they are the same
         // (e.g. fresh install) the legacy attachment is a no-op.
         let write_path = env.write_database_path();
-        let legacy_path = env.database_path();
+        let legacy_path = env.legacy_database_path();
         let legacy_for_pool = if legacy_path != write_path
             && legacy_path.exists()
         {
