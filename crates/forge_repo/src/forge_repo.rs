@@ -71,9 +71,7 @@ impl<
         // (e.g. fresh install) the legacy attachment is a no-op.
         let write_path = env.write_database_path();
         let legacy_path = env.legacy_database_path();
-        let legacy_for_pool = if legacy_path != write_path
-            && legacy_path.exists()
-        {
+        let legacy_for_pool = if legacy_path != write_path && legacy_path.exists() {
             Some(legacy_path.clone())
         } else {
             None
@@ -336,9 +334,7 @@ impl<F: Send + Sync> ConversationRepository for ForgeRepo<F> {
         &self,
         options: &forge_domain::MigrateOptions,
     ) -> anyhow::Result<forge_domain::ForgeMigrateReport> {
-        self.conversation_repository
-            .migrate_data_dir(options)
-            .await
+        self.conversation_repository.migrate_data_dir(options).await
     }
 }
 
@@ -434,8 +430,7 @@ impl<F: EnvironmentInfra<Config = forge_config::ForgeConfig> + Send + Sync> Envi
 
     fn database_stats(
         &self,
-    ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>>
-        + Send
+    ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
     {
         self.infra.database_stats()
     }

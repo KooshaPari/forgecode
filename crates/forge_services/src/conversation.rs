@@ -211,9 +211,7 @@ impl<S: ConversationRepository> ConversationService for ForgeConversationService
         &self,
         options: &forge_domain::MigrateOptions,
     ) -> Result<ForgeMigrateReport> {
-        self.conversation_repository
-            .migrate_data_dir(options)
-            .await
+        self.conversation_repository.migrate_data_dir(options).await
     }
 
     async fn forget_conversations(

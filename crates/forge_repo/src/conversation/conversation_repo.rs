@@ -910,10 +910,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
             use diesel::sql_types::Text;
 
             if !source.is_file() {
-                anyhow::bail!(
-                    "source database not found: {}",
-                    source.display()
-                );
+                anyhow::bail!("source database not found: {}", source.display());
             }
 
             // Open the source database and immediately enable SQLite's
@@ -936,7 +933,9 @@ impl ConversationRepository for ConversationRepositoryImpl {
             let column_names: Vec<&str> =
                 columns.iter().map(|column| column.name.as_str()).collect();
 
-            if column_names.iter().any(|name| *name == "is_compressed" || *name == "context_zstd")
+            if column_names
+                .iter()
+                .any(|name| *name == "is_compressed" || *name == "context_zstd")
             {
                 anyhow::bail!(
                     "source database {} is already a heliosLite/fork-schema database; \
@@ -1008,28 +1007,22 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // `include_agent` flag re-includes them.
             let sql = if options.include_agent {
                 "SELECT conversation_id, title, context, context_zstd, created_at, \
-                 updated_at, metrics FROM conversations_all".to_string()
+                 updated_at, metrics FROM conversations_all"
+                    .to_string()
             } else {
                 "SELECT conversation_id, title, context, context_zstd, created_at, \
                  updated_at, metrics FROM conversations_all \
                  WHERE COALESCE(json_extract(context, '$.initiator'), 'user') != 'agent' \
-                    OR context IS NULL".to_string()
+                    OR context IS NULL"
+                    .to_string()
             };
             let rows: Vec<HeliosExportRow> = diesel::sql_query(sql).load(connection)?;
 
             // Dispatch to the format-specific writer if the caller asked
             // for JSONL or CSV. SQLite is the default and falls through to
             // the original code path below.
-            if !matches!(
-                options.format,
-                forge_domain::ForgeExportFormat::Sqlite
-            ) {
-                return write_export_non_sqlite(
-                    connection,
-                    &rows,
-                    destination,
-                    &options,
-                );
+            if !matches!(options.format, forge_domain::ForgeExportFormat::Sqlite) {
+                return write_export_non_sqlite(connection, &rows, destination, &options);
             }
 
             let mut report = forge_domain::ForgeExportReport {
@@ -1087,12 +1080,11 @@ impl ConversationRepository for ConversationRepositoryImpl {
                     #[diesel(sql_type = Text)]
                     workspace_id: String,
                 }
-                let workspace_id = diesel::sql_query(
-                    "SELECT workspace_id FROM conversations_all LIMIT 1",
-                )
-                .get_result::<WorkspaceIdRow>(connection)
-                .map(|row| row.workspace_id)
-                .unwrap_or_else(|_| "imported".to_string());
+                let workspace_id =
+                    diesel::sql_query("SELECT workspace_id FROM conversations_all LIMIT 1")
+                        .get_result::<WorkspaceIdRow>(connection)
+                        .map(|row| row.workspace_id)
+                        .unwrap_or_else(|_| "imported".to_string());
 
                 for row in &rows {
                     let plain_context = match export_context(row) {
@@ -1221,11 +1213,8 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             let mut conditions: Vec<String> = Vec::new();
             if !options.ids.is_empty() {
-                let id_list: Vec<String> = options
-                    .ids
-                    .iter()
-                    .map(|id| format!("'{}'", id))
-                    .collect();
+                let id_list: Vec<String> =
+                    options.ids.iter().map(|id| format!("'{}'", id)).collect();
                 conditions.push(format!("conversation_id IN ({})", id_list.join(",")));
             }
             if let Some(source) = &options.source {
@@ -1234,10 +1223,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
             }
             if let Some(secs) = options.older_than_secs {
                 let cutoff = chrono::Utc::now().timestamp() - secs;
-                conditions.push(format!(
-                    "updated_at < datetime({}, 'unixepoch')",
-                    cutoff
-                ));
+                conditions.push(format!("updated_at < datetime({}, 'unixepoch')", cutoff));
             }
             let where_clause = format!("WHERE {}", conditions.join(" AND "));
 
@@ -1251,29 +1237,20 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 where_clause
             ))
             .get_result::<CountRow>(connection)?
-            .n.max(0) as usize;
+            .n
+            .max(0) as usize;
 
             if options.dry_run {
-                return Ok(forge_domain::ForgeForgetReport {
-                    matched,
-                    deleted: 0,
-                    dry_run: true,
-                });
+                return Ok(forge_domain::ForgeForgetReport { matched, deleted: 0, dry_run: true });
             }
 
             // Use plain `execute` so we read the row count from the
             // diesel `usize` return value (works on every SQLite version).
-            let deleted: usize = diesel::sql_query(format!(
-                "DELETE FROM conversations {}",
-                where_clause
-            ))
-            .execute(connection)?;
+            let deleted: usize =
+                diesel::sql_query(format!("DELETE FROM conversations {}", where_clause))
+                    .execute(connection)?;
 
-            Ok(forge_domain::ForgeForgetReport {
-                matched,
-                deleted,
-                dry_run: false,
-            })
+            Ok(forge_domain::ForgeForgetReport { matched, deleted, dry_run: false })
         })
         .await
     }
@@ -1286,7 +1263,11 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let db_path = self.pool.database_path().to_path_buf();
         let source_dir = match db_path.parent() {
             Some(p) => p.to_path_buf(),
-            None => return Err(anyhow::anyhow!("could not determine parent directory of DB path")),
+            None => {
+                return Err(anyhow::anyhow!(
+                    "could not determine parent directory of DB path"
+                ));
+            }
         };
         let source_dir_name = source_dir
             .file_name()
@@ -1310,7 +1291,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let home = std::env::var("USERPROFILE")
             .or_else(|_| std::env::var("HOME"))
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| source_dir.parent().map(|p| p.to_path_buf()).unwrap_or_default());
+            .unwrap_or_else(|_| {
+                source_dir
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_default()
+            });
         let destination_dir = home.join(".helioslite");
 
         // The fork writes conversations to the pool's database path
@@ -1372,8 +1358,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 std::fs::rename(&tmp, &destination_write_db)?;
                 // WAL/SHM siblings were copied to the tmp name; move them too.
                 for ext in ["-wal", "-shm", "-journal"] {
-                    let tmp_sidecar =
-                        std::path::PathBuf::from(format!("{}{}", tmp.display(), ext));
+                    let tmp_sidecar = std::path::PathBuf::from(format!("{}{}", tmp.display(), ext));
                     if tmp_sidecar.exists() {
                         let dst_sidecar = std::path::PathBuf::from(format!(
                             "{}{}",
@@ -1422,10 +1407,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
                     Ok(c) => c,
                     Err(e) => {
                         let _ = std::fs::remove_file(&tmp_dst);
-                        return Err(anyhow::anyhow!(
-                            "post-copy validation failed: {}",
-                            e
-                        ));
+                        return Err(anyhow::anyhow!("post-copy validation failed: {}", e));
                     }
                 };
                 let count: i64 = diesel::sql_query("SELECT COUNT(*) AS n FROM conversations")
@@ -1461,10 +1443,8 @@ impl ConversationRepository for ConversationRepositoryImpl {
         // Rename the legacy directory aside so the user can roll back.
         if !dry_run {
             let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
-            let renamed = source_dir.with_file_name(format!(
-                "{}.migrated-{}",
-                source_dir_name, timestamp
-            ));
+            let renamed =
+                source_dir.with_file_name(format!("{}.migrated-{}", source_dir_name, timestamp));
             if let Err(e) = std::fs::rename(&source_dir, &renamed) {
                 // Non-fatal: the copy succeeded; the legacy rename is a
                 // hint, not a requirement.
@@ -1537,8 +1517,8 @@ fn import_rows(
             report.context_parse_failed += 1;
         }
 
-        let created_at = parse_naive_datetime(&row.created_at)
-            .unwrap_or_else(|| chrono::Utc::now().naive_utc());
+        let created_at =
+            parse_naive_datetime(&row.created_at).unwrap_or_else(|| chrono::Utc::now().naive_utc());
         let updated_at = row.updated_at.as_deref().and_then(parse_naive_datetime);
 
         let metrics = row
@@ -1546,9 +1526,7 @@ fn import_rows(
             .as_deref()
             .and_then(|json| serde_json::from_str::<MetricsRecord>(json).ok())
             .map(forge_domain::Metrics::from)
-            .unwrap_or_else(|| {
-                forge_domain::Metrics::default().started_at(created_at.and_utc())
-            });
+            .unwrap_or_else(|| forge_domain::Metrics::default().started_at(created_at.and_utc()));
 
         let conversation = forge_domain::Conversation::new(id)
             .context(context)
@@ -3247,8 +3225,7 @@ mod tests {
 
         // A well-formed plain-text context serialized through the record type
         // exactly as the importer expects to read it back.
-        let well_formed =
-            ContextRecord::from(&forge_domain::Context::default());
+        let well_formed = ContextRecord::from(&forge_domain::Context::default());
         insert(
             "11111111-1111-1111-1111-111111111111",
             "imported fully",
@@ -3264,11 +3241,7 @@ mod tests {
             "imported parse-failed",
             Some("this is not valid context json"),
         );
-        insert(
-            "not-a-uuid",
-            "invalid id",
-            None,
-        );
+        insert("not-a-uuid", "invalid id", None);
     }
 
     #[tokio::test]
@@ -3288,7 +3261,10 @@ mod tests {
             report.context_parse_failed, 1,
             "unparseable context is counted but the row still imports"
         );
-        assert_eq!(report.skipped_existing, 0, "first run imports everything new");
+        assert_eq!(
+            report.skipped_existing, 0,
+            "first run imports everything new"
+        );
         assert_eq!(report.errors, 0, "no insert errors");
 
         // The imported conversations are readable through the normal read path.
@@ -3344,8 +3320,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let source = temp.path().join("fork-schema.db");
         let url = source.to_string_lossy().to_string();
-        let mut connection =
-            diesel::sqlite::SqliteConnection::establish(&url).expect("open db");
+        let mut connection = diesel::sqlite::SqliteConnection::establish(&url).expect("open db");
         // A fork-schema table carries the compression columns the importer
         // refuses to process.
         diesel::sql_query(
@@ -3373,10 +3348,8 @@ mod tests {
     #[tokio::test]
     async fn test_import_forge_db_missing_source_errors() -> anyhow::Result<()> {
         let repo = repository()?;
-        let missing = std::env::temp_dir().join(format!(
-            "forge-does-not-exist-{}.db",
-            std::process::id()
-        ));
+        let missing =
+            std::env::temp_dir().join(format!("forge-does-not-exist-{}.db", std::process::id()));
         let error = repo
             .import_forge_db(missing)
             .await
@@ -3395,10 +3368,7 @@ mod tests {
         seed_official_source_db(&source);
         let repo = repository()?;
 
-        let options = forge_domain::ForgeImportOptions {
-            dry_run: true,
-            verbose: false,
-        };
+        let options = forge_domain::ForgeImportOptions { dry_run: true, verbose: false };
         let report = repo
             .import_forge_db_with_options(source.clone(), &options)
             .await?;
@@ -3426,10 +3396,7 @@ mod tests {
         seed_official_source_db(&source);
         let repo = repository()?;
 
-        let options = forge_domain::ForgeImportOptions {
-            dry_run: false,
-            verbose: true,
-        };
+        let options = forge_domain::ForgeImportOptions { dry_run: false, verbose: true };
         let report = repo
             .import_forge_db_with_options(source.clone(), &options)
             .await?;
@@ -3496,13 +3463,9 @@ mod tests {
 
         let conv = forge_domain::Conversation::new(ConversationId::generate())
             .title(Some("do not write".to_string()))
-            .context(Some(
-                Context::default().messages(vec![ContextMessage::user(
-                    "do not write payload",
-                    None,
-                )
-                .into()]),
-            ));
+            .context(Some(Context::default().messages(vec![
+                ContextMessage::user("do not write payload", None).into(),
+            ])));
         repo.upsert_conversation(conv).await?;
 
         let dest = temp.path().join("never-created.db");
@@ -3512,7 +3475,10 @@ mod tests {
         assert!(report.dry_run);
         assert_eq!(report.source_total, 1);
         assert_eq!(report.exported, 1);
-        assert!(!dest.exists(), "dry_run must not create the destination file");
+        assert!(
+            !dest.exists(),
+            "dry_run must not create the destination file"
+        );
         Ok(())
     }
 
@@ -3523,9 +3489,9 @@ mod tests {
         // compresses it) so the totals are non-zero.
         let conv = forge_domain::Conversation::new(ConversationId::generate())
             .title(Some("stats test".to_string()))
-            .context(Some(
-                Context::default().messages(vec![ContextMessage::user("stats payload", None).into()]),
-            ));
+            .context(Some(Context::default().messages(vec![
+                ContextMessage::user("stats payload", None).into(),
+            ])));
         repo.upsert_conversation(conv).await?;
 
         let stats = repo.database_stats().await?;
@@ -3559,15 +3525,12 @@ mod tests {
             let legacy_pool = Arc::new(DatabasePool::try_from(
                 PoolConfig::new(legacy_db.clone()).with_legacy_database_path(None),
             )?);
-            let legacy_repo =
-                ConversationRepositoryImpl::new(legacy_pool, WorkspaceHash::new(0));
+            let legacy_repo = ConversationRepositoryImpl::new(legacy_pool, WorkspaceHash::new(0));
             let conv = Conversation::new(ConversationId::generate())
                 .title(Some("legacy row".to_string()))
-                .context(Some(
-                    Context::default().messages(vec![
-                        ContextMessage::user("legacy payload", None).into(),
-                    ]),
-                ));
+                .context(Some(Context::default().messages(vec![
+                    ContextMessage::user("legacy payload", None).into(),
+                ])));
             legacy_repo.upsert_conversation(conv.clone()).await?;
         }
 
@@ -3592,9 +3555,9 @@ mod tests {
         // pool still sees both rows.
         let new_conv = Conversation::new(ConversationId::generate())
             .title(Some("write row".to_string()))
-            .context(Some(
-                Context::default().messages(vec![ContextMessage::user("write payload", None).into()]),
-            ));
+            .context(Some(Context::default().messages(vec![
+                ContextMessage::user("write payload", None).into(),
+            ])));
         repo.upsert_conversation(new_conv).await?;
 
         let pool2 = Arc::new(DatabasePool::try_from(
@@ -3663,7 +3626,11 @@ mod tests {
             .iter()
             .map(|c| c.title.as_deref().unwrap_or_default())
             .collect();
-        assert_eq!(titles, vec!["user two", "user one"], "user rows newest-first");
+        assert_eq!(
+            titles,
+            vec!["user two", "user one"],
+            "user rows newest-first"
+        );
         Ok(())
     }
     #[tokio::test]
@@ -3680,15 +3647,12 @@ mod tests {
             let legacy_pool = Arc::new(DatabasePool::try_from(
                 PoolConfig::new(legacy_db.clone()).with_legacy_database_path(None),
             )?);
-            let legacy_repo =
-                ConversationRepositoryImpl::new(legacy_pool, WorkspaceHash::new(0));
+            let legacy_repo = ConversationRepositoryImpl::new(legacy_pool, WorkspaceHash::new(0));
             let conv = Conversation::new(ConversationId::generate())
                 .title(Some("env legacy row".to_string()))
-                .context(Some(
-                    Context::default().messages(vec![
-                        ContextMessage::user("env legacy payload", None).into(),
-                    ]),
-                ));
+                .context(Some(Context::default().messages(vec![
+                    ContextMessage::user("env legacy payload", None).into(),
+                ])));
             legacy_repo.upsert_conversation(conv.clone()).await?;
         }
         // Point FORGE_LEGACY_DB_PATH at the seeded file and resolve the
@@ -3758,11 +3722,9 @@ mod tests {
             let legacy_repo = ConversationRepositoryImpl::new(legacy_pool, WorkspaceHash::new(0));
             let conv = Conversation::new(ConversationId::generate())
                 .title(Some("legacy row".to_string()))
-                .context(Some(
-                    Context::default().messages(vec![
-                        ContextMessage::user("legacy payload", None).into(),
-                    ]),
-                ));
+                .context(Some(Context::default().messages(vec![
+                    ContextMessage::user("legacy payload", None).into(),
+                ])));
             legacy_repo.upsert_conversation(conv.clone()).await?;
         }
 
@@ -3776,11 +3738,9 @@ mod tests {
             let write_repo = ConversationRepositoryImpl::new(write_pool, WorkspaceHash::new(0));
             let marker = Conversation::new(ConversationId::generate())
                 .title(Some("fork-write-db-marker".to_string()))
-                .context(Some(
-                    Context::default().messages(vec![
-                        ContextMessage::user("fork payload", None).into(),
-                    ]),
-                ));
+                .context(Some(Context::default().messages(vec![
+                    ContextMessage::user("fork payload", None).into(),
+                ])));
             write_repo.upsert_conversation(marker).await?;
         }
         let pool = Arc::new(DatabasePool::try_from(

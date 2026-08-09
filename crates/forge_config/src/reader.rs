@@ -106,11 +106,6 @@ impl ConfigReader {
         BASE_PATH.clone()
     }
 
-    fn resolve_base_path() -> PathBuf {
-        Self::resolve_base_path_for(Self::binary_name(), dirs::home_dir().as_deref(), None)
-            .unwrap_or_else(|error| panic!("unable to resolve configuration root: {error}"))
-    }
-
     fn is_helioslite(binary_name: &str) -> bool {
         binary_name.eq_ignore_ascii_case("helioslite")
     }
@@ -340,7 +335,9 @@ mod tests {
     #[test]
     fn test_base_path_uses_forge_config_env_var() {
         let _guard = EnvGuard::set(&[("FORGE_CONFIG", "/custom/forge/dir")]);
-        let actual = ConfigReader::resolve_base_path();
+        let fallback_home = PathBuf::from("/unused/when/forge-config/is-set");
+        let actual =
+            ConfigReader::resolve_base_path_for("forge", Some(&fallback_home), None).unwrap();
         let expected = PathBuf::from("/custom/forge/dir");
         assert_eq!(actual, expected);
     }
@@ -351,15 +348,9 @@ mod tests {
         // cannot race with test_base_path_uses_forge_config_env_var.
         let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG"]);
 
-        let actual = ConfigReader::resolve_base_path();
-        // Without FORGE_CONFIG set the path must be either "forge" (legacy,
-        // preferred when ~/forge exists) or ".forge" (default new path).
-        let name = actual.file_name().unwrap();
-        assert!(
-            name == "forge" || name == ".forge",
-            "Expected base_path to end with 'forge' or '.forge', got: {:?}",
-            name
-        );
+        let home = PathBuf::from("/tmp/forge-config-reader-home");
+        let actual = ConfigReader::resolve_base_path_for("forge", Some(&home), None).unwrap();
+        assert_eq!(actual, home.join(".forge"));
     }
 
     #[test]

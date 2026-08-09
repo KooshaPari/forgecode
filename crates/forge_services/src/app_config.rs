@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use forge_app::{AppConfigService, EnvironmentInfra};
-use forge_domain::{ConfigOperation, Effort, HeliosdoctorInfo, ModelConfig, ModelId, ProviderId, ProviderRepository};
+use forge_domain::{
+    ConfigOperation, Effort, HeliosdoctorInfo, ModelConfig, ModelId, ProviderId, ProviderRepository,
+};
 use tracing::debug;
 
 /// Service for managing user preferences for default providers and models.
@@ -74,10 +76,7 @@ impl<F: ProviderRepository + EnvironmentInfra<Config = forge_config::ForgeConfig
         self.heliosdoctor_verbose(false).await
     }
 
-    async fn heliosdoctor_verbose(
-        &self,
-        verbose: bool,
-    ) -> anyhow::Result<HeliosdoctorInfo> {
+    async fn heliosdoctor_verbose(&self, verbose: bool) -> anyhow::Result<HeliosdoctorInfo> {
         // Deliberately resolves the path from forge_config rather than the
         // infra's environment: this is the canonical resolution used by the
         // Gate 5 data-dir split and is identical across all binaries.
