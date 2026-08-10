@@ -7,9 +7,9 @@ use forge_domain::{
     AgentId, AnyProvider, Attachment, AuthContextRequest, AuthContextResponse, AuthMethod,
     ChatCompletionMessage, CommandOutput, Context, Conversation, ConversationId,
     ConversationSummary, File, FileInfo, FileStatus, ForgeForgetOptions, ForgeForgetReport,
-    ForgeImportReport, Image, McpConfig, McpServers, Model, ModelId,
-    Node, Provider, ProviderId, ResultStream, Scope, SearchParams, SyncProgress, SyntaxError,
-    Template, ToolCallFull, ToolOutput, WorkspaceAuth, WorkspaceId, WorkspaceInfo,
+    ForgeImportReport, Image, McpConfig, McpServers, Model, ModelId, Node, Provider, ProviderId,
+    ResultStream, Scope, SearchParams, SyncProgress, SyntaxError, Template, ToolCallFull,
+    ToolOutput, WorkspaceAuth, WorkspaceId, WorkspaceInfo,
 };
 use forge_eventsource::EventSource;
 use reqwest::Response;
@@ -928,16 +928,16 @@ impl<I: Services> ConversationService for I {
         &self,
         options: &forge_domain::MigrateOptions,
     ) -> anyhow::Result<forge_domain::ForgeMigrateReport> {
-        self.conversation_service()
-            .migrate_data_dir(options)
-            .await
+        self.conversation_service().migrate_data_dir(options).await
     }
 
     async fn forget_conversations(
         &self,
         options: &ForgeForgetOptions,
     ) -> anyhow::Result<ForgeForgetReport> {
-        self.conversation_service().forget_conversations(options).await
+        self.conversation_service()
+            .forget_conversations(options)
+            .await
     }
 }
 #[async_trait::async_trait]

@@ -1187,11 +1187,8 @@ mod env_tests {
                 .collect()
         }
 
-        fn database_stats(
-            &self,
-        ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
-        {
-            async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
+        async fn database_stats(&self) -> anyhow::Result<forge_domain::HeliosdoctorDbStats> {
+            Ok(forge_domain::HeliosdoctorDbStats::default())
         }
     }
 
@@ -1965,11 +1962,8 @@ mod env_tests {
                     .collect()
             }
 
-            fn database_stats(
-                &self,
-            ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
-            {
-                async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
+            async fn database_stats(&self) -> anyhow::Result<forge_domain::HeliosdoctorDbStats> {
+                Ok(forge_domain::HeliosdoctorDbStats::default())
             }
         }
 

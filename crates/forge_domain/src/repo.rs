@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
-use url::Url;
 use crate::{
     AnyProvider, AuthCredential, ChatCompletionMessage, Context, Conversation, ConversationId,
     ConversationSummary, MigrationResult, Model, ModelId, Provider, ProviderId, ProviderTemplate,
     ResultStream, SearchMatch, Skill, Snapshot, WorkspaceAuth, WorkspaceId,
 };
+use anyhow::Result;
+use url::Url;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextPatchBlock {
@@ -668,10 +668,8 @@ pub trait ConversationRepository: Send + Sync {
     /// # Errors
     /// Returns an error if no filter is provided, the database update
     /// fails, or the resolved DB is on a read-only volume.
-    async fn forget_conversations(
-        &self,
-        options: &ForgeForgetOptions,
-    ) -> Result<ForgeForgetReport>;
+    async fn forget_conversations(&self, options: &ForgeForgetOptions)
+    -> Result<ForgeForgetReport>;
 
     /// Atomically migrate the active data directory from `~/.forge` to
     /// `~/.helioslite` (the canonical heliosLite location).
