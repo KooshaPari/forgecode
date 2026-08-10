@@ -39,6 +39,16 @@ installed state is traceable to a commit and verified result.
                   total 460; bogus path -> 2 write-DB rows, no crash);
                   conversation list shows real sessions.
 
+2026-08-09 ~20:00 Swap 7: installed release build of 6c98c8c47 (swap-6 state
+                  + 4d4cffe32 snapshot Windows fix + 74d7411cb forge_dbd +
+                  afc1d3494/6c98c8c47 test-mock hygiene), detached worktree at
+                  HEAD (C:\temp\helioslite-release-20260809).
+                  Verified: version 2.10.7 both binaries; heliosdoctor
+                  460/29/165/266/0/156, integrity ok (live DB unchanged from
+                  swap 6); conversation list shows real sessions; export
+                  dry-run "304 read, 304 exported, 0 decompression failures,
+                  0 errors" (dry-run only, no real export run).
+
 Commits covered by the 2026-08-08 swaps:
   c30e21dac  feat(splitdb): complete read/write DB split with union reads by default
   87b4fbf43  fix(doctor): align infra stats with split-DB defaults
