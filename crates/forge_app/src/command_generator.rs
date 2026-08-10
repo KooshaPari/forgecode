@@ -354,9 +354,7 @@ mod tests {
             })
         }
 
-        async fn heliosdoctor_integrity(
-            &self,
-        ) -> anyhow::Result<forge_domain::HeliosdoctorInfo> {
+        async fn heliosdoctor_integrity(&self) -> anyhow::Result<forge_domain::HeliosdoctorInfo> {
             Ok(forge_domain::HeliosdoctorInfo {
                 version: "test".to_string(),
                 binary_stem: "forge".to_string(),

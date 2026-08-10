@@ -406,5 +406,6 @@ pub trait API: Sync + Send {
 
     /// Delete conversations matching the given filter. Idempotent and safe
     /// to run while forge is otherwise idle.
-    async fn forget_conversations(&self, options: &ForgeForgetOptions) -> Result<ForgeForgetReport>;
+    async fn forget_conversations(&self, options: &ForgeForgetOptions)
+    -> Result<ForgeForgetReport>;
 }

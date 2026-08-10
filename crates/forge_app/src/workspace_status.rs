@@ -175,6 +175,7 @@ mod tests {
 
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn test_file_statuses() {
         let base = "/workspace";

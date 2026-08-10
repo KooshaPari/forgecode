@@ -1342,13 +1342,18 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 match import_group.command {
                     ImportSubcommand::Forge { db, dry_run, verbose } => {
                         let options = ForgeImportOptions { dry_run, verbose };
-                        self.spinner.start(Some(if dry_run { "Scanning (dry-run)" } else { "Importing" }))?;
-                        let report = self
-                            .api
-                            .import_forge_db_with_options(db, &options)
-                            .await?;
+                        self.spinner.start(Some(if dry_run {
+                            "Scanning (dry-run)"
+                        } else {
+                            "Importing"
+                        }))?;
+                        let report = self.api.import_forge_db_with_options(db, &options).await?;
                         self.spinner.stop(None)?;
-                        let prefix = if dry_run { "import (dry-run)" } else { "import" };
+                        let prefix = if dry_run {
+                            "import (dry-run)"
+                        } else {
+                            "import"
+                        };
                         self.writeln(format!(
                             "{} complete: {} read, {} imported, {} skipped (already exist), \
                              {} invalid IDs, {} context parse failures, {} errors",
@@ -1367,15 +1372,20 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             TopLevelCommand::Export(export_group) => {
                 match export_group.command {
                     ExportSubcommand::Forge { db, dry_run, format, include_agent } => {
-                        let options = ForgeExportOptions {
-                            dry_run,
-                            format: format.into(),
-                            include_agent,
-                        };
-                        self.spinner.start(Some(if dry_run { "Scanning (dry-run)" } else { "Exporting" }))?;
+                        let options =
+                            ForgeExportOptions { dry_run, format: format.into(), include_agent };
+                        self.spinner.start(Some(if dry_run {
+                            "Scanning (dry-run)"
+                        } else {
+                            "Exporting"
+                        }))?;
                         let report = self.api.export_forge_db(db, &options).await?;
                         self.spinner.stop(None)?;
-                        let prefix = if dry_run { "export (dry-run)" } else { "export" };
+                        let prefix = if dry_run {
+                            "export (dry-run)"
+                        } else {
+                            "export"
+                        };
                         self.writeln(format!(
                             "{} complete: {} read, {} exported, {} decompression failures, {} errors",
                             prefix,
@@ -1389,13 +1399,19 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 return Ok(());
             }
             TopLevelCommand::Migrate(args) => {
-                self.spinner.start(Some(if args.dry_run { "Scanning migration" } else { "Migrating" }))?;
-                let options = forge_domain::MigrateOptions {
-                    dry_run: args.dry_run,
-                };
+                self.spinner.start(Some(if args.dry_run {
+                    "Scanning migration"
+                } else {
+                    "Migrating"
+                }))?;
+                let options = forge_domain::MigrateOptions { dry_run: args.dry_run };
                 let report = self.api.migrate_data_dir(&options).await?;
                 self.spinner.stop(None)?;
-                let prefix = if args.dry_run { "migrate (dry-run)" } else { "migrate" };
+                let prefix = if args.dry_run {
+                    "migrate (dry-run)"
+                } else {
+                    "migrate"
+                };
                 self.writeln(format!(
                     "{} complete: source={} destination={} outcome={} bytes_copied={} conversations_verified={} renamed_legacy_to={}",
                     prefix,
@@ -1435,16 +1451,21 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                     older_than_secs: args.older_than_secs,
                     dry_run: args.dry_run,
                 };
-                self.spinner.start(Some(if args.dry_run { "Scanning forget" } else { "Deleting" }))?;
+                self.spinner.start(Some(if args.dry_run {
+                    "Scanning forget"
+                } else {
+                    "Deleting"
+                }))?;
                 let report = self.api.forget_conversations(&options).await?;
                 self.spinner.stop(None)?;
-                let prefix = if args.dry_run { "forget (dry-run)" } else { "forget" };
+                let prefix = if args.dry_run {
+                    "forget (dry-run)"
+                } else {
+                    "forget"
+                };
                 self.writeln(format!(
                     "{} complete: {} matched, {} deleted (dry_run={})",
-                    prefix,
-                    report.matched,
-                    report.deleted,
-                    report.dry_run
+                    prefix, report.matched, report.deleted, report.dry_run
                 ))?;
                 return Ok(());
             }

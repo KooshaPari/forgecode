@@ -228,7 +228,9 @@ impl AttachmentService for Runner {
 #[async_trait::async_trait]
 impl SkillFetchService for Runner {
     async fn fetch_skill(&self, _skill_name: String) -> anyhow::Result<forge_domain::Skill> {
-        Err(anyhow::anyhow!("SkillFetchService not implemented for test Runner"))
+        Err(anyhow::anyhow!(
+            "SkillFetchService not implemented for test Runner"
+        ))
     }
 
     async fn list_skills(&self) -> anyhow::Result<Vec<forge_domain::Skill>> {
@@ -296,12 +298,5 @@ impl EnvironmentInfra for Runner {
         _ops: Vec<forge_domain::ConfigOperation>,
     ) -> anyhow::Result<()> {
         Ok(())
-    }
-
-    fn database_stats(
-        &self,
-    ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
-    {
-        async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
     }
 }

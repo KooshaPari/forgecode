@@ -456,8 +456,9 @@ mod tests {
             }
             fn database_stats(
                 &self,
-            ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
-            {
+            ) -> impl std::future::Future<
+                Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>,
+            > + Send {
                 async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
             }
         }
@@ -566,8 +567,9 @@ mod tests {
             }
             fn database_stats(
                 &self,
-            ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
-            {
+            ) -> impl std::future::Future<
+                Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>,
+            > + Send {
                 async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
             }
         }
@@ -672,8 +674,9 @@ mod tests {
             }
             fn database_stats(
                 &self,
-            ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
-            {
+            ) -> impl std::future::Future<
+                Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>,
+            > + Send {
                 async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
             }
         }

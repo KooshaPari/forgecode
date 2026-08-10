@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use forge_app::{AppConfigService, EnvironmentInfra};
-use forge_domain::{ConfigOperation, Effort, HeliosdoctorInfo, ModelConfig, ModelId, ProviderId, ProviderRepository};
+use forge_domain::{
+    ConfigOperation, Effort, HeliosdoctorInfo, ModelConfig, ModelId, ProviderId, ProviderRepository,
+};
 use tracing::debug;
 
 /// Service for managing user preferences for default providers and models.
@@ -152,10 +154,7 @@ impl<F: ProviderRepository + EnvironmentInfra<Config = forge_config::ForgeConfig
         self.heliosdoctor_verbose(false).await
     }
 
-    async fn heliosdoctor_verbose(
-        &self,
-        verbose: bool,
-    ) -> anyhow::Result<HeliosdoctorInfo> {
+    async fn heliosdoctor_verbose(&self, verbose: bool) -> anyhow::Result<HeliosdoctorInfo> {
         let mut info = self.heliosdoctor_base_info();
         let db_stats = if verbose {
             match self.infra.database_stats().await {
@@ -172,9 +171,7 @@ impl<F: ProviderRepository + EnvironmentInfra<Config = forge_config::ForgeConfig
         Ok(info)
     }
 
-    async fn heliosdoctor_integrity(
-        &self,
-    ) -> anyhow::Result<HeliosdoctorInfo> {
+    async fn heliosdoctor_integrity(&self) -> anyhow::Result<HeliosdoctorInfo> {
         let mut info = self.heliosdoctor_base_info();
         info.db_stats = match self.infra.database_integrity().await {
             Ok(stats) => Some(stats),
