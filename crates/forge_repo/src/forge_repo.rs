@@ -26,6 +26,7 @@ use url::Url;
 use crate::agent::ForgeAgentRepository;
 use crate::context_engine::ForgeContextEngineRepository;
 use crate::conversation::ConversationRepositoryImpl;
+use crate::daemon_repo::DaemonConversationRepository;
 use crate::database::{DatabasePool, PoolConfig};
 use crate::fs_snap::ForgeFileSnapshotService;
 use crate::fuzzy_search::ForgeFuzzySearchRepository;
@@ -41,7 +42,7 @@ use crate::validation::ForgeValidationRepository;
 pub struct ForgeRepo<F> {
     infra: Arc<F>,
     file_snapshot_service: Arc<ForgeFileSnapshotService>,
-    conversation_repository: Arc<ConversationRepositoryImpl>,
+    conversation_repository: Arc<dyn ConversationRepository>,
     mcp_cache_repository: Arc<CacacheStorage>,
     provider_repository: Arc<ForgeProviderRepository<F>>,
     chat_repository: Arc<ForgeChatRepository<F>>,
@@ -84,6 +85,18 @@ impl<
             db_pool.clone(),
             env.workspace_hash(),
         ));
+        // Daemon mode (P3 single-writer daemon): when FORGE_DBD_ENABLED, route
+        // the hot-path conversation writes through forge-dbd and keep reads
+        // direct. The decorator is best-effort — any daemon failure falls back
+        // to the direct implementation, so this is a mode switch only.
+        let conversation_repository: Arc<dyn ConversationRepository> = if env.dbd_enabled() {
+            Arc::new(DaemonConversationRepository::new(
+                conversation_repository,
+                env.dbd_socket_path(),
+            ))
+        } else {
+            conversation_repository
+        };
 
         let mcp_cache_repository = Arc::new(CacacheStorage::new(
             env.cache_dir().join("mcp_cache"),
