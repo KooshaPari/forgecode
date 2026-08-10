@@ -80,8 +80,7 @@ pub async fn read_frame<R: AsyncRead + Unpin, T: for<'de> Deserialize<'de>>(
     }
     let mut buf = vec![0u8; len];
     reader.read_exact(&mut buf).await?;
-    serde_json::from_slice(&buf)
-        .map_err(|e| io::Error::other(format!("JSON decoding error: {e}")))
+    serde_json::from_slice(&buf).map_err(|e| io::Error::other(format!("JSON decoding error: {e}")))
 }
 
 #[cfg(test)]
@@ -104,10 +103,7 @@ mod tests {
         assert_eq!(payload, b"\"Ping\"", "payload was not JSON: {payload:?}");
 
         let (mut writer, mut reader) = tokio::io::duplex(1024);
-        writer
-            .write_all(&length)
-            .await
-            .expect("write length");
+        writer.write_all(&length).await.expect("write length");
         writer.write_all(&payload).await.expect("write payload");
         let actual: Request = read_frame(&mut reader).await.expect("round trip");
         assert!(matches!(actual, Request::Ping));
@@ -120,10 +116,13 @@ mod tests {
             .write_all(&(8 * 1024 * 1024 + 1u32).to_le_bytes())
             .await
             .expect("write oversized length");
-        let error = timeout(Duration::from_millis(100), read_frame::<_, Request>(&mut reader))
-            .await
-            .expect("frame rejection should not wait for payload")
-            .expect_err("oversized frame must fail closed");
+        let error = timeout(
+            Duration::from_millis(100),
+            read_frame::<_, Request>(&mut reader),
+        )
+        .await
+        .expect("frame rejection should not wait for payload")
+        .expect_err("oversized frame must fail closed");
         assert!(error.to_string().contains("frame too large"));
     }
 }
