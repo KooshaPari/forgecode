@@ -1,8 +1,8 @@
 // The batch-writer pipeline (queue plumbing, health probe, PRAGMA execution)
-// is driven only by the Unix transport in `run_unix`. On non-Unix platforms
-// `run()` bails out before any of it runs, so the machinery compiles but is
-// unreachable there. Allow dead_code rather than scattering cfg_attr across
-// the subsystem.
+// is shared by both transports. The transport-specific run loops are
+// cfg-gated (unix socket / windows named pipe), so on any given platform the
+// other loop is compiled out and the machinery it references is unreachable.
+// Allow dead_code rather than scattering cfg_attr across the subsystem.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
@@ -10,21 +10,23 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use forge_domain::{Conversation, ConversationId};
 use rusqlite::Connection;
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
-#[cfg(unix)]
-use tokio::sync::Mutex;
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::ServerOptions;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 #[cfg(unix)]
-use tracing::{error, warn};
+use tracing::warn;
 
-use crate::protocol::{HealthStatus, Request, Response};
-#[cfg(unix)]
-use crate::protocol::{read_frame, write_frame};
+use forge_dbd::protocol::{HealthStatus, Request, Response};
+#[cfg(windows)]
+use forge_dbd::protocol::named_pipe_name;
+use forge_dbd::protocol::{read_frame, write_frame};
 
 // ---------------------------------------------------------------------------
 // Shared daemon state (cheap to clone; wraps Arcs internally)
@@ -90,16 +92,14 @@ impl DbServer {
     }
 
     pub async fn run(self) -> Result<()> {
-        #[cfg(not(unix))]
-        {
-            anyhow::bail!(
-                "forge_dbd requires Unix domain socket support and is not available on this platform"
-            );
-        }
-
         #[cfg(unix)]
         {
             self.run_unix().await
+        }
+
+        #[cfg(windows)]
+        {
+            self.run_windows().await
         }
     }
 
@@ -138,27 +138,17 @@ impl DbServer {
         // One-shot shutdown signal: fired by OS signal handlers
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
-        // Install SIGTERM / SIGINT handlers
-        #[cfg(unix)]
-        {
-            let mut sigterm =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-            let mut sigint =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
-            tokio::spawn(async move {
-                tokio::select! {
-                    _ = sigterm.recv() => { info!("SIGTERM received"); }
-                    _ = sigint.recv()  => { info!("SIGINT received"); }
-                }
-                let _ = shutdown_tx.send(());
-            });
-        }
-        // On non-Unix platforms the shutdown_tx is dropped immediately which
-        // means shutdown_rx fires at startup — acceptable for a Unix daemon.
-        #[cfg(not(unix))]
-        {
-            let _ = shutdown_tx; // silence unused warning
-        }
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        let mut sigint =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = sigterm.recv() => { info!("SIGTERM received"); }
+                _ = sigint.recv()  => { info!("SIGINT received"); }
+            }
+            let _ = shutdown_tx.send(());
+        });
 
         // Accept loop — exits when shutdown fires
         loop {
@@ -202,36 +192,113 @@ impl DbServer {
         Ok(())
     }
 
+    #[cfg(windows)]
+    async fn run_windows(self) -> Result<()> {
+        let pipe_name = named_pipe_name(&self.socket_path);
+        info!(
+            pipe = %pipe_name,
+            db   = %self.state.db_path.display(),
+            "DbServer starting (windows named pipe)"
+        );
+
+        // The real write queue used during this run
+        let (queue_tx, queue_rx) = mpsc::channel::<QueuedRequest>(1024);
+        let state = self.state.clone();
+        // Wrap queue_tx so we can drop it on shutdown to signal the writer
+        let queue_tx = Arc::new(queue_tx);
+
+        // Spawn the batching writer task
+        let db_path = self.state.db_path.clone();
+        let writer_handle = tokio::spawn(Self::writer_task(queue_rx, db_path));
+
+        // One-shot shutdown signal: fired by the console ctrl-c handler
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let mut sigint = tokio::signal::windows::ctrl_c()?;
+        tokio::spawn(async move {
+            sigint.recv().await;
+            info!("CTRL_C received");
+            let _ = shutdown_tx.send(());
+        });
+
+        // Accept loop — exits when shutdown fires.
+        //
+        // Windows has no stale-socket problem: named pipes are released when
+        // the last handle drops, so there is nothing to unlink. The server
+        // creates a fresh pipe instance per client and `connect` completes
+        // when that client opens it. Sequential one-client-at-a-time
+        // acceptance is intentional for this wiring (the write queue
+        // serialises requests anyway); the per-connection request/response
+        // loop and the frame protocol are shared with the unix transport via
+        // the stream-generic `handle_client`.
+        loop {
+            let pipe = match ServerOptions::new().create(&pipe_name) {
+                Ok(pipe) => pipe,
+                Err(e) => {
+                    error!("failed to create named pipe instance: {e}");
+                    break;
+                }
+            };
+
+            tokio::select! {
+                _ = &mut shutdown_rx => {
+                    info!("shutdown signal received; draining write queue");
+                    break;
+                }
+                result = pipe.connect() => {
+                    match result {
+                        Ok(()) => {
+                            debug!("client connected");
+                            let queue_tx = Arc::clone(&queue_tx);
+                            let state = state.clone();
+                            tokio::spawn(Self::handle_client(pipe, queue_tx, state));
+                        }
+                        Err(e) => {
+                            error!("pipe connect error: {e}");
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---- Graceful drain ------------------------------------------------
+        // Same as the unix transport: drop our sender half so the writer task
+        // sees channel-closed once all client handlers drop their clones.
+        drop(queue_tx);
+
+        match writer_handle.await {
+            Ok(()) => info!("writer task drained; exiting cleanly"),
+            Err(e) => error!("writer task panicked: {e}"),
+        }
+
+        Ok(())
+    }
+
     // -------------------------------------------------------------------------
-    // Per-connection handler
+    // Per-connection handler (stream-generic: used by both transports)
     // -------------------------------------------------------------------------
 
-    #[cfg(unix)]
-    async fn handle_client(
-        stream: UnixStream,
+    async fn handle_client<S>(
+        mut stream: S,
         queue_tx: Arc<mpsc::Sender<QueuedRequest>>,
         state: DaemonState,
-    ) {
-        let stream = Arc::new(Mutex::new(stream));
-
+    ) where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    {
         loop {
-            let request = {
-                let mut guard = stream.lock().await;
-                match timeout(
-                    Duration::from_secs(30),
-                    read_frame::<_, Request>(&mut *guard),
-                )
-                .await
-                {
-                    Ok(Ok(req)) => req,
-                    Ok(Err(e)) => {
-                        debug!("frame read error: {e}");
-                        break;
-                    }
-                    Err(_) => {
-                        debug!("client read timeout");
-                        break;
-                    }
+            let request = match timeout(
+                Duration::from_secs(30),
+                read_frame::<_, Request>(&mut stream),
+            )
+            .await
+            {
+                Ok(Ok(req)) => req,
+                Ok(Err(e)) => {
+                    debug!("frame read error: {e}");
+                    break;
+                }
+                Err(_) => {
+                    debug!("client read timeout");
+                    break;
                 }
             };
 
@@ -240,8 +307,7 @@ impl DbServer {
             // Health probe is handled inline — no queue round-trip needed
             if matches!(request, Request::Ping) {
                 let resp = Response::Health(state.health());
-                let mut guard = stream.lock().await;
-                let _ = write_frame(&mut *guard, &resp).await;
+                let _ = write_frame(&mut stream, &resp).await;
                 continue;
             }
 
@@ -254,16 +320,14 @@ impl DbServer {
                 state.queue_depth.fetch_sub(1, Ordering::Relaxed);
                 error!("failed to enqueue request; channel closed");
                 let err_response = Response::Error { message: "server queue closed".to_string() };
-                let mut guard = stream.lock().await;
-                let _ = write_frame(&mut *guard, &err_response).await;
+                let _ = write_frame(&mut stream, &err_response).await;
                 break;
             }
 
             match timeout(Duration::from_secs(30), response_rx).await {
                 Ok(Ok(response)) => {
                     debug!("sending response: {:?}", response);
-                    let mut guard = stream.lock().await;
-                    if let Err(e) = write_frame(&mut *guard, &response).await {
+                    if let Err(e) = write_frame(&mut stream, &response).await {
                         error!("failed to write response: {e}");
                         break;
                     }
@@ -276,8 +340,7 @@ impl DbServer {
                     error!("response timeout");
                     let timeout_resp =
                         Response::Error { message: "server processing timeout".to_string() };
-                    let mut guard = stream.lock().await;
-                    let _ = write_frame(&mut *guard, &timeout_resp).await;
+                    let _ = write_frame(&mut stream, &timeout_resp).await;
                     break;
                 }
             }
@@ -295,19 +358,25 @@ impl DbServer {
         let batch_timeout = Duration::from_millis(15);
         let batch_threshold = 100;
 
+        // Single writer connection (P3 design): opened lazily on the first
+        // write and reused for the daemon's whole lifetime, instead of opening
+        // a fresh connection per request. Lazy so the daemon does not create
+        // the DB file unless a write actually arrives.
+        let mut conn: Option<Connection> = None;
+
         loop {
             match timeout(batch_timeout, queue_rx.recv()).await {
                 Ok(Some(req)) => {
                     batch.push(req);
                     if batch.len() >= batch_threshold {
-                        Self::flush_batch(&mut batch, &db_path).await;
+                        Self::flush_batch(&mut batch, &mut conn, &db_path).await;
                     }
                 }
                 Ok(None) => {
                     // All senders dropped (graceful shutdown path)
                     if !batch.is_empty() {
                         info!(count = batch.len(), "draining final batch on shutdown");
-                        Self::flush_batch(&mut batch, &db_path).await;
+                        Self::flush_batch(&mut batch, &mut conn, &db_path).await;
                     }
                     info!("writer task exiting");
                     break;
@@ -315,42 +384,75 @@ impl DbServer {
                 Err(_) => {
                     // Batch window elapsed
                     if !batch.is_empty() {
-                        Self::flush_batch(&mut batch, &db_path).await;
+                        Self::flush_batch(&mut batch, &mut conn, &db_path).await;
                     }
                 }
             }
         }
     }
 
-    /// Execute a batch of requests against the SQLite write database.
-    async fn flush_batch(batch: &mut Vec<QueuedRequest>, db_path: &Path) {
+    /// Execute a batch of requests on the single writer connection.
+    async fn flush_batch(
+        batch: &mut Vec<QueuedRequest>,
+        conn: &mut Option<Connection>,
+        db_path: &Path,
+    ) {
         debug!(count = batch.len(), "flushing batch");
+
+        // Open the writer connection on first use. A failed open fails every
+        // request in the batch with a path-tagged error and is retried on the
+        // next batch.
+        if conn.is_none() {
+            match Self::open_writer_connection(db_path) {
+                Ok(open) => *conn = Some(open),
+                Err(e) => {
+                    for queued in batch.drain(..) {
+                        let _ = queued.response_tx.send(Response::Error {
+                            message: format!("db error ({}): {e}", db_path.display()),
+                        });
+                    }
+                    return;
+                }
+            }
+        }
+
+        let conn = conn.as_ref().expect("writer connection opened above");
         for queued in batch.drain(..) {
-            let resp = match Self::execute(db_path, &queued.request) {
+            let resp = match Self::execute_with_conn(conn, &queued.request) {
                 Ok(resp) => resp,
                 Err(e) => Response::Error {
-                    message: format!("db error: {e}"),
+                    message: format!("db error ({}): {e}", db_path.display()),
                 },
             };
             let _ = queued.response_tx.send(resp);
         }
     }
 
-    /// Execute a single request against the SQLite database at `db_path`.
+    /// Opens the daemon's single writer connection.
     ///
-    /// Opens (creating if needed) the write DB and performs the real operation:
-    /// - [`Request::CheckpointWal`] runs `PRAGMA wal_checkpoint(TRUNCATE)`.
-    /// - [`Request::OptimizeFts`] / [`Request::RefreshFts`] run
-    ///   `PRAGMA optimize`, which also maintains FTS indexes when present.
-    /// - Conversation writes need the forge_repo schema, which this scaffold
-    ///   does not own yet; they report an explicit error (with the resolved
-    ///   path) instead of a misleading `Ack`.
-    fn execute(db_path: &Path, request: &Request) -> Result<Response> {
+    /// Mirrors the pragmas forge_repo's pool customizer applies to its write
+    /// connections (busy timeout, WAL). No schema statements run here: table
+    /// creation and migrations stay with the app's diesel setup.
+    fn open_writer_connection(db_path: &Path) -> Result<Connection> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(db_path)?;
+        conn.busy_timeout(Duration::from_secs(5))?;
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+        Ok(conn)
+    }
 
+    /// Execute a single request against the writer connection.
+    ///
+    /// - [`Request::CheckpointWal`] runs `PRAGMA wal_checkpoint(TRUNCATE)`.
+    /// - [`Request::OptimizeFts`] / [`Request::RefreshFts`] run
+    ///   `PRAGMA optimize`, which also maintains FTS indexes when present.
+    /// - Conversation writes mirror the exact SQL from forge_repo's
+    ///   `ConversationRepositoryImpl` (conversation_repo.rs): the
+    ///   `conversations` table, the `conversation_id` conflict target, and
+    ///   the same updated-column sets.
+    fn execute_with_conn(conn: &Connection, request: &Request) -> Result<Response> {
         match request {
             Request::CheckpointWal => {
                 // wal_checkpoint(TRUNCATE) returns a single row
@@ -366,16 +468,43 @@ impl DbServer {
                 conn.execute_batch("PRAGMA optimize;")?;
                 Ok(Response::Ack)
             }
-            request @ (Request::UpsertConversation { .. }
-            | Request::UpsertConversationRef { .. }
-            | Request::UpdateParentId { .. }
-            | Request::DeleteConversation { .. }) => Ok(Response::Error {
-                message: format!(
-                    "conversation write {request:?} needs the forge_repo schema, \
-                     not yet wired into forge_dbd (opened {})",
-                    db_path.display()
-                ),
-            }),
+            Request::UpsertConversation { conversation } => {
+                Self::upsert_conversation(conn, conversation, true)?;
+                Ok(Response::Ack)
+            }
+            Request::UpsertConversationRef { conversation } => {
+                Self::upsert_conversation(conn, conversation, false)?;
+                Ok(Response::Ack)
+            }
+            Request::UpdateParentId { conversation_id, new_parent_id } => {
+                // Mirrors forge_repo's update_parent_id exactly: no workspace
+                // filter, parent_id + updated_at only.
+                conn.execute(
+                    "UPDATE conversations SET parent_id = ?, \
+                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') \
+                     WHERE conversation_id = ?",
+                    rusqlite::params![
+                        new_parent_id.as_ref().map(ConversationId::into_string),
+                        conversation_id.into_string()
+                    ],
+                )?;
+                Ok(Response::Ack)
+            }
+            Request::DeleteConversation { conversation_id } => {
+                // conversation_id is the table's PRIMARY KEY (a globally
+                // unique UUID; see forge_repo's database/schema.rs), so it
+                // uniquely identifies the row. forge_repo additionally
+                // filters by workspace_id as a cross-workspace guard, but the
+                // daemon derives workspace_id from ITS OWN current_dir hash,
+                // which can diverge from the client's (e.g. --directory mode
+                // canonicalizes paths on Windows). Reusing that predicate here
+                // would silently no-op the delete, so we key on the unique id.
+                conn.execute(
+                    "DELETE FROM conversations WHERE conversation_id = ?",
+                    rusqlite::params![conversation_id.into_string()],
+                )?;
+                Ok(Response::Ack)
+            }
             Request::Ping => Ok(Response::Error {
                 message: "Ping is answered inline by the connection handler, \
                           not by the batch writer"
@@ -383,10 +512,162 @@ impl DbServer {
             }),
         }
     }
+
+    /// INSERT ... ON CONFLICT(conversation_id) DO UPDATE ... against the
+    /// `conversations` table, mirroring forge_repo's `upsert_conversation` /
+    /// `upsert_conversation_ref`. `full` selects the column set of
+    /// `upsert_conversation` (which also refreshes `context_zstd` /
+    /// `is_compressed` on conflict) vs `upsert_conversation_ref` (which
+    /// leaves those compression columns untouched).
+    ///
+    /// Values are derived from the domain [`Conversation`] the same way
+    /// `ConversationRecord::new` / `new_ref` derive them. Two deliberate
+    /// simplifications for this wiring pass, both readable by the app:
+    /// - `context` is stored as plain JSON (no zstd), so `context_zstd` stays
+    ///   NULL and `is_compressed` stays 0.
+    /// - `created_at` is the client-supplied RFC3339 timestamp, which diesel's
+    ///   SQLite timestamp reader accepts (`%FT%T%.fZ`); `updated_at` is
+    ///   stamped in SQL via `strftime`.
+    fn upsert_conversation(
+        conn: &Connection,
+        conversation: &Conversation,
+        full: bool,
+    ) -> Result<()> {
+        // Only conversations with messages (or an initiator) get a context
+        // blob; tombstone conversations keep NULL, matching ConversationRecord.
+        let context_json = conversation
+            .context
+            .as_ref()
+            .filter(|ctx| !ctx.messages.is_empty() || ctx.initiator.is_some())
+            .map(serde_json::to_string)
+            .transpose()?;
+        let message_count = conversation
+            .context
+            .as_ref()
+            .filter(|ctx| !ctx.messages.is_empty() || ctx.initiator.is_some())
+            .map(|ctx| ctx.messages.len() as i32);
+
+        let conversation_value = serde_json::to_value(conversation)?;
+        let created_at = conversation_value
+            .get("metadata")
+            .and_then(|meta| meta.get("created_at"))
+            .and_then(|created| created.as_str())
+            .context("conversation metadata.created_at missing")?
+            .to_string();
+
+        // Metrics are best-effort: an unreadable blob falls back to default
+        // metrics on the read side, same as forge_repo.
+        let metrics = serde_json::to_string(&conversation.metrics).ok();
+
+        let update_set = if full {
+            "title = excluded.title, \
+             context = excluded.context, \
+             context_zstd = excluded.context_zstd, \
+             is_compressed = excluded.is_compressed, \
+             updated_at = excluded.updated_at, \
+             metrics = excluded.metrics, \
+             parent_id = excluded.parent_id, \
+             source = excluded.source, \
+             cwd = excluded.cwd, \
+             message_count = excluded.message_count"
+        } else {
+            "title = excluded.title, \
+             context = excluded.context, \
+             updated_at = excluded.updated_at, \
+             metrics = excluded.metrics, \
+             parent_id = excluded.parent_id, \
+             source = excluded.source, \
+             cwd = excluded.cwd, \
+             message_count = excluded.message_count"
+        };
+
+        conn.execute(
+            &format!(
+                "INSERT INTO conversations (\
+                     conversation_id, title, workspace_id, context, created_at, \
+                     updated_at, metrics, parent_id, source, cwd, message_count, \
+                     intent_state, extracted_at, memory_id, intent_hash, \
+                     context_zstd, is_compressed\
+                 ) VALUES (\
+                     ?, ?, ?, ?, ?, \
+                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?, ?, ?, ?, ?, \
+                     'pending', NULL, NULL, NULL, NULL, 0\
+                 )\
+                 ON CONFLICT(conversation_id) DO UPDATE SET {update_set}",
+            ),
+            rusqlite::params![
+                conversation.id.into_string(),
+                conversation.title.clone(),
+                Self::workspace_id(),
+                context_json,
+                created_at,
+                metrics,
+                conversation.parent_id.map(|id| id.into_string()),
+                conversation.source.clone(),
+                conversation.cwd.clone(),
+                message_count,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The workspace id the daemon writes under.
+    ///
+    /// forge_app passes `env.workspace_hash().id() as i64` into the
+    /// ConversationRepository (forge_repo.rs). The daemon recomputes the same
+    /// value from its own environment: `Environment::workspace_hash` hashes
+    /// the cwd with a zero-seed `DefaultHasher`, so it is deterministic
+    /// across processes for the same cwd (the daemon is spawned by the first
+    /// client, so it inherits the client's cwd).
+    fn workspace_id() -> i64 {
+        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let env = forge_domain::Environment {
+            os: std::env::consts::OS.to_string(),
+            cwd: std::env::current_dir().unwrap_or_else(|_| home.clone()),
+            home: Some(home.clone()),
+            shell: std::env::var("SHELL").unwrap_or_default(),
+            base_path: home.join(".forge"),
+        };
+        env.workspace_hash().id() as i64
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Test helpers (shared by the unix socket tests, the platform-neutral db
+// tests, and the windows named-pipe test)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+fn create_conversations_schema(conn: &rusqlite::Connection) {
+    // The `conversations` table as forge_repo's diesel schema + migrations
+    // produce it. The daemon never creates schema, so tests that exercise
+    // conversation writes must set it up explicitly.
+    conn.execute_batch(
+        "CREATE TABLE conversations (\
+             conversation_id TEXT PRIMARY KEY NOT NULL, \
+             title TEXT, \
+             workspace_id BIGINT NOT NULL, \
+             context TEXT, \
+             created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \
+             updated_at TIMESTAMP, \
+             metrics TEXT, \
+             parent_id TEXT, \
+             source TEXT, \
+             cwd TEXT, \
+             message_count INTEGER, \
+             intent_state TEXT NOT NULL DEFAULT 'pending', \
+             extracted_at TIMESTAMP, \
+             memory_id TEXT, \
+             intent_hash TEXT, \
+             context_zstd BLOB, \
+             is_compressed INTEGER NOT NULL DEFAULT 0\
+         )",
+    )
+    .expect("create conversations schema");
+}
+
+// ---------------------------------------------------------------------------
+// Unix socket transport tests
 // ---------------------------------------------------------------------------
 
 #[cfg(all(test, unix))]
@@ -398,7 +679,6 @@ mod tests {
     use tokio::time::{Duration, sleep};
 
     use super::*;
-    use crate::protocol::{Request, Response, read_frame, write_frame};
 
     fn tmp_paths(dir: &TempDir) -> (PathBuf, PathBuf) {
         let sock = dir.path().join("test.sock");
@@ -449,7 +729,8 @@ mod tests {
                 assert!(status.uptime_secs < 60, "uptime should be < 60s in test");
                 // queue should be empty while no writes are in flight
                 assert_eq!(status.queue_depth, 0);
-                // db file doesn't exist yet (just a path marker) — reachable = false
+                // no writes arrived, so the writer never opened the DB —
+                // the file doesn't exist yet and reachable = false
                 assert!(!status.db_reachable);
             }
             other => panic!("expected Health response, got {other:?}"),
@@ -516,13 +797,13 @@ mod tests {
 }
 
 // ---------------------------------------------------------------------------
-// DB execution tests — platform-independent: drive the batch handler directly
-// (the same path the Unix writer task uses), no socket required.
+// DB execution tests — platform-independent: drive the batch handler / writer
+// connection directly (the same path the writer task uses), no socket needed.
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod db_tests {
-    use forge_domain::ConversationId;
+    use forge_domain::{Context, ContextMessage, Conversation, ConversationId};
     use tempfile::TempDir;
 
     use super::*;
@@ -531,31 +812,272 @@ mod db_tests {
     async fn flush_batch_performs_real_sqlite_work() {
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("test.db");
+        let mut conn = None;
 
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         let mut batch = vec![QueuedRequest {
             request: Request::CheckpointWal,
             response_tx,
         }];
-        DbServer::flush_batch(&mut batch, &db_path).await;
+        DbServer::flush_batch(&mut batch, &mut conn, &db_path).await;
 
         // A stub Ack would acknowledge without creating a file; real execution
-        // opens the SQLite DB and runs the checkpoint.
+        // opens the SQLite DB and runs the checkpoint on the single writer
+        // connection (opened lazily by flush_batch).
         assert!(matches!(response_rx.await.unwrap(), Response::Ack));
         assert!(db_path.exists());
 
         // ...and the file on disk is a valid, intact SQLite database.
-        let conn = rusqlite::Connection::open(&db_path).unwrap();
-        let integrity: String = conn
+        let opened = rusqlite::Connection::open(&db_path).unwrap();
+        let integrity: String = opened
             .query_row("PRAGMA integrity_check", [], |row| row.get(0))
             .unwrap();
         assert_eq!(integrity, "ok");
     }
 
+    /// The frame codec (currently JSON, the P3 design's alternate encoding)
+    /// must round-trip the conversation request payloads. This pins that the
+    /// domain types (Conversation / Metrics / Context, which skip empty
+    /// fields) survive encode + decode.
+    #[test]
+    fn json_round_trip_conversation_request() {
+        let conversation = Conversation::generate().title("rt".to_string());
+        let request = Request::UpsertConversationRef { conversation };
+        let encoded = serde_json::to_vec(&request).unwrap();
+        let decoded: Request = serde_json::from_slice(&encoded)
+            .expect("json round-trip must succeed");
+        assert!(matches!(decoded, Request::UpsertConversationRef { .. }));
+    }
+
+    /// Upsert inserts a new row and, on the same conversation_id, updates it
+    /// in place — the ON CONFLICT path must not duplicate the row.
+    #[test]
+    fn upsert_conversation_inserts_and_updates_in_place() {
+        let dir = TempDir::new().unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
+        create_conversations_schema(&conn);
+
+        let conversation = Conversation::generate().title("first title".to_string());
+        let id = conversation.id;
+        assert!(matches!(
+            DbServer::execute_with_conn(
+                &conn,
+                &Request::UpsertConversationRef { conversation: conversation.clone() }
+            )
+            .expect("upsert"),
+            Response::Ack
+        ));
+
+        let (title, workspace_id, message_count): (Option<String>, i64, Option<i32>) = conn
+            .query_row(
+                "SELECT title, workspace_id, message_count FROM conversations \
+                 WHERE conversation_id = ?1",
+                [id.into_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(title.as_deref(), Some("first title"));
+        assert_eq!(workspace_id, DbServer::workspace_id());
+        assert_eq!(message_count, None);
+
+        // Same conversation_id on conflict → the row updates in place.
+        let updated = conversation.clone().title("second title".to_string());
+        assert!(matches!(
+            DbServer::execute_with_conn(
+                &conn,
+                &Request::UpsertConversationRef { conversation: updated }
+            )
+            .expect("upsert on conflict"),
+            Response::Ack
+        ));
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM conversations WHERE conversation_id = ?1",
+                [id.into_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "conflict upsert must not create a second row");
+
+        let title: Option<String> = conn
+            .query_row(
+                "SELECT title FROM conversations WHERE conversation_id = ?1",
+                [id.into_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(title.as_deref(), Some("second title"));
+    }
+
+    /// The full upsert stores the serialised context, stamps `updated_at`, and
+    /// leaves the compression columns at their uncompressed defaults.
+    #[test]
+    fn upsert_conversation_with_context_stores_context_and_timestamps() {
+        let dir = TempDir::new().unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
+        create_conversations_schema(&conn);
+
+        let context = Context::default().add_message(ContextMessage::user("hello", None));
+        let conversation = Conversation::generate().title("with context".to_string()).context(context);
+        let id = conversation.id;
+        assert!(matches!(
+            DbServer::execute_with_conn(
+                &conn,
+                &Request::UpsertConversation { conversation }
+            )
+            .expect("upsert"),
+            Response::Ack
+        ));
+
+        let (context, message_count, updated_at, context_zstd, is_compressed): (
+            Option<String>,
+            Option<i32>,
+            Option<String>,
+            Option<Vec<u8>>,
+            i32,
+        ) = conn
+            .query_row(
+                "SELECT context, message_count, updated_at, context_zstd, is_compressed \
+                 FROM conversations WHERE conversation_id = ?1",
+                [id.into_string()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+
+        assert!(context.is_some(), "context blob should be stored");
+        assert_eq!(message_count, Some(1));
+        assert!(updated_at.is_some(), "updated_at should be stamped on write");
+        assert_eq!(context_zstd, None, "no zstd compression in this wiring pass");
+        assert_eq!(is_compressed, 0);
+    }
+
+    /// Delete keys on the conversation_id PRIMARY KEY alone: the row is
+    /// removed even when its workspace_id differs from the daemon's, because
+    /// the daemon's own current_dir hash can diverge from the client's (e.g.
+    /// --directory canonicalization on Windows) and a workspace-filtered
+    /// predicate would silently no-op. forge_repo's workspace guard is a
+    /// cross-user boundary that has no meaning inside a local single-user
+    /// daemon.
+    #[test]
+    fn delete_conversation_removes_row_by_unique_id_across_workspaces() {
+        let dir = TempDir::new().unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
+        create_conversations_schema(&conn);
+
+        let conversation = Conversation::generate().title("to delete".to_string());
+        let id = conversation.id;
+        assert!(matches!(
+            DbServer::execute_with_conn(
+                &conn,
+                &Request::UpsertConversationRef { conversation }
+            )
+            .expect("upsert"),
+            Response::Ack
+        ));
+
+        // Simulate a workspace_id mismatch (client resolved a different cwd):
+        // the daemon must still delete the row by its unique id.
+        conn.execute(
+            "UPDATE conversations SET workspace_id = ?1 WHERE conversation_id = ?2",
+            rusqlite::params![DbServer::workspace_id() + 1, id.into_string()],
+        )
+        .unwrap();
+
+        assert!(matches!(
+            DbServer::execute_with_conn(
+                &conn,
+                &Request::DeleteConversation { conversation_id: id }
+            )
+            .expect("delete"),
+            Response::Ack
+        ));
+
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM conversations", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(total, 0, "row deleted despite the workspace_id mismatch");
+    }
+
+    /// update_parent_id mirrors forge_repo: it sets parent_id (and stamps
+    /// updated_at) on the matching conversation_id with no workspace filter.
+    #[test]
+    fn update_parent_id_sets_and_clears_parent() {
+        let dir = TempDir::new().unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
+        create_conversations_schema(&conn);
+
+        let conversation = Conversation::generate().title("child".to_string());
+        let id = conversation.id;
+        assert!(matches!(
+            DbServer::execute_with_conn(
+                &conn,
+                &Request::UpsertConversationRef { conversation }
+            )
+            .expect("upsert"),
+            Response::Ack
+        ));
+
+        let parent = ConversationId::generate();
+        assert!(matches!(
+            DbServer::execute_with_conn(
+                &conn,
+                &Request::UpdateParentId {
+                    conversation_id: id,
+                    new_parent_id: Some(parent),
+                }
+            )
+            .expect("set parent"),
+            Response::Ack
+        ));
+        let stored: Option<String> = conn
+            .query_row(
+                "SELECT parent_id FROM conversations WHERE conversation_id = ?1",
+                [id.into_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored.as_deref(), Some(parent.into_string().as_str()));
+
+        // Clearing the parent back to NULL works too.
+        assert!(matches!(
+            DbServer::execute_with_conn(
+                &conn,
+                &Request::UpdateParentId {
+                    conversation_id: id,
+                    new_parent_id: None,
+                }
+            )
+            .expect("clear parent"),
+            Response::Ack
+        ));
+        let stored: Option<String> = conn
+            .query_row(
+                "SELECT parent_id FROM conversations WHERE conversation_id = ?1",
+                [id.into_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, None);
+    }
+
+    /// A conversation write against a database without the `conversations`
+    /// table fails with an Error that names the resolved db path (the old stub
+    /// behaviour, now reachable only through genuine failure).
     #[tokio::test]
-    async fn conversation_write_reports_resolved_path_instead_of_stub_ack() {
+    async fn conversation_write_error_includes_db_path() {
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("test.db");
+        let mut conn = Some(DbServer::open_writer_connection(&db_path).unwrap());
+        // No schema created: the DELETE hits a missing table.
 
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         let mut batch = vec![QueuedRequest {
@@ -564,7 +1086,7 @@ mod db_tests {
             },
             response_tx,
         }];
-        DbServer::flush_batch(&mut batch, &db_path).await;
+        DbServer::flush_batch(&mut batch, &mut conn, &db_path).await;
 
         match response_rx.await.unwrap() {
             Response::Error { message } => {
@@ -575,5 +1097,84 @@ mod db_tests {
             }
             other => panic!("expected Error response, got {other:?}"),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Windows named-pipe integration test: spawn the real server, drive it
+// through the real client (DbClient) over the pipe transport.
+// ---------------------------------------------------------------------------
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use std::path::PathBuf;
+
+    use tempfile::TempDir;
+    use tokio::time::{Duration, sleep};
+
+    use super::*;
+    use forge_dbd::client::DbClient;
+
+    fn tmp_paths(dir: &TempDir) -> (PathBuf, PathBuf) {
+        // Include the pid in the socket path so the derived pipe name is
+        // unique per process: parallel test runs (and stale instances from
+        // crashed runs) cannot collide.
+        let pid = std::process::id();
+        let sock = dir.path().join(format!("test-{pid}.sock"));
+        let db = dir.path().join(format!("test-{pid}.db"));
+        (sock, db)
+    }
+
+    /// Connect with retries: the server creates pipe instances on demand, so
+    /// an open may land in the brief window where no instance exists yet.
+    async fn connect_with_retry(sock: &std::path::Path) -> DbClient {
+        for _ in 0..100 {
+            if let Ok(client) = DbClient::connect(sock).await {
+                return client;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+        panic!("DbClient::connect did not succeed in time");
+    }
+
+    #[tokio::test]
+    async fn named_pipe_ping_health_and_conversation_write() {
+        let dir = TempDir::new().unwrap();
+        let (sock, db) = tmp_paths(&dir);
+
+        // Create the schema up-front (the daemon never migrates).
+        let schema_conn = rusqlite::Connection::open(&db).unwrap();
+        create_conversations_schema(&schema_conn);
+        drop(schema_conn);
+
+        let server = DbServer::new(sock.clone(), db.clone());
+        let _handle = tokio::spawn(server.run());
+
+        let client = connect_with_retry(&sock).await;
+
+        // Ping → Health over the named pipe.
+        let health = client.health().await.expect("health probe");
+        assert!(health.uptime_secs < 60, "uptime should be < 60s in test");
+        assert_eq!(health.queue_depth, 0);
+
+        // Conversation write against the pre-created schema → real Ack.
+        let conversation = Conversation::generate().title("windows pipe test".to_string());
+        let id = conversation.id;
+        let resp = client
+            .send(Request::UpsertConversationRef { conversation })
+            .await
+            .expect("send upsert");
+        assert!(matches!(resp, Response::Ack), "expected Ack, got {resp:?}");
+
+        // And the row actually landed in the write DB.
+        let verify = rusqlite::Connection::open(&db).unwrap();
+        let title: Option<String> = verify
+            .query_row(
+                "SELECT title FROM conversations WHERE conversation_id = ?1",
+                [id.into_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(title.as_deref(), Some("windows pipe test"));
     }
 }
