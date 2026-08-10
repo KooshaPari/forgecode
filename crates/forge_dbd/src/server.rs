@@ -1,9 +1,17 @@
-use std::path::PathBuf;
+// The batch-writer pipeline (queue plumbing, health probe, PRAGMA execution)
+// is driven only by the Unix transport in `run_unix`. On non-Unix platforms
+// `run()` bails out before any of it runs, so the machinery compiles but is
+// unreachable there. Allow dead_code rather than scattering cfg_attr across
+// the subsystem.
+#![allow(dead_code)]
+
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use rusqlite::Connection;
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 #[cfg(unix)]
@@ -35,9 +43,24 @@ impl DaemonState {
         HealthStatus {
             uptime_secs: self.started_at.elapsed().as_secs(),
             queue_depth: self.queue_depth.load(Ordering::Relaxed),
-            db_reachable: self.db_path.exists(),
+            db_reachable: db_reachable(&self.db_path),
         }
     }
+}
+
+/// Whether the write database is actually reachable: the file must exist,
+/// open cleanly, and pass `PRAGMA quick_check`. Existence alone is not enough —
+/// a never-opened path marker is not a working database.
+fn db_reachable(db_path: &Path) -> bool {
+    if !db_path.exists() {
+        return false;
+    }
+    Connection::open(db_path)
+        .and_then(|conn| {
+            conn.query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
+        })
+        .map(|result| result == "ok")
+        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -47,7 +70,6 @@ impl DaemonState {
 pub struct DbServer {
     socket_path: PathBuf,
     state: DaemonState,
-    queue_tx: mpsc::Sender<QueuedRequest>,
 }
 
 struct QueuedRequest {
@@ -57,9 +79,6 @@ struct QueuedRequest {
 
 impl DbServer {
     pub fn new(socket_path: PathBuf, db_path: PathBuf) -> Self {
-        // Channel created here is unused; run() creates the real one so we
-        // can share queue_depth tracking properly.
-        let (queue_tx, _) = mpsc::channel(1024);
         Self {
             socket_path,
             state: DaemonState {
@@ -67,7 +86,6 @@ impl DbServer {
                 started_at: Instant::now(),
                 queue_depth: Arc::new(AtomicUsize::new(0)),
             },
-            queue_tx,
         }
     }
 
@@ -114,7 +132,8 @@ impl DbServer {
         let queue_tx = Arc::new(queue_tx);
 
         // Spawn the batching writer task
-        let writer_handle = tokio::spawn(Self::writer_task(queue_rx));
+        let db_path = self.state.db_path.clone();
+        let writer_handle = tokio::spawn(Self::writer_task(queue_rx, db_path));
 
         // One-shot shutdown signal: fired by OS signal handlers
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -271,7 +290,7 @@ impl DbServer {
     // Batching writer task
     // -------------------------------------------------------------------------
 
-    async fn writer_task(mut queue_rx: mpsc::Receiver<QueuedRequest>) {
+    async fn writer_task(mut queue_rx: mpsc::Receiver<QueuedRequest>, db_path: PathBuf) {
         let mut batch: Vec<QueuedRequest> = Vec::new();
         let batch_timeout = Duration::from_millis(15);
         let batch_threshold = 100;
@@ -281,14 +300,14 @@ impl DbServer {
                 Ok(Some(req)) => {
                     batch.push(req);
                     if batch.len() >= batch_threshold {
-                        Self::flush_batch(&mut batch).await;
+                        Self::flush_batch(&mut batch, &db_path).await;
                     }
                 }
                 Ok(None) => {
                     // All senders dropped (graceful shutdown path)
                     if !batch.is_empty() {
                         info!(count = batch.len(), "draining final batch on shutdown");
-                        Self::flush_batch(&mut batch).await;
+                        Self::flush_batch(&mut batch, &db_path).await;
                     }
                     info!("writer task exiting");
                     break;
@@ -296,22 +315,72 @@ impl DbServer {
                 Err(_) => {
                     // Batch window elapsed
                     if !batch.is_empty() {
-                        Self::flush_batch(&mut batch).await;
+                        Self::flush_batch(&mut batch, &db_path).await;
                     }
                 }
             }
         }
     }
 
-    /// Execute a batch of requests in a single logical transaction.
-    ///
-    /// TODO: replace the stub `Ack` with real rusqlite/diesel execution once
-    /// the database integration layer is wired up.
-    async fn flush_batch(batch: &mut Vec<QueuedRequest>) {
+    /// Execute a batch of requests against the SQLite write database.
+    async fn flush_batch(batch: &mut Vec<QueuedRequest>, db_path: &Path) {
         debug!(count = batch.len(), "flushing batch");
         for queued in batch.drain(..) {
-            let resp = Response::Ack; // TODO: real DB transaction
+            let resp = match Self::execute(db_path, &queued.request) {
+                Ok(resp) => resp,
+                Err(e) => Response::Error {
+                    message: format!("db error: {e}"),
+                },
+            };
             let _ = queued.response_tx.send(resp);
+        }
+    }
+
+    /// Execute a single request against the SQLite database at `db_path`.
+    ///
+    /// Opens (creating if needed) the write DB and performs the real operation:
+    /// - [`Request::CheckpointWal`] runs `PRAGMA wal_checkpoint(TRUNCATE)`.
+    /// - [`Request::OptimizeFts`] / [`Request::RefreshFts`] run
+    ///   `PRAGMA optimize`, which also maintains FTS indexes when present.
+    /// - Conversation writes need the forge_repo schema, which this scaffold
+    ///   does not own yet; they report an explicit error (with the resolved
+    ///   path) instead of a misleading `Ack`.
+    fn execute(db_path: &Path, request: &Request) -> Result<Response> {
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let conn = Connection::open(db_path)?;
+
+        match request {
+            Request::CheckpointWal => {
+                // wal_checkpoint(TRUNCATE) returns a single row
+                // (busy, log, checkpointed); running it is the real work.
+                let (busy, log, checkpointed): (i64, i64, i64) =
+                    conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                    })?;
+                debug!(busy, log, checkpointed, "wal checkpoint executed");
+                Ok(Response::Ack)
+            }
+            Request::OptimizeFts | Request::RefreshFts => {
+                conn.execute_batch("PRAGMA optimize;")?;
+                Ok(Response::Ack)
+            }
+            request @ (Request::UpsertConversation { .. }
+            | Request::UpsertConversationRef { .. }
+            | Request::UpdateParentId { .. }
+            | Request::DeleteConversation { .. }) => Ok(Response::Error {
+                message: format!(
+                    "conversation write {request:?} needs the forge_repo schema, \
+                     not yet wired into forge_dbd (opened {})",
+                    db_path.display()
+                ),
+            }),
+            Request::Ping => Ok(Response::Error {
+                message: "Ping is answered inline by the connection handler, \
+                          not by the batch writer"
+                    .to_string(),
+            }),
         }
     }
 }
@@ -443,5 +512,68 @@ mod tests {
             .expect("write ping");
         let resp: Response = read_frame(&mut stream).await.expect("read health");
         assert!(matches!(resp, Response::Health(_)));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DB execution tests — platform-independent: drive the batch handler directly
+// (the same path the Unix writer task uses), no socket required.
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod db_tests {
+    use forge_domain::ConversationId;
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn flush_batch_performs_real_sqlite_work() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        let mut batch = vec![QueuedRequest {
+            request: Request::CheckpointWal,
+            response_tx,
+        }];
+        DbServer::flush_batch(&mut batch, &db_path).await;
+
+        // A stub Ack would acknowledge without creating a file; real execution
+        // opens the SQLite DB and runs the checkpoint.
+        assert!(matches!(response_rx.await.unwrap(), Response::Ack));
+        assert!(db_path.exists());
+
+        // ...and the file on disk is a valid, intact SQLite database.
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let integrity: String = conn
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(integrity, "ok");
+    }
+
+    #[tokio::test]
+    async fn conversation_write_reports_resolved_path_instead_of_stub_ack() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        let mut batch = vec![QueuedRequest {
+            request: Request::DeleteConversation {
+                conversation_id: ConversationId::default(),
+            },
+            response_tx,
+        }];
+        DbServer::flush_batch(&mut batch, &db_path).await;
+
+        match response_rx.await.unwrap() {
+            Response::Error { message } => {
+                assert!(
+                    message.contains(&db_path.display().to_string()),
+                    "error should reference the resolved db path: {message}"
+                );
+            }
+            other => panic!("expected Error response, got {other:?}"),
+        }
     }
 }

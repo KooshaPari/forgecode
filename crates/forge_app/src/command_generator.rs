@@ -202,7 +202,8 @@ mod tests {
             &self,
             _ops: Vec<forge_domain::ConfigOperation>,
         ) -> anyhow::Result<()> {
-            unimplemented!()
+            // Test double: no environment to persist.
+            Ok(())
         }
 
         fn get_env_var(&self, key: &str) -> Option<String> {
@@ -215,8 +216,9 @@ mod tests {
 
         fn database_stats(
             &self,
-        ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send {
-            async move { Ok(forge_domain::HeliosdoctorDbStats::default()) }
+        ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
+        {
+            async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
         }
     }
 
@@ -330,21 +332,8 @@ mod tests {
             Ok(())
         }
 
-        async fn heliosdoctor(
-            &self,
-        ) -> anyhow::Result<forge_domain::HeliosdoctorInfo> {
-            Ok(forge_domain::HeliosdoctorInfo {
-                version: "test".to_string(),
-                binary_stem: "forge".to_string(),
-                base_path: PathBuf::from("/tmp"),
-                db_path: PathBuf::from("/tmp/.forge.db"),
-                updater_repo: "test/repo".to_string(),
-                updater_binary: "forge".to_string(),
-                config_source: "default".to_string(),
-                db_stats: None,
-                write_db_path: None,
-                legacy_db_path: None,
-            })
+        async fn heliosdoctor(&self) -> anyhow::Result<forge_domain::HeliosdoctorInfo> {
+            self.heliosdoctor_verbose(false).await
         }
 
         async fn heliosdoctor_verbose(
@@ -353,11 +342,11 @@ mod tests {
         ) -> anyhow::Result<forge_domain::HeliosdoctorInfo> {
             Ok(forge_domain::HeliosdoctorInfo {
                 version: "test".to_string(),
-                binary_stem: "forge".to_string(),
-                base_path: PathBuf::from("/tmp"),
-                db_path: PathBuf::from("/tmp/.forge.db"),
-                updater_repo: "test/repo".to_string(),
-                updater_binary: "forge".to_string(),
+                binary_stem: "test".to_string(),
+                base_path: std::path::PathBuf::new(),
+                db_path: std::path::PathBuf::new(),
+                updater_repo: "test".to_string(),
+                updater_binary: "test".to_string(),
                 config_source: "default".to_string(),
                 db_stats: None,
                 write_db_path: None,

@@ -145,7 +145,8 @@ mod tests {
             &self,
             _ops: Vec<forge_domain::ConfigOperation>,
         ) -> anyhow::Result<()> {
-            unimplemented!()
+            // Test double: no environment to persist.
+            Ok(())
         }
 
         fn get_env_var(&self, _key: &str) -> Option<String> {
@@ -158,8 +159,9 @@ mod tests {
 
         fn database_stats(
             &self,
-        ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send {
-            async move { Ok(forge_domain::HeliosdoctorDbStats::default()) }
+        ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
+        {
+            async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
         }
     }
 

@@ -8,7 +8,8 @@ IPC daemon that serialises conversation history to a local SQLite database.
 ## Current state
 
 - Protocol types defined (`protocol.rs`)
-- Stub server + client skeletons (`server.rs`, `client.rs`)
+- Server with real SQLite execution (PRAGMA-level) + client skeleton
+  (`server.rs`, `client.rs`)
 - Binary entry point exists (`main.rs`)
 - **Not depended upon by any other workspace crate**
 - **Not included in the shipped binary**
