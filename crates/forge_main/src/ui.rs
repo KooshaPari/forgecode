@@ -6395,7 +6395,6 @@ mod tests {
         MAX_AUTO_CONTINUE_ATTEMPTS, auto_continue_allowed, is_helioslite_binary_name,
         redact_api_key, validate_helioslite_sessions_root, validate_snapshot_destination,
     };
-    use std::fs;
     use tempfile::tempdir;
 
     #[test]

@@ -209,11 +209,13 @@ fn compute_database_integrity() -> HeliosdoctorDbStats {
     let write_path = database_write_path();
     let legacy_path = database_legacy_read_path();
 
-    let mut stats = HeliosdoctorDbStats::default();
-    stats.write_db_path = Some(write_path.to_string_lossy().to_string());
-    stats.legacy_db_path = legacy_path
-        .as_ref()
-        .map(|p| p.to_string_lossy().to_string());
+    let mut stats = HeliosdoctorDbStats {
+        write_db_path: Some(write_path.to_string_lossy().to_string()),
+        legacy_db_path: legacy_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string()),
+        ..Default::default()
+    };
 
     #[derive(diesel::QueryableByName)]
     struct IntegrityRow {
@@ -240,18 +242,19 @@ fn compute_database_integrity() -> HeliosdoctorDbStats {
     // The legacy DB is only part of the split when it resolves to a different
     // file than the write DB. It is checked separately (no ATTACH needed for
     // a standalone PRAGMA), read-only by construction.
-    if let Some(legacy) = legacy_path.as_ref() {
-        if legacy != &write_path && legacy.exists() {
-            match SqliteConnection::establish(legacy.to_string_lossy().as_ref()) {
-                Ok(mut legacy_conn) => {
-                    stats.legacy_attached = Some(true);
-                    checks.push(("legacy".to_string(), check(&mut legacy_conn)));
-                }
-                Err(err) => {
-                    stats.legacy_attached = Some(false);
-                    stats.error = Some(format!("open legacy db: {err}"));
-                    checks.push(("legacy".to_string(), "error".to_string()));
-                }
+    if let Some(legacy) = legacy_path.as_ref()
+        && legacy != &write_path
+        && legacy.exists()
+    {
+        match SqliteConnection::establish(legacy.to_string_lossy().as_ref()) {
+            Ok(mut legacy_conn) => {
+                stats.legacy_attached = Some(true);
+                checks.push(("legacy".to_string(), check(&mut legacy_conn)));
+            }
+            Err(err) => {
+                stats.legacy_attached = Some(false);
+                stats.error = Some(format!("open legacy db: {err}"));
+                checks.push(("legacy".to_string(), "error".to_string()));
             }
         }
     }
@@ -282,11 +285,13 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
     let write_path = database_write_path();
     let legacy_path = database_legacy_read_path();
 
-    let mut stats = HeliosdoctorDbStats::default();
-    stats.write_db_path = Some(write_path.to_string_lossy().to_string());
-    stats.legacy_db_path = legacy_path
-        .as_ref()
-        .map(|p| p.to_string_lossy().to_string());
+    let mut stats = HeliosdoctorDbStats {
+        write_db_path: Some(write_path.to_string_lossy().to_string()),
+        legacy_db_path: legacy_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string()),
+        ..Default::default()
+    };
 
     // If the write DB is the same path as legacy (i.e. the write path fell back
     // to .forge.db because no .forge.writes.db exists), only one DB is in play
@@ -304,25 +309,25 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
         }
     };
 
-    if !only_legacy {
-        if let Some(legacy) = legacy_path.as_ref() {
-            if legacy.exists() && legacy != &write_path {
-                // ATTACH the legacy DB read-only. The bundled SQLite does not
-                // accept a READ ONLY keyword here (both `READ ONLY` and
-                // `(READONLY)` fail), so use a plain ATTACH like the pool's
-                // SqliteCustomizer fallback. Read-only is enforced
-                // structurally: no code path ever writes to `legacy_read`.
-                let escaped = legacy.to_string_lossy().replace('\'', "''");
-                let attach_sql = format!("ATTACH DATABASE '{}' AS legacy_read", escaped);
-                if let Err(err) =
-                    diesel::connection::SimpleConnection::batch_execute(&mut conn, &attach_sql)
-                {
-                    stats.legacy_attached = Some(false);
-                    stats.error = Some(format!("attach legacy: {err}"));
-                } else {
-                    stats.legacy_attached = Some(true);
-                }
-            }
+    if !only_legacy
+        && let Some(legacy) = legacy_path.as_ref()
+        && legacy.exists()
+        && legacy != &write_path
+    {
+        // ATTACH the legacy DB read-only. The bundled SQLite does not
+        // accept a READ ONLY keyword here (both `READ ONLY` and
+        // `(READONLY)` fail), so use a plain ATTACH like the pool's
+        // SqliteCustomizer fallback. Read-only is enforced
+        // structurally: no code path ever writes to `legacy_read`.
+        let escaped = legacy.to_string_lossy().replace('\'', "''");
+        let attach_sql = format!("ATTACH DATABASE '{}' AS legacy_read", escaped);
+        if let Err(err) =
+            diesel::connection::SimpleConnection::batch_execute(&mut conn, &attach_sql)
+        {
+            stats.legacy_attached = Some(false);
+            stats.error = Some(format!("attach legacy: {err}"));
+        } else {
+            stats.legacy_attached = Some(true);
         }
     }
 
@@ -422,14 +427,11 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
             .unwrap_or_else(|_| "unknown".to_string())
     };
     let mut checks: Vec<(String, String)> = vec![("primary".to_string(), check(&mut conn))];
-    if stats.legacy_attached == Some(true) {
-        if let Some(legacy) = legacy_path.as_ref() {
-            if let Ok(mut legacy_conn) =
-                SqliteConnection::establish(legacy.to_string_lossy().as_ref())
-            {
-                checks.push(("legacy".to_string(), check(&mut legacy_conn)));
-            }
-        }
+    if stats.legacy_attached == Some(true)
+        && let Some(legacy) = legacy_path.as_ref()
+        && let Ok(mut legacy_conn) = SqliteConnection::establish(legacy.to_string_lossy().as_ref())
+    {
+        checks.push(("legacy".to_string(), check(&mut legacy_conn)));
     }
     stats.integrity_check = if checks.iter().all(|(_, c)| c == "ok") {
         "ok".to_string()

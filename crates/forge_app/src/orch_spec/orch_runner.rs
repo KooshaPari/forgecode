@@ -278,11 +278,8 @@ impl EnvironmentInfra for Runner {
         BTreeMap::new()
     }
 
-    fn database_stats(
-        &self,
-    ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
-    {
-        async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
+    async fn database_stats(&self) -> anyhow::Result<forge_domain::HeliosdoctorDbStats> {
+        Ok(forge_domain::HeliosdoctorDbStats::default())
     }
 
     fn get_environment(&self) -> forge_domain::Environment {

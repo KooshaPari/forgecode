@@ -945,7 +945,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 );
             }
             for required in ["conversation_id", "context", "created_at"] {
-                if !column_names.iter().any(|name| *name == required) {
+                if !column_names.iter().any(|name| name == &required) {
                     anyhow::bail!(
                         "source database {} is not an official forge conversations \
                          database (missing column `{required}`)",
@@ -1052,10 +1052,10 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 return Ok(report);
             }
 
-            if let Some(parent) = destination.parent() {
-                if !parent.as_os_str().is_empty() {
-                    std::fs::create_dir_all(parent)?;
-                }
+            if let Some(parent) = destination.parent()
+                && !parent.as_os_str().is_empty()
+            {
+                std::fs::create_dir_all(parent)?;
             }
             let dest_url = destination.to_string_lossy().to_string();
             let mut dest = diesel::sqlite::SqliteConnection::establish(&dest_url)?;
@@ -1664,10 +1664,10 @@ impl diesel::QueryableByName<diesel::sqlite::Sqlite> for HeliosExportRow {
 ///   these count as `decompression_failed` in export reports.
 fn export_context(row: &HeliosExportRow) -> Result<Option<String>, ()> {
     use crate::codec::decompress;
-    if let Some(plain) = row.context.as_deref() {
-        if !plain.trim().is_empty() {
-            return Ok(Some(plain.to_string()));
-        }
+    if let Some(plain) = row.context.as_deref()
+        && !plain.trim().is_empty()
+    {
+        return Ok(Some(plain.to_string()));
     }
     if let Some(bytes) = row.context_zstd.as_deref() {
         match decompress(bytes) {
@@ -1706,10 +1706,10 @@ fn write_export_non_sqlite(
         return Ok(report);
     }
 
-    if let Some(parent) = destination.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = destination.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
     }
 
     let mut out = String::new();
@@ -3471,6 +3471,7 @@ mod tests {
         let mut check = diesel::sqlite::SqliteConnection::establish(&url)?;
         #[derive(diesel::QueryableByName)]
         struct ExportRow {
+            #[allow(dead_code)]
             #[diesel(sql_type = diesel::sql_types::Text)]
             conversation_id: String,
             #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]

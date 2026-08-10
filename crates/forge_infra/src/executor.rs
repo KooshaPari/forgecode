@@ -382,8 +382,8 @@ mod tests {
         // the comparison is line-ending agnostic.
         let strip_newlines = |s: &str| s.replace("\r", "").replace("\n", "");
         assert_eq!(
-            strip_newlines(&actual.stdout.trim()),
-            strip_newlines(&expected.stdout.trim())
+            strip_newlines(actual.stdout.trim()),
+            strip_newlines(expected.stdout.trim())
         );
         assert_eq!(actual.stderr, expected.stderr);
         assert_eq!(actual.success(), expected.success());
@@ -531,8 +531,8 @@ mod tests {
         // so strip line endings from both sides before comparing.
         let strip_newlines = |s: &str| s.replace("\r", "").replace("\n", "");
         assert_eq!(
-            strip_newlines(&actual.stdout.trim()),
-            strip_newlines(&expected.stdout.trim())
+            strip_newlines(actual.stdout.trim()),
+            strip_newlines(expected.stdout.trim())
         );
         assert_eq!(actual.stderr, expected.stderr);
         assert_eq!(actual.success(), expected.success());
