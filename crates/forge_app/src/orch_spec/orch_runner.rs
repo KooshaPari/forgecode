@@ -300,7 +300,8 @@ impl EnvironmentInfra for Runner {
 
     fn database_stats(
         &self,
-    ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send {
-        async move { Ok(forge_domain::HeliosdoctorDbStats::default()) }
+    ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
+    {
+        async { Ok(forge_domain::HeliosdoctorDbStats::default()) }
     }
 }

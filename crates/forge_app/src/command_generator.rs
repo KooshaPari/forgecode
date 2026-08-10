@@ -338,17 +338,17 @@ mod tests {
 
         async fn heliosdoctor_verbose(
             &self,
-            _verbose: bool,
+            verbose: bool,
         ) -> anyhow::Result<forge_domain::HeliosdoctorInfo> {
             Ok(forge_domain::HeliosdoctorInfo {
                 version: "test".to_string(),
-                binary_stem: "test".to_string(),
-                base_path: std::path::PathBuf::new(),
-                db_path: std::path::PathBuf::new(),
-                updater_repo: "test".to_string(),
-                updater_binary: "test".to_string(),
-                config_source: "default".to_string(),
-                db_stats: None,
+                binary_stem: "forge".to_string(),
+                base_path: "/test".into(),
+                db_path: "/test/forge.db".into(),
+                updater_repo: "test/repo".to_string(),
+                updater_binary: "forge".to_string(),
+                config_source: "test".to_string(),
+                db_stats: verbose.then(forge_domain::HeliosdoctorDbStats::default),
                 write_db_path: None,
                 legacy_db_path: None,
             })
