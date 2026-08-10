@@ -390,6 +390,12 @@ pub trait API: Sync + Send {
     /// `verbose` is `true`.
     async fn heliosdoctor_verbose(&self, verbose: bool) -> Result<HeliosdoctorInfo>;
 
+    /// Fast health check: same as `heliosdoctor`, but `db_stats` is populated
+    /// by an integrity-only probe (PRAGMA integrity_check on the write DB and
+    /// legacy DB when split) that skips the COUNT queries the verbose variant
+    /// runs.
+    async fn heliosdoctor_integrity(&self) -> Result<HeliosdoctorInfo>;
+
     /// Atomically migrate the legacy data directory to the canonical
     /// location. For `helioslite`: `~/.forge` -> `~/.helioslite`. For
     /// `forge`: `~/forge` -> `~/.forge`.

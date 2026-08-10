@@ -152,6 +152,13 @@ impl EnvironmentInfra for ForgeInfra {
     {
         self.config_infra.database_stats()
     }
+
+    fn database_integrity(
+        &self,
+    ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
+    {
+        self.config_infra.database_integrity()
+    }
 }
 
 #[async_trait::async_trait]

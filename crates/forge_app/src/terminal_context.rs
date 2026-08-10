@@ -154,6 +154,12 @@ mod tests {
         fn get_env_vars(&self) -> BTreeMap<String, String> {
             self.env_vars.clone()
         }
+
+        fn database_stats(
+            &self,
+        ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send {
+            async move { Ok(forge_domain::HeliosdoctorDbStats::default()) }
+        }
     }
 
     #[test]

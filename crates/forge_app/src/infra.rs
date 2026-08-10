@@ -58,6 +58,25 @@ pub trait EnvironmentInfra: Send + Sync {
     fn database_stats(
         &self,
     ) -> impl std::future::Future<Output = anyhow::Result<HeliosdoctorDbStats>> + Send;
+
+    /// Fast integrity-only probe surfaced by `heliosdoctor --integrity-only`.
+    ///
+    /// Runs `PRAGMA integrity_check` on the write DB (and the legacy read DB
+    /// when split-DB is active) without the COUNT queries that
+    /// [`database_stats`](Self::database_stats) performs, so the health check
+    /// stays cheap on large databases. Implementations that can compute this
+    /// without the full stats scan should override it.
+    ///
+    /// The default falls back to [`database_stats`](Self::database_stats),
+    /// which is always correct but not cheap.
+    ///
+    /// # Errors
+    /// Returns an error if the underlying DB query fails.
+    fn database_integrity(
+        &self,
+    ) -> impl std::future::Future<Output = anyhow::Result<HeliosdoctorDbStats>> + Send {
+        self.database_stats()
+    }
 }
 
 /// Repository for accessing system environment information

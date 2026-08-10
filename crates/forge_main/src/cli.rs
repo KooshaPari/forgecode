@@ -204,6 +204,12 @@ pub struct HeliosdoctorArgs {
     /// oversized contexts, integrity check).
     #[arg(short, long)]
     pub verbose: bool,
+
+    /// Run only the fast integrity check (PRAGMA integrity_check on the write
+    /// DB and legacy DB when split) without the COUNT queries `--verbose`
+    /// performs. Prints the integrity result and the paths checked.
+    #[arg(long)]
+    pub integrity_only: bool,
 }
 
 /// Arguments for `helioslite migrate` (or `forge migrate`).
@@ -2201,6 +2207,26 @@ mod tests {
         let fixture = Cli::parse_from(["forge", "doctor"]);
         let actual = matches!(fixture.subcommands, Some(TopLevelCommand::Doctor));
         assert_eq!(actual, true);
+    }
+
+    #[test]
+    fn test_heliosdoctor_integrity_only_flag() {
+        let fixture = Cli::parse_from(["forge", "heliosdoctor", "--integrity-only"]);
+        let actual = match fixture.subcommands {
+            Some(TopLevelCommand::Heliosdoctor(args)) => args.integrity_only,
+            _ => false,
+        };
+        assert_eq!(actual, true);
+    }
+
+    #[test]
+    fn test_heliosdoctor_defaults_to_full_verbose_path() {
+        let fixture = Cli::parse_from(["forge", "heliosdoctor"]);
+        let actual = match fixture.subcommands {
+            Some(TopLevelCommand::Heliosdoctor(args)) => args.integrity_only,
+            _ => false,
+        };
+        assert_eq!(actual, false);
     }
 
     #[test]

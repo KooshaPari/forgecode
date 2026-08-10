@@ -221,6 +221,16 @@ pub trait AppConfigService: Send + Sync {
         &self,
         verbose: bool,
     ) -> anyhow::Result<forge_domain::HeliosdoctorInfo>;
+
+    /// Fast health check surfaced by `heliosdoctor --integrity-only`.
+    ///
+    /// Returns the same diagnostics as [`heliosdoctor`] but with `db_stats`
+    /// populated by an integrity-only probe (PRAGMA integrity_check on the
+    /// write DB and legacy DB when split) that skips the COUNT queries
+    /// [`heliosdoctor_verbose`] performs.
+    async fn heliosdoctor_integrity(
+        &self,
+    ) -> anyhow::Result<forge_domain::HeliosdoctorInfo>;
 }
 
 #[async_trait::async_trait]
@@ -1297,6 +1307,12 @@ impl<I: Services> AppConfigService for I {
         verbose: bool,
     ) -> anyhow::Result<forge_domain::HeliosdoctorInfo> {
         self.config_service().heliosdoctor_verbose(verbose).await
+    }
+
+    async fn heliosdoctor_integrity(
+        &self,
+    ) -> anyhow::Result<forge_domain::HeliosdoctorInfo> {
+        self.config_service().heliosdoctor_integrity().await
     }
 }
 

@@ -675,6 +675,10 @@ impl<
         self.services.heliosdoctor_verbose(verbose).await
     }
 
+    async fn heliosdoctor_integrity(&self) -> Result<HeliosdoctorInfo> {
+        self.services.heliosdoctor_integrity().await
+    }
+
     async fn migrate_data_dir(
         &self,
         options: &forge_domain::MigrateOptions,

@@ -184,6 +184,85 @@ impl EnvironmentInfra for ForgeEnvironmentInfra {
         let stats = compute_database_stats();
         async move { Ok(stats) }
     }
+
+    fn database_integrity(
+        &self,
+    ) -> impl std::future::Future<Output = anyhow::Result<HeliosdoctorDbStats>> + Send {
+        let stats = compute_database_integrity();
+        async move { Ok(stats) }
+    }
+}
+
+/// Runs `PRAGMA integrity_check` on the write DB and (when split-DB is
+/// active) the legacy read DB, without the COUNT queries that
+/// [`compute_database_stats`] performs. Surfaces the per-DB results on
+/// `integrity_check` ("ok" when every checked DB is healthy) and records the
+/// paths checked on `write_db_path` / `legacy_db_path`.
+fn compute_database_integrity() -> HeliosdoctorDbStats {
+    use diesel::Connection;
+    use diesel::sqlite::SqliteConnection;
+    use diesel::RunQueryDsl;
+    use diesel::sql_types::Text;
+
+    let write_path = database_write_path();
+    let legacy_path = database_legacy_read_path();
+
+    let mut stats = HeliosdoctorDbStats::default();
+    stats.write_db_path = Some(write_path.to_string_lossy().to_string());
+    stats.legacy_db_path = legacy_path.as_ref().map(|p| p.to_string_lossy().to_string());
+
+    #[derive(diesel::QueryableByName)]
+    struct IntegrityRow {
+        #[diesel(sql_type = Text)]
+        integrity_check: String,
+    }
+    let check = |conn: &mut diesel::sqlite::SqliteConnection| -> String {
+        diesel::sql_query("PRAGMA integrity_check")
+            .get_result::<IntegrityRow>(conn)
+            .map(|r| r.integrity_check)
+            .unwrap_or_else(|_| "unknown".to_string())
+    };
+
+    let mut checks: Vec<(String, String)> = Vec::new();
+    match SqliteConnection::establish(write_path.to_string_lossy().as_ref()) {
+        Ok(mut conn) => checks.push(("primary".to_string(), check(&mut conn))),
+        Err(err) => {
+            stats.error = Some(format!("open write db: {err}"));
+            stats.integrity_check = "error".to_string();
+            return stats;
+        }
+    }
+
+    // The legacy DB is only part of the split when it resolves to a different
+    // file than the write DB. It is checked separately (no ATTACH needed for
+    // a standalone PRAGMA), read-only by construction.
+    if let Some(legacy) = legacy_path.as_ref() {
+        if legacy != &write_path && legacy.exists() {
+            match SqliteConnection::establish(legacy.to_string_lossy().as_ref()) {
+                Ok(mut legacy_conn) => {
+                    stats.legacy_attached = Some(true);
+                    checks.push(("legacy".to_string(), check(&mut legacy_conn)));
+                }
+                Err(err) => {
+                    stats.legacy_attached = Some(false);
+                    stats.error = Some(format!("open legacy db: {err}"));
+                    checks.push(("legacy".to_string(), "error".to_string()));
+                }
+            }
+        }
+    }
+
+    stats.integrity_check = if checks.iter().all(|(_, c)| c == "ok") {
+        "ok".to_string()
+    } else {
+        checks
+            .iter()
+            .map(|(name, c)| format!("{name}: {c}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    stats
 }
 
 /// Computes live database row counts from the write DB (and the legacy DB if

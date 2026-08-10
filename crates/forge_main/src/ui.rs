@@ -1241,7 +1241,11 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
             }
             TopLevelCommand::Heliosdoctor(args) => {
                 self.spinner.start(Some("Diagnosing"))?;
-                let info = self.api.heliosdoctor_verbose(args.verbose).await?;
+                let info = if args.integrity_only {
+                    self.api.heliosdoctor_integrity().await?
+                } else {
+                    self.api.heliosdoctor_verbose(args.verbose).await?
+                };
                 self.spinner.stop(None)?;
                 if args.json {
                     let json = serde_json::to_string_pretty(&info)?;
@@ -1270,6 +1274,12 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                             stats.integrity_check,
                         ));
                     }
+                    if let Some(write) = info.write_db_path.as_ref() {
+                        line.push_str(&format!("\nwrite_db={}", write.display()));
+                    }
+                    if let Some(legacy) = info.legacy_db_path.as_ref() {
+                        line.push_str(&format!("\nlegacy_db={}", legacy.display()));
+                    }
                     line.push('\n');
                     self.writeln(line)?;
                 } else {
@@ -1284,16 +1294,31 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                         info.updater_binary,
                     ))?;
                     if let Some(stats) = info.db_stats.as_ref() {
-                        self.writeln(format!(
-                            "database stats\n  total              : {}\n  compressed         : {}\n  uncompressed       : {}\n  empty              : {}\n  oversized (>1MB)   : {}\n  agent-initiated    : {}\n  integrity check    : {}\n",
-                            stats.total_conversations,
-                            stats.compressed_rows,
-                            stats.uncompressed_rows,
-                            stats.empty_rows,
-                            stats.oversized_rows,
-                            stats.agent_initiated_rows,
-                            stats.integrity_check,
-                        ))?;
+                        if args.integrity_only {
+                            self.writeln(format!(
+                                "integrity check\n  result            : {}\n  write db          : {}\n  legacy db         : {}\n",
+                                stats.integrity_check,
+                                info.write_db_path
+                                    .as_ref()
+                                    .map(|p| p.display().to_string())
+                                    .unwrap_or_else(|| info.db_path.display().to_string()),
+                                info.legacy_db_path
+                                    .as_ref()
+                                    .map(|p| p.display().to_string())
+                                    .unwrap_or_else(|| "-".to_string()),
+                            ))?;
+                        } else {
+                            self.writeln(format!(
+                                "database stats\n  total              : {}\n  compressed         : {}\n  uncompressed       : {}\n  empty              : {}\n  oversized (>1MB)   : {}\n  agent-initiated    : {}\n  integrity check    : {}\n",
+                                stats.total_conversations,
+                                stats.compressed_rows,
+                                stats.uncompressed_rows,
+                                stats.empty_rows,
+                                stats.oversized_rows,
+                                stats.agent_initiated_rows,
+                                stats.integrity_check,
+                            ))?;
+                        }
                     }
                 }
                 return Ok(());
