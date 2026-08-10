@@ -72,6 +72,10 @@ fn db_reachable(db_path: &Path) -> bool {
 pub struct DbServer {
     socket_path: PathBuf,
     state: DaemonState,
+    /// How long the daemon keeps running after the last client disconnects.
+    /// When this idle window elapses with no connected client, the daemon
+    /// drains the write queue and exits cleanly (see the run loops).
+    idle_timeout: Duration,
 }
 
 struct QueuedRequest {
@@ -80,7 +84,15 @@ struct QueuedRequest {
 }
 
 impl DbServer {
+    /// Create a daemon with the default idle timeout (300 seconds).
     pub fn new(socket_path: PathBuf, db_path: PathBuf) -> Self {
+        Self::new_with_idle(socket_path, db_path, Duration::from_secs(300))
+    }
+
+    /// Create a daemon with an explicit idle timeout. Tests pass a short
+    /// window to exercise the idle-shutdown path quickly; production uses
+    /// [`DbServer::new`] and its default.
+    pub fn new_with_idle(socket_path: PathBuf, db_path: PathBuf, idle_timeout: Duration) -> Self {
         Self {
             socket_path,
             state: DaemonState {
@@ -88,6 +100,7 @@ impl DbServer {
                 started_at: Instant::now(),
                 queue_depth: Arc::new(AtomicUsize::new(0)),
             },
+            idle_timeout,
         }
     }
 
@@ -150,7 +163,19 @@ impl DbServer {
             let _ = shutdown_tx.send(());
         });
 
-        // Accept loop — exits when shutdown fires
+        // Active-connection tracking: incremented when a client connects,
+        // decremented when its handler exits. The idle timer below only shuts
+        // the daemon down while this is zero.
+        let active_connections = Arc::new(AtomicUsize::new(0));
+
+        // Idle timer — the daemon self-terminates after the last client
+        // disconnects and no new connection arrives for `idle_timeout`. Reset
+        // on every accepted connection; when it elapses with no active
+        // clients we fall through to the same graceful-drain path as the
+        // shutdown signal.
+        let mut idle = Box::pin(tokio::time::sleep(self.idle_timeout));
+
+        // Accept loop — exits when shutdown fires or the daemon idles out
         loop {
             tokio::select! {
                 accept = listener.accept() => {
@@ -159,7 +184,14 @@ impl DbServer {
                             debug!("client connected");
                             let queue_tx = Arc::clone(&queue_tx);
                             let state = state.clone();
-                            tokio::spawn(Self::handle_client(stream, queue_tx, state));
+                            let active = Arc::clone(&active_connections);
+                            tokio::spawn(async move {
+                                active.fetch_add(1, Ordering::SeqCst);
+                                Self::handle_client(stream, queue_tx, state).await;
+                                active.fetch_sub(1, Ordering::SeqCst);
+                            });
+                            // A new client restarts the idle window.
+                            idle.as_mut().reset(tokio::time::Instant::now() + self.idle_timeout);
                         }
                         Err(e) => {
                             error!("accept error: {e}");
@@ -169,6 +201,18 @@ impl DbServer {
                 _ = &mut shutdown_rx => {
                     info!("shutdown signal received; draining write queue");
                     break;
+                }
+                _ = &mut idle => {
+                    if active_connections.load(Ordering::SeqCst) == 0 {
+                        info!(
+                            idle = ?self.idle_timeout,
+                            "no active clients; shutting down after idle timeout"
+                        );
+                        break;
+                    }
+                    // A client is still connected — give it another window
+                    // rather than shutting down mid-session.
+                    idle.as_mut().reset(tokio::time::Instant::now() + self.idle_timeout);
                 }
             }
         }
@@ -220,7 +264,13 @@ impl DbServer {
             let _ = shutdown_tx.send(());
         });
 
-        // Accept loop — exits when shutdown fires.
+        // Active-connection tracking + idle timer, same semantics as the unix
+        // transport: on Windows the count is naturally 0 or 1 because the
+        // accept loop is sequential.
+        let active_connections = Arc::new(AtomicUsize::new(0));
+        let mut idle = Box::pin(tokio::time::sleep(self.idle_timeout));
+
+        // Accept loop — exits when shutdown fires or the daemon idles out.
         //
         // Windows has no stale-socket problem: named pipes are released when
         // the last handle drops, so there is nothing to unlink. The server
@@ -250,12 +300,29 @@ impl DbServer {
                             debug!("client connected");
                             let queue_tx = Arc::clone(&queue_tx);
                             let state = state.clone();
-                            tokio::spawn(Self::handle_client(pipe, queue_tx, state));
+                            let active = Arc::clone(&active_connections);
+                            tokio::spawn(async move {
+                                active.fetch_add(1, Ordering::SeqCst);
+                                Self::handle_client(pipe, queue_tx, state).await;
+                                active.fetch_sub(1, Ordering::SeqCst);
+                            });
+                            // A new client restarts the idle window.
+                            idle.as_mut().reset(tokio::time::Instant::now() + self.idle_timeout);
                         }
                         Err(e) => {
                             error!("pipe connect error: {e}");
                         }
                     }
+                }
+                _ = &mut idle => {
+                    if active_connections.load(Ordering::SeqCst) == 0 {
+                        info!(
+                            idle = ?self.idle_timeout,
+                            "no active clients; shutting down after idle timeout"
+                        );
+                        break;
+                    }
+                    idle.as_mut().reset(tokio::time::Instant::now() + self.idle_timeout);
                 }
             }
         }
@@ -695,6 +762,17 @@ mod tests {
         tokio::spawn(server.run())
     }
 
+    /// Spawn the server with an explicit (short) idle timeout so tests can
+    /// exercise the idle-shutdown path without waiting out the default.
+    async fn spawn_server_with_idle(
+        sock: PathBuf,
+        db: PathBuf,
+        idle: Duration,
+    ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
+        let server = DbServer::new_with_idle(sock, db, idle);
+        tokio::spawn(server.run())
+    }
+
     /// Wait until the socket file appears (server is ready to accept).
     async fn wait_for_socket(sock: &Path) {
         for _ in 0..50 {
@@ -793,6 +871,58 @@ mod tests {
             .expect("write ping");
         let resp: Response = read_frame(&mut stream).await.expect("read health");
         assert!(matches!(resp, Response::Health(_)));
+    }
+
+    // -------------------------------------------------------------------------
+    // Idle timeout tests: the daemon must exit cleanly after the last client
+    // disconnects and no new connection arrives for the idle window.
+    // -------------------------------------------------------------------------
+
+    /// With no client ever connecting, the daemon exits on its own once the
+    /// idle window elapses, unlinks its socket, and reports a clean result.
+    #[tokio::test]
+    async fn idle_timeout_shuts_down_without_clients() {
+        let dir = TempDir::new().unwrap();
+        let (sock, db) = tmp_paths(&dir);
+        let handle =
+            spawn_server_with_idle(sock.clone(), db.clone(), Duration::from_millis(500)).await;
+        wait_for_socket(&sock).await;
+
+        // Deliberately do not connect: the server must self-terminate.
+        sleep(Duration::from_millis(1200)).await;
+
+        assert!(handle.is_finished(), "server should have exited after idle timeout");
+        assert!(handle.await.expect("server task should not panic").is_ok());
+        assert!(!sock.exists(), "socket should be unlinked on shutdown");
+    }
+
+    /// Connecting and completing a Ping, then dropping the connection, must
+    /// still let the daemon exit after the idle window — proving the
+    /// last-client-disconnect semantics (not a fixed uptime cap).
+    #[tokio::test]
+    async fn idle_timeout_shuts_down_after_last_client_disconnects() {
+        let dir = TempDir::new().unwrap();
+        let (sock, db) = tmp_paths(&dir);
+        let handle =
+            spawn_server_with_idle(sock.clone(), db.clone(), Duration::from_millis(500)).await;
+        wait_for_socket(&sock).await;
+
+        // Complete a full request/response cycle, then drop the connection
+        // (the handler sees EOF and the active-connection count returns to 0).
+        {
+            let mut stream = UnixStream::connect(&sock).await.expect("connect");
+            write_frame(&mut stream, &Request::Ping).await.expect("write ping");
+            let resp: Response = read_frame(&mut stream).await.expect("read health");
+            assert!(matches!(resp, Response::Health(_)));
+        }
+
+        sleep(Duration::from_millis(1200)).await;
+
+        assert!(
+            handle.is_finished(),
+            "server should exit after last client disconnects + idle window"
+        );
+        assert!(handle.await.expect("server task should not panic").is_ok());
     }
 }
 
@@ -1176,5 +1306,23 @@ mod windows_tests {
             )
             .unwrap();
         assert_eq!(title.as_deref(), Some("windows pipe test"));
+    }
+
+    /// With no client ever connecting, the named-pipe server exits on its own
+    /// once the idle window elapses (no socket file exists on Windows to
+    /// assert against; a clean join is the whole check).
+    #[tokio::test]
+    async fn idle_timeout_shuts_down_without_clients() {
+        let dir = TempDir::new().unwrap();
+        let (sock, db) = tmp_paths(&dir);
+
+        let server = DbServer::new_with_idle(sock, db, Duration::from_millis(500));
+        let handle = tokio::spawn(server.run());
+
+        // Deliberately do not connect: the server must self-terminate.
+        sleep(Duration::from_millis(1200)).await;
+
+        assert!(handle.is_finished(), "server should have exited after idle timeout");
+        assert!(handle.await.expect("server task should not panic").is_ok());
     }
 }

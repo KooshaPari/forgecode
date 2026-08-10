@@ -181,6 +181,19 @@ impl Environment {
             .join(".forge/.forge.db.sock")
     }
 
+    /// Returns the path to the `forge-dbd` daemon binary the client should
+    /// spawn on the first routed write when the socket is not live.
+    ///
+    /// Resolution order:
+    /// 1. `FORGE_DBD_BIN` environment variable, if set. Allows callers to
+    ///    point the client at a specific daemon binary — an absolute path, or
+    ///    a bare name resolved through `PATH`.
+    /// 2. Otherwise `None` — the client falls back to looking up `forge_dbd`
+    ///    on `PATH` at spawn time.
+    pub fn dbd_bin_path(&self) -> Option<PathBuf> {
+        std::env::var("FORGE_DBD_BIN").ok().map(PathBuf::from)
+    }
+
     /// Returns the path to the cache directory
     pub fn cache_dir(&self) -> PathBuf {
         self.base_path.join("cache")
@@ -585,6 +598,48 @@ mod tests {
         match previous {
             Some(value) => unsafe { std::env::set_var("FORGE_DBD_SOCKET", value) },
             None => unsafe { std::env::remove_var("FORGE_DBD_SOCKET") },
+        }
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_dbd_bin_path_defaults_to_none() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let fixture: Environment = Faker.fake();
+
+        // Arrange: ensure FORGE_DBD_BIN is not set.
+        let previous = std::env::var("FORGE_DBD_BIN").ok();
+        unsafe { std::env::remove_var("FORGE_DBD_BIN") };
+
+        let actual = fixture.dbd_bin_path();
+        let expected = None;
+
+        // Cleanup: restore the previous value, if any.
+        match previous {
+            Some(value) => unsafe { std::env::set_var("FORGE_DBD_BIN", value) },
+            None => unsafe { std::env::remove_var("FORGE_DBD_BIN") },
+        }
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_dbd_bin_path_honors_env_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let fixture: Environment = Faker.fake();
+
+        // Arrange: point FORGE_DBD_BIN at a custom daemon binary.
+        let previous = std::env::var("FORGE_DBD_BIN").ok();
+        unsafe { std::env::set_var("FORGE_DBD_BIN", "/custom/forge_dbd") };
+
+        let actual = fixture.dbd_bin_path();
+        let expected = Some(PathBuf::from("/custom/forge_dbd"));
+
+        // Cleanup: restore the previous value, if any.
+        match previous {
+            Some(value) => unsafe { std::env::set_var("FORGE_DBD_BIN", value) },
+            None => unsafe { std::env::remove_var("FORGE_DBD_BIN") },
         }
 
         assert_eq!(actual, expected);

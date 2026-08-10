@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use forge_dbd::client::DbClient;
 use forge_dbd::protocol::{Request, Response};
@@ -9,9 +11,15 @@ use forge_domain::{
     ForgeImportOptions, ForgeImportReport, ForgeMigrateReport, HeliosdoctorDbStats,
     MigrateOptions,
 };
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::conversation::ConversationRepositoryImpl;
+
+/// Set once per process: the first routed write that fails to connect
+/// attempts to spawn the daemon. A later connect failure in the same process
+/// never respawns — either the daemon came up (and subsequent connects
+/// succeed) or it did not, and re-spawning would just repeat the wait.
+static SPAWN_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 
 /// Decorator that routes the hot-path conversation WRITES through the
 /// `forge-dbd` single-writer daemon while keeping reads on the direct diesel
@@ -43,6 +51,14 @@ use crate::conversation::ConversationRepositoryImpl;
 /// connection per request anyway (client.rs), so caching only skips the
 /// connect probe.
 ///
+/// ## Daemon spawn
+///
+/// When the first routed write cannot connect, the client spawns the daemon
+/// (binary from `FORGE_DBD_BIN` or `forge_dbd` on PATH) exactly once per
+/// process, then polls the socket for ~2 s before falling back to the direct
+/// path. A later connect failure in the same process skips the spawn and
+/// falls back immediately — the daemon either came up or it did not.
+///
 /// ## Fallback semantics
 ///
 /// The daemon path is BEST-EFFORT: on any failure — connect error, send error,
@@ -54,11 +70,32 @@ pub struct DaemonConversationRepository {
     inner: Arc<ConversationRepositoryImpl>,
     socket_path: PathBuf,
     client: tokio::sync::OnceCell<DbClient>,
+    /// Daemon binary to spawn on the first routed write, resolved from
+    /// `FORGE_DBD_BIN` at construction (see
+    /// [`forge_domain::Environment::dbd_bin_path`]). `None` means "look up
+    /// `forge_dbd` on PATH" at spawn time.
+    dbd_bin: Option<PathBuf>,
 }
 
 impl DaemonConversationRepository {
     pub fn new(inner: Arc<ConversationRepositoryImpl>, socket_path: PathBuf) -> Self {
-        Self { inner, socket_path, client: tokio::sync::OnceCell::new() }
+        Self {
+            inner,
+            socket_path,
+            client: tokio::sync::OnceCell::new(),
+            dbd_bin: default_dbd_bin(),
+        }
+    }
+
+    /// Test-only constructor: injects the daemon binary path so tests can
+    /// point at a guaranteed-missing binary without mutating process env.
+    #[cfg(test)]
+    fn new_with_bin(
+        inner: Arc<ConversationRepositoryImpl>,
+        socket_path: PathBuf,
+        dbd_bin: Option<PathBuf>,
+    ) -> Self {
+        Self { inner, socket_path, client: tokio::sync::OnceCell::new(), dbd_bin }
     }
 
     /// Best-effort daemon round-trip for a write request.
@@ -77,9 +114,18 @@ impl DaemonConversationRepository {
                 debug!(
                     socket = %self.socket_path.display(),
                     error = %err,
-                    "forge_dbd unavailable; falling back to direct write"
+                    "forge_dbd unavailable; attempting to spawn daemon"
                 );
-                return false;
+                match self.spawn_and_connect().await {
+                    Some(client) => client,
+                    None => {
+                        debug!(
+                            socket = %self.socket_path.display(),
+                            "forge_dbd still unavailable; falling back to direct write"
+                        );
+                        return false;
+                    }
+                }
             }
         };
         match client.send(request).await {
@@ -104,6 +150,93 @@ impl DaemonConversationRepository {
             }
         }
     }
+
+    /// Attempts to bring the daemon up and connect to it.
+    ///
+    /// Spawns the daemon exactly once per process (guarded by
+    /// [`SPAWN_ATTEMPTED`]); a second connect failure in the same process
+    /// skips the spawn and falls straight back to the direct write. After a
+    /// successful spawn the socket is polled for ~2 s — the daemon needs a
+    /// moment to bind (the named-pipe `ERROR_PIPE_BUSY` retry inside
+    /// `DbClient::connect` also helps) — and the connected client is cached
+    /// in the [`OnceCell`](tokio::sync::OnceCell) for subsequent writes.
+    async fn spawn_and_connect(&self) -> Option<&DbClient> {
+        if SPAWN_ATTEMPTED.swap(true, Ordering::SeqCst) {
+            return None;
+        }
+        if !self.spawn_daemon() {
+            // Spawn failed (e.g. binary not found): no point polling a socket
+            // nothing will bind. The guard is already set, so we do not retry.
+            return None;
+        }
+        for _ in 0..10 {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            if let Ok(client) = DbClient::connect(&self.socket_path).await {
+                let _ = self.client.set(client);
+                return self.client.get();
+            }
+        }
+        None
+    }
+
+    /// Spawns the `forge-dbd` daemon as a detached child process.
+    ///
+    /// Returns `false` (after logging) when the binary cannot be spawned,
+    /// e.g. `FORGE_DBD_BIN` points at a missing file.
+    ///
+    /// The child inherits `FORGE_WRITE_DB_PATH` when the parent has it set,
+    /// so the daemon writes to the same database as the client.
+    /// `FORGE_DBD_SOCKET` is deliberately NOT forwarded: `forge_dbd`'s main
+    /// resolves the socket from `~/.forge/.forge.db.sock` only and ignores
+    /// `FORGE_DBD_SOCKET`, so both sides already agree on the default path
+    /// (an explicit client-side `FORGE_DBD_SOCKET` would not be honoured by a
+    /// spawned daemon — a known limitation).
+    fn spawn_daemon(&self) -> bool {
+        let bin = self
+            .dbd_bin
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("forge_dbd"));
+        let mut cmd = std::process::Command::new(&bin);
+        if let Ok(write_db) = std::env::var("FORGE_WRITE_DB_PATH") {
+            cmd.env("FORGE_WRITE_DB_PATH", write_db);
+        }
+        cmd.stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        match cmd.spawn() {
+            Ok(_) => {
+                info!(
+                    bin = %bin.display(),
+                    "spawned forge-dbd daemon; waiting for it to accept connections"
+                );
+                true
+            }
+            Err(e) => {
+                warn!(
+                    bin = %bin.display(),
+                    error = %e,
+                    "failed to spawn forge-dbd daemon; falling back to direct write"
+                );
+                false
+            }
+        }
+    }
+}
+
+/// Resolves the daemon binary path from the environment, mirroring
+/// [`forge_domain::Environment::dbd_bin_path`]: `FORGE_DBD_BIN` if set,
+/// otherwise `None` (spawn-time `forge_dbd` PATH lookup). The method ignores
+/// `self` — it only reads the environment — so a throwaway
+/// [`forge_domain::Environment`] suffices.
+fn default_dbd_bin() -> Option<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let env = forge_domain::Environment {
+        os: std::env::consts::OS.to_string(),
+        cwd: std::env::current_dir().unwrap_or_else(|_| home.clone()),
+        home: Some(home),
+        shell: std::env::var("SHELL").unwrap_or_default(),
+        base_path: PathBuf::from("."),
+    };
+    env.dbd_bin_path()
 }
 
 #[async_trait::async_trait]
@@ -326,6 +459,10 @@ mod tests {
     use crate::conversation::ConversationRepositoryImpl;
     use crate::database::DatabasePool;
 
+    /// Serializes the decorator tests that touch the process-wide spawn guard
+    /// ([`SPAWN_ATTEMPTED`]) so they cannot race each other.
+    static SPAWN_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn in_memory_inner() -> Arc<ConversationRepositoryImpl> {
         let pool = Arc::new(DatabasePool::in_memory().expect("in-memory pool"));
         Arc::new(ConversationRepositoryImpl::new(pool, WorkspaceHash::new(0)))
@@ -337,6 +474,11 @@ mod tests {
     /// repository.
     #[tokio::test]
     async fn falls_back_to_direct_write_when_daemon_absent() -> anyhow::Result<()> {
+        let _serial = SPAWN_GUARD.lock().unwrap();
+        // Mark the spawn as already attempted so this test never launches a
+        // real daemon; the assertion is about the fallback, not the spawn.
+        SPAWN_ATTEMPTED.store(true, Ordering::SeqCst);
+
         let inner = in_memory_inner();
         let repo = DaemonConversationRepository::new(
             inner.clone(),
@@ -351,6 +493,48 @@ mod tests {
 
         let actual = inner.get_conversation(&id).await?;
         assert_eq!(actual.expect("row persisted via direct fallback").title, Some("daemon-fallback".to_string()));
+        Ok(())
+    }
+
+    /// With `FORGE_DBD_BIN` pointing at a binary that does not exist, the
+    /// first routed write attempts to spawn it exactly once, fails, and falls
+    /// back to the direct path — the row still persists. A second write does
+    /// not re-attempt the spawn (the guard is set) and falls back without
+    /// hanging.
+    #[tokio::test]
+    async fn spawn_is_attempted_once_then_falls_back() -> anyhow::Result<()> {
+        let _serial = SPAWN_GUARD.lock().unwrap();
+        // Reset the process-wide guard so this test exercises the spawn path
+        // deterministically.
+        SPAWN_ATTEMPTED.store(false, Ordering::SeqCst);
+
+        let inner = in_memory_inner();
+        let repo = DaemonConversationRepository::new_with_bin(
+            inner.clone(),
+            PathBuf::from("/nonexistent/.forge.db.sock"),
+            Some(PathBuf::from("/definitely/missing/forge_dbd_bin")),
+        );
+
+        let conversation =
+            Conversation::new(ConversationId::generate()).title(Some("spawn-fallback".to_string()));
+        let id = conversation.id;
+
+        repo.upsert_conversation(conversation).await?;
+        let actual = inner.get_conversation(&id).await?;
+        assert_eq!(
+            actual.expect("row persisted via direct fallback").title,
+            Some("spawn-fallback".to_string())
+        );
+
+        // Second write: the spawn guard is set, so no respawn (and no 2 s
+        // retry wait) — straight to the direct fallback.
+        let second =
+            Conversation::new(ConversationId::generate()).title(Some("second".to_string()));
+        let second_id = second.id;
+        repo.upsert_conversation(second).await?;
+        let actual = inner.get_conversation(&second_id).await?;
+        assert_eq!(actual.expect("second row persisted via direct fallback").title, Some("second".to_string()));
+
         Ok(())
     }
 }

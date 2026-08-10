@@ -25,12 +25,23 @@ Wired into the client write path (opt-in, off by default):
 - The daemon holds one SQLite connection for its lifetime and batches writes
   (15 ms window / 100-request threshold), executing the same operations
   forge_repo performs with diesel.
+- Daemon lifecycle: on the first routed write, when the socket is not
+  accepting connections the client spawns the daemon itself (binary from
+  `FORGE_DBD_BIN` if set, else `forge_dbd` on PATH; spawn attempted once per
+  process, then the socket is polled for ~2 s before falling back to the
+  direct path). The daemon self-terminates cleanly — draining its write
+  queue — after the last client disconnects and the idle timeout (300 s)
+  elapses.
 
 ## Not yet done (follow-ups)
 
-- Daemon lifecycle: clients do not spawn the daemon yet — it must be started
-  separately (`cargo run -p forge_dbd`). Spawn-on-first-client, idle
-  timeout, and stale-socket recreation are designed but not wired.
+- Stale-socket recreation on the client side is only exercised indirectly
+  (spawn + connect retry); a failed spawn leaves a stale path in place until
+  the next successful daemon start unlinks it.
+- `FORGE_DBD_SOCKET` is honoured by the client (`dbd_socket_path`) but not by
+  `forge_dbd`'s main (it always binds `~/.forge/.forge.db.sock`), so an
+  explicit client-side `FORGE_DBD_SOCKET` would not be picked up by a spawned
+  daemon — the spawned daemon therefore does not inherit it.
 - The daemon is not part of the shipped installs (release builds cover
   `helioslite` / `forge`); `forge_dbd` is built standalone.
 - `Context` is stored uncompressed (`context_zstd = NULL`,
@@ -41,6 +52,7 @@ Wired into the client write path (opt-in, off by default):
 ## Run
 
 ```sh
-cargo run -p forge_dbd          # Unix: unix socket; Windows: named pipe
+cargo run -p forge_dbd          # manual start (the client also spawns this on
+                                # the first routed write when it is not up)
 FORGE_DBD_ENABLED=1 forge ...   # client routes writes through the daemon
 ```
