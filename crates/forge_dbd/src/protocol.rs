@@ -4,6 +4,9 @@ use forge_domain::{Conversation, ConversationId};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+/// Maximum serialized payload accepted by the daemon frame protocol.
+const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Request {
     UpsertConversation {
@@ -47,21 +50,24 @@ pub enum Response {
     Health(HealthStatus),
 }
 
-/// Async length-prefixed frame writer: writes u32 length prefix + serialized
-/// data
+/// Async length-prefixed frame writer: writes a u32 length prefix plus JSON data.
 pub async fn write_frame<W: AsyncWrite + Unpin, T: Serialize>(
     writer: &mut W,
     value: &T,
 ) -> io::Result<()> {
-    let serialized = bincode::serde::encode_to_vec(value, bincode::config::standard())
-        .map_err(|e| io::Error::other(format!("bincode error: {e}")))?;
-    let len = serialized.len() as u32;
+    let serialized = serde_json::to_vec(value)
+        .map_err(|e| io::Error::other(format!("JSON encoding error: {e}")))?;
+    let len = u32::try_from(serialized.len())
+        .map_err(|_| io::Error::other("serialized frame exceeds u32 length limit"))?;
+    if serialized.len() > MAX_FRAME_BYTES {
+        return Err(io::Error::other("serialized frame exceeds maximum size"));
+    }
     writer.write_all(&len.to_le_bytes()).await?;
     writer.write_all(&serialized).await?;
     Ok(())
 }
 
-/// Async length-prefixed frame reader: reads u32 length prefix + deserializes
+/// Async length-prefixed frame reader: reads a u32 length prefix and JSON payload.
 /// data
 pub async fn read_frame<R: AsyncRead + Unpin, T: for<'de> Deserialize<'de>>(
     reader: &mut R,
@@ -69,9 +75,55 @@ pub async fn read_frame<R: AsyncRead + Unpin, T: for<'de> Deserialize<'de>>(
     let mut len_bytes = [0u8; 4];
     reader.read_exact(&mut len_bytes).await?;
     let len = u32::from_le_bytes(len_bytes) as usize;
+    if len > MAX_FRAME_BYTES {
+        return Err(io::Error::other(format!("frame too large: {len} bytes")));
+    }
     let mut buf = vec![0u8; len];
     reader.read_exact(&mut buf).await?;
-    bincode::serde::decode_from_slice(&buf, bincode::config::standard())
-        .map(|(value, _)| value)
-        .map_err(|e| io::Error::other(format!("bincode error: {e}")))
+    serde_json::from_slice(&buf)
+        .map_err(|e| io::Error::other(format!("JSON decoding error: {e}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Request, read_frame, write_frame};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::time::{Duration, timeout};
+
+    #[tokio::test]
+    async fn frame_payload_is_json_and_round_trips() {
+        let (mut writer, mut reader) = tokio::io::duplex(1024);
+        write_frame(&mut writer, &Request::Ping)
+            .await
+            .expect("write frame");
+
+        let mut length = [0; 4];
+        reader.read_exact(&mut length).await.expect("read length");
+        let mut payload = vec![0; u32::from_le_bytes(length) as usize];
+        reader.read_exact(&mut payload).await.expect("read payload");
+        assert_eq!(payload, b"\"Ping\"", "payload was not JSON: {payload:?}");
+
+        let (mut writer, mut reader) = tokio::io::duplex(1024);
+        writer
+            .write_all(&length)
+            .await
+            .expect("write length");
+        writer.write_all(&payload).await.expect("write payload");
+        let actual: Request = read_frame(&mut reader).await.expect("round trip");
+        assert!(matches!(actual, Request::Ping));
+    }
+
+    #[tokio::test]
+    async fn read_frame_rejects_oversized_payload_before_allocation() {
+        let (mut writer, mut reader) = tokio::io::duplex(1024);
+        writer
+            .write_all(&(8 * 1024 * 1024 + 1u32).to_le_bytes())
+            .await
+            .expect("write oversized length");
+        let error = timeout(Duration::from_millis(100), read_frame::<_, Request>(&mut reader))
+            .await
+            .expect("frame rejection should not wait for payload")
+            .expect_err("oversized frame must fail closed");
+        assert!(error.to_string().contains("frame too large"));
+    }
 }

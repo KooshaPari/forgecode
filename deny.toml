@@ -33,7 +33,6 @@ ignore = [
     # Unmaintained-transitive advisories surfaced via upstream forgecode workspace
     # deps (no direct use in Phenotype additions). All have "no safe upgrade"
     # per RustSec; resolution depends on upstream tailcallhq/forgecode bumps.
-    { id = "RUSTSEC-2025-0141", reason = "bincode 1.x unmaintained; transitive via upstream workspace deps; bincode 2.x migration is upstream-owned." },
     { id = "RUSTSEC-2024-0436", reason = "paste unmaintained; transitive via proc-macro deps; paste! macro not invoked directly in Phenotype additions." },
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained (folded into rustls-pki-types); transitive via upstream rustls stack; pending upstream bump." },
     # Note: RUSTSEC-2026-0049 (advisory-not-detected) entry already removed in 40114d8dc.
