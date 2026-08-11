@@ -394,4 +394,13 @@ impl<
         // multiple-applicable-items error.
         <F as EnvironmentInfra>::database_stats(&*self.infra)
     }
+
+    fn database_integrity(
+        &self,
+    ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
+    {
+        // Same reasoning as `database_stats`: forward to the inner infra's
+        // PRAGMA-only override so `heliosdoctor --integrity-only` stays cheap.
+        <F as EnvironmentInfra>::database_integrity(&*self.infra)
+    }
 }

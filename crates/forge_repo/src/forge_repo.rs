@@ -447,6 +447,13 @@ impl<F: EnvironmentInfra<Config = forge_config::ForgeConfig> + Send + Sync> Envi
     {
         self.infra.database_stats()
     }
+
+    fn database_integrity(
+        &self,
+    ) -> impl std::future::Future<Output = anyhow::Result<forge_domain::HeliosdoctorDbStats>> + Send
+    {
+        self.infra.database_integrity()
+    }
 }
 
 #[async_trait::async_trait]
@@ -887,5 +894,177 @@ impl<F: forge_domain::ConsoleWriter> forge_domain::ConsoleWriter for ForgeRepo<F
 
     fn flush_err(&self) -> std::io::Result<()> {
         self.infra.flush_err()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use forge_app::{EnvironmentInfra, FileReaderInfra, FileWriterInfra, GrpcInfra, HttpInfra};
+    use forge_config::ForgeConfig;
+    use forge_domain::{Environment, HeliosdoctorDbStats};
+
+    use super::*;
+
+    /// Minimal infra double that reports distinguishable `database_stats` and
+    /// `database_integrity` results so a forwarding regression (falling back
+    /// to the full-stats default) is observable.
+    struct MockInfra {
+        base_path: PathBuf,
+    }
+
+    impl EnvironmentInfra for MockInfra {
+        type Config = ForgeConfig;
+
+        fn get_env_var(&self, _key: &str) -> Option<String> {
+            None
+        }
+
+        fn get_env_vars(&self) -> BTreeMap<String, String> {
+            BTreeMap::new()
+        }
+
+        fn get_environment(&self) -> Environment {
+            Environment {
+                os: "test".to_string(),
+                cwd: self.base_path.clone(),
+                home: None,
+                shell: "bash".to_string(),
+                base_path: self.base_path.clone(),
+            }
+        }
+
+        fn get_config(&self) -> anyhow::Result<Self::Config> {
+            Ok(ForgeConfig::default())
+        }
+
+        fn update_environment(
+            &self,
+            _ops: Vec<forge_domain::ConfigOperation>,
+        ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send {
+            async move { Ok(()) }
+        }
+
+        fn database_stats(
+            &self,
+        ) -> impl std::future::Future<Output = anyhow::Result<HeliosdoctorDbStats>> + Send {
+            async move { Ok(HeliosdoctorDbStats { total_conversations: 42, ..Default::default() }) }
+        }
+
+        fn database_integrity(
+            &self,
+        ) -> impl std::future::Future<Output = anyhow::Result<HeliosdoctorDbStats>> + Send {
+            async move {
+                Ok(HeliosdoctorDbStats { integrity_check: "ok".to_string(), ..Default::default() })
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl FileReaderInfra for MockInfra {
+        async fn read_utf8(&self, _path: &Path) -> anyhow::Result<String> {
+            Ok(String::new())
+        }
+
+        fn read_batch_utf8(
+            &self,
+            _batch_size: usize,
+            _paths: Vec<PathBuf>,
+        ) -> impl futures::Stream<Item = (PathBuf, anyhow::Result<String>)> + Send {
+            futures::stream::empty()
+        }
+
+        async fn read(&self, _path: &Path) -> anyhow::Result<Vec<u8>> {
+            Ok(Vec::new())
+        }
+
+        async fn range_read_utf8(
+            &self,
+            _path: &Path,
+            _start_line: u64,
+            _end_line: u64,
+        ) -> anyhow::Result<(String, FileInfo)> {
+            anyhow::bail!("not implemented in mock")
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl FileWriterInfra for MockInfra {
+        async fn write(&self, _path: &Path, _contents: Bytes) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn append(&self, _path: &Path, _contents: Bytes) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn write_temp(
+            &self,
+            _prefix: &str,
+            _ext: &str,
+            _content: &str,
+        ) -> anyhow::Result<PathBuf> {
+            anyhow::bail!("not implemented in mock")
+        }
+    }
+
+    impl GrpcInfra for MockInfra {
+        fn channel(&self) -> anyhow::Result<tonic::transport::Channel> {
+            anyhow::bail!("not implemented in mock")
+        }
+
+        fn hydrate(&self) {}
+    }
+
+    #[async_trait::async_trait]
+    impl HttpInfra for MockInfra {
+        async fn http_get(
+            &self,
+            _url: &Url,
+            _headers: Option<HeaderMap>,
+        ) -> anyhow::Result<Response> {
+            anyhow::bail!("not implemented in mock")
+        }
+
+        async fn http_post(
+            &self,
+            _url: &Url,
+            _headers: Option<HeaderMap>,
+            _body: bytes::Bytes,
+        ) -> anyhow::Result<Response> {
+            anyhow::bail!("not implemented in mock")
+        }
+
+        async fn http_delete(&self, _url: &Url) -> anyhow::Result<Response> {
+            anyhow::bail!("not implemented in mock")
+        }
+
+        async fn http_eventsource(
+            &self,
+            _url: &Url,
+            _headers: Option<HeaderMap>,
+            _body: Bytes,
+        ) -> anyhow::Result<EventSource> {
+            anyhow::bail!("not implemented in mock")
+        }
+    }
+
+    #[tokio::test]
+    async fn environment_infra_database_integrity_forwards_to_inner_infra() -> anyhow::Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let infra = Arc::new(MockInfra { base_path: tmp.path().to_path_buf() });
+        let repo = ForgeRepo::new(infra.clone());
+
+        // The full-stats fallback would surface total_conversations=42;
+        // the PRAGMA-only forward must surface the integrity marker instead.
+        let stats = forge_app::EnvironmentInfra::database_integrity(&repo).await?;
+        assert_eq!(stats.integrity_check, "ok");
+        assert_eq!(stats.total_conversations, 0);
+
+        // And the stats path must still forward to the inner stats impl.
+        let stats = forge_app::EnvironmentInfra::database_stats(&repo).await?;
+        assert_eq!(stats.total_conversations, 42);
+        Ok(())
     }
 }
