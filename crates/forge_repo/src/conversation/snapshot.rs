@@ -401,7 +401,10 @@ fn fingerprint(path: &Path) -> Result<Fingerprint> {
             break;
         }
         size += read as u64;
-        hasher.update(&buffer[..read]);
+        let bytes = buffer
+            .get(..read)
+            .context("read byte count must fit the snapshot fingerprint buffer")?;
+        hasher.update(bytes);
     }
     let modified_unix_ms = metadata.modified().ok().and_then(|value| {
         value

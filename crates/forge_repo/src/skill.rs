@@ -521,7 +521,11 @@ mod tests {
                 .replace('\\', "/")
         };
         assert_eq!(
-            test_skill.resources.iter().map(relative).collect::<Vec<_>>(),
+            test_skill
+                .resources
+                .iter()
+                .map(relative)
+                .collect::<Vec<_>>(),
             vec![
                 "test-skill/file_1.txt".to_string(),
                 "test-skill/foo/bar/file_3.txt".to_string(),
