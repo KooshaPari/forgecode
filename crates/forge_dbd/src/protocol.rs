@@ -7,6 +7,39 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 /// Maximum serialized payload accepted by the daemon frame protocol.
 const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 
+struct BoundedFrameWriter {
+    bytes: Vec<u8>,
+}
+
+impl BoundedFrameWriter {
+    fn new() -> Self {
+        Self {
+            bytes: Vec::with_capacity(MAX_FRAME_BYTES),
+        }
+    }
+
+    fn into_inner(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
+impl io::Write for BoundedFrameWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if buf.len() > MAX_FRAME_BYTES.saturating_sub(self.bytes.len()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "serialized frame exceeds maximum size",
+            ));
+        }
+        self.bytes.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Request {
     UpsertConversation {
@@ -55,13 +88,16 @@ pub async fn write_frame<W: AsyncWrite + Unpin, T: Serialize>(
     writer: &mut W,
     value: &T,
 ) -> io::Result<()> {
-    let serialized = serde_json::to_vec(value)
-        .map_err(|e| io::Error::other(format!("JSON encoding error: {e}")))?;
+    let mut bounded = BoundedFrameWriter::new();
+    {
+        let mut serializer = serde_json::Serializer::new(&mut bounded);
+        value
+            .serialize(&mut serializer)
+            .map_err(|e| io::Error::other(format!("JSON encoding error: {e}")))?;
+    }
+    let serialized = bounded.into_inner();
     let len = u32::try_from(serialized.len())
         .map_err(|_| io::Error::other("serialized frame exceeds u32 length limit"))?;
-    if serialized.len() > MAX_FRAME_BYTES {
-        return Err(io::Error::other("serialized frame exceeds maximum size"));
-    }
     writer.write_all(&len.to_le_bytes()).await?;
     writer.write_all(&serialized).await?;
     Ok(())
@@ -85,7 +121,8 @@ pub async fn read_frame<R: AsyncRead + Unpin, T: for<'de> Deserialize<'de>>(
 
 #[cfg(test)]
 mod tests {
-    use super::{Request, read_frame, write_frame};
+    use super::{BoundedFrameWriter, Request, read_frame, write_frame};
+    use std::io::Write;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::time::{Duration, timeout};
 
@@ -124,5 +161,35 @@ mod tests {
         .expect("frame rejection should not wait for payload")
         .expect_err("oversized frame must fail closed");
         assert!(error.to_string().contains("frame too large"));
+    }
+
+    #[tokio::test]
+    async fn write_frame_rejects_oversized_payload_before_writing() {
+        let (mut writer, mut reader) = tokio::io::duplex(1024);
+        let oversized = "x".repeat(super::MAX_FRAME_BYTES + 1);
+
+        let error = write_frame(&mut writer, &oversized)
+            .await
+            .expect_err("oversized frame must fail closed");
+        assert!(error.to_string().contains("serialized frame exceeds maximum size"));
+
+        let mut prefix = [0u8; 4];
+        assert!(timeout(Duration::from_millis(100), reader.read_exact(&mut prefix))
+            .await
+            .is_err(), "rejected frame must not write a prefix");
+    }
+
+    #[test]
+    fn bounded_frame_writer_rejects_bytes_past_limit() {
+        let mut writer = BoundedFrameWriter::new();
+        let payload = vec![0u8; super::MAX_FRAME_BYTES];
+        writer.write_all(&payload).expect("maximum frame fits");
+
+        let error = writer
+            .write_all(&[0u8])
+            .expect_err("writer must reject bytes past maximum");
+        assert!(error
+            .to_string()
+            .contains("serialized frame exceeds maximum size"));
     }
 }
