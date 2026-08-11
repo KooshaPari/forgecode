@@ -1,9 +1,11 @@
-// The conversation-write request variants are placeholders for the forge_app
-// integration: nothing in this crate constructs them yet. Allow dead_code
-// until the daemon is wired in.
+// The conversation-write request variants are executed by the daemon server
+// (bin-only `server` module) and exercised by the crate's tests; the
+// forge_app client wiring is still pending. Allow dead_code until then.
 #![allow(dead_code)]
 
 use std::io;
+#[cfg(windows)]
+use std::path::Path;
 
 use forge_domain::{Conversation, ConversationId};
 use serde::{Deserialize, Serialize};
@@ -58,8 +60,13 @@ pub async fn write_frame<W: AsyncWrite + Unpin, T: Serialize>(
     writer: &mut W,
     value: &T,
 ) -> io::Result<()> {
-    let serialized = bincode::serde::encode_to_vec(value, bincode::config::standard())
-        .map_err(|e| io::Error::other(format!("bincode error: {e}")))?;
+    // JSON codec (the P3 design's "debugging-friendly alternate"): the domain
+    // types (Conversation / Metrics / Context) rely on `skip_serializing_if`
+    // extensively, which bincode — a positional format — cannot round-trip
+    // (encode-then-decode of the same value fails). JSON is self-describing,
+    // so serde defaults correctly fill the omitted fields.
+    let serialized = serde_json::to_vec(value)
+        .map_err(|e| io::Error::other(format!("serde_json error: {e}")))?;
     let len = serialized.len() as u32;
     writer.write_all(&len.to_le_bytes()).await?;
     writer.write_all(&serialized).await?;
@@ -76,7 +83,26 @@ pub async fn read_frame<R: AsyncRead + Unpin, T: for<'de> Deserialize<'de>>(
     let len = u32::from_le_bytes(len_bytes) as usize;
     let mut buf = vec![0u8; len];
     reader.read_exact(&mut buf).await?;
-    bincode::serde::decode_from_slice(&buf, bincode::config::standard())
-        .map(|(value, _)| value)
-        .map_err(|e| io::Error::other(format!("bincode error: {e}")))
+    serde_json::from_slice(&buf).map_err(|e| io::Error::other(format!("serde_json error: {e}")))
+}
+
+/// Derives the Windows named-pipe name for a daemon socket path.
+///
+/// Windows has no Unix domain sockets, so the daemon listens on a named pipe
+/// instead. The name is derived deterministically from the socket path so
+/// client and server agree without extra configuration: every character that
+/// is not alphanumeric / `.` / `-` is folded into `-`, and the result is
+/// prefixed with `\\.\pipe\forge-dbd-`. Unix never uses this.
+#[cfg(windows)]
+pub fn named_pipe_name(socket_path: &Path) -> String {
+    let raw = socket_path.to_string_lossy().to_lowercase();
+    let mut sanitized = String::with_capacity(raw.len());
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+            sanitized.push(c);
+        } else {
+            sanitized.push('-');
+        }
+    }
+    format!(r"\\.\pipe\forge-dbd-{sanitized}")
 }

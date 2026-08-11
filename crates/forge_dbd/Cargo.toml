@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "WIP: SQLite daemon for persistent conversation storage (not yet wired into forge_app)"
+description = "SQLite write daemon for persistent conversation storage (P3 single-writer; wired into forge_repo via FORGE_DBD_ENABLED)"
 
 [dependencies]
 anyhow = { workspace = true }
@@ -13,7 +13,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "signal"] }
 tracing = { workspace = true }
-bincode = { version = "2.0.1", features = ["serde"] }
 forge_domain = { workspace = true }
 rusqlite = { version = "0.39.0", features = ["bundled"] }
 

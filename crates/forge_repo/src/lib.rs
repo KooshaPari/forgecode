@@ -3,6 +3,7 @@ mod agent_definition;
 mod codec;
 mod context_engine;
 mod conversation;
+mod daemon_repo;
 mod database;
 mod forge_repo;
 mod fs_snap;

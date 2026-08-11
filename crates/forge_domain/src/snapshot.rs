@@ -115,9 +115,24 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(unix)]
     fn test_create_with_nonexistent_absolute_path() {
         // Test with a non-existent absolute path
         let nonexistent_path = PathBuf::from("/this/path/does/not/exist/file.txt");
+        let snapshot = Snapshot::create(nonexistent_path.clone()).unwrap();
+
+        assert!(!snapshot.id.to_string().is_empty());
+        assert!(snapshot.timestamp.as_secs() > 0);
+        // Should use the original absolute path since canonicalize fails
+        assert_eq!(snapshot.path, nonexistent_path.display().to_string());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_create_with_nonexistent_absolute_path() {
+        // Windows twin: "/this/..." has no drive prefix, so is_absolute() is
+        // false there; use a drive-qualified path for the same semantics.
+        let nonexistent_path = PathBuf::from("C:\\this\\path\\does\\not\\exist\\file.txt");
         let snapshot = Snapshot::create(nonexistent_path.clone()).unwrap();
 
         assert!(!snapshot.id.to_string().is_empty());

@@ -1,5 +1,3 @@
-mod client;
-mod protocol;
 mod server;
 
 use std::path::PathBuf;
