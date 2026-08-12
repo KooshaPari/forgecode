@@ -544,9 +544,13 @@ mod tests {
 
         // Arrange: exercise the accepted enabling values.
         let previous = std::env::var("FORGE_DBD_ENABLED").ok();
-        for (value, expected) in
-            [("1", true), ("true", true), ("TRUE", true), ("0", false), ("", false)]
-        {
+        for (value, expected) in [
+            ("1", true),
+            ("true", true),
+            ("TRUE", true),
+            ("0", false),
+            ("", false),
+        ] {
             unsafe { std::env::set_var("FORGE_DBD_ENABLED", value) };
             let actual = fixture.dbd_enabled();
             assert_eq!(actual, expected, "FORGE_DBD_ENABLED={value:?}");

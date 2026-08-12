@@ -6,10 +6,9 @@ use std::time::Duration;
 use forge_dbd::client::DbClient;
 use forge_dbd::protocol::{Request, Response};
 use forge_domain::{
-    Conversation, ConversationId, ConversationRepository, ConversationSummary,
-    ForgeExportOptions, ForgeExportReport, ForgeForgetOptions, ForgeForgetReport,
-    ForgeImportOptions, ForgeImportReport, ForgeMigrateReport, HeliosdoctorDbStats,
-    MigrateOptions,
+    Conversation, ConversationId, ConversationRepository, ConversationSummary, ForgeExportOptions,
+    ForgeExportReport, ForgeForgetOptions, ForgeForgetReport, ForgeImportOptions,
+    ForgeImportReport, ForgeMigrateReport, HeliosdoctorDbStats, MigrateOptions,
 };
 use tracing::{debug, info, warn};
 
@@ -95,7 +94,12 @@ impl DaemonConversationRepository {
         socket_path: PathBuf,
         dbd_bin: Option<PathBuf>,
     ) -> Self {
-        Self { inner, socket_path, client: tokio::sync::OnceCell::new(), dbd_bin }
+        Self {
+            inner,
+            socket_path,
+            client: tokio::sync::OnceCell::new(),
+            dbd_bin,
+        }
     }
 
     /// Best-effort daemon round-trip for a write request.
@@ -279,7 +283,9 @@ impl ConversationRepository for DaemonConversationRepository {
         {
             return Ok(());
         }
-        self.inner.update_parent_id(conversation_id, new_parent_id).await
+        self.inner
+            .update_parent_id(conversation_id, new_parent_id)
+            .await
     }
 
     async fn delete_conversation(&self, conversation_id: &ConversationId) -> anyhow::Result<()> {
@@ -333,7 +339,9 @@ impl ConversationRepository for DaemonConversationRepository {
         limit: Option<usize>,
         all_workspaces: bool,
     ) -> anyhow::Result<Option<Vec<ConversationSummary>>> {
-        self.inner.get_parent_conversations_lite(limit, all_workspaces).await
+        self.inner
+            .get_parent_conversations_lite(limit, all_workspaces)
+            .await
     }
 
     async fn get_conversations_by_source(
@@ -358,7 +366,9 @@ impl ConversationRepository for DaemonConversationRepository {
         query: &str,
         token_count: usize,
     ) -> anyhow::Result<Option<String>> {
-        self.inner.get_conversation_snippet(conversation_id, query, token_count).await
+        self.inner
+            .get_conversation_snippet(conversation_id, query, token_count)
+            .await
     }
 
     async fn optimize_fts_index(&self) -> anyhow::Result<()> {
@@ -382,7 +392,9 @@ impl ConversationRepository for DaemonConversationRepository {
         conversation_id: &ConversationId,
         new_state: &str,
     ) -> anyhow::Result<()> {
-        self.inner.mark_intent_state(conversation_id, new_state).await
+        self.inner
+            .mark_intent_state(conversation_id, new_state)
+            .await
     }
 
     async fn list_prune_eligible(
@@ -417,7 +429,9 @@ impl ConversationRepository for DaemonConversationRepository {
         source: PathBuf,
         options: &ForgeImportOptions,
     ) -> anyhow::Result<ForgeImportReport> {
-        self.inner.import_forge_db_with_options(source, options).await
+        self.inner
+            .import_forge_db_with_options(source, options)
+            .await
     }
 
     async fn export_forge_db(
@@ -485,14 +499,17 @@ mod tests {
             PathBuf::from("/nonexistent/.forge.db.sock"),
         );
 
-        let conversation =
-            Conversation::new(ConversationId::generate()).title(Some("daemon-fallback".to_string()));
+        let conversation = Conversation::new(ConversationId::generate())
+            .title(Some("daemon-fallback".to_string()));
         let id = conversation.id;
 
         repo.upsert_conversation(conversation).await?;
 
         let actual = inner.get_conversation(&id).await?;
-        assert_eq!(actual.expect("row persisted via direct fallback").title, Some("daemon-fallback".to_string()));
+        assert_eq!(
+            actual.expect("row persisted via direct fallback").title,
+            Some("daemon-fallback".to_string())
+        );
         Ok(())
     }
 
@@ -533,7 +550,12 @@ mod tests {
         let second_id = second.id;
         repo.upsert_conversation(second).await?;
         let actual = inner.get_conversation(&second_id).await?;
-        assert_eq!(actual.expect("second row persisted via direct fallback").title, Some("second".to_string()));
+        assert_eq!(
+            actual
+                .expect("second row persisted via direct fallback")
+                .title,
+            Some("second".to_string())
+        );
 
         Ok(())
     }
