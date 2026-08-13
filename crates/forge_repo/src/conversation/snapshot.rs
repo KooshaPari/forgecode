@@ -287,15 +287,32 @@ pub fn publish_snapshot_atomic(snapshot: &ForgeSnapshot, destination: &Path) -> 
             &stage.join("manifest.json"),
             &serde_json::to_vec_pretty(&published.manifest)?,
         )?;
-        sync_staging_dir(&stage)?;
-        fs::rename(&stage, destination)
-            .with_context(|| format!("publish snapshot {}", destination.display()))?;
-        Ok(())
+        publish_stage(&stage, snapshot, destination)
     })();
     if result.is_err() {
         let _ = fs::remove_dir_all(&stage);
     }
     result
+}
+
+fn publish_stage(stage: &Path, snapshot: &ForgeSnapshot, destination: &Path) -> Result<()> {
+    sync_staging_dir(stage)?;
+    match fs::rename(stage, destination) {
+        Ok(()) => Ok(()),
+        Err(error) if destination.exists() => {
+            let verification = verify_existing_publication(snapshot, destination);
+            let _ = fs::remove_dir_all(stage);
+            verification.with_context(|| {
+                format!(
+                    "publish snapshot {} after a concurrent destination appeared: {error}",
+                    destination.display()
+                )
+            })
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("publish snapshot {}", destination.display()))
+        }
+    }
 }
 
 fn finalized_snapshot(snapshot: &ForgeSnapshot, destination: &Path) -> ForgeSnapshot {
@@ -834,6 +851,37 @@ mod tests {
         assert!(actual.is_ok());
         assert_eq!(snapshot_bytes, fs::read(destination.join("snapshot.json"))?);
         assert_eq!(manifest_bytes, fs::read(destination.join("manifest.json"))?);
+        Ok(())
+    }
+
+    #[test]
+    fn reuses_matching_destination_when_stage_rename_loses_race() -> Result<()> {
+        let dir = tempdir()?;
+        let source = dir.path().join("forge.db");
+        fixture(&source, false)?;
+        let snapshot = export_forge_snapshot(&source)?;
+        let destination = dir.path().join("sessions").join("snapshot");
+        let parent = destination.parent().unwrap();
+        fs::create_dir_all(parent)?;
+
+        let staged = finalized_snapshot(&snapshot, &destination);
+        fs::create_dir(&destination)?;
+        write_synced(
+            &destination.join("snapshot.json"),
+            &serde_json::to_vec_pretty(&staged)?,
+        )?;
+        write_synced(
+            &destination.join("manifest.json"),
+            &serde_json::to_vec_pretty(&staged.manifest)?,
+        )?;
+
+        let stage = parent.join("staging-loser");
+        fs::create_dir(&stage)?;
+        let actual = publish_stage(&stage, &snapshot, &destination);
+
+        assert!(actual.is_ok());
+        assert!(!stage.exists());
+        assert!(destination.join("snapshot.json").is_file());
         Ok(())
     }
 }
