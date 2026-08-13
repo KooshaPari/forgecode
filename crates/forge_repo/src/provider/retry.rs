@@ -4,7 +4,7 @@ use forge_app::dto::openai::{Error, ErrorCode, ErrorResponse};
 use forge_config::RetryConfig;
 
 const TRANSPORT_ERROR_CODES: [&str; 3] = ["ERR_STREAM_PREMATURE_CLOSE", "ECONNRESET", "ETIMEDOUT"];
-const OPENAI_OVERLOADED_ERROR_CODE: &str = "server_is_overloaded";
+const OPENAI_RETRYABLE_ERROR_CODES: [&str; 2] = ["server_is_overloaded", "server_error"];
 
 pub fn into_retry(error: anyhow::Error, retry_config: &RetryConfig) -> anyhow::Error {
     if let Some(code) = get_req_status_code(&error)
@@ -70,7 +70,7 @@ fn get_event_req_status_code(error: &anyhow::Error) -> Option<u16> {
 #[derive(Clone, Copy)]
 enum RetryableApiErrorCode {
     Transport,
-    OpenAIOverloaded,
+    OpenAIServer,
 }
 
 impl RetryableApiErrorCode {
@@ -81,7 +81,7 @@ impl RetryableApiErrorCode {
 
         match self {
             RetryableApiErrorCode::Transport => TRANSPORT_ERROR_CODES.contains(&code),
-            RetryableApiErrorCode::OpenAIOverloaded => code == OPENAI_OVERLOADED_ERROR_CODE,
+            RetryableApiErrorCode::OpenAIServer => OPENAI_RETRYABLE_ERROR_CODES.contains(&code),
         }
     }
 }
@@ -117,9 +117,7 @@ fn is_openai_overloaded_error(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<Error>()
         .is_some_and(|error| match error {
-            Error::Response(error) => {
-                has_error_code(error, RetryableApiErrorCode::OpenAIOverloaded)
-            }
+            Error::Response(error) => has_error_code(error, RetryableApiErrorCode::OpenAIServer),
             _ => false,
         })
 }
@@ -336,24 +334,26 @@ mod tests {
     }
 
     #[test]
-    fn test_openai_server_overloaded_error_is_retryable() {
+    fn test_openai_server_errors_are_retryable() {
         let retry_config = fixture_retry_config(vec![]);
 
-        let error = anyhow::Error::from(Error::Response(Box::new(
-            ErrorResponse::default()
-                .code(ErrorCode::String("server_is_overloaded".to_string()))
-                .message(
-                    "Our servers are currently overloaded. Please try again later.".to_string(),
-                ),
-        )));
+        for code in ["server_is_overloaded", "server_error"] {
+            let fixture = anyhow::Error::from(Error::Response(Box::new(
+                ErrorResponse::default().code(ErrorCode::String(code.to_string())),
+            )));
+            let actual = is_retryable(into_retry(fixture, &retry_config));
+            let expected = true;
 
-        assert!(is_retryable(into_retry(error, &retry_config)));
+            assert_eq!(actual, expected, "{code} should be retryable");
+        }
 
-        let error = anyhow::Error::from(Error::Response(Box::new(
+        let fixture = anyhow::Error::from(Error::Response(Box::new(
             ErrorResponse::default().code(ErrorCode::String("rate_limit".to_string())),
         )));
+        let actual = is_retryable(into_retry(fixture, &retry_config));
+        let expected = false;
 
-        assert!(!is_retryable(into_retry(error, &retry_config)));
+        assert_eq!(actual, expected);
     }
 
     #[test]
