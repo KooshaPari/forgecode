@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
 use config::ConfigBuilder;
@@ -171,16 +171,61 @@ impl ConfigReader {
         let Some(home) = home else {
             return Ok(());
         };
-        let forge_root = home.join(".forge");
+        let candidate = Self::canonicalize_for_overlap(candidate)?;
+        let forge_root = Self::canonicalize_for_overlap(&home.join(".forge"))?;
         if candidate == forge_root
             || candidate.starts_with(&forge_root)
-            || forge_root.starts_with(candidate)
+            || forge_root.starts_with(&candidate)
         {
             return Err(crate::Error::Config(config::ConfigError::Message(
                 "HELIOSLITE_HOME must not overlap ~/.forge".to_string(),
             )));
         }
         Ok(())
+    }
+
+    fn canonicalize_for_overlap(path: &Path) -> crate::Result<PathBuf> {
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()?.join(path)
+        };
+        let absolute = Self::lexical_normalize(&absolute);
+        let mut ancestor = absolute.clone();
+        while !ancestor.exists() {
+            ancestor = ancestor
+                .parent()
+                .ok_or_else(|| {
+                    crate::Error::Config(config::ConfigError::Message(format!(
+                        "path has no existing ancestor: {}",
+                        absolute.display()
+                    )))
+                })?
+                .to_path_buf();
+        }
+        let canonical_ancestor = ancestor.canonicalize()?;
+        let suffix = absolute.strip_prefix(&ancestor).map_err(|_| {
+            crate::Error::Config(config::ConfigError::Message(format!(
+                "derive non-existent suffix for {} from {}",
+                absolute.display(),
+                ancestor.display()
+            )))
+        })?;
+        Ok(canonical_ancestor.join(suffix))
+    }
+
+    fn lexical_normalize(path: &Path) -> PathBuf {
+        let mut normalized = PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    normalized.pop();
+                }
+                component => normalized.push(component.as_os_str()),
+            }
+        }
+        normalized
     }
 
     fn config_path_for(binary_name: &str, root: &std::path::Path) -> PathBuf {
@@ -262,6 +307,7 @@ impl ConfigReader {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::sync::{Mutex, MutexGuard};
 
     use pretty_assertions::assert_eq;
@@ -392,6 +438,37 @@ mod tests {
                     .expect_err("overlapping HeliosLite root must be rejected");
             assert!(error.to_string().contains("must not overlap ~/.forge"));
         }
+    }
+
+    #[test]
+    fn helioslite_home_rejects_lexical_alias_of_forge_root() {
+        let home = PathBuf::from("/tmp/helios-home");
+        let candidate = home.join("..").join("helios-home/.forge");
+
+        let error =
+            ConfigReader::resolve_base_path_for("helioslite", Some(&home), Some(&candidate))
+                .expect_err("lexical alias of Forge root must be rejected");
+
+        assert!(error.to_string().contains("must not overlap ~/.forge"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn helioslite_home_rejects_symlink_alias_of_forge_root() {
+        use std::os::unix::fs::symlink;
+
+        let fixture =
+            std::env::temp_dir().join(format!("forge-config-home-{}", std::process::id()));
+        let home = fixture.join("home");
+        let alias = fixture.join("alias");
+        fs::create_dir_all(home.join(".forge")).unwrap();
+        symlink(home.join(".forge"), &alias).unwrap();
+
+        let actual = ConfigReader::resolve_base_path_for("helioslite", Some(&home), Some(&alias));
+        fs::remove_dir_all(&fixture).unwrap();
+
+        let error = actual.expect_err("symlink alias of Forge root must be rejected");
+        assert!(error.to_string().contains("must not overlap ~/.forge"));
     }
 
     #[test]
