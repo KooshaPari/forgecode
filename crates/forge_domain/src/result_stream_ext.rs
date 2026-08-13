@@ -4,7 +4,7 @@ use tokio_stream::StreamExt;
 use crate::reasoning::{Reasoning, ReasoningFull};
 use crate::{
     ArcSender, ChatCompletionMessage, ChatCompletionMessageFull, ChatResponse, ChatResponseContent,
-    ToolCallFull, ToolCallPart, Usage,
+    FinishReason, ToolCallFull, ToolCallPart, Usage,
 };
 
 /// Extension trait for ResultStream to provide additional functionality
@@ -258,6 +258,10 @@ impl ResultStreamExt<anyhow::Error> for crate::BoxStream<ChatCompletionMessage, 
 
         // Get phase from the last message that has one
         let phase = messages.iter().rev().find_map(|message| message.phase);
+
+        if finish_reason == Some(FinishReason::ContentFilter) && tool_calls.is_empty() {
+            return Err(crate::Error::Refusal.into());
+        }
 
         // Check for empty completion - map to retryable error for retry
         if content.trim().is_empty()
@@ -1219,6 +1223,21 @@ mod tests {
         };
 
         assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn test_into_full_refusal_is_non_retryable_error() {
+        let messages = vec![Ok(ChatCompletionMessage::assistant(Content::part(""))
+            .finish_reason(FinishReason::ContentFilter))];
+        let fixture: BoxStream<ChatCompletionMessage, anyhow::Error> =
+            Box::pin(tokio_stream::iter(messages));
+
+        let actual = fixture.into_full(false).await.unwrap_err();
+
+        assert!(matches!(
+            actual.downcast_ref::<crate::Error>(),
+            Some(crate::Error::Refusal)
+        ));
     }
 
     #[tokio::test]
