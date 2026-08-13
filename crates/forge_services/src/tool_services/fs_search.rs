@@ -525,7 +525,7 @@ mod test {
     #[async_trait::async_trait]
     impl FileReaderInfra for MockInfra {
         async fn read_utf8(&self, path: &Path) -> anyhow::Result<String> {
-            Ok(String::from_utf8_lossy(&self.read(path).await?).to_string())
+            Ok(self.read(path).await?.to_str_lossy().into_owned())
         }
 
         fn read_batch_utf8(
