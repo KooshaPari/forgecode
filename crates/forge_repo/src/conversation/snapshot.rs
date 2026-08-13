@@ -344,7 +344,8 @@ fn verify_existing_publication(snapshot: &ForgeSnapshot, destination: &Path) -> 
     let expected = finalized_snapshot(snapshot, destination);
     let stored_digest = content_digest(&stored_snapshot.rows)?;
     let matches = stored_manifest == stored_snapshot.manifest
-        && stored_manifest == expected.manifest
+        && stable_publication_manifest(&stored_manifest)
+            == stable_publication_manifest(&expected.manifest)
         && stored_digest == expected.manifest.content_sha256
         && id_digest(&stored_snapshot.rows) == expected.manifest.id_digest
         && stored_snapshot.rows.len() == expected.manifest.row_count;
@@ -355,6 +356,19 @@ fn verify_existing_publication(snapshot: &ForgeSnapshot, destination: &Path) -> 
         );
     }
     Ok(())
+}
+
+/// Return the provenance fields that are stable across independent exports.
+///
+/// Export clock values describe when a read occurred, not what was read. They
+/// must not prevent an idempotent retry when the source and rows are otherwise
+/// identical.
+fn stable_publication_manifest(manifest: &ForgeSnapshotManifest) -> ForgeSnapshotManifest {
+    let mut stable = manifest.clone();
+    stable.export_started_at_unix_ms = 0;
+    stable.export_completed_at_unix_ms = 0;
+    stable.exported_at_unix_ms = 0;
+    stable
 }
 
 impl From<ConversationRow> for ForgeSnapshotRow {
@@ -755,6 +769,22 @@ mod tests {
                 .to_string()
                 .contains("different or invalid provenance")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn republishes_matching_rows_when_export_time_changes() -> Result<()> {
+        let dir = tempdir()?;
+        let source = dir.path().join("forge.db");
+        fixture(&source, false)?;
+        let snapshot = export_forge_snapshot(&source)?;
+        let destination = dir.path().join("sessions").join("snapshot");
+        publish_snapshot_atomic(&snapshot, &destination)?;
+
+        let mut retry = snapshot.clone();
+        retry.manifest.exported_at_unix_ms += 1;
+        let actual = publish_snapshot_atomic(&retry, &destination);
+        assert!(actual.is_ok());
         Ok(())
     }
 }
