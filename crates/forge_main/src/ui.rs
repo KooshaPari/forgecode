@@ -182,12 +182,6 @@ fn validate_helioslite_sessions_root(sessions_root: &Path) -> anyhow::Result<()>
 
 fn validate_snapshot_destination(destination: &Path, sessions_root: &Path) -> anyhow::Result<()> {
     validate_helioslite_sessions_root(sessions_root)?;
-    if destination.exists() {
-        return Err(anyhow::anyhow!(
-            "snapshot destination already exists: {}",
-            destination.display()
-        ));
-    }
     let parent = destination
         .parent()
         .ok_or_else(|| anyhow::anyhow!("snapshot destination must have a parent directory"))?;
@@ -6395,6 +6389,7 @@ mod tests {
         MAX_AUTO_CONTINUE_ATTEMPTS, auto_continue_allowed, is_helioslite_binary_name,
         redact_api_key, validate_helioslite_sessions_root, validate_snapshot_destination,
     };
+    use std::fs;
     use tempfile::tempdir;
 
     #[test]
@@ -6491,5 +6486,19 @@ mod tests {
         validate_snapshot_destination(&destination, &root).unwrap();
         assert!(destination.parent().unwrap().is_dir());
         assert!(!destination.exists());
+    }
+
+    #[test]
+    fn destination_allows_existing_published_snapshot_through_preflight() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("helioslite/sessions");
+        let destination = root.join("imports/snapshot");
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(destination.join("snapshot.json"), "{}\n").unwrap();
+        fs::write(destination.join("manifest.json"), "{}\n").unwrap();
+
+        let actual = validate_snapshot_destination(&destination, &root);
+
+        assert!(actual.is_ok());
     }
 }
