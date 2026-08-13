@@ -487,6 +487,7 @@ mod tests {
     /// `DbClient::connect` fail, and the write still lands in the inner
     /// repository.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // The process-wide spawn state makes these tests serial by design.
     async fn falls_back_to_direct_write_when_daemon_absent() -> anyhow::Result<()> {
         let _serial = SPAWN_GUARD.lock().unwrap();
         // Mark the spawn as already attempted so this test never launches a
@@ -519,6 +520,7 @@ mod tests {
     /// not re-attempt the spawn (the guard is set) and falls back without
     /// hanging.
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // The process-wide spawn state makes these tests serial by design.
     async fn spawn_is_attempted_once_then_falls_back() -> anyhow::Result<()> {
         let _serial = SPAWN_GUARD.lock().unwrap();
         // Reset the process-wide guard so this test exercises the spawn path
