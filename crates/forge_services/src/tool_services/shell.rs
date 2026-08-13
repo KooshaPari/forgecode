@@ -108,7 +108,9 @@ mod tests {
             _env_vars: Option<Vec<String>>,
         ) -> anyhow::Result<std::process::ExitStatus> {
             // Mock: raw command execution is not supported by the test double.
-            Err(anyhow::anyhow!("execute_command_raw not implemented in mock"))
+            Err(anyhow::anyhow!(
+                "execute_command_raw not implemented in mock"
+            ))
         }
     }
 

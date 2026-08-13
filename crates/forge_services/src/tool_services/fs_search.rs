@@ -566,7 +566,11 @@ mod test {
             };
 
             let filtered_content = filtered_lines.join("\n");
-            let actual_start = if filtered_lines.is_empty() { 0 } else { start_line };
+            let actual_start = if filtered_lines.is_empty() {
+                0
+            } else {
+                start_line
+            };
             let actual_end = if filtered_lines.is_empty() {
                 0
             } else {
