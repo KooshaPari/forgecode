@@ -13,10 +13,10 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use forge_domain::{Conversation, ConversationId};
 use rusqlite::Connection;
+#[cfg(unix)]
+use tokio::net::UnixListener;
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::ServerOptions;
-#[cfg(unix)]
-use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 #[cfg(unix)]
@@ -1058,13 +1058,15 @@ mod db_tests {
             Response::Ack
         ));
 
-        let (context, message_count, updated_at, context_zstd, is_compressed): (
+        type ConversationContextStorageRow = (
             Option<String>,
             Option<i32>,
             Option<String>,
             Option<Vec<u8>>,
             i32,
-        ) = conn
+        );
+
+        let (context, message_count, updated_at, context_zstd, is_compressed): ConversationContextStorageRow = conn
             .query_row(
                 "SELECT context, message_count, updated_at, context_zstd, is_compressed \
                  FROM conversations WHERE conversation_id = ?1",
