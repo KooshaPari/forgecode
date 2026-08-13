@@ -340,7 +340,8 @@ fn verify_existing_publication(snapshot: &ForgeSnapshot, destination: &Path) -> 
     let expected = finalized_snapshot(snapshot, destination);
     let stored_digest = content_digest(&stored_snapshot.rows)?;
     let matches = stored_manifest == stored_snapshot.manifest
-        && stored_manifest == expected.manifest
+        && stable_publication_manifest(&stored_manifest)
+            == stable_publication_manifest(&expected.manifest)
         && stored_digest == expected.manifest.content_sha256
         && id_digest(&stored_snapshot.rows) == expected.manifest.id_digest
         && stored_snapshot.rows.len() == expected.manifest.row_count;
@@ -351,6 +352,17 @@ fn verify_existing_publication(snapshot: &ForgeSnapshot, destination: &Path) -> 
         );
     }
     Ok(())
+}
+
+fn stable_publication_manifest(manifest: &ForgeSnapshotManifest) -> ForgeSnapshotManifest {
+    let mut stable = manifest.clone();
+    // Export timestamps attest to when a read took place, not to the source
+    // or rows being published. A later equivalent export must reuse the
+    // existing finalized bundle rather than treat timing alone as conflict.
+    stable.export_started_at_unix_ms = 0;
+    stable.export_completed_at_unix_ms = 0;
+    stable.exported_at_unix_ms = 0;
+    stable
 }
 
 impl From<ConversationRow> for ForgeSnapshotRow {
@@ -799,6 +811,29 @@ mod tests {
                 .to_string()
                 .contains("different or invalid provenance")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn republishes_matching_rows_from_a_later_export() -> Result<()> {
+        let dir = tempdir()?;
+        let source = dir.path().join("forge.db");
+        fixture(&source, false)?;
+        let first = export_forge_snapshot(&source)?;
+        let destination = dir.path().join("sessions").join("snapshot");
+        publish_snapshot_atomic(&first, &destination)?;
+        let snapshot_bytes = fs::read(destination.join("snapshot.json"))?;
+        let manifest_bytes = fs::read(destination.join("manifest.json"))?;
+
+        let mut retry = first.clone();
+        retry.manifest.export_started_at_unix_ms += 1;
+        retry.manifest.export_completed_at_unix_ms += 1;
+        retry.manifest.exported_at_unix_ms += 1;
+        let actual = publish_snapshot_atomic(&retry, &destination);
+
+        assert!(actual.is_ok());
+        assert_eq!(snapshot_bytes, fs::read(destination.join("snapshot.json"))?);
+        assert_eq!(manifest_bytes, fs::read(destination.join("manifest.json"))?);
         Ok(())
     }
 }
