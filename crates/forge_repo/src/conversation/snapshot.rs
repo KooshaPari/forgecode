@@ -22,14 +22,13 @@ use sha2::{Digest, Sha256};
 pub const SNAPSHOT_CONTRACT_VERSION: &str = "helioslite-forge-session-v2";
 pub const SUPPORTED_SCHEMA_VERSION: &str = "forge-conversations-v3";
 const IMPORTER_VERSION: &str = env!("CARGO_PKG_VERSION");
-const REQUIRED_COLUMNS: [&str; 18] = [
+const REQUIRED_COLUMNS: [&str; 17] = [
     "conversation_id",
     "title",
     "workspace_id",
     "context",
     "context_zstd",
     "is_compressed",
-    "hidden",
     "parent_id",
     "source",
     "cwd",
@@ -53,7 +52,6 @@ pub struct ForgeSnapshotRow {
     pub context: Option<String>,
     pub context_zstd: Option<Vec<u8>>,
     pub is_compressed: i32,
-    pub hidden: i32,
     pub parent_id: Option<String>,
     pub source: Option<String>,
     pub cwd: Option<String>,
@@ -136,8 +134,6 @@ struct ConversationRow {
     context_zstd: Option<Vec<u8>>,
     #[diesel(sql_type = Integer)]
     is_compressed: i32,
-    #[diesel(sql_type = Integer)]
-    hidden: i32,
     #[diesel(sql_type = Nullable<Text>)]
     parent_id: Option<String>,
     #[diesel(sql_type = Nullable<Text>)]
@@ -203,7 +199,7 @@ pub fn export_forge_snapshot(source: &Path) -> Result<ForgeSnapshot> {
     let schema_fingerprint = schema_fingerprint(&schema);
     let rows: Vec<ForgeSnapshotRow> = diesel::sql_query(
         "SELECT conversation_id, title, workspace_id, context, context_zstd, \
-         is_compressed, hidden, parent_id, source, cwd, message_count, \
+         is_compressed, parent_id, source, cwd, message_count, \
          created_at, updated_at, intent_state, metrics, extracted_at, memory_id, intent_hash \
          FROM conversations ORDER BY conversation_id",
     )
@@ -366,7 +362,6 @@ impl From<ConversationRow> for ForgeSnapshotRow {
             context: row.context,
             context_zstd: row.context_zstd,
             is_compressed: row.is_compressed,
-            hidden: row.hidden,
             parent_id: row.parent_id,
             source: row.source,
             cwd: row.cwd,
@@ -499,7 +494,6 @@ fn validate_schema(schema: &[SchemaRow]) -> Result<()> {
         ("intent_hash", "TEXT"),
         ("context_zstd", "BLOB"),
         ("is_compressed", "INTEGER"),
-        ("hidden", "INTEGER"),
     ];
     for (name, expected) in expected_types {
         let actual = columns
@@ -641,7 +635,7 @@ mod tests {
                 conversation_id TEXT PRIMARY KEY NOT NULL,
                 title TEXT, workspace_id BIGINT NOT NULL, context TEXT,
                 context_zstd BLOB, is_compressed INTEGER NOT NULL DEFAULT 0,
-                hidden INTEGER NOT NULL DEFAULT 0, parent_id TEXT, source TEXT,
+                parent_id TEXT, source TEXT,
                 cwd TEXT, message_count INTEGER, created_at TIMESTAMP NOT NULL,
                 updated_at TIMESTAMP, intent_state TEXT NOT NULL DEFAULT '{}',
                 metrics TEXT, extracted_at TIMESTAMP, memory_id TEXT, intent_hash TEXT
@@ -649,14 +643,14 @@ mod tests {
         )
         .execute(&mut connection)?;
         diesel::sql_query(
-            "INSERT INTO conversations (conversation_id,title,workspace_id,context,is_compressed,hidden,created_at,intent_state)
-             VALUES ('root','Root',7,'plain',0,0,'2026-01-01 00:00:00','{}')",
+            "INSERT INTO conversations (conversation_id,title,workspace_id,context,is_compressed,created_at,intent_state)
+             VALUES ('root','Root',7,'plain',0,'2026-01-01 00:00:00','{}')",
         )
         .execute(&mut connection)?;
         let compressed = codec::compress("compressed")?;
         diesel::sql_query(
-            "INSERT INTO conversations (conversation_id,title,workspace_id,context_zstd,is_compressed,hidden,parent_id,created_at,intent_state)
-             VALUES ('child',NULL,7,?,1,1,'root','2026-01-01 00:00:01','{}')",
+            "INSERT INTO conversations (conversation_id,title,workspace_id,context_zstd,is_compressed,parent_id,created_at,intent_state)
+             VALUES ('child',NULL,7,?,1,'root','2026-01-01 00:00:01','{}')",
         )
         .bind::<Binary, _>(compressed)
         .execute(&mut connection)?;
@@ -696,12 +690,7 @@ mod tests {
         assert_eq!(actual.manifest.row_count, 2);
         assert_eq!(actual.manifest.source_sha256, before.sha256);
         assert_eq!(before, after);
-        assert!(
-            actual
-                .rows
-                .iter()
-                .any(|row| row.is_compressed == 1 && row.hidden == 1)
-        );
+        assert!(actual.rows.iter().any(|row| row.is_compressed == 1));
         Ok(())
     }
 
@@ -712,6 +701,40 @@ mod tests {
         fixture(&source, true)?;
         let error = export_forge_snapshot(&source).expect_err("legacy id schema must fail");
         assert!(error.to_string().contains("conversation_id"));
+        Ok(())
+    }
+
+    #[test]
+    fn exports_current_forge_schema_without_hidden_column() -> Result<()> {
+        let dir = tempdir()?;
+        let source = dir.path().join("forge.db");
+        let mut connection = diesel::sqlite::SqliteConnection::establish(source.to_str().unwrap())?;
+        diesel::sql_query(
+            "CREATE TABLE conversations (
+                conversation_id TEXT PRIMARY KEY NOT NULL,
+                title TEXT, workspace_id BIGINT NOT NULL, context TEXT,
+                created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP,
+                metrics TEXT, parent_id TEXT, source TEXT, cwd TEXT,
+                message_count INTEGER, intent_state TEXT NOT NULL DEFAULT 'pending',
+                extracted_at TIMESTAMP, memory_id TEXT, intent_hash TEXT,
+                context_zstd BLOB, is_compressed INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&mut connection)?;
+        diesel::sql_query(
+            "INSERT INTO conversations (conversation_id, workspace_id, context, created_at, intent_state)
+             VALUES ('current', 7, 'plain', '2026-01-01 00:00:00', 'pending')",
+        )
+        .execute(&mut connection)?;
+        connection
+            .batch_execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            .ok();
+        drop(connection);
+
+        let actual = export_forge_snapshot(&source)?;
+
+        assert_eq!(actual.rows.len(), 1);
+        assert_eq!(actual.rows[0].conversation_id, "current");
         Ok(())
     }
 
