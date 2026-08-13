@@ -92,12 +92,9 @@ impl ConfigReader {
     /// Resolution order:
     /// 1. For the canonical `helioslite` binary:
     ///    - `HELIOSLITE_HOME`, if set (rejected when it overlaps `~/.forge`).
-    ///    - `~/.forge` (legacy), if that directory exists — the data is
-    ///      honored and read in place and is never auto-migrated. The legacy
-    ///      dir keeps winning while present so an empty `~/.helioslite` stub
-    ///      can never shadow real data.
-    ///    - `~/.helioslite` (canonical data dir), as the default for fresh
-    ///      installs and after `~/.forge` has been moved away by a migration.
+    ///    - `~/.helioslite` as the isolated default, including when a legacy
+    ///      `~/.forge` directory exists. HeliosLite never reads or migrates
+    ///      Forge state implicitly.
     /// 2. For the legacy `forge` / `forge-dev` binaries:
     ///    - `FORGE_CONFIG` environment variable, if set.
     ///    - `~/forge` (historical legacy path), if that directory exists.

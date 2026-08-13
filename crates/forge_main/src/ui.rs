@@ -182,6 +182,16 @@ fn validate_helioslite_sessions_root(sessions_root: &Path) -> anyhow::Result<()>
 
 fn validate_snapshot_destination(destination: &Path, sessions_root: &Path) -> anyhow::Result<()> {
     validate_helioslite_sessions_root(sessions_root)?;
+    let absolute_destination = lexical_absolute(destination)?;
+    if fs::symlink_metadata(&absolute_destination)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        anyhow::bail!(
+            "snapshot destination must not be a symlink: {}",
+            absolute_destination.display()
+        );
+    }
     let parent = destination
         .parent()
         .ok_or_else(|| anyhow::anyhow!("snapshot destination must have a parent directory"))?;
@@ -6500,5 +6510,24 @@ mod tests {
         let actual = validate_snapshot_destination(&destination, &root);
 
         assert!(actual.is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn destination_rejects_existing_symlink_before_publishing() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("helioslite/sessions");
+        let outside = dir.path().join("outside/snapshot");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let destination = root.join("imports/snapshot");
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        symlink(&outside, &destination).unwrap();
+
+        let error = validate_snapshot_destination(&destination, &root).unwrap_err();
+
+        assert!(error.to_string().contains("must not be a symlink"));
     }
 }
