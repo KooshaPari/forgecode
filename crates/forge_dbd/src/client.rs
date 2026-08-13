@@ -6,14 +6,14 @@
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-#[cfg(windows)]
-use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 #[cfg(unix)]
 use tokio::net::UnixStream;
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 
-use crate::protocol::{HealthStatus, Request, Response};
 #[cfg(windows)]
 use crate::protocol::named_pipe_name;
+use crate::protocol::{HealthStatus, Request, Response};
 use crate::protocol::{read_frame, write_frame};
 
 /// Client for the `forge_dbd` daemon.
@@ -48,9 +48,9 @@ impl DbClient {
         #[cfg(windows)]
         {
             let pipe_name = named_pipe_name(&socket_path);
-            let _ = Self::open_pipe(&pipe_name).await.with_context(|| {
-                format!("cannot connect to forge_dbd at {pipe_name}")
-            })?;
+            let _ = Self::open_pipe(&pipe_name)
+                .await
+                .with_context(|| format!("cannot connect to forge_dbd at {pipe_name}"))?;
         }
 
         Ok(Self { socket_path })
@@ -74,9 +74,9 @@ impl DbClient {
         #[cfg(windows)]
         {
             let pipe_name = named_pipe_name(&self.socket_path);
-            let mut stream = Self::open_pipe(&pipe_name).await.with_context(|| {
-                format!("failed to connect to forge_dbd at {pipe_name}")
-            })?;
+            let mut stream = Self::open_pipe(&pipe_name)
+                .await
+                .with_context(|| format!("failed to connect to forge_dbd at {pipe_name}"))?;
             Self::request_response(&mut stream, request).await
         }
     }

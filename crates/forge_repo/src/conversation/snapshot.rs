@@ -22,14 +22,13 @@ use sha2::{Digest, Sha256};
 pub const SNAPSHOT_CONTRACT_VERSION: &str = "helioslite-forge-session-v2";
 pub const SUPPORTED_SCHEMA_VERSION: &str = "forge-conversations-v3";
 const IMPORTER_VERSION: &str = env!("CARGO_PKG_VERSION");
-const REQUIRED_COLUMNS: [&str; 18] = [
+const REQUIRED_COLUMNS: [&str; 17] = [
     "conversation_id",
     "title",
     "workspace_id",
     "context",
     "context_zstd",
     "is_compressed",
-    "hidden",
     "parent_id",
     "source",
     "cwd",
@@ -53,7 +52,6 @@ pub struct ForgeSnapshotRow {
     pub context: Option<String>,
     pub context_zstd: Option<Vec<u8>>,
     pub is_compressed: i32,
-    pub hidden: i32,
     pub parent_id: Option<String>,
     pub source: Option<String>,
     pub cwd: Option<String>,
@@ -136,8 +134,6 @@ struct ConversationRow {
     context_zstd: Option<Vec<u8>>,
     #[diesel(sql_type = Integer)]
     is_compressed: i32,
-    #[diesel(sql_type = Integer)]
-    hidden: i32,
     #[diesel(sql_type = Nullable<Text>)]
     parent_id: Option<String>,
     #[diesel(sql_type = Nullable<Text>)]
@@ -203,7 +199,7 @@ pub fn export_forge_snapshot(source: &Path) -> Result<ForgeSnapshot> {
     let schema_fingerprint = schema_fingerprint(&schema);
     let rows: Vec<ForgeSnapshotRow> = diesel::sql_query(
         "SELECT conversation_id, title, workspace_id, context, context_zstd, \
-         is_compressed, hidden, parent_id, source, cwd, message_count, \
+         is_compressed, parent_id, source, cwd, message_count, \
          created_at, updated_at, intent_state, metrics, extracted_at, memory_id, intent_hash \
          FROM conversations ORDER BY conversation_id",
     )
@@ -291,15 +287,32 @@ pub fn publish_snapshot_atomic(snapshot: &ForgeSnapshot, destination: &Path) -> 
             &stage.join("manifest.json"),
             &serde_json::to_vec_pretty(&published.manifest)?,
         )?;
-        sync_staging_dir(&stage)?;
-        fs::rename(&stage, destination)
-            .with_context(|| format!("publish snapshot {}", destination.display()))?;
-        Ok(())
+        publish_stage(&stage, snapshot, destination)
     })();
     if result.is_err() {
         let _ = fs::remove_dir_all(&stage);
     }
     result
+}
+
+fn publish_stage(stage: &Path, snapshot: &ForgeSnapshot, destination: &Path) -> Result<()> {
+    sync_staging_dir(stage)?;
+    match fs::rename(stage, destination) {
+        Ok(()) => Ok(()),
+        Err(error) if destination.exists() => {
+            let verification = verify_existing_publication(snapshot, destination);
+            let _ = fs::remove_dir_all(stage);
+            verification.with_context(|| {
+                format!(
+                    "publish snapshot {} after a concurrent destination appeared: {error}",
+                    destination.display()
+                )
+            })
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("publish snapshot {}", destination.display()))
+        }
+    }
 }
 
 fn finalized_snapshot(snapshot: &ForgeSnapshot, destination: &Path) -> ForgeSnapshot {
@@ -344,7 +357,8 @@ fn verify_existing_publication(snapshot: &ForgeSnapshot, destination: &Path) -> 
     let expected = finalized_snapshot(snapshot, destination);
     let stored_digest = content_digest(&stored_snapshot.rows)?;
     let matches = stored_manifest == stored_snapshot.manifest
-        && stored_manifest == expected.manifest
+        && stable_publication_manifest(&stored_manifest)
+            == stable_publication_manifest(&expected.manifest)
         && stored_digest == expected.manifest.content_sha256
         && id_digest(&stored_snapshot.rows) == expected.manifest.id_digest
         && stored_snapshot.rows.len() == expected.manifest.row_count;
@@ -357,6 +371,17 @@ fn verify_existing_publication(snapshot: &ForgeSnapshot, destination: &Path) -> 
     Ok(())
 }
 
+fn stable_publication_manifest(manifest: &ForgeSnapshotManifest) -> ForgeSnapshotManifest {
+    let mut stable = manifest.clone();
+    // Export timestamps attest to when a read took place, not to the source
+    // or rows being published. A later equivalent export must reuse the
+    // existing finalized bundle rather than treat timing alone as conflict.
+    stable.export_started_at_unix_ms = 0;
+    stable.export_completed_at_unix_ms = 0;
+    stable.exported_at_unix_ms = 0;
+    stable
+}
+
 impl From<ConversationRow> for ForgeSnapshotRow {
     fn from(row: ConversationRow) -> Self {
         Self {
@@ -366,7 +391,6 @@ impl From<ConversationRow> for ForgeSnapshotRow {
             context: row.context,
             context_zstd: row.context_zstd,
             is_compressed: row.is_compressed,
-            hidden: row.hidden,
             parent_id: row.parent_id,
             source: row.source,
             cwd: row.cwd,
@@ -499,7 +523,6 @@ fn validate_schema(schema: &[SchemaRow]) -> Result<()> {
         ("intent_hash", "TEXT"),
         ("context_zstd", "BLOB"),
         ("is_compressed", "INTEGER"),
-        ("hidden", "INTEGER"),
     ];
     for (name, expected) in expected_types {
         let actual = columns
@@ -641,7 +664,7 @@ mod tests {
                 conversation_id TEXT PRIMARY KEY NOT NULL,
                 title TEXT, workspace_id BIGINT NOT NULL, context TEXT,
                 context_zstd BLOB, is_compressed INTEGER NOT NULL DEFAULT 0,
-                hidden INTEGER NOT NULL DEFAULT 0, parent_id TEXT, source TEXT,
+                parent_id TEXT, source TEXT,
                 cwd TEXT, message_count INTEGER, created_at TIMESTAMP NOT NULL,
                 updated_at TIMESTAMP, intent_state TEXT NOT NULL DEFAULT '{}',
                 metrics TEXT, extracted_at TIMESTAMP, memory_id TEXT, intent_hash TEXT
@@ -649,14 +672,14 @@ mod tests {
         )
         .execute(&mut connection)?;
         diesel::sql_query(
-            "INSERT INTO conversations (conversation_id,title,workspace_id,context,is_compressed,hidden,created_at,intent_state)
-             VALUES ('root','Root',7,'plain',0,0,'2026-01-01 00:00:00','{}')",
+            "INSERT INTO conversations (conversation_id,title,workspace_id,context,is_compressed,created_at,intent_state)
+             VALUES ('root','Root',7,'plain',0,'2026-01-01 00:00:00','{}')",
         )
         .execute(&mut connection)?;
         let compressed = codec::compress("compressed")?;
         diesel::sql_query(
-            "INSERT INTO conversations (conversation_id,title,workspace_id,context_zstd,is_compressed,hidden,parent_id,created_at,intent_state)
-             VALUES ('child',NULL,7,?,1,1,'root','2026-01-01 00:00:01','{}')",
+            "INSERT INTO conversations (conversation_id,title,workspace_id,context_zstd,is_compressed,parent_id,created_at,intent_state)
+             VALUES ('child',NULL,7,?,1,'root','2026-01-01 00:00:01','{}')",
         )
         .bind::<Binary, _>(compressed)
         .execute(&mut connection)?;
@@ -696,12 +719,7 @@ mod tests {
         assert_eq!(actual.manifest.row_count, 2);
         assert_eq!(actual.manifest.source_sha256, before.sha256);
         assert_eq!(before, after);
-        assert!(
-            actual
-                .rows
-                .iter()
-                .any(|row| row.is_compressed == 1 && row.hidden == 1)
-        );
+        assert!(actual.rows.iter().any(|row| row.is_compressed == 1));
         Ok(())
     }
 
@@ -712,6 +730,40 @@ mod tests {
         fixture(&source, true)?;
         let error = export_forge_snapshot(&source).expect_err("legacy id schema must fail");
         assert!(error.to_string().contains("conversation_id"));
+        Ok(())
+    }
+
+    #[test]
+    fn exports_current_forge_schema_without_hidden_column() -> Result<()> {
+        let dir = tempdir()?;
+        let source = dir.path().join("forge.db");
+        let mut connection = diesel::sqlite::SqliteConnection::establish(source.to_str().unwrap())?;
+        diesel::sql_query(
+            "CREATE TABLE conversations (
+                conversation_id TEXT PRIMARY KEY NOT NULL,
+                title TEXT, workspace_id BIGINT NOT NULL, context TEXT,
+                created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP,
+                metrics TEXT, parent_id TEXT, source TEXT, cwd TEXT,
+                message_count INTEGER, intent_state TEXT NOT NULL DEFAULT 'pending',
+                extracted_at TIMESTAMP, memory_id TEXT, intent_hash TEXT,
+                context_zstd BLOB, is_compressed INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&mut connection)?;
+        diesel::sql_query(
+            "INSERT INTO conversations (conversation_id, workspace_id, context, created_at, intent_state)
+             VALUES ('current', 7, 'plain', '2026-01-01 00:00:00', 'pending')",
+        )
+        .execute(&mut connection)?;
+        connection
+            .batch_execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            .ok();
+        drop(connection);
+
+        let actual = export_forge_snapshot(&source)?;
+
+        assert_eq!(actual.rows.len(), 1);
+        assert_eq!(actual.rows[0].conversation_id, "current");
         Ok(())
     }
 
@@ -776,6 +828,60 @@ mod tests {
                 .to_string()
                 .contains("different or invalid provenance")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn republishes_matching_rows_from_a_later_export() -> Result<()> {
+        let dir = tempdir()?;
+        let source = dir.path().join("forge.db");
+        fixture(&source, false)?;
+        let first = export_forge_snapshot(&source)?;
+        let destination = dir.path().join("sessions").join("snapshot");
+        publish_snapshot_atomic(&first, &destination)?;
+        let snapshot_bytes = fs::read(destination.join("snapshot.json"))?;
+        let manifest_bytes = fs::read(destination.join("manifest.json"))?;
+
+        let mut retry = first.clone();
+        retry.manifest.export_started_at_unix_ms += 1;
+        retry.manifest.export_completed_at_unix_ms += 1;
+        retry.manifest.exported_at_unix_ms += 1;
+        let actual = publish_snapshot_atomic(&retry, &destination);
+
+        assert!(actual.is_ok());
+        assert_eq!(snapshot_bytes, fs::read(destination.join("snapshot.json"))?);
+        assert_eq!(manifest_bytes, fs::read(destination.join("manifest.json"))?);
+        Ok(())
+    }
+
+    #[test]
+    fn reuses_matching_destination_when_stage_rename_loses_race() -> Result<()> {
+        let dir = tempdir()?;
+        let source = dir.path().join("forge.db");
+        fixture(&source, false)?;
+        let snapshot = export_forge_snapshot(&source)?;
+        let destination = dir.path().join("sessions").join("snapshot");
+        let parent = destination.parent().unwrap();
+        fs::create_dir_all(parent)?;
+
+        let staged = finalized_snapshot(&snapshot, &destination);
+        fs::create_dir(&destination)?;
+        write_synced(
+            &destination.join("snapshot.json"),
+            &serde_json::to_vec_pretty(&staged)?,
+        )?;
+        write_synced(
+            &destination.join("manifest.json"),
+            &serde_json::to_vec_pretty(&staged.manifest)?,
+        )?;
+
+        let stage = parent.join("staging-loser");
+        fs::create_dir(&stage)?;
+        let actual = publish_stage(&stage, &snapshot, &destination);
+
+        assert!(actual.is_ok());
+        assert!(!stage.exists());
+        assert!(destination.join("snapshot.json").is_file());
         Ok(())
     }
 }
