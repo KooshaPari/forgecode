@@ -475,7 +475,7 @@ mod tests {
 
     /// Serializes the decorator tests that touch the process-wide spawn guard
     /// ([`SPAWN_ATTEMPTED`]) so they cannot race each other.
-    static SPAWN_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static SPAWN_GUARD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     fn in_memory_inner() -> Arc<ConversationRepositoryImpl> {
         let pool = Arc::new(DatabasePool::in_memory().expect("in-memory pool"));
@@ -488,7 +488,7 @@ mod tests {
     /// repository.
     #[tokio::test]
     async fn falls_back_to_direct_write_when_daemon_absent() -> anyhow::Result<()> {
-        let _serial = SPAWN_GUARD.lock().unwrap();
+        let _serial = SPAWN_GUARD.lock().await;
         // Mark the spawn as already attempted so this test never launches a
         // real daemon; the assertion is about the fallback, not the spawn.
         SPAWN_ATTEMPTED.store(true, Ordering::SeqCst);
@@ -520,7 +520,7 @@ mod tests {
     /// hanging.
     #[tokio::test]
     async fn spawn_is_attempted_once_then_falls_back() -> anyhow::Result<()> {
-        let _serial = SPAWN_GUARD.lock().unwrap();
+        let _serial = SPAWN_GUARD.lock().await;
         // Reset the process-wide guard so this test exercises the spawn path
         // deterministically.
         SPAWN_ATTEMPTED.store(false, Ordering::SeqCst);

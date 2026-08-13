@@ -939,25 +939,19 @@ mod tests {
             Ok(ForgeConfig::default())
         }
 
-        fn update_environment(
+        async fn update_environment(
             &self,
             _ops: Vec<forge_domain::ConfigOperation>,
-        ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send {
-            async move { Ok(()) }
+        ) -> anyhow::Result<()> {
+            Ok(())
         }
 
-        fn database_stats(
-            &self,
-        ) -> impl std::future::Future<Output = anyhow::Result<HeliosdoctorDbStats>> + Send {
-            async move { Ok(HeliosdoctorDbStats { total_conversations: 42, ..Default::default() }) }
+        async fn database_stats(&self) -> anyhow::Result<HeliosdoctorDbStats> {
+            Ok(HeliosdoctorDbStats { total_conversations: 42, ..Default::default() })
         }
 
-        fn database_integrity(
-            &self,
-        ) -> impl std::future::Future<Output = anyhow::Result<HeliosdoctorDbStats>> + Send {
-            async move {
-                Ok(HeliosdoctorDbStats { integrity_check: "ok".to_string(), ..Default::default() })
-            }
+        async fn database_integrity(&self) -> anyhow::Result<HeliosdoctorDbStats> {
+            Ok(HeliosdoctorDbStats { integrity_check: "ok".to_string(), ..Default::default() })
         }
     }
 
