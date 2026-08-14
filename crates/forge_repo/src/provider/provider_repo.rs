@@ -1049,6 +1049,29 @@ mod tests {
     }
 
     #[test]
+    fn test_openai_and_codex_include_gpt_5_6_model_variants() {
+        let configs = get_provider_configs();
+
+        for provider_id in [ProviderId::OPENAI, ProviderId::CODEX] {
+            let config = configs
+                .iter()
+                .find(|config| config.id == provider_id)
+                .unwrap();
+            let models = match config.models.as_ref().expect("models should be present") {
+                Models::Hardcoded(models) => models,
+                other => panic!("expected hardcoded models, got {other:?}"),
+            };
+
+            for model_id in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+                assert!(
+                    models.iter().any(|model| model.id.as_str() == model_id),
+                    "expected {model_id} for {provider_id}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_provider_entry_with_static_models_converts_to_hardcoded() {
         let model = forge_domain::Model::new("Qwen3.6-35B-A3b-q3-mlx")
             .name("Qwen3.5-35B".to_string())
