@@ -38,10 +38,6 @@ Wired into the client write path (opt-in, off by default):
 - Stale-socket recreation on the client side is only exercised indirectly
   (spawn + connect retry); a failed spawn leaves a stale path in place until
   the next successful daemon start unlinks it.
-- `FORGE_DBD_SOCKET` is honoured by the client (`dbd_socket_path`) but not by
-  `forge_dbd`'s main (it always binds `~/.forge/.forge.db.sock`), so an
-  explicit client-side `FORGE_DBD_SOCKET` would not be picked up by a spawned
-  daemon — the spawned daemon therefore does not inherit it.
 - The daemon is not part of the shipped installs (release builds cover
   `helioslite` / `forge`); `forge_dbd` is built standalone.
 - `Context` is stored uncompressed (`context_zstd = NULL`,
