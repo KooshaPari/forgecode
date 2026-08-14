@@ -22,6 +22,7 @@
 use std::path::Path;
 use std::process::Command;
 
+use bstr::ByteSlice;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
 
@@ -91,15 +92,15 @@ fn run_doctor(write_db: &Path, legacy_db: &Path, args: &[&str]) -> String {
         "forge {:?} failed (status {:?})\nstdout:\n{}\nstderr:\n{}",
         args,
         output.status.code(),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
+        output.stdout.to_str_lossy(),
+        output.stderr.to_str_lossy(),
     );
     assert!(
         write_db.exists(),
         "binary must have created and migrated the write DB: {}",
         write_db.display()
     );
-    String::from_utf8_lossy(&output.stdout).into_owned()
+    output.stdout.to_str_lossy().into_owned()
 }
 
 fn find_line<'a>(haystack: &'a str, key: &str) -> &'a str {
