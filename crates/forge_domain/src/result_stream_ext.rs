@@ -259,7 +259,7 @@ impl ResultStreamExt<anyhow::Error> for crate::BoxStream<ChatCompletionMessage, 
         // Get phase from the last message that has one
         let phase = messages.iter().rev().find_map(|message| message.phase);
 
-        if finish_reason == Some(FinishReason::ContentFilter) && tool_calls.is_empty() {
+        if finish_reason == Some(FinishReason::Refusal) && tool_calls.is_empty() {
             return Err(crate::Error::Refusal.into());
         }
 
@@ -1228,7 +1228,7 @@ mod tests {
     #[tokio::test]
     async fn test_into_full_refusal_is_non_retryable_error() {
         let messages = vec![Ok(ChatCompletionMessage::assistant(Content::part(""))
-            .finish_reason(FinishReason::ContentFilter))];
+            .finish_reason(FinishReason::Refusal))];
         let fixture: BoxStream<ChatCompletionMessage, anyhow::Error> =
             Box::pin(tokio_stream::iter(messages));
 
@@ -1238,6 +1238,19 @@ mod tests {
             actual.downcast_ref::<crate::Error>(),
             Some(crate::Error::Refusal)
         ));
+    }
+
+    #[tokio::test]
+    async fn test_into_full_content_filter_remains_a_completion() {
+        let messages = vec![Ok(ChatCompletionMessage::assistant(Content::part(""))
+            .finish_reason(FinishReason::ContentFilter))];
+        let fixture: BoxStream<ChatCompletionMessage, anyhow::Error> =
+            Box::pin(tokio_stream::iter(messages));
+
+        let actual = fixture.into_full(false).await.unwrap();
+
+        let expected = Some(FinishReason::ContentFilter);
+        assert_eq!(actual.finish_reason, expected);
     }
 
     #[tokio::test]
