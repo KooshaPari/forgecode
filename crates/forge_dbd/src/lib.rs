@@ -6,4 +6,5 @@
 //! this library's surface: `server` stays bin-only.
 
 pub mod client;
+pub mod conversation_storage;
 pub mod protocol;
