@@ -189,12 +189,10 @@ impl DaemonConversationRepository {
     /// e.g. `FORGE_DBD_BIN` points at a missing file.
     ///
     /// The child inherits `FORGE_WRITE_DB_PATH` when the parent has it set,
-    /// so the daemon writes to the same database as the client.
-    /// `FORGE_DBD_SOCKET` is deliberately NOT forwarded: `forge_dbd`'s main
-    /// resolves the socket from `~/.forge/.forge.db.sock` only and ignores
-    /// `FORGE_DBD_SOCKET`, so both sides already agree on the default path
-    /// (an explicit client-side `FORGE_DBD_SOCKET` would not be honoured by a
-    /// spawned daemon — a known limitation).
+    /// so the daemon writes to the same database as the client, and
+    /// `FORGE_DBD_SOCKET` when set, so a daemon bound to a custom socket path
+    /// is reachable at the same place the client expects it (both sides honor
+    /// the variable; the default `~/.forge/.forge.db.sock` is used when unset).
     fn spawn_daemon(&self) -> bool {
         let bin = self
             .dbd_bin
@@ -203,6 +201,9 @@ impl DaemonConversationRepository {
         let mut cmd = std::process::Command::new(&bin);
         if let Ok(write_db) = std::env::var("FORGE_WRITE_DB_PATH") {
             cmd.env("FORGE_WRITE_DB_PATH", write_db);
+        }
+        if let Ok(socket) = std::env::var("FORGE_DBD_SOCKET") {
+            cmd.env("FORGE_DBD_SOCKET", socket);
         }
         cmd.stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
