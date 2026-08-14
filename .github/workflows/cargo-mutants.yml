@@ -1,0 +1,117 @@
+# Mutation testing with cargo-mutants.
+#
+# Runs weekly and on-demand to verify that the test suite actually catches
+# real code changes (mutations).  PR-triggered runs are scoped to a fast
+# subset so they don't block merge.
+
+name: cargo-mutants
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly on Monday at 03:17 UTC — low-traffic window.
+    - cron: "17 3 * * 1"
+  pull_request:
+    branches: [main]
+    paths:
+      - "crates/forge_domain/**"
+      - "crates/forge_json_repair/**"
+      - "crates/forge_config/**"
+      - "crates/forge_services/**"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── PR-scoped: fast subset of high-value crates ────────────────────
+  mutants-pr:
+    name: "mutants (PR subset)"
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Install system deps
+        run: sudo apt-get update -q && sudo apt-get install -y libsqlite3-dev protobuf-compiler
+
+      - name: Setup Rust toolchain (stable)
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@7e35be21c2b94d972b1143087fabc27d7dc881ef
+
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd
+        with:
+          tool: cargo-mutants
+
+      - name: Generate diff for baseline
+        run: echo "${{ github.event.pull_request.base.sha }}" > .base-sha.txt
+
+      - name: Run cargo-mutants (baseline diff)
+        run: >-
+          cargo mutants
+          --diff-from "${{ github.event.pull_request.base.sha }}"
+          --timeout 120
+          --test-timeout 30
+          --jobs 2
+          --output mutants-pr.out
+
+      - name: Upload mutant outcomes
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mutants-pr-report
+          path: mutants-pr.out
+          retention-days: 7
+
+  # ── Scheduled / manual: full workspace sweep ───────────────────────
+  mutants-full:
+    name: "mutants (full workspace)"
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Install system deps
+        run: sudo apt-get update -q && sudo apt-get install -y libsqlite3-dev protobuf-compiler
+
+      - name: Setup Rust toolchain (stable)
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@7e35be21c2b94d972b1143087fabc27d7dc881ef
+
+      - name: Install cargo-mutants
+        uses: taiki-e/install-action@c44f6b046f1c29ae5918b1e0bfdbb2f1813836fd
+        with:
+          tool: cargo-mutants
+
+      - name: Run cargo-mutants (full)
+        run: >-
+          cargo mutants
+          --timeout 300
+          --test-timeout 60
+          --jobs 2
+          --output mutants-full.out
+
+      - name: Upload mutant outcomes
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mutants-full-report
+          path: mutants-full.out
+          retention-days: 30
