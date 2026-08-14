@@ -49,6 +49,22 @@ installed state is traceable to a commit and verified result.
                   dry-run "304 read, 304 exported, 0 decompression failures,
                   0 errors" (dry-run only, no real export run).
 
+2026-08-13 ~23:30 Swap 8: installed release build of 550c63a75 (swap-7 state
+                  + origin/main #153 quality gates + forge_dbd lifecycle
+                  f167fa280 + FORGE_DBD_SOCKET df42f1d48 + mock-dedupe fix
+                  1f0d51992 + dbd version flags 550c63a75), detached worktree
+                  at HEAD (C:\temp\helioslite-release-20260813).
+                  Verified: version 2.10.7 all three binaries (helioslite.exe,
+                  forge.exe, forge_dbd.exe --version exits instantly);
+                  heliosdoctor 460/29/165/266/0/156, integrity ok; conversation
+                  list shows real sessions; export dry-run "304 read, 304
+                  exported, 0 decompression failures, 0 errors" (no dest file
+                  created). forge_dbd.exe installed to Programs\heliosLite,
+                  Programs\Forge, and .cargo\bin (PATH) so
+                  FORGE_DBD_ENABLED=1 spawn-on-first-write works out of the
+                  box. Full suite at HEAD: repo 372/0/1, services 210/0,
+                  app 711/0, domain 659/0, dbd 9/0.
+
 Commits covered by the 2026-08-08 swaps:
   c30e21dac  feat(splitdb): complete read/write DB split with union reads by default
   87b4fbf43  fix(doctor): align infra stats with split-DB defaults
