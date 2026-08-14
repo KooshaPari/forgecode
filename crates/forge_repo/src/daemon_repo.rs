@@ -321,7 +321,10 @@ impl ConversationRepository for DaemonConversationRepository {
 
     async fn delete_conversation(&self, conversation_id: &ConversationId) -> anyhow::Result<()> {
         self.write_or_fallback(
-            Request::DeleteConversation { conversation_id: *conversation_id },
+            Request::DeleteConversation {
+                conversation_id: *conversation_id,
+                workspace_id: self.inner.workspace_id(),
+            },
             || self.inner.delete_conversation(conversation_id),
         )
         .await
@@ -495,10 +498,13 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    #[cfg(unix)]
     use forge_dbd::protocol::read_frame;
     use forge_domain::{Conversation, ConversationId, WorkspaceHash};
     use pretty_assertions::assert_eq;
+    #[cfg(unix)]
     use tokio::net::UnixListener;
+    #[cfg(unix)]
     use tokio::sync::oneshot;
 
     use super::*;
@@ -597,6 +603,7 @@ mod tests {
     /// Once a daemon accepts a write request, a lost ACK is indeterminate: it
     /// may have committed the write, so the decorator must return an explicit
     /// error instead of replaying the request through the direct repository.
+    #[cfg(unix)]
     #[tokio::test]
     async fn does_not_fallback_after_daemon_records_request_then_loses_ack() -> anyhow::Result<()> {
         let temp_dir = tempfile::tempdir()?;

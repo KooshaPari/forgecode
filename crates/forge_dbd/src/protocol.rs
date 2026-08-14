@@ -25,6 +25,7 @@ pub enum Request {
     },
     DeleteConversation {
         conversation_id: ConversationId,
+        workspace_id: i64,
     },
     OptimizeFts,
     RefreshFts,

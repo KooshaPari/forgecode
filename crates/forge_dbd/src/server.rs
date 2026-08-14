@@ -554,18 +554,10 @@ impl DbServer {
                 )?;
                 Ok(Response::Ack)
             }
-            Request::DeleteConversation { conversation_id } => {
-                // conversation_id is the table's PRIMARY KEY (a globally
-                // unique UUID; see forge_repo's database/schema.rs), so it
-                // uniquely identifies the row. forge_repo additionally
-                // filters by workspace_id as a cross-workspace guard, but the
-                // daemon derives workspace_id from ITS OWN current_dir hash,
-                // which can diverge from the client's (e.g. --directory mode
-                // canonicalizes paths on Windows). Reusing that predicate here
-                // would silently no-op the delete, so we key on the unique id.
+            Request::DeleteConversation { conversation_id, workspace_id } => {
                 conn.execute(
-                    "DELETE FROM conversations WHERE conversation_id = ?",
-                    rusqlite::params![conversation_id.into_string()],
+                    "DELETE FROM conversations WHERE conversation_id = ? AND workspace_id = ?",
+                    rusqlite::params![conversation_id.into_string(), workspace_id],
                 )?;
                 Ok(Response::Ack)
             }
@@ -1095,15 +1087,10 @@ mod db_tests {
         assert_eq!(is_compressed, 0);
     }
 
-    /// Delete keys on the conversation_id PRIMARY KEY alone: the row is
-    /// removed even when its workspace_id differs from the daemon's, because
-    /// the daemon's own current_dir hash can diverge from the client's (e.g.
-    /// --directory canonicalization on Windows) and a workspace-filtered
-    /// predicate would silently no-op. forge_repo's workspace guard is a
-    /// cross-user boundary that has no meaning inside a local single-user
-    /// daemon.
+    /// A delete request must not remove an identically-addressed conversation
+    /// from a different workspace.
     #[test]
-    fn delete_conversation_removes_row_by_unique_id_across_workspaces() {
+    fn delete_conversation_does_not_remove_row_from_another_workspace() {
         let dir = TempDir::new().unwrap();
         let conn = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
         create_conversations_schema(&conn);
@@ -1116,18 +1103,20 @@ mod db_tests {
             Response::Ack
         ));
 
-        // Simulate a workspace_id mismatch (client resolved a different cwd):
-        // the daemon must still delete the row by its unique id.
+        let other_workspace_id = DbServer::workspace_id() + 1;
         conn.execute(
             "UPDATE conversations SET workspace_id = ?1 WHERE conversation_id = ?2",
-            rusqlite::params![DbServer::workspace_id() + 1, id.into_string()],
+            rusqlite::params![other_workspace_id, id.into_string()],
         )
         .unwrap();
 
         assert!(matches!(
             DbServer::execute_with_conn(
                 &conn,
-                &Request::DeleteConversation { conversation_id: id }
+                &Request::DeleteConversation {
+                    conversation_id: id,
+                    workspace_id: DbServer::workspace_id(),
+                }
             )
             .expect("delete"),
             Response::Ack
@@ -1136,7 +1125,7 @@ mod db_tests {
         let total: i64 = conn
             .query_row("SELECT COUNT(*) FROM conversations", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(total, 0, "row deleted despite the workspace_id mismatch");
+        assert_eq!(total, 1, "row from the other workspace must remain");
     }
 
     /// update_parent_id mirrors forge_repo: it sets parent_id (and stamps
@@ -1204,7 +1193,10 @@ mod db_tests {
 
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         let mut batch = vec![QueuedRequest {
-            request: Request::DeleteConversation { conversation_id: ConversationId::default() },
+            request: Request::DeleteConversation {
+                conversation_id: ConversationId::default(),
+                workspace_id: DbServer::workspace_id(),
+            },
             response_tx,
         }];
         DbServer::flush_batch(&mut batch, &mut conn, &db_path).await;
