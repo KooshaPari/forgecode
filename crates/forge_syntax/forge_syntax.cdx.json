@@ -13,23 +13,23 @@
     ],
     "component": {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.10.7",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.10.9",
       "name": "forge_syntax",
-      "version": "2.10.7",
+      "version": "2.10.9",
       "scope": "required",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:cargo/forge_syntax@2.10.7?download_url=file://.",
+      "purl": "pkg:cargo/forge_syntax@2.10.9?download_url=file://.",
       "components": [
         {
           "type": "library",
-          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.10.7 bin-target-0",
+          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.10.9 bin-target-0",
           "name": "forge_syntax",
-          "version": "2.10.7",
-          "purl": "pkg:cargo/forge_syntax@2.10.7?download_url=file://.#src/lib.rs"
+          "version": "2.10.9",
+          "purl": "pkg:cargo/forge_syntax@2.10.9?download_url=file://.#src/lib.rs"
         }
       ]
     },
@@ -106,7 +106,7 @@
   ],
   "dependencies": [
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.10.7",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.10.9",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#unicode-segmentation@1.13.3",
         "registry+https://github.com/rust-lang/crates.io-index#unicode-width@0.2.2"

@@ -182,11 +182,15 @@ fn validate_helioslite_sessions_root(sessions_root: &Path) -> anyhow::Result<()>
 
 fn validate_snapshot_destination(destination: &Path, sessions_root: &Path) -> anyhow::Result<()> {
     validate_helioslite_sessions_root(sessions_root)?;
-    if destination.exists() {
-        return Err(anyhow::anyhow!(
-            "snapshot destination already exists: {}",
-            destination.display()
-        ));
+    let absolute_destination = lexical_absolute(destination)?;
+    if fs::symlink_metadata(&absolute_destination)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        anyhow::bail!(
+            "snapshot destination must not be a symlink: {}",
+            absolute_destination.display()
+        );
     }
     let parent = destination
         .parent()
@@ -6395,6 +6399,7 @@ mod tests {
         MAX_AUTO_CONTINUE_ATTEMPTS, auto_continue_allowed, is_helioslite_binary_name,
         redact_api_key, validate_helioslite_sessions_root, validate_snapshot_destination,
     };
+    use std::fs;
     use tempfile::tempdir;
 
     #[test]
@@ -6491,5 +6496,38 @@ mod tests {
         validate_snapshot_destination(&destination, &root).unwrap();
         assert!(destination.parent().unwrap().is_dir());
         assert!(!destination.exists());
+    }
+
+    #[test]
+    fn destination_allows_existing_published_snapshot_through_preflight() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("helioslite/sessions");
+        let destination = root.join("imports/snapshot");
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(destination.join("snapshot.json"), "{}\n").unwrap();
+        fs::write(destination.join("manifest.json"), "{}\n").unwrap();
+
+        let actual = validate_snapshot_destination(&destination, &root);
+
+        assert!(actual.is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn destination_rejects_existing_symlink_before_publishing() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("helioslite/sessions");
+        let outside = dir.path().join("outside/snapshot");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let destination = root.join("imports/snapshot");
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        symlink(&outside, &destination).unwrap();
+
+        let error = validate_snapshot_destination(&destination, &root).unwrap_err();
+
+        assert!(error.to_string().contains("must not be a symlink"));
     }
 }

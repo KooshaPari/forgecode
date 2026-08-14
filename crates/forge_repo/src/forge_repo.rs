@@ -914,6 +914,7 @@ mod tests {
         base_path: PathBuf,
     }
 
+    #[allow(clippy::manual_async_fn)] // The trait intentionally uses RPIT futures; keep the mock signature identical.
     impl EnvironmentInfra for MockInfra {
         type Config = ForgeConfig;
 

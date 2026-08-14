@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
 use config::ConfigBuilder;
@@ -92,12 +92,9 @@ impl ConfigReader {
     /// Resolution order:
     /// 1. For the canonical `helioslite` binary:
     ///    - `HELIOSLITE_HOME`, if set (rejected when it overlaps `~/.forge`).
-    ///    - `~/.forge` (legacy), if that directory exists — the data is
-    ///      honored and read in place and is never auto-migrated. The legacy
-    ///      dir keeps winning while present so an empty `~/.helioslite` stub
-    ///      can never shadow real data.
-    ///    - `~/.helioslite` (canonical data dir), as the default for fresh
-    ///      installs and after `~/.forge` has been moved away by a migration.
+    ///    - `~/.helioslite` as the isolated default, including when a legacy
+    ///      `~/.forge` directory exists. HeliosLite never reads or migrates
+    ///      Forge state implicitly.
     /// 2. For the legacy `forge` / `forge-dev` binaries:
     ///    - `FORGE_CONFIG` environment variable, if set.
     ///    - `~/forge` (historical legacy path), if that directory exists.
@@ -152,20 +149,11 @@ impl ConfigReader {
                 Self::validate_helioslite_home(&path, home)?;
                 return Ok(path);
             }
-            // Gate 5: legacy ~/.forge data is honored and read in place while
-            // it exists (never auto-migrated). It keeps winning so an empty
-            // ~/.helioslite stub can never shadow the real data; the canonical
-            // dir only becomes active after ~/.forge has been moved away by an
-            // explicit migration, or for fresh installs.
-            if let Some(home) = home {
-                let legacy = home.join(".forge");
-                if legacy.exists() {
-                    return Ok(legacy);
-                }
-            }
-            return Ok(home
+            let default = home
                 .unwrap_or_else(|| std::path::Path::new("."))
-                .join(".helioslite"));
+                .join(".helioslite");
+            Self::validate_helioslite_home(&default, home)?;
+            return Ok(default);
         }
 
         if let Some(path) = explicit_home {
@@ -192,7 +180,8 @@ impl ConfigReader {
         let Some(home) = home else {
             return Ok(());
         };
-        let forge_root = home.join(".forge");
+        let candidate = Self::canonicalize_for_overlap(candidate)?;
+        let forge_root = Self::canonicalize_for_overlap(&home.join(".forge"))?;
         if candidate == forge_root
             || candidate.starts_with(&forge_root)
             || forge_root.starts_with(candidate)
@@ -202,6 +191,50 @@ impl ConfigReader {
             )));
         }
         Ok(())
+    }
+
+    fn canonicalize_for_overlap(path: &Path) -> crate::Result<PathBuf> {
+        let absolute = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()?.join(path)
+        };
+        let absolute = Self::lexical_normalize(&absolute);
+        let mut ancestor = absolute.clone();
+        while !ancestor.exists() {
+            ancestor = ancestor
+                .parent()
+                .ok_or_else(|| {
+                    crate::Error::Config(config::ConfigError::Message(format!(
+                        "path has no existing ancestor: {}",
+                        absolute.display()
+                    )))
+                })?
+                .to_path_buf();
+        }
+        let canonical_ancestor = ancestor.canonicalize()?;
+        let suffix = absolute.strip_prefix(&ancestor).map_err(|_| {
+            crate::Error::Config(config::ConfigError::Message(format!(
+                "derive non-existent suffix for {} from {}",
+                absolute.display(),
+                ancestor.display()
+            )))
+        })?;
+        Ok(canonical_ancestor.join(suffix))
+    }
+
+    fn lexical_normalize(path: &Path) -> PathBuf {
+        let mut normalized = PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    normalized.pop();
+                }
+                component => normalized.push(component.as_os_str()),
+            }
+        }
+        normalized
     }
 
     fn config_path_for(binary_name: &str, root: &std::path::Path) -> PathBuf {
@@ -428,28 +461,40 @@ mod tests {
     }
 
     #[test]
-    fn test_base_path_canonical_binary_honors_legacy_forge_dir() {
-        // Gate 5: the legacy ~/.forge dir keeps winning while present, so an
-        // empty ~/.helioslite stub can never shadow real data.
+    fn test_base_path_canonical_binary_does_not_adopt_legacy_forge_dir() {
         let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG", "HELIOSLITE_HOME"]);
         let home = std::env::temp_dir().join(format!("hl-gate5-legacy-{}", std::process::id()));
         std::fs::create_dir_all(home.join(".forge")).unwrap();
         let actual = ConfigReader::resolve_base_path_for("helioslite", Some(&home), None).unwrap();
         std::fs::remove_dir_all(&home).ok();
-        assert_eq!(actual, home.join(".forge"));
+        assert_eq!(actual, home.join(".helioslite"));
     }
 
     #[test]
-    fn test_base_path_canonical_binary_legacy_forge_wins_while_present() {
-        // When both exist, ~/.forge must win: an empty ~/.helioslite stub
-        // must never shadow real legacy data.
+    fn helioslite_default_root_remains_independent_when_forge_exists() {
+        let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG", "HELIOSLITE_HOME"]);
+        let home = std::env::temp_dir().join(format!("hl-default-overlap-{}", std::process::id()));
+        std::fs::create_dir_all(home.join(".forge")).unwrap();
+
+        let actual = ConfigReader::resolve_base_path_for("helioslite", Some(&home), None);
+
+        std::fs::remove_dir_all(&home).ok();
+        assert_eq!(
+            actual.unwrap(),
+            home.join(".helioslite"),
+            "HeliosLite must not use the Forge root by default"
+        );
+    }
+
+    #[test]
+    fn test_base_path_canonical_binary_keeps_owned_root_when_both_exist() {
         let _guard = EnvGuard::set_and_remove(&[], &["FORGE_CONFIG", "HELIOSLITE_HOME"]);
         let home = std::env::temp_dir().join(format!("hl-gate5-canon-{}", std::process::id()));
         std::fs::create_dir_all(home.join(".helioslite")).unwrap();
         std::fs::create_dir_all(home.join(".forge")).unwrap();
         let actual = ConfigReader::resolve_base_path_for("helioslite", Some(&home), None).unwrap();
         std::fs::remove_dir_all(&home).ok();
-        assert_eq!(actual, home.join(".forge"));
+        assert_eq!(actual, home.join(".helioslite"));
     }
 
     #[test]
