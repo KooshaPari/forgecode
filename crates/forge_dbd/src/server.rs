@@ -14,18 +14,18 @@ use anyhow::{Context, Result};
 use forge_domain::{Conversation, ConversationId};
 use rusqlite::Connection;
 #[cfg(unix)]
-use tokio::net::{UnixListener, UnixStream};
+use tokio::net::UnixListener;
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::ServerOptions;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
-use tracing::{debug, error, info};
 #[cfg(unix)]
 use tracing::warn;
+use tracing::{debug, error, info};
 
-use forge_dbd::protocol::{HealthStatus, Request, Response};
 #[cfg(windows)]
 use forge_dbd::protocol::named_pipe_name;
+use forge_dbd::protocol::{HealthStatus, Request, Response};
 use forge_dbd::protocol::{read_frame, write_frame};
 
 // ---------------------------------------------------------------------------
@@ -58,9 +58,7 @@ fn db_reachable(db_path: &Path) -> bool {
         return false;
     }
     Connection::open(db_path)
-        .and_then(|conn| {
-            conn.query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))
-        })
+        .and_then(|conn| conn.query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0)))
         .map(|result| result == "ok")
         .unwrap_or(false)
 }
@@ -153,8 +151,7 @@ impl DbServer {
 
         let mut sigterm =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-        let mut sigint =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+        let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
         tokio::spawn(async move {
             tokio::select! {
                 _ = sigterm.recv() => { info!("SIGTERM received"); }
@@ -487,9 +484,9 @@ impl DbServer {
         for queued in batch.drain(..) {
             let resp = match Self::execute_with_conn(conn, &queued.request) {
                 Ok(resp) => resp,
-                Err(e) => Response::Error {
-                    message: format!("db error ({}): {e}", db_path.display()),
-                },
+                Err(e) => {
+                    Response::Error { message: format!("db error ({}): {e}", db_path.display()) }
+                }
             };
             let _ = queued.response_tx.send(resp);
         }
@@ -891,7 +888,10 @@ mod tests {
         // Deliberately do not connect: the server must self-terminate.
         sleep(Duration::from_millis(1200)).await;
 
-        assert!(handle.is_finished(), "server should have exited after idle timeout");
+        assert!(
+            handle.is_finished(),
+            "server should have exited after idle timeout"
+        );
         assert!(handle.await.expect("server task should not panic").is_ok());
         assert!(!sock.exists(), "socket should be unlinked on shutdown");
     }
@@ -911,7 +911,9 @@ mod tests {
         // (the handler sees EOF and the active-connection count returns to 0).
         {
             let mut stream = UnixStream::connect(&sock).await.expect("connect");
-            write_frame(&mut stream, &Request::Ping).await.expect("write ping");
+            write_frame(&mut stream, &Request::Ping)
+                .await
+                .expect("write ping");
             let resp: Response = read_frame(&mut stream).await.expect("read health");
             assert!(matches!(resp, Response::Health(_)));
         }
@@ -945,10 +947,7 @@ mod db_tests {
         let mut conn = None;
 
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        let mut batch = vec![QueuedRequest {
-            request: Request::CheckpointWal,
-            response_tx,
-        }];
+        let mut batch = vec![QueuedRequest { request: Request::CheckpointWal, response_tx }];
         DbServer::flush_batch(&mut batch, &mut conn, &db_path).await;
 
         // A stub Ack would acknowledge without creating a file; real execution
@@ -974,8 +973,8 @@ mod db_tests {
         let conversation = Conversation::generate().title("rt".to_string());
         let request = Request::UpsertConversationRef { conversation };
         let encoded = serde_json::to_vec(&request).unwrap();
-        let decoded: Request = serde_json::from_slice(&encoded)
-            .expect("json round-trip must succeed");
+        let decoded: Request =
+            serde_json::from_slice(&encoded).expect("json round-trip must succeed");
         assert!(matches!(decoded, Request::UpsertConversationRef { .. }));
     }
 
@@ -1049,24 +1048,24 @@ mod db_tests {
         create_conversations_schema(&conn);
 
         let context = Context::default().add_message(ContextMessage::user("hello", None));
-        let conversation = Conversation::generate().title("with context".to_string()).context(context);
+        let conversation = Conversation::generate()
+            .title("with context".to_string())
+            .context(context);
         let id = conversation.id;
         assert!(matches!(
-            DbServer::execute_with_conn(
-                &conn,
-                &Request::UpsertConversation { conversation }
-            )
-            .expect("upsert"),
+            DbServer::execute_with_conn(&conn, &Request::UpsertConversation { conversation })
+                .expect("upsert"),
             Response::Ack
         ));
 
-        let (context, message_count, updated_at, context_zstd, is_compressed): (
+        type ConversationStorageRow = (
             Option<String>,
             Option<i32>,
             Option<String>,
             Option<Vec<u8>>,
             i32,
-        ) = conn
+        );
+        let (context, message_count, updated_at, context_zstd, is_compressed): ConversationStorageRow = conn
             .query_row(
                 "SELECT context, message_count, updated_at, context_zstd, is_compressed \
                  FROM conversations WHERE conversation_id = ?1",
@@ -1085,8 +1084,14 @@ mod db_tests {
 
         assert!(context.is_some(), "context blob should be stored");
         assert_eq!(message_count, Some(1));
-        assert!(updated_at.is_some(), "updated_at should be stamped on write");
-        assert_eq!(context_zstd, None, "no zstd compression in this wiring pass");
+        assert!(
+            updated_at.is_some(),
+            "updated_at should be stamped on write"
+        );
+        assert_eq!(
+            context_zstd, None,
+            "no zstd compression in this wiring pass"
+        );
         assert_eq!(is_compressed, 0);
     }
 
@@ -1106,11 +1111,8 @@ mod db_tests {
         let conversation = Conversation::generate().title("to delete".to_string());
         let id = conversation.id;
         assert!(matches!(
-            DbServer::execute_with_conn(
-                &conn,
-                &Request::UpsertConversationRef { conversation }
-            )
-            .expect("upsert"),
+            DbServer::execute_with_conn(&conn, &Request::UpsertConversationRef { conversation })
+                .expect("upsert"),
             Response::Ack
         ));
 
@@ -1148,11 +1150,8 @@ mod db_tests {
         let conversation = Conversation::generate().title("child".to_string());
         let id = conversation.id;
         assert!(matches!(
-            DbServer::execute_with_conn(
-                &conn,
-                &Request::UpsertConversationRef { conversation }
-            )
-            .expect("upsert"),
+            DbServer::execute_with_conn(&conn, &Request::UpsertConversationRef { conversation })
+                .expect("upsert"),
             Response::Ack
         ));
 
@@ -1160,10 +1159,7 @@ mod db_tests {
         assert!(matches!(
             DbServer::execute_with_conn(
                 &conn,
-                &Request::UpdateParentId {
-                    conversation_id: id,
-                    new_parent_id: Some(parent),
-                }
+                &Request::UpdateParentId { conversation_id: id, new_parent_id: Some(parent) }
             )
             .expect("set parent"),
             Response::Ack
@@ -1181,10 +1177,7 @@ mod db_tests {
         assert!(matches!(
             DbServer::execute_with_conn(
                 &conn,
-                &Request::UpdateParentId {
-                    conversation_id: id,
-                    new_parent_id: None,
-                }
+                &Request::UpdateParentId { conversation_id: id, new_parent_id: None }
             )
             .expect("clear parent"),
             Response::Ack
@@ -1211,9 +1204,7 @@ mod db_tests {
 
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         let mut batch = vec![QueuedRequest {
-            request: Request::DeleteConversation {
-                conversation_id: ConversationId::default(),
-            },
+            request: Request::DeleteConversation { conversation_id: ConversationId::default() },
             response_tx,
         }];
         DbServer::flush_batch(&mut batch, &mut conn, &db_path).await;
@@ -1322,7 +1313,10 @@ mod windows_tests {
         // Deliberately do not connect: the server must self-terminate.
         sleep(Duration::from_millis(1200)).await;
 
-        assert!(handle.is_finished(), "server should have exited after idle timeout");
+        assert!(
+            handle.is_finished(),
+            "server should have exited after idle timeout"
+        );
         assert!(handle.await.expect("server task should not panic").is_ok());
     }
 }
