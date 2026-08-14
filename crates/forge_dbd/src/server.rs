@@ -627,19 +627,11 @@ impl DbServer {
         full: bool,
         workspace_id: Option<i64>,
     ) -> Result<()> {
-        // Only conversations with messages (or an initiator) get a context
-        // blob; tombstone conversations keep NULL, matching ConversationRecord.
-        let context_json = conversation
-            .context
-            .as_ref()
-            .filter(|ctx| !ctx.messages.is_empty() || ctx.initiator.is_some())
-            .map(serde_json::to_string)
-            .transpose()?;
-        let message_count = conversation
-            .context
-            .as_ref()
-            .filter(|ctx| !ctx.messages.is_empty() || ctx.initiator.is_some())
-            .map(|ctx| ctx.messages.len() as i32);
+        // Keep the daemon's wire bytes identical to forge_repo's direct
+        // writer, including the legacy ContextRecord envelope and its
+        // compressed-column fallback.
+        let persisted_context =
+            forge_dbd::conversation_storage::persist_context(conversation.context.as_ref());
 
         let conversation_value = serde_json::to_value(conversation)?;
         let created_at = conversation_value
@@ -689,7 +681,7 @@ impl DbServer {
                  ) VALUES (\
                      ?, ?, ?, ?, ?, \
                      strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?, ?, ?, ?, ?, \
-                     'pending', NULL, NULL, NULL, NULL, 0\
+                     'pending', NULL, NULL, NULL, ?, ?\
                  )\
                  ON CONFLICT(conversation_id) DO UPDATE SET {update_set}",
             ),
@@ -697,13 +689,15 @@ impl DbServer {
                 conversation.id.into_string(),
                 conversation.title.clone(),
                 workspace_id,
-                context_json,
+                persisted_context.context,
                 created_at,
                 metrics,
                 conversation.parent_id.map(|id| id.into_string()),
                 conversation.source.clone(),
                 conversation.cwd.clone(),
-                message_count,
+                persisted_context.message_count,
+                persisted_context.context_zstd,
+                persisted_context.is_compressed,
             ],
         )?;
         Ok(())
@@ -1076,10 +1070,10 @@ mod db_tests {
         assert_eq!(title.as_deref(), Some("second title"));
     }
 
-    /// The full upsert stores the serialised context, stamps `updated_at`, and
-    /// leaves the compression columns at their uncompressed defaults.
+    /// The full upsert stores the legacy context wire in zstd form, stamps
+    /// `updated_at`, and mirrors forge_repo's compression columns exactly.
     #[test]
-    fn upsert_conversation_with_context_stores_context_and_timestamps() {
+    fn upsert_conversation_with_context_stores_compressed_context_and_timestamps() {
         let dir = TempDir::new().unwrap();
         let conn = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
         create_conversations_schema(&conn);
@@ -1122,17 +1116,67 @@ mod db_tests {
             )
             .unwrap();
 
-        assert!(context.is_some(), "context blob should be stored");
+        assert_eq!(context, None, "compressed rows leave context NULL");
         assert_eq!(message_count, Some(1));
         assert!(
             updated_at.is_some(),
             "updated_at should be stamped on write"
         );
+        let compressed = context_zstd.expect("full upsert must persist zstd context");
+        let decompressed = zstd::decode_all(compressed.as_slice()).expect("valid zstd context");
+        let actual = String::from_utf8(decompressed).expect("UTF-8 context");
         assert_eq!(
-            context_zstd, None,
-            "no zstd compression in this wiring pass"
+            actual,
+            r#"{"messages":[{"message":{"text":{"role":"User","content":"hello"}}}]}"#
         );
-        assert_eq!(is_compressed, 0);
+        assert_eq!(is_compressed, 1);
+    }
+
+    /// A reference upsert inserts compression fields for a new row, but on
+    /// conflict intentionally preserves the existing compressed payload.
+    #[test]
+    fn upsert_conversation_ref_conflict_preserves_compression_fields() {
+        let dir = TempDir::new().unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
+        create_conversations_schema(&conn);
+
+        let fixture = Conversation::generate()
+            .context(Context::default().add_message(ContextMessage::user("first", None)));
+        let id = fixture.id;
+        DbServer::execute_with_conn(
+            &conn,
+            &Request::UpsertConversation { conversation: fixture.clone() },
+        )
+        .expect("initial full upsert");
+
+        let before: (Option<String>, Option<Vec<u8>>, i32) = conn
+            .query_row(
+                "SELECT context, context_zstd, is_compressed FROM conversations \
+                 WHERE conversation_id = ?1",
+                [id.into_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+
+        let updated =
+            fixture.context(Context::default().add_message(ContextMessage::user("second", None)));
+        DbServer::execute_with_conn(
+            &conn,
+            &Request::UpsertConversationRef { conversation: updated },
+        )
+        .expect("reference conflict upsert");
+
+        let actual: (Option<String>, Option<Vec<u8>>, i32) = conn
+            .query_row(
+                "SELECT context, context_zstd, is_compressed FROM conversations \
+                 WHERE conversation_id = ?1",
+                [id.into_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(actual.0, None);
+        assert_eq!(actual.1, before.1);
+        assert_eq!(actual.2, before.2);
     }
 
     /// A delete request must not remove an identically-addressed conversation

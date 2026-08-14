@@ -979,28 +979,11 @@ impl ConversationRecord {
         conversation: forge_domain::Conversation,
         workspace_id: forge_domain::WorkspaceHash,
     ) -> Self {
-        let context_json = conversation
-            .context
-            .as_ref()
-            .filter(|ctx| !ctx.messages.is_empty() || ctx.initiator.is_some())
-            .map(ContextRecord::from)
-            .and_then(|ctx_record| serde_json::to_string(&ctx_record).ok());
-
-        // Compress context on write (transparent zstd compression)
-        let (context, context_zstd, is_compressed) = if let Some(json) = context_json {
-            match codec::compress(&json) {
-                Ok(compressed) => {
-                    // Store compressed data; context remains None for compressed rows
-                    (None, Some(compressed), 1)
-                }
-                Err(_) => {
-                    // Fallback: store uncompressed if compression fails
-                    (Some(json), None, 0)
-                }
-            }
-        } else {
-            (None, None, 0)
-        };
+        let persisted_context =
+            forge_dbd::conversation_storage::persist_context(conversation.context.as_ref());
+        let context = persisted_context.context;
+        let context_zstd = persisted_context.context_zstd;
+        let is_compressed = persisted_context.is_compressed;
 
         let updated_at = if context.is_some() || context_zstd.is_some() {
             Some(chrono::Utc::now().naive_utc())
@@ -1013,11 +996,7 @@ impl ConversationRecord {
         // written once at upsert time. `context.as_ref().map(...)` returns
         // `None` for tombstone conversations (no Context blob), and we
         // leave the column NULL in that case.
-        let message_count = conversation
-            .context
-            .as_ref()
-            .filter(|ctx| !ctx.messages.is_empty() || ctx.initiator.is_some())
-            .map(|ctx| ctx.messages.len() as i32);
+        let message_count = persisted_context.message_count;
 
         Self {
             conversation_id: conversation.id.into_string(),
@@ -1056,28 +1035,11 @@ impl ConversationRecord {
         conversation: &forge_domain::Conversation,
         workspace_id: forge_domain::WorkspaceHash,
     ) -> Self {
-        let context_json = conversation
-            .context
-            .as_ref()
-            .filter(|ctx| !ctx.messages.is_empty() || ctx.initiator.is_some())
-            .map(ContextRecord::from)
-            .and_then(|ctx_record| serde_json::to_string(&ctx_record).ok());
-
-        // Compress context on write (transparent zstd compression)
-        let (context, context_zstd, is_compressed) = if let Some(json) = context_json {
-            match codec::compress(&json) {
-                Ok(compressed) => {
-                    // Store compressed data; context remains None for compressed rows
-                    (None, Some(compressed), 1)
-                }
-                Err(_) => {
-                    // Fallback: store uncompressed if compression fails
-                    (Some(json), None, 0)
-                }
-            }
-        } else {
-            (None, None, 0)
-        };
+        let persisted_context =
+            forge_dbd::conversation_storage::persist_context(conversation.context.as_ref());
+        let context = persisted_context.context;
+        let context_zstd = persisted_context.context_zstd;
+        let is_compressed = persisted_context.is_compressed;
 
         let updated_at = if context.is_some() || context_zstd.is_some() {
             Some(chrono::Utc::now().naive_utc())
@@ -1086,11 +1048,7 @@ impl ConversationRecord {
         };
         let metrics_record = MetricsRecord::from(&conversation.metrics);
         let metrics = serde_json::to_string(&metrics_record).ok();
-        let message_count = conversation
-            .context
-            .as_ref()
-            .filter(|ctx| !ctx.messages.is_empty() || ctx.initiator.is_some())
-            .map(|ctx| ctx.messages.len() as i32);
+        let message_count = persisted_context.message_count;
 
         Self {
             conversation_id: conversation.id.into_string(),
