@@ -113,7 +113,15 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 .do_update()
                 .set((
                     conversations::title.eq(&record.title),
-                    conversations::context.eq(&record.context),
+                    // A ref write persists its context in `excluded.context_zstd`.
+                    // Its NULL plain column must not erase a readable legacy row
+                    // while this conflict path deliberately preserves the existing
+                    // compression columns.
+                    conversations::context.eq(diesel::dsl::sql::<
+                        diesel::sql_types::Nullable<diesel::sql_types::Text>,
+                    >(
+                        "COALESCE(excluded.context, context)"
+                    )),
                     conversations::updated_at.eq(record.updated_at),
                     conversations::metrics.eq(&record.metrics),
                     conversations::parent_id.eq(&record.parent_id),
@@ -1905,6 +1913,48 @@ mod tests {
         let actual = repo.get_conversation(&fixture.id).await?;
         assert!(actual.is_some());
         assert_eq!(actual.unwrap().title, Some("Updated Title".to_string()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ref_upsert_preserves_existing_plain_context_when_incoming_context_is_compressed()
+    -> anyhow::Result<()> {
+        let repo = repository()?;
+        let legacy_context =
+            Context::default().messages(vec![ContextMessage::user("legacy context", None).into()]);
+        let conversation = Conversation::new(ConversationId::generate())
+            .title(Some("legacy context row".to_string()))
+            .context(Some(legacy_context.clone()));
+
+        repo.upsert_conversation(conversation.clone()).await?;
+
+        // Model an existing pre-compression row. A ref write must not clear this
+        // payload merely because its new-format context lives in context_zstd.
+        let legacy_json = serde_json::to_string(&ContextRecord::from(&legacy_context))?;
+        let conversation_id = conversation.id.into_string();
+        repo.run_with_connection(move |connection, _wid| {
+            diesel::sql_query(
+                "UPDATE conversations \
+                 SET context = ?, context_zstd = NULL, is_compressed = 0 \
+                 WHERE conversation_id = ?",
+            )
+            .bind::<diesel::sql_types::Text, _>(&legacy_json)
+            .bind::<diesel::sql_types::Text, _>(&conversation_id)
+            .execute(connection)?;
+            Ok(())
+        })
+        .await?;
+
+        let incoming_context = Context::default()
+            .messages(vec![ContextMessage::user("incoming context", None).into()]);
+        let incoming = Conversation::new(conversation.id).context(Some(incoming_context));
+        repo.upsert_conversation_ref(&incoming).await?;
+
+        let stored = repo
+            .get_conversation(&conversation.id)
+            .await?
+            .expect("the existing conversation must remain readable");
+        assert_eq!(stored.context, Some(legacy_context));
         Ok(())
     }
 

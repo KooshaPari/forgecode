@@ -13,7 +13,7 @@ use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 
 #[cfg(windows)]
 use crate::protocol::named_pipe_name;
-use crate::protocol::{HealthStatus, Request, Response};
+use crate::protocol::{HealthStatus, MUTATION_PROTOCOL_VERSION, Request, Response};
 use crate::protocol::{read_frame, write_frame};
 
 /// Client for the `forge_dbd` daemon.
@@ -87,20 +87,42 @@ impl DbClient {
 
         #[cfg(unix)]
         {
-            let _ = UnixStream::connect(&socket_path).await.with_context(|| {
+            let mut stream = UnixStream::connect(&socket_path).await.with_context(|| {
                 format!("cannot connect to forge_dbd at {}", socket_path.display())
             })?;
+            Self::verify_mutation_protocol(&mut stream).await?;
         }
 
         #[cfg(windows)]
         {
             let pipe_name = named_pipe_name(&socket_path);
-            let _ = Self::open_pipe(&pipe_name)
+            let mut stream = Self::open_pipe(&pipe_name)
                 .await
                 .with_context(|| format!("cannot connect to forge_dbd at {pipe_name}"))?;
+            Self::verify_mutation_protocol(&mut stream).await?;
         }
 
         Ok(Self { socket_path })
+    }
+
+    /// Verify that a daemon supports the scoped mutation envelope before a
+    /// caller sends any database-changing request.
+    async fn verify_mutation_protocol<S>(stream: &mut S) -> Result<()>
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    {
+        match Self::request_response(stream, Request::Ping).await? {
+            Response::Health(status) if status.protocol_version >= MUTATION_PROTOCOL_VERSION => {
+                Ok(())
+            }
+            Response::Health(status) => bail!(
+                "forge_dbd protocol v{} is too old for scoped mutations (requires v{})",
+                status.protocol_version,
+                MUTATION_PROTOCOL_VERSION,
+            ),
+            Response::Error { message } => bail!("forge_dbd protocol probe failed: {message}"),
+            other => bail!("unexpected response to protocol probe: {other:?}"),
+        }
     }
 
     /// Send `request` to the daemon and return the response.
@@ -210,6 +232,8 @@ impl DbClient {
 mod tests {
     use super::{DbClient, DbClientSendError};
     use crate::protocol::Request;
+    #[cfg(unix)]
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[cfg(unix)]
     fn test_socket_path(label: &str) -> std::path::PathBuf {
@@ -262,5 +286,56 @@ mod tests {
         std::fs::remove_file(socket_path).expect("test socket is removable");
 
         assert!(matches!(error, DbClientSendError::Indeterminate(_)));
+    }
+
+    /// A client must refuse an older daemon before it sends a mutation. Older
+    /// daemons report a Health frame without the protocol-version field, so
+    /// the caller can safely choose its direct-storage fallback.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rejects_legacy_daemon_during_non_mutating_protocol_probe() {
+        let socket_path = test_socket_path("legacy-protocol");
+        let listener =
+            tokio::net::UnixListener::bind(&socket_path).expect("test socket listener binds");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("client connects");
+
+            let mut len = [0u8; 4];
+            stream
+                .read_exact(&mut len)
+                .await
+                .expect("read probe length");
+            let mut request = vec![0; u32::from_le_bytes(len) as usize];
+            stream
+                .read_exact(&mut request)
+                .await
+                .expect("read probe request");
+            assert!(
+                request
+                    .windows(b"Ping".len())
+                    .any(|window| window == b"Ping")
+            );
+
+            // Exact v1 Health JSON: no protocol_version field.
+            let response =
+                br#"{\"Health\":{\"uptime_secs\":0,\"queue_depth\":0,\"db_reachable\":true}}"#;
+            stream
+                .write_all(&(response.len() as u32).to_le_bytes())
+                .await
+                .expect("write legacy response length");
+            stream
+                .write_all(response)
+                .await
+                .expect("write legacy response");
+        });
+
+        let actual = DbClient::connect(&socket_path).await;
+        server.await.expect("legacy server completes");
+        std::fs::remove_file(socket_path).expect("test socket is removable");
+
+        assert!(
+            actual.is_err(),
+            "legacy protocol must be rejected before mutation"
+        );
     }
 }

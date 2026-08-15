@@ -11,8 +11,26 @@ use forge_domain::{Conversation, ConversationId};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+/// Minimum protocol version required before a client may send a mutation.
+///
+/// Version two adds the caller-owned workspace identity to every mutation.
+/// The daemon must never infer that identity from its inherited current
+/// directory because the default socket is shared by independently launched
+/// workspace processes.
+pub const MUTATION_PROTOCOL_VERSION: u16 = 2;
+
+/// The version implicitly reported by a Health response that predates the
+/// explicit `protocol_version` field.
+pub const LEGACY_PROTOCOL_VERSION: u16 = 1;
+
+/// A conversation mutation whose authorization scope is supplied by the
+/// client that owns the workspace.
+///
+/// This is deliberately nested under [`Request::MutationV2`]. Older daemons
+/// reject the unknown outer enum tag before they can execute a legacy
+/// mutation, rather than silently ignoring an added workspace field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Request {
+pub enum ConversationMutation {
     UpsertConversation {
         conversation: Conversation,
     },
@@ -25,7 +43,32 @@ pub enum Request {
     },
     DeleteConversation {
         conversation_id: ConversationId,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Request {
+    /// Legacy unscoped mutation forms. New daemons reject these without
+    /// executing them; they remain decodable for source and wire compatibility
+    /// with v1 peers.
+    UpsertConversation {
+        conversation: Conversation,
+    },
+    UpsertConversationRef {
+        conversation: Conversation,
+    },
+    UpdateParentId {
+        conversation_id: ConversationId,
+        new_parent_id: Option<ConversationId>,
+    },
+    DeleteConversation {
+        conversation_id: ConversationId,
+    },
+    /// Versioned mutation envelope. The caller must complete the non-mutating
+    /// health negotiation before it sends this variant.
+    MutationV2 {
         workspace_id: i64,
+        mutation: ConversationMutation,
     },
     OptimizeFts,
     RefreshFts,
@@ -37,12 +80,20 @@ pub enum Request {
 /// Status returned by a [`Request::Ping`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthStatus {
+    /// Protocol version supported by this daemon. Missing on an older daemon
+    /// decodes as version one so new clients can reject it before mutation.
+    #[serde(default = "legacy_protocol_version")]
+    pub protocol_version: u16,
     /// Seconds the daemon has been running.
     pub uptime_secs: u64,
     /// Number of write requests currently queued (not yet flushed to disk).
     pub queue_depth: usize,
     /// Whether the database file/path is reachable (existence check for now).
     pub db_reachable: bool,
+}
+
+fn legacy_protocol_version() -> u16 {
+    LEGACY_PROTOCOL_VERSION
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

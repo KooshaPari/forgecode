@@ -25,7 +25,9 @@ use tracing::{debug, error, info};
 
 #[cfg(windows)]
 use forge_dbd::protocol::named_pipe_name;
-use forge_dbd::protocol::{HealthStatus, Request, Response};
+use forge_dbd::protocol::{
+    ConversationMutation, HealthStatus, MUTATION_PROTOCOL_VERSION, Request, Response,
+};
 use forge_dbd::protocol::{read_frame, write_frame};
 
 // ---------------------------------------------------------------------------
@@ -43,6 +45,7 @@ pub(crate) struct DaemonState {
 impl DaemonState {
     fn health(&self) -> HealthStatus {
         HealthStatus {
+            protocol_version: MUTATION_PROTOCOL_VERSION,
             uptime_secs: self.started_at.elapsed().as_secs(),
             queue_depth: self.queue_depth.load(Ordering::Relaxed),
             db_reachable: db_reachable(&self.db_path),
@@ -532,35 +535,44 @@ impl DbServer {
                 conn.execute_batch("PRAGMA optimize;")?;
                 Ok(Response::Ack)
             }
-            Request::UpsertConversation { conversation } => {
-                Self::upsert_conversation(conn, conversation, true)?;
-                Ok(Response::Ack)
-            }
-            Request::UpsertConversationRef { conversation } => {
-                Self::upsert_conversation(conn, conversation, false)?;
-                Ok(Response::Ack)
-            }
-            Request::UpdateParentId { conversation_id, new_parent_id } => {
-                // Mirrors forge_repo's update_parent_id exactly: no workspace
-                // filter, parent_id + updated_at only.
-                conn.execute(
-                    "UPDATE conversations SET parent_id = ?, \
+            Request::MutationV2 { workspace_id, mutation } => match mutation {
+                ConversationMutation::UpsertConversation { conversation } => {
+                    Self::upsert_conversation(conn, conversation, *workspace_id, true)?;
+                    Ok(Response::Ack)
+                }
+                ConversationMutation::UpsertConversationRef { conversation } => {
+                    Self::upsert_conversation(conn, conversation, *workspace_id, false)?;
+                    Ok(Response::Ack)
+                }
+                ConversationMutation::UpdateParentId { conversation_id, new_parent_id } => {
+                    conn.execute(
+                        "UPDATE conversations SET parent_id = ?, \
                      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') \
-                     WHERE conversation_id = ?",
-                    rusqlite::params![
-                        new_parent_id.as_ref().map(ConversationId::into_string),
-                        conversation_id.into_string()
-                    ],
-                )?;
-                Ok(Response::Ack)
-            }
-            Request::DeleteConversation { conversation_id, workspace_id } => {
-                conn.execute(
-                    "DELETE FROM conversations WHERE conversation_id = ? AND workspace_id = ?",
-                    rusqlite::params![conversation_id.into_string(), workspace_id],
-                )?;
-                Ok(Response::Ack)
-            }
+                     WHERE conversation_id = ? AND workspace_id = ?",
+                        rusqlite::params![
+                            new_parent_id.as_ref().map(ConversationId::into_string),
+                            conversation_id.into_string(),
+                            workspace_id,
+                        ],
+                    )?;
+                    Ok(Response::Ack)
+                }
+                ConversationMutation::DeleteConversation { conversation_id } => {
+                    conn.execute(
+                        "DELETE FROM conversations WHERE conversation_id = ? AND workspace_id = ?",
+                        rusqlite::params![conversation_id.into_string(), workspace_id],
+                    )?;
+                    Ok(Response::Ack)
+                }
+            },
+            Request::UpsertConversation { .. }
+            | Request::UpsertConversationRef { .. }
+            | Request::UpdateParentId { .. }
+            | Request::DeleteConversation { .. } => Ok(Response::Error {
+                message: format!(
+                    "legacy unscoped mutation rejected; negotiate protocol v{MUTATION_PROTOCOL_VERSION}"
+                ),
+            }),
             Request::Ping => Ok(Response::Error {
                 message: "Ping is answered inline by the connection handler, \
                           not by the batch writer"
@@ -577,16 +589,13 @@ impl DbServer {
     /// leaves those compression columns untouched).
     ///
     /// Values are derived from the domain [`Conversation`] the same way
-    /// `ConversationRecord::new` / `new_ref` derive them. Two deliberate
-    /// simplifications for this wiring pass, both readable by the app:
-    /// - `context` is stored as plain JSON (no zstd), so `context_zstd` stays
-    ///   NULL and `is_compressed` stays 0.
-    /// - `created_at` is the client-supplied RFC3339 timestamp, which diesel's
-    ///   SQLite timestamp reader accepts (`%FT%T%.fZ`); `updated_at` is
-    ///   stamped in SQL via `strftime`.
+    /// `ConversationRecord::new` / `new_ref` derive them. Context uses the
+    /// shared legacy zstd encoder, and `created_at` remains the client-supplied
+    /// RFC3339 timestamp while `updated_at` is stamped in SQL via `strftime`.
     fn upsert_conversation(
         conn: &Connection,
         conversation: &Conversation,
+        workspace_id: i64,
         full: bool,
     ) -> Result<()> {
         // Keep the daemon's wire bytes identical to forge_repo's direct
@@ -646,7 +655,7 @@ impl DbServer {
             rusqlite::params![
                 conversation.id.into_string(),
                 conversation.title.clone(),
-                Self::workspace_id(),
+                workspace_id,
                 persisted_context.context,
                 created_at,
                 metrics,
@@ -659,26 +668,6 @@ impl DbServer {
             ],
         )?;
         Ok(())
-    }
-
-    /// The workspace id the daemon writes under.
-    ///
-    /// forge_app passes `env.workspace_hash().id() as i64` into the
-    /// ConversationRepository (forge_repo.rs). The daemon recomputes the same
-    /// value from its own environment: `Environment::workspace_hash` hashes
-    /// the cwd with a zero-seed `DefaultHasher`, so it is deterministic
-    /// across processes for the same cwd (the daemon is spawned by the first
-    /// client, so it inherits the client's cwd).
-    fn workspace_id() -> i64 {
-        let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let env = forge_domain::Environment {
-            os: std::env::consts::OS.to_string(),
-            cwd: std::env::current_dir().unwrap_or_else(|_| home.clone()),
-            home: Some(home.clone()),
-            shell: std::env::var("SHELL").unwrap_or_default(),
-            base_path: home.join(".forge"),
-        };
-        env.workspace_hash().id() as i64
     }
 }
 
@@ -921,10 +910,17 @@ mod tests {
 
 #[cfg(test)]
 mod db_tests {
+    use forge_dbd::protocol::ConversationMutation;
     use forge_domain::{Context, ContextMessage, Conversation, ConversationId};
     use tempfile::TempDir;
 
     use super::*;
+
+    const TEST_WORKSPACE: i64 = 42;
+
+    fn scoped(workspace_id: i64, mutation: ConversationMutation) -> Request {
+        Request::MutationV2 { workspace_id, mutation }
+    }
 
     #[tokio::test]
     async fn flush_batch_performs_real_sqlite_work() {
@@ -957,11 +953,14 @@ mod db_tests {
     #[test]
     fn json_round_trip_conversation_request() {
         let conversation = Conversation::generate().title("rt".to_string());
-        let request = Request::UpsertConversationRef { conversation };
+        let request = scoped(
+            TEST_WORKSPACE,
+            ConversationMutation::UpsertConversationRef { conversation },
+        );
         let encoded = serde_json::to_vec(&request).unwrap();
         let decoded: Request =
             serde_json::from_slice(&encoded).expect("json round-trip must succeed");
-        assert!(matches!(decoded, Request::UpsertConversationRef { .. }));
+        assert!(matches!(decoded, Request::MutationV2 { .. }));
     }
 
     /// Upsert inserts a new row and, on the same conversation_id, updates it
@@ -977,7 +976,12 @@ mod db_tests {
         assert!(matches!(
             DbServer::execute_with_conn(
                 &conn,
-                &Request::UpsertConversationRef { conversation: conversation.clone() }
+                &scoped(
+                    TEST_WORKSPACE,
+                    ConversationMutation::UpsertConversationRef {
+                        conversation: conversation.clone(),
+                    },
+                )
             )
             .expect("upsert"),
             Response::Ack
@@ -992,7 +996,7 @@ mod db_tests {
             )
             .unwrap();
         assert_eq!(title.as_deref(), Some("first title"));
-        assert_eq!(workspace_id, DbServer::workspace_id());
+        assert_eq!(workspace_id, TEST_WORKSPACE);
         assert_eq!(message_count, None);
 
         // Same conversation_id on conflict → the row updates in place.
@@ -1000,7 +1004,10 @@ mod db_tests {
         assert!(matches!(
             DbServer::execute_with_conn(
                 &conn,
-                &Request::UpsertConversationRef { conversation: updated }
+                &scoped(
+                    TEST_WORKSPACE,
+                    ConversationMutation::UpsertConversationRef { conversation: updated },
+                )
             )
             .expect("upsert on conflict"),
             Response::Ack
@@ -1039,8 +1046,14 @@ mod db_tests {
             .context(context);
         let id = conversation.id;
         assert!(matches!(
-            DbServer::execute_with_conn(&conn, &Request::UpsertConversation { conversation })
-                .expect("upsert"),
+            DbServer::execute_with_conn(
+                &conn,
+                &scoped(
+                    TEST_WORKSPACE,
+                    ConversationMutation::UpsertConversation { conversation },
+                ),
+            )
+            .expect("upsert"),
             Response::Ack
         ));
 
@@ -1097,7 +1110,10 @@ mod db_tests {
         let id = fixture.id;
         DbServer::execute_with_conn(
             &conn,
-            &Request::UpsertConversation { conversation: fixture.clone() },
+            &scoped(
+                TEST_WORKSPACE,
+                ConversationMutation::UpsertConversation { conversation: fixture.clone() },
+            ),
         )
         .expect("initial full upsert");
 
@@ -1114,7 +1130,10 @@ mod db_tests {
             fixture.context(Context::default().add_message(ContextMessage::user("second", None)));
         DbServer::execute_with_conn(
             &conn,
-            &Request::UpsertConversationRef { conversation: updated },
+            &scoped(
+                TEST_WORKSPACE,
+                ConversationMutation::UpsertConversationRef { conversation: updated },
+            ),
         )
         .expect("reference conflict upsert");
 
@@ -1142,12 +1161,18 @@ mod db_tests {
         let conversation = Conversation::generate().title("to delete".to_string());
         let id = conversation.id;
         assert!(matches!(
-            DbServer::execute_with_conn(&conn, &Request::UpsertConversationRef { conversation })
-                .expect("upsert"),
+            DbServer::execute_with_conn(
+                &conn,
+                &scoped(
+                    TEST_WORKSPACE,
+                    ConversationMutation::UpsertConversationRef { conversation },
+                ),
+            )
+            .expect("upsert"),
             Response::Ack
         ));
 
-        let other_workspace_id = DbServer::workspace_id() + 1;
+        let other_workspace_id = TEST_WORKSPACE + 1;
         conn.execute(
             "UPDATE conversations SET workspace_id = ?1 WHERE conversation_id = ?2",
             rusqlite::params![other_workspace_id, id.into_string()],
@@ -1157,10 +1182,10 @@ mod db_tests {
         assert!(matches!(
             DbServer::execute_with_conn(
                 &conn,
-                &Request::DeleteConversation {
-                    conversation_id: id,
-                    workspace_id: DbServer::workspace_id(),
-                }
+                &scoped(
+                    TEST_WORKSPACE,
+                    ConversationMutation::DeleteConversation { conversation_id: id },
+                )
             )
             .expect("delete"),
             Response::Ack
@@ -1172,8 +1197,59 @@ mod db_tests {
         assert_eq!(total, 1, "row from the other workspace must remain");
     }
 
-    /// update_parent_id mirrors forge_repo: it sets parent_id (and stamps
-    /// updated_at) on the matching conversation_id with no workspace filter.
+    /// Mutations carry workspace identity from their client instead of using
+    /// the daemon process CWD. A shared socket can therefore serve A and B
+    /// without assigning B's rows to A or letting B delete A's row.
+    #[test]
+    fn workspace_scoped_mutations_isolate_shared_daemon_clients() {
+        let dir = TempDir::new().unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
+        create_conversations_schema(&conn);
+
+        let workspace_a = 101;
+        let workspace_b = 202;
+        let conversation_a = Conversation::generate().title("workspace A".to_string());
+        let conversation_b = Conversation::generate().title("workspace B".to_string());
+        let id_a = conversation_a.id;
+        let id_b = conversation_b.id;
+
+        for (workspace_id, conversation) in
+            [(workspace_a, conversation_a), (workspace_b, conversation_b)]
+        {
+            let request = Request::MutationV2 {
+                workspace_id,
+                mutation: ConversationMutation::UpsertConversationRef { conversation },
+            };
+            assert!(matches!(
+                DbServer::execute_with_conn(&conn, &request).expect("upsert"),
+                Response::Ack
+            ));
+        }
+
+        let delete_b = Request::MutationV2 {
+            workspace_id: workspace_b,
+            mutation: ConversationMutation::DeleteConversation { conversation_id: id_b },
+        };
+        assert!(matches!(
+            DbServer::execute_with_conn(&conn, &delete_b).expect("delete"),
+            Response::Ack
+        ));
+
+        let actual: Vec<(String, i64)> = conn
+            .prepare(
+                "SELECT conversation_id, workspace_id FROM conversations ORDER BY workspace_id",
+            )
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let expected = vec![(id_a.into_string(), workspace_a)];
+        assert_eq!(actual, expected);
+    }
+
+    /// update_parent_id updates only the caller's workspace row and stamps
+    /// its updated_at value.
     #[test]
     fn update_parent_id_sets_and_clears_parent() {
         let dir = TempDir::new().unwrap();
@@ -1183,8 +1259,14 @@ mod db_tests {
         let conversation = Conversation::generate().title("child".to_string());
         let id = conversation.id;
         assert!(matches!(
-            DbServer::execute_with_conn(&conn, &Request::UpsertConversationRef { conversation })
-                .expect("upsert"),
+            DbServer::execute_with_conn(
+                &conn,
+                &scoped(
+                    TEST_WORKSPACE,
+                    ConversationMutation::UpsertConversationRef { conversation },
+                ),
+            )
+            .expect("upsert"),
             Response::Ack
         ));
 
@@ -1192,7 +1274,13 @@ mod db_tests {
         assert!(matches!(
             DbServer::execute_with_conn(
                 &conn,
-                &Request::UpdateParentId { conversation_id: id, new_parent_id: Some(parent) }
+                &scoped(
+                    TEST_WORKSPACE,
+                    ConversationMutation::UpdateParentId {
+                        conversation_id: id,
+                        new_parent_id: Some(parent),
+                    },
+                )
             )
             .expect("set parent"),
             Response::Ack
@@ -1210,7 +1298,13 @@ mod db_tests {
         assert!(matches!(
             DbServer::execute_with_conn(
                 &conn,
-                &Request::UpdateParentId { conversation_id: id, new_parent_id: None }
+                &scoped(
+                    TEST_WORKSPACE,
+                    ConversationMutation::UpdateParentId {
+                        conversation_id: id,
+                        new_parent_id: None,
+                    },
+                )
             )
             .expect("clear parent"),
             Response::Ack
@@ -1237,10 +1331,12 @@ mod db_tests {
 
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         let mut batch = vec![QueuedRequest {
-            request: Request::DeleteConversation {
-                conversation_id: ConversationId::default(),
-                workspace_id: DbServer::workspace_id(),
-            },
+            request: scoped(
+                TEST_WORKSPACE,
+                ConversationMutation::DeleteConversation {
+                    conversation_id: ConversationId::default(),
+                },
+            ),
             response_tx,
         }];
         DbServer::flush_batch(&mut batch, &mut conn, &db_path).await;
@@ -1271,6 +1367,7 @@ mod windows_tests {
 
     use super::*;
     use forge_dbd::client::DbClient;
+    use forge_dbd::protocol::ConversationMutation;
 
     fn tmp_paths(dir: &TempDir) -> (PathBuf, PathBuf) {
         // Include the pid in the socket path so the derived pipe name is
@@ -1318,7 +1415,10 @@ mod windows_tests {
         let conversation = Conversation::generate().title("windows pipe test".to_string());
         let id = conversation.id;
         let resp = client
-            .send(Request::UpsertConversationRef { conversation })
+            .send(Request::MutationV2 {
+                workspace_id: 42,
+                mutation: ConversationMutation::UpsertConversationRef { conversation },
+            })
             .await
             .expect("send upsert");
         assert!(matches!(resp, Response::Ack), "expected Ack, got {resp:?}");
