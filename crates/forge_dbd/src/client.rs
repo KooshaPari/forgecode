@@ -29,6 +29,53 @@ pub struct DbClient {
     socket_path: std::path::PathBuf,
 }
 
+/// The delivery certainty of a daemon request failure.
+///
+/// [`DbClientSendError::Unavailable`] means the fresh transport connection
+/// could not be established, so no request bytes were sent and a caller may
+/// safely choose its direct-storage fallback. [`DbClientSendError::Indeterminate`]
+/// means the connection was established and the request exchange began; the
+/// daemon may have observed the request, so callers must not replay it.
+#[derive(Debug)]
+pub enum DbClientSendError {
+    Unavailable(anyhow::Error),
+    Indeterminate(anyhow::Error),
+}
+
+impl DbClientSendError {
+    /// Discard delivery certainty while preserving the underlying failure for
+    /// callers that retain the legacy [`DbClient::send`] API.
+    fn into_anyhow(self) -> anyhow::Error {
+        match self {
+            Self::Unavailable(error) | Self::Indeterminate(error) => error,
+        }
+    }
+}
+
+impl std::fmt::Display for DbClientSendError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unavailable(error) => {
+                write!(formatter, "daemon unavailable before send: {error}")
+            }
+            Self::Indeterminate(error) => {
+                write!(
+                    formatter,
+                    "daemon request delivery is indeterminate: {error}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for DbClientSendError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unavailable(error) | Self::Indeterminate(error) => Some(error.as_ref()),
+        }
+    }
+}
+
 impl DbClient {
     /// Create a client that will connect to the daemon at `socket_path`.
     ///
@@ -57,7 +104,25 @@ impl DbClient {
     }
 
     /// Send `request` to the daemon and return the response.
+    ///
+    /// This compatibility API erases delivery certainty. Call
+    /// [`DbClient::send_classified`] when a caller needs to decide whether a
+    /// direct fallback can safely replay the request.
     pub async fn send(&self, request: Request) -> Result<Response> {
+        self.send_classified(request)
+            .await
+            .map_err(DbClientSendError::into_anyhow)
+    }
+
+    /// Send `request` while preserving whether it was safe to replay.
+    ///
+    /// Only a fresh transport connection failure is [`DbClientSendError::Unavailable`].
+    /// Once a stream has connected, write, read, framing, decode, and response
+    /// failures are all [`DbClientSendError::Indeterminate`].
+    pub async fn send_classified(
+        &self,
+        request: Request,
+    ) -> std::result::Result<Response, DbClientSendError> {
         #[cfg(unix)]
         {
             let mut stream = UnixStream::connect(&self.socket_path)
@@ -67,8 +132,11 @@ impl DbClient {
                         "failed to connect to forge_dbd at {}",
                         self.socket_path.display()
                     )
-                })?;
-            Self::request_response(&mut stream, request).await
+                })
+                .map_err(DbClientSendError::Unavailable)?;
+            Self::request_response(&mut stream, request)
+                .await
+                .map_err(DbClientSendError::Indeterminate)
         }
 
         #[cfg(windows)]
@@ -76,8 +144,11 @@ impl DbClient {
             let pipe_name = named_pipe_name(&self.socket_path);
             let mut stream = Self::open_pipe(&pipe_name)
                 .await
-                .with_context(|| format!("failed to connect to forge_dbd at {pipe_name}"))?;
-            Self::request_response(&mut stream, request).await
+                .with_context(|| format!("failed to connect to forge_dbd at {pipe_name}"))
+                .map_err(DbClientSendError::Unavailable)?;
+            Self::request_response(&mut stream, request)
+                .await
+                .map_err(DbClientSendError::Indeterminate)
         }
     }
 
@@ -132,5 +203,64 @@ impl DbClient {
             Response::Error { message } => bail!("daemon health error: {message}"),
             other => bail!("unexpected response to Ping: {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DbClient, DbClientSendError};
+    use crate::protocol::Request;
+
+    #[cfg(unix)]
+    fn test_socket_path(label: &str) -> std::path::PathBuf {
+        // macOS Unix sockets have a short SUN_LEN limit; its per-user temp
+        // directory is often already longer than that limit.
+        std::path::PathBuf::from(format!(
+            "/tmp/fdb-{label}-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time is after Unix epoch")
+                .as_nanos()
+        ))
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn classifies_fresh_socket_connection_failure_as_unavailable() {
+        let socket_path = test_socket_path("unavailable");
+        // `connect` is deliberately eager, so construct the otherwise
+        // ordinary client to exercise the per-request fresh connection path.
+        let client = DbClient { socket_path };
+        let error = client
+            .send_classified(Request::Ping)
+            .await
+            .expect_err("a fresh nonexistent socket must be unavailable");
+
+        assert!(matches!(error, DbClientSendError::Unavailable(_)));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn classifies_failure_after_connection_as_indeterminate() {
+        let socket_path = test_socket_path("indeterminate");
+        let listener =
+            tokio::net::UnixListener::bind(&socket_path).expect("test socket listener binds");
+        let server = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.expect("client connects");
+            // Drop the accepted stream without replying. The connection was
+            // established, but the caller cannot know whether a request was
+            // observed, so it must not use a replay-safe classification.
+        });
+
+        let client = DbClient { socket_path: socket_path.clone() };
+        let error = client
+            .send_classified(Request::Ping)
+            .await
+            .expect_err("a peer that closes without a response must fail");
+        server.await.expect("test server completes");
+        std::fs::remove_file(socket_path).expect("test socket is removable");
+
+        assert!(matches!(error, DbClientSendError::Indeterminate(_)));
     }
 }

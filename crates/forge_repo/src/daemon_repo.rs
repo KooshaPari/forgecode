@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use forge_dbd::client::DbClient;
+use forge_dbd::client::{DbClient, DbClientSendError};
 use forge_dbd::protocol::{Request, Response};
 use forge_domain::{
     Conversation, ConversationId, ConversationRepository, ConversationSummary, ForgeExportOptions,
@@ -45,10 +45,10 @@ static SPAWN_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 /// ## Client lifecycle
 ///
 /// `DbClient` is created lazily on the first routed write and cached in a
-/// `tokio::sync::OnceCell`. A failed connect leaves the cell empty, so the
-/// next write retries (best-effort reconnect). `DbClient::send` opens a fresh
-/// connection per request anyway (client.rs), so caching only skips the
-/// connect probe.
+/// clearable `tokio::sync::Mutex<Option<DbClient>>`. A failed fresh request
+/// connection evicts the stale probe client, so a later write can recover.
+/// `DbClient::send_classified` opens a fresh connection per request anyway
+/// (client.rs), so caching only skips the connect probe.
 ///
 /// ## Daemon spawn
 ///
@@ -61,7 +61,7 @@ static SPAWN_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 /// ## Fallback semantics
 ///
 /// A direct fallback is safe only before a daemon request can have been sent:
-/// failed initial connect or failed daemon spawn. Once [`DbClient::send`]
+/// failed initial connect or failed daemon spawn. Once [`DbClient::send_classified`]
 /// starts its fresh request stream, a transport error, daemon error response,
 /// or unexpected response is indeterminate: the daemon may have committed the
 /// write. Those outcomes are surfaced to the caller and are never replayed
@@ -69,7 +69,11 @@ static SPAWN_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 pub struct DaemonConversationRepository {
     inner: Arc<ConversationRepositoryImpl>,
     socket_path: PathBuf,
-    client: tokio::sync::OnceCell<DbClient>,
+    client: tokio::sync::Mutex<Option<DbClient>>,
+    /// Serializes recovery from an unavailable daemon. A second write must
+    /// wait for the first caller's spawn/poll before deciding that direct
+    /// fallback is safe.
+    lifecycle_lock: tokio::sync::Mutex<()>,
     /// Daemon binary to spawn on the first routed write, resolved from
     /// `FORGE_DBD_BIN` at construction (see
     /// [`forge_domain::Environment::dbd_bin_path`]). `None` means "look up
@@ -94,7 +98,8 @@ impl DaemonConversationRepository {
         Self {
             inner,
             socket_path,
-            client: tokio::sync::OnceCell::new(),
+            client: tokio::sync::Mutex::new(None),
+            lifecycle_lock: tokio::sync::Mutex::new(()),
             dbd_bin: default_dbd_bin(),
         }
     }
@@ -110,7 +115,8 @@ impl DaemonConversationRepository {
         Self {
             inner,
             socket_path,
-            client: tokio::sync::OnceCell::new(),
+            client: tokio::sync::Mutex::new(None),
+            lifecycle_lock: tokio::sync::Mutex::new(()),
             dbd_bin,
         }
     }
@@ -119,34 +125,26 @@ impl DaemonConversationRepository {
     ///
     /// Only an initial connection/spawn failure is classified as
     /// [`DaemonWriteOutcome::Unavailable`]. All failures after
-    /// [`DbClient::send`] begins are indeterminate because the daemon may have
+    /// [`DbClient::send_classified`] begins are indeterminate because the daemon may have
     /// recorded the request before the client lost its response.
     async fn try_daemon(&self, request: Request) -> DaemonWriteOutcome {
-        let client = match self
-            .client
-            .get_or_try_init(|| DbClient::connect(&self.socket_path))
-            .await
-        {
-            Ok(client) => client,
-            Err(err) => {
-                debug!(
-                    socket = %self.socket_path.display(),
-                    error = %err,
-                    "forge_dbd unavailable; attempting to spawn daemon"
-                );
-                match self.spawn_and_connect().await {
-                    Some(client) => client,
-                    None => {
-                        debug!(
-                            socket = %self.socket_path.display(),
-                            "forge_dbd still unavailable; falling back to direct write"
-                        );
-                        return DaemonWriteOutcome::Unavailable;
-                    }
-                }
-            }
+        // Recovery and use of the mutable probe cache share one lifecycle
+        // regime. This prevents a caller from direct-falling back while a
+        // concurrent caller is spawning/polling the daemon.
+        let _lifecycle = self.lifecycle_lock.lock().await;
+        if !self.ensure_client().await {
+            debug!(
+                socket = %self.socket_path.display(),
+                "forge_dbd still unavailable; falling back to direct write"
+            );
+            return DaemonWriteOutcome::Unavailable;
+        }
+
+        let mut cached = self.client.lock().await;
+        let Some(client) = cached.as_ref() else {
+            return DaemonWriteOutcome::Unavailable;
         };
-        match client.send(request).await {
+        match client.send_classified(request).await {
             Ok(Response::Ack) => DaemonWriteOutcome::Ack,
             Ok(Response::Error { message }) => {
                 warn!(
@@ -166,7 +164,19 @@ impl DaemonConversationRepository {
                     "forge_dbd returned an unexpected response after receiving the request: {other:?}"
                 ))
             }
-            Err(err) => {
+            Err(DbClientSendError::Unavailable(err)) => {
+                // A fresh stream could not be opened, so no request bytes
+                // were sent. Drop the stale successful probe and permit the
+                // safe direct fallback.
+                *cached = None;
+                debug!(
+                    socket = %self.socket_path.display(),
+                    error = %err,
+                    "forge_dbd cached probe went stale before request send; falling back to direct write"
+                );
+                DaemonWriteOutcome::Unavailable
+            }
+            Err(DbClientSendError::Indeterminate(err)) => {
                 warn!(
                     error = %err,
                     "forge_dbd request transport failed; not replaying an indeterminate write"
@@ -201,24 +211,36 @@ impl DaemonConversationRepository {
     /// successful spawn the socket is polled for ~2 s — the daemon needs a
     /// moment to bind (the named-pipe `ERROR_PIPE_BUSY` retry inside
     /// `DbClient::connect` also helps) — and the connected client is cached
-    /// in the [`OnceCell`](tokio::sync::OnceCell) for subsequent writes.
-    async fn spawn_and_connect(&self) -> Option<&DbClient> {
+    /// in the clearable client cache for subsequent writes. The caller holds
+    /// `lifecycle_lock`, so concurrent writers cannot bypass this recovery.
+    async fn ensure_client(&self) -> bool {
+        if self.client.lock().await.is_some() {
+            return true;
+        }
+        if let Ok(client) = DbClient::connect(&self.socket_path).await {
+            *self.client.lock().await = Some(client);
+            return true;
+        }
+        debug!(
+            socket = %self.socket_path.display(),
+            "forge_dbd unavailable; attempting to spawn daemon"
+        );
         if SPAWN_ATTEMPTED.swap(true, Ordering::SeqCst) {
-            return None;
+            return false;
         }
         if !self.spawn_daemon() {
             // Spawn failed (e.g. binary not found): no point polling a socket
             // nothing will bind. The guard is already set, so we do not retry.
-            return None;
+            return false;
         }
         for _ in 0..10 {
             tokio::time::sleep(Duration::from_millis(200)).await;
             if let Ok(client) = DbClient::connect(&self.socket_path).await {
-                let _ = self.client.set(client);
-                return self.client.get();
+                *self.client.lock().await = Some(client);
+                return true;
             }
         }
-        None
+        false
     }
 
     /// Spawns the `forge-dbd` daemon as a detached child process.
@@ -597,6 +619,77 @@ mod tests {
             Some("second".to_string())
         );
 
+        Ok(())
+    }
+
+    /// A second write arriving while the first one is polling a freshly
+    /// spawned daemon must not bypass that in-progress recovery by falling
+    /// straight back to SQLite. Otherwise both the daemon and direct path can
+    /// write concurrently once the daemon binds.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // The process-wide spawn state makes these tests serial by design.
+    async fn concurrent_write_waits_for_in_progress_daemon_spawn() -> anyhow::Result<()> {
+        let _serial = SPAWN_GUARD.lock().unwrap();
+        SPAWN_ATTEMPTED.store(false, Ordering::SeqCst);
+
+        let inner = in_memory_inner();
+        let repo = DaemonConversationRepository::new_with_bin(
+            inner,
+            PathBuf::from("/nonexistent/forge-dbd-delayed.sock"),
+            Some(PathBuf::from("/usr/bin/true")),
+        );
+        let first = Conversation::new(ConversationId::generate())
+            .title(Some("first-startup-write".to_string()));
+        let second = Conversation::new(ConversationId::generate())
+            .title(Some("second-startup-write".to_string()));
+
+        let first_write = repo.upsert_conversation(first);
+        tokio::pin!(first_write);
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+            result = &mut first_write => panic!("first write completed before delayed spawn window: {result:?}"),
+        }
+
+        let second_write =
+            tokio::time::timeout(Duration::from_millis(100), repo.upsert_conversation(second))
+                .await;
+        assert!(
+            second_write.is_err(),
+            "second write must wait for the first spawn/poll instead of direct-falling back"
+        );
+
+        first_write.await?;
+        Ok(())
+    }
+
+    /// `DbClient` is only a successful probe cache; every send opens a new
+    /// stream. If the daemon exits after that probe, a refusal while opening
+    /// the fresh stream is pre-send and may safely use the direct writer.
+    #[cfg(unix)]
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // The process-wide spawn state makes these tests serial by design.
+    async fn stale_cached_client_pre_send_refusal_falls_back_directly() -> anyhow::Result<()> {
+        let _serial = SPAWN_GUARD.lock().unwrap();
+        SPAWN_ATTEMPTED.store(true, Ordering::SeqCst);
+
+        let temp_dir = tempfile::tempdir()?;
+        let socket_path = temp_dir.path().join("forge-dbd.sock");
+        let listener = UnixListener::bind(&socket_path)?;
+        let inner = in_memory_inner();
+        let repo = DaemonConversationRepository::new(inner.clone(), socket_path);
+        let cached_client = DbClient::connect(repo.socket_path.as_path()).await?;
+        *repo.client.lock().await = Some(cached_client);
+        drop(listener);
+
+        let conversation = Conversation::new(ConversationId::generate())
+            .title(Some("stale-client-direct-fallback".to_string()));
+        let id = conversation.id;
+        repo.upsert_conversation(conversation).await?;
+
+        assert!(
+            inner.get_conversation(&id).await?.is_some(),
+            "a pre-send connection refusal must fall back without replay risk"
+        );
         Ok(())
     }
 
