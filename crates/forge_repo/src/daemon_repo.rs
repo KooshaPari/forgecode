@@ -74,15 +74,26 @@ pub struct DaemonConversationRepository {
     /// [`forge_domain::Environment::dbd_bin_path`]). `None` means "look up
     /// `forge_dbd` on PATH" at spawn time.
     dbd_bin: Option<PathBuf>,
+    /// The client's workspace id (hash of its cwd), stamped onto daemon-side
+    /// upserts. The daemon derives its own id from ITS current directory,
+    /// which diverges from the client's in `--directory` mode (Windows path
+    /// canonicalization). Reads filter by the client's hash, so daemon-written
+    /// rows must carry it or they would be invisible to the caller.
+    workspace_id: i64,
 }
 
 impl DaemonConversationRepository {
-    pub fn new(inner: Arc<ConversationRepositoryImpl>, socket_path: PathBuf) -> Self {
+    pub fn new(
+        inner: Arc<ConversationRepositoryImpl>,
+        socket_path: PathBuf,
+        workspace_id: i64,
+    ) -> Self {
         Self {
             inner,
             socket_path,
             client: tokio::sync::OnceCell::new(),
             dbd_bin: default_dbd_bin(),
+            workspace_id,
         }
     }
 
@@ -93,12 +104,14 @@ impl DaemonConversationRepository {
         inner: Arc<ConversationRepositoryImpl>,
         socket_path: PathBuf,
         dbd_bin: Option<PathBuf>,
+        workspace_id: i64,
     ) -> Self {
         Self {
             inner,
             socket_path,
             client: tokio::sync::OnceCell::new(),
             dbd_bin,
+            workspace_id,
         }
     }
 
@@ -252,7 +265,10 @@ impl ConversationRepository for DaemonConversationRepository {
 
     async fn upsert_conversation(&self, conversation: Conversation) -> anyhow::Result<()> {
         if self
-            .try_daemon(Request::UpsertConversation { conversation: conversation.clone() })
+            .try_daemon(Request::UpsertConversation {
+                conversation: conversation.clone(),
+                workspace_id: Some(self.workspace_id),
+            })
             .await
         {
             return Ok(());
@@ -262,7 +278,10 @@ impl ConversationRepository for DaemonConversationRepository {
 
     async fn upsert_conversation_ref(&self, conversation: &Conversation) -> anyhow::Result<()> {
         if self
-            .try_daemon(Request::UpsertConversationRef { conversation: conversation.clone() })
+            .try_daemon(Request::UpsertConversationRef {
+                conversation: conversation.clone(),
+                workspace_id: Some(self.workspace_id),
+            })
             .await
         {
             return Ok(());
@@ -499,6 +518,7 @@ mod tests {
         let repo = DaemonConversationRepository::new(
             inner.clone(),
             PathBuf::from("/nonexistent/.forge.db.sock"),
+            0,
         );
 
         let conversation = Conversation::new(ConversationId::generate())
@@ -533,6 +553,7 @@ mod tests {
             inner.clone(),
             PathBuf::from("/nonexistent/.forge.db.sock"),
             Some(PathBuf::from("/definitely/missing/forge_dbd_bin")),
+            0,
         );
 
         let conversation =
