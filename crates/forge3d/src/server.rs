@@ -605,6 +605,10 @@ mod tests {
 
     /// Verify that `serve` exits cleanly when the `CancellationToken` is
     /// triggered, without waiting for a new connection to arrive.
+    ///
+    /// Unix-only: the server binds a Unix socket and returns a
+    /// `Protocol` error on other platforms.
+    #[cfg(unix)]
     #[tokio::test]
     async fn serve_exits_on_cancellation() {
         let dir = tempfile::tempdir().unwrap();
