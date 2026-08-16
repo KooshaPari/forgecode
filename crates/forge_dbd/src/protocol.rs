@@ -15,9 +15,16 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 pub enum Request {
     UpsertConversation {
         conversation: Conversation,
+        /// Client-supplied workspace id (hash of the client's cwd). The
+        /// daemon derives its own workspace id from ITS current directory,
+        /// which diverges from the client's in `--directory` mode (path
+        /// canonicalization on Windows); `None` falls back to the daemon's
+        /// own derivation.
+        workspace_id: Option<i64>,
     },
     UpsertConversationRef {
         conversation: Conversation,
+        workspace_id: Option<i64>,
     },
     UpdateParentId {
         conversation_id: ConversationId,

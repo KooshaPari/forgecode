@@ -16,8 +16,10 @@ use rusqlite::Connection;
 #[cfg(unix)]
 use tokio::net::UnixListener;
 #[cfg(windows)]
-use tokio::net::windows::named_pipe::ServerOptions;
+use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::sync::mpsc;
+#[cfg(windows)]
+use tokio::task::JoinSet;
 use tokio::time::timeout;
 #[cfg(unix)]
 use tracing::warn;
@@ -262,38 +264,40 @@ impl DbServer {
         });
 
         // Active-connection tracking + idle timer, same semantics as the unix
-        // transport: on Windows the count is naturally 0 or 1 because the
-        // accept loop is sequential.
+        // transport.
         let active_connections = Arc::new(AtomicUsize::new(0));
         let mut idle = Box::pin(tokio::time::sleep(self.idle_timeout));
 
-        // Accept loop — exits when shutdown fires or the daemon idles out.
+        // Concurrent accept loop — exits when shutdown fires or the daemon
+        // idles out.
         //
         // Windows has no stale-socket problem: named pipes are released when
-        // the last handle drops, so there is nothing to unlink. The server
-        // creates a fresh pipe instance per client and `connect` completes
-        // when that client opens it. Sequential one-client-at-a-time
-        // acceptance is intentional for this wiring (the write queue
-        // serialises requests anyway); the per-connection request/response
-        // loop and the frame protocol are shared with the unix transport via
-        // the stream-generic `handle_client`.
-        loop {
-            let pipe = match ServerOptions::new().create(&pipe_name) {
-                Ok(pipe) => pipe,
-                Err(e) => {
-                    error!("failed to create named pipe instance: {e}");
-                    break;
-                }
-            };
+        // the last handle drops, so there is nothing to unlink. Windows
+        // named-pipe servers can listen on several INSTANCES of the same pipe
+        // name at once, which is what makes simultaneous clients possible. We
+        // keep a small pool of pending connect tasks in a JoinSet — each task
+        // creates a pipe instance and awaits a client opening it — and
+        // replenish the pool every time one connects. This replaces the
+        // original sequential one-instance wiring, where a second client's
+        // `connect` could not complete until the first handler had returned.
+        // The write queue serialises requests anyway; the per-connection
+        // request/response loop and the frame protocol are shared with the
+        // unix transport via the stream-generic `handle_client`.
+        const PIPE_INSTANCES: usize = 4;
+        let mut accepts: JoinSet<std::io::Result<NamedPipeServer>> = JoinSet::new();
+        for _ in 0..PIPE_INSTANCES {
+            accepts.spawn(Self::connect_pipe_instance(pipe_name.clone()));
+        }
 
+        loop {
             tokio::select! {
                 _ = &mut shutdown_rx => {
                     info!("shutdown signal received; draining write queue");
                     break;
                 }
-                result = pipe.connect() => {
-                    match result {
-                        Ok(()) => {
+                joined = accepts.join_next(), if !accepts.is_empty() => {
+                    match joined {
+                        Some(Ok(Ok(pipe))) => {
                             debug!("client connected");
                             let queue_tx = Arc::clone(&queue_tx);
                             let state = state.clone();
@@ -303,11 +307,28 @@ impl DbServer {
                                 Self::handle_client(pipe, queue_tx, state).await;
                                 active.fetch_sub(1, Ordering::SeqCst);
                             });
-                            // A new client restarts the idle window.
+                            // Replenish the consumed instance and restart the
+                            // idle window.
+                            accepts.spawn(Self::connect_pipe_instance(pipe_name.clone()));
                             idle.as_mut().reset(tokio::time::Instant::now() + self.idle_timeout);
                         }
-                        Err(e) => {
+                        Some(Ok(Err(e))) => {
                             error!("pipe connect error: {e}");
+                            // Brief backoff so a persistent bind failure
+                            // cannot hot-spin the loop.
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            accepts.spawn(Self::connect_pipe_instance(pipe_name.clone()));
+                        }
+                        Some(Err(e)) => {
+                            error!("pipe connect task panicked: {e}");
+                            accepts.spawn(Self::connect_pipe_instance(pipe_name.clone()));
+                        }
+                        None => {
+                            // Defensive: only reachable if the pool drained
+                            // without a join (the guard above makes this
+                            // unreachable in practice).
+                            info!("accept pool exhausted; shutting down");
+                            break;
                         }
                     }
                 }
@@ -335,6 +356,17 @@ impl DbServer {
         }
 
         Ok(())
+    }
+
+    /// Creates a fresh named-pipe instance for `pipe_name` and waits for a
+    /// client to open it. Each task in the accept pool runs one of these;
+    /// multiple instances of the same pipe name let concurrent clients be
+    /// served simultaneously.
+    #[cfg(windows)]
+    async fn connect_pipe_instance(pipe_name: String) -> std::io::Result<NamedPipeServer> {
+        let pipe = ServerOptions::new().create(&pipe_name)?;
+        pipe.connect().await?;
+        Ok(pipe)
     }
 
     // -------------------------------------------------------------------------
@@ -532,12 +564,12 @@ impl DbServer {
                 conn.execute_batch("PRAGMA optimize;")?;
                 Ok(Response::Ack)
             }
-            Request::UpsertConversation { conversation } => {
-                Self::upsert_conversation(conn, conversation, true)?;
+            Request::UpsertConversation { conversation, workspace_id } => {
+                Self::upsert_conversation(conn, conversation, true, *workspace_id)?;
                 Ok(Response::Ack)
             }
-            Request::UpsertConversationRef { conversation } => {
-                Self::upsert_conversation(conn, conversation, false)?;
+            Request::UpsertConversationRef { conversation, workspace_id } => {
+                Self::upsert_conversation(conn, conversation, false, *workspace_id)?;
                 Ok(Response::Ack)
             }
             Request::UpdateParentId { conversation_id, new_parent_id } => {
@@ -584,6 +616,13 @@ impl DbServer {
     /// `is_compressed` on conflict) vs `upsert_conversation_ref` (which
     /// leaves those compression columns untouched).
     ///
+    /// `workspace_id` is the value supplied by the client request: the
+    /// daemon's own `current_dir`-derived hash diverges from the client's in
+    /// `--directory` mode (Windows path canonicalization), and reads filter
+    /// by the client's hash, so a daemon-written row would be invisible to
+    /// its caller. `None` falls back to the daemon's own derivation for
+    /// hand-built requests that carry no id.
+    ///
     /// Values are derived from the domain [`Conversation`] the same way
     /// `ConversationRecord::new` / `new_ref` derive them. Two deliberate
     /// simplifications for this wiring pass, both readable by the app:
@@ -596,6 +635,7 @@ impl DbServer {
         conn: &Connection,
         conversation: &Conversation,
         full: bool,
+        workspace_id: Option<i64>,
     ) -> Result<()> {
         // Only conversations with messages (or an initiator) get a context
         // blob; tombstone conversations keep NULL, matching ConversationRecord.
@@ -622,6 +662,10 @@ impl DbServer {
         // Metrics are best-effort: an unreadable blob falls back to default
         // metrics on the read side, same as forge_repo.
         let metrics = serde_json::to_string(&conversation.metrics).ok();
+
+        // The client's workspace id when the request carries one; otherwise
+        // the daemon's own cwd-derived id (e.g. hand-built requests in tests).
+        let workspace_id = workspace_id.unwrap_or_else(Self::workspace_id);
 
         let update_set = if full {
             "title = excluded.title, \
@@ -662,7 +706,7 @@ impl DbServer {
             rusqlite::params![
                 conversation.id.into_string(),
                 conversation.title.clone(),
-                Self::workspace_id(),
+                workspace_id,
                 context_json,
                 created_at,
                 metrics,
@@ -971,7 +1015,7 @@ mod db_tests {
     #[test]
     fn json_round_trip_conversation_request() {
         let conversation = Conversation::generate().title("rt".to_string());
-        let request = Request::UpsertConversationRef { conversation };
+        let request = Request::UpsertConversationRef { conversation, workspace_id: None };
         let encoded = serde_json::to_vec(&request).unwrap();
         let decoded: Request =
             serde_json::from_slice(&encoded).expect("json round-trip must succeed");
@@ -991,7 +1035,10 @@ mod db_tests {
         assert!(matches!(
             DbServer::execute_with_conn(
                 &conn,
-                &Request::UpsertConversationRef { conversation: conversation.clone() }
+                &Request::UpsertConversationRef {
+                    conversation: conversation.clone(),
+                    workspace_id: None
+                }
             )
             .expect("upsert"),
             Response::Ack
@@ -1014,7 +1061,7 @@ mod db_tests {
         assert!(matches!(
             DbServer::execute_with_conn(
                 &conn,
-                &Request::UpsertConversationRef { conversation: updated }
+                &Request::UpsertConversationRef { conversation: updated, workspace_id: None }
             )
             .expect("upsert on conflict"),
             Response::Ack
@@ -1053,8 +1100,11 @@ mod db_tests {
             .context(context);
         let id = conversation.id;
         assert!(matches!(
-            DbServer::execute_with_conn(&conn, &Request::UpsertConversation { conversation })
-                .expect("upsert"),
+            DbServer::execute_with_conn(
+                &conn,
+                &Request::UpsertConversation { conversation, workspace_id: None }
+            )
+            .expect("upsert"),
             Response::Ack
         ));
 
@@ -1111,8 +1161,11 @@ mod db_tests {
         let conversation = Conversation::generate().title("to delete".to_string());
         let id = conversation.id;
         assert!(matches!(
-            DbServer::execute_with_conn(&conn, &Request::UpsertConversationRef { conversation })
-                .expect("upsert"),
+            DbServer::execute_with_conn(
+                &conn,
+                &Request::UpsertConversationRef { conversation, workspace_id: None }
+            )
+            .expect("upsert"),
             Response::Ack
         ));
 
@@ -1150,8 +1203,11 @@ mod db_tests {
         let conversation = Conversation::generate().title("child".to_string());
         let id = conversation.id;
         assert!(matches!(
-            DbServer::execute_with_conn(&conn, &Request::UpsertConversationRef { conversation })
-                .expect("upsert"),
+            DbServer::execute_with_conn(
+                &conn,
+                &Request::UpsertConversationRef { conversation, workspace_id: None }
+            )
+            .expect("upsert"),
             Response::Ack
         ));
 
@@ -1282,7 +1338,7 @@ mod windows_tests {
         let conversation = Conversation::generate().title("windows pipe test".to_string());
         let id = conversation.id;
         let resp = client
-            .send(Request::UpsertConversationRef { conversation })
+            .send(Request::UpsertConversationRef { conversation, workspace_id: None })
             .await
             .expect("send upsert");
         assert!(matches!(resp, Response::Ack), "expected Ack, got {resp:?}");
@@ -1297,6 +1353,72 @@ mod windows_tests {
             )
             .unwrap();
         assert_eq!(title.as_deref(), Some("windows pipe test"));
+    }
+
+    /// Two clients connected at the same time are both served: the accept
+    /// loop keeps several pipe instances pending, so the second client's open
+    /// completes while the first is still connected (a sequential accept loop
+    /// would leave the second client stuck on `ERROR_PIPE_BUSY` until the
+    /// first disconnects).
+    #[tokio::test]
+    async fn named_pipe_serves_concurrent_clients() {
+        let dir = TempDir::new().unwrap();
+        let (sock, db) = tmp_paths(&dir);
+
+        let schema_conn = rusqlite::Connection::open(&db).unwrap();
+        create_conversations_schema(&schema_conn);
+        drop(schema_conn);
+
+        let server = DbServer::new(sock.clone(), db.clone());
+        let _handle = tokio::spawn(server.run());
+
+        // Client A connects and stays connected for the whole test.
+        let client_a = connect_with_retry(&sock).await;
+        let health_a = client_a.health().await.expect("health probe A");
+        assert!(health_a.uptime_secs < 60, "uptime should be < 60s in test");
+
+        // Client B connects while A is still open and is served immediately.
+        let client_b = connect_with_retry(&sock).await;
+        let health_b = client_b.health().await.expect("health probe B");
+        assert!(health_b.uptime_secs < 60, "uptime should be < 60s in test");
+
+        // Writes from both distinct connections land in the write DB.
+        let conversation_a = Conversation::generate().title("concurrent a".to_string());
+        let conversation_b = Conversation::generate().title("concurrent b".to_string());
+        let id_a = conversation_a.id;
+        let id_b = conversation_b.id;
+        let resp_a = client_a
+            .send(Request::UpsertConversationRef {
+                conversation: conversation_a,
+                workspace_id: None,
+            })
+            .await
+            .expect("send upsert A");
+        let resp_b = client_b
+            .send(Request::UpsertConversationRef {
+                conversation: conversation_b,
+                workspace_id: None,
+            })
+            .await
+            .expect("send upsert B");
+        assert!(
+            matches!(resp_a, Response::Ack),
+            "expected Ack, got {resp_a:?}"
+        );
+        assert!(
+            matches!(resp_b, Response::Ack),
+            "expected Ack, got {resp_b:?}"
+        );
+
+        let verify = rusqlite::Connection::open(&db).unwrap();
+        let count: i64 = verify
+            .query_row(
+                "SELECT COUNT(*) FROM conversations WHERE conversation_id IN (?1, ?2)",
+                [id_a.into_string(), id_b.into_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2, "both concurrent writes should land");
     }
 
     /// With no client ever connecting, the named-pipe server exits on its own
