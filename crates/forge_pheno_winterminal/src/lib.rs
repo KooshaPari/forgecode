@@ -780,10 +780,27 @@ pub mod config {
 mod tests {
     use super::*;
 
+    /// The `NotWindows` short-circuit only exists on non-Windows, so this
+    /// test is meaningful there (CI runs it on macOS/Linux).
     #[test]
+    #[cfg(not(windows))]
     fn test_detect_install_on_macos() {
         let state = detect::detect_install();
         assert_eq!(state, InstallState::NotInstalled(Reason::NotWindows));
+    }
+
+    /// On Windows the `NotWindows` branch is unreachable: detection probes the
+    /// Windows Terminal package directories and reports `Installed` when
+    /// found, or `NotInstalled(NotInstalled)` otherwise. Assert the branch
+    /// that is actually reachable instead of the macOS-only short-circuit.
+    #[test]
+    #[cfg(windows)]
+    fn test_detect_install_on_windows_never_reports_not_windows() {
+        let state = detect::detect_install();
+        assert!(
+            !matches!(state, InstallState::NotInstalled(Reason::NotWindows)),
+            "detection on Windows must not short-circuit to NotWindows"
+        );
     }
 
     #[test]
