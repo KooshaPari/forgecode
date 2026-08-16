@@ -81,14 +81,21 @@ impl From<ReleaseBuilderJob> for Job {
 
         if let Some(release_id) = value.release_id {
             job = job
-                // Rename binary to target name
+                // Rename binary to the forge asset name and mirror it under
+                // the helioslite asset name so both binary identities can
+                // self-update from this release (see forge_main::update).
                 .add_step(
                     Step::new("Copy Binary")
-                        .run("cp ${{ matrix.binary_path }} ${{ matrix.binary_name }}"),
+                        .run("cp ${{ matrix.binary_path }} ${{ matrix.binary_name }}\ncp ${{ matrix.binary_path }} ${{ matrix.helioslite_name }}"),
                 )
                 .add_step(
                     Step::new("Generate SHA-256 checksum")
                         .run(r#"if command -v sha256sum >/dev/null 2>&1; then sha256sum "${{ matrix.binary_name }}" > "${{ matrix.binary_name }}.sha256"; else shasum -a 256 "${{ matrix.binary_name }}" > "${{ matrix.binary_name }}.sha256"; fi"#)
+                        .shell("bash"),
+                )
+                .add_step(
+                    Step::new("Generate helioslite SHA-256 checksum")
+                        .run(r#"if command -v sha256sum >/dev/null 2>&1; then sha256sum "${{ matrix.helioslite_name }}" > "${{ matrix.helioslite_name }}.sha256"; else shasum -a 256 "${{ matrix.helioslite_name }}" > "${{ matrix.helioslite_name }}.sha256"; fi"#)
                         .shell("bash"),
                 )
                 // Upload to the generated github release id
@@ -110,8 +117,30 @@ impl From<ReleaseBuilderJob> for Job {
                             "upload-to-github-release",
                             "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
                         )
-                        .input("release_id", release_id)
+                        .input("release_id", release_id.clone())
                         .input("file", "${{ matrix.binary_name }}.sha256")
+                        .input("overwrite", "true"),
+                )
+                .add_step(
+                    Step::new("Upload helioslite to Release")
+                        .uses(
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                        )
+                        .input("release_id", release_id.clone())
+                        .input("file", "${{ matrix.helioslite_name }}")
+                        .input("overwrite", "true"),
+                )
+                .add_step(
+                    Step::new("Upload helioslite checksum to Release")
+                        .uses(
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                        )
+                        .input("release_id", release_id)
+                        .input("file", "${{ matrix.helioslite_name }}.sha256")
                         .input("overwrite", "true"),
                 );
         }
