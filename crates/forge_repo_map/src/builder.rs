@@ -168,9 +168,16 @@ mod tests {
         assert_eq!(map.total_files, 2, "should find 2 Rust files");
         assert_eq!(map.total_symbols, 3, "should find 3 symbols total");
 
-        let paths: Vec<&str> = map.files.iter().map(|f| f.path.as_str()).collect();
-        assert!(paths.contains(&"src/lib.rs"));
-        assert!(paths.contains(&"src/main.rs"));
+        // Relative paths use the platform separator after strip_prefix
+        // (e.g. src\lib.rs on Windows); normalize to forward slashes so the
+        // repo-relative expectations are platform-agnostic.
+        let paths: Vec<String> = map
+            .files
+            .iter()
+            .map(|f| f.path.replace('\\', "/"))
+            .collect();
+        assert!(paths.contains(&"src/lib.rs".to_string()));
+        assert!(paths.contains(&"src/main.rs".to_string()));
     }
 
     #[test]
