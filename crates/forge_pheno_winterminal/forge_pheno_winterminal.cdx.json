@@ -13,9 +13,9 @@
     ],
     "component": {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_pheno_winterminal#2.10.9",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_pheno_winterminal#2.13.21",
       "name": "forge_pheno_winterminal",
-      "version": "2.10.9",
+      "version": "2.13.21",
       "description": "Windows Terminal profile/palette/scheme management for forgecode",
       "scope": "required",
       "licenses": [
@@ -23,14 +23,14 @@
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:cargo/forge_pheno_winterminal@2.10.9?download_url=file://.",
+      "purl": "pkg:cargo/forge_pheno_winterminal@2.13.21?download_url=file://.",
       "components": [
         {
           "type": "library",
-          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_pheno_winterminal#2.10.9 bin-target-0",
+          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_pheno_winterminal#2.13.21 bin-target-0",
           "name": "forge_pheno_winterminal",
-          "version": "2.10.9",
-          "purl": "pkg:cargo/forge_pheno_winterminal@2.10.9?download_url=file://.#src/lib.rs"
+          "version": "2.13.21",
+          "purl": "pkg:cargo/forge_pheno_winterminal@2.13.21?download_url=file://.#src/lib.rs"
         }
       ]
     },
@@ -1230,7 +1230,7 @@
   ],
   "dependencies": [
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_pheno_winterminal#2.10.9",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_pheno_winterminal#2.13.21",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#dirs@6.0.0",
         "registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1",

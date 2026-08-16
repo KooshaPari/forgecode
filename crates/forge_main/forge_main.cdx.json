@@ -18,10 +18,10 @@
     ],
     "component": {
       "type": "application",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_main#2.10.9",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_main#2.13.21",
       "author": "KooshaPari / Phenotype.",
       "name": "forge_main",
-      "version": "2.10.9",
+      "version": "2.13.21",
       "description": "HeliosLite (formerly Forgecode) CLI — main crate. Hosts the canonical `helioslite` binary alongside the legacy `forge`/`forge-dev` aliases during the deprecation window. See docs/RENAMES-STRATEGY.md.",
       "scope": "required",
       "licenses": [
@@ -29,7 +29,7 @@
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:cargo/forge_main@2.10.9?download_url=file://.",
+      "purl": "pkg:cargo/forge_main@2.13.21?download_url=file://.",
       "externalReferences": [
         {
           "type": "documentation",
@@ -47,31 +47,31 @@
       "components": [
         {
           "type": "library",
-          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_main#2.10.9 bin-target-0",
+          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_main#2.13.21 bin-target-0",
           "name": "forge_main",
-          "version": "2.10.9",
-          "purl": "pkg:cargo/forge_main@2.10.9?download_url=file://.#src/lib.rs"
+          "version": "2.13.21",
+          "purl": "pkg:cargo/forge_main@2.13.21?download_url=file://.#src/lib.rs"
         },
         {
           "type": "application",
-          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_main#2.10.9 bin-target-1",
+          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_main#2.13.21 bin-target-1",
           "name": "forge",
-          "version": "2.10.9",
-          "purl": "pkg:cargo/forge_main@2.10.9?download_url=file://.#src/main.rs"
+          "version": "2.13.21",
+          "purl": "pkg:cargo/forge_main@2.13.21?download_url=file://.#src/main.rs"
         },
         {
           "type": "application",
-          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_main#2.10.9 bin-target-2",
+          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_main#2.13.21 bin-target-2",
           "name": "forge-dev",
-          "version": "2.10.9",
-          "purl": "pkg:cargo/forge_main@2.10.9?download_url=file://.#src/main.rs"
+          "version": "2.13.21",
+          "purl": "pkg:cargo/forge_main@2.13.21?download_url=file://.#src/main.rs"
         },
         {
           "type": "application",
-          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_main#2.10.9 bin-target-3",
+          "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_main#2.13.21 bin-target-3",
           "name": "helioslite",
-          "version": "2.10.9",
-          "purl": "pkg:cargo/forge_main@2.10.9?download_url=file://.#src/main.rs"
+          "version": "2.13.21",
+          "purl": "pkg:cargo/forge_main@2.13.21?download_url=file://.#src/main.rs"
         }
       ]
     },
@@ -319,16 +319,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.10.9",
+      "bom-ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.13.21",
       "name": "forge_syntax",
-      "version": "2.10.9",
+      "version": "2.13.21",
       "scope": "required",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:cargo/forge_syntax@2.10.9?download_url=file://../forge_syntax"
+      "purl": "pkg:cargo/forge_syntax@2.13.21?download_url=file://../forge_syntax"
     },
     {
       "type": "library",
@@ -19505,7 +19505,7 @@
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#console@0.16.4",
         "registry+https://github.com/rust-lang/crates.io-index#derive_setters@0.1.9",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.10.9",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.13.21",
         "registry+https://github.com/rust-lang/crates.io-index#regex@1.13.1",
         "registry+https://github.com/rust-lang/crates.io-index#similar@3.1.1",
         "registry+https://github.com/rust-lang/crates.io-index#termimad@0.34.1",
@@ -19650,7 +19650,7 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_main#2.10.9",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_main#2.13.21",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#anyhow@1.0.104",
         "registry+https://github.com/rust-lang/crates.io-index#arboard@3.6.1",
@@ -19714,7 +19714,7 @@
       "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_markdown_stream#0.1.1",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#colored@3.1.1",
-        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.10.9",
+        "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.13.21",
         "registry+https://github.com/rust-lang/crates.io-index#streamdown-ansi@0.1.4",
         "registry+https://github.com/rust-lang/crates.io-index#streamdown-core@0.1.4",
         "registry+https://github.com/rust-lang/crates.io-index#streamdown-parser@0.1.4",
@@ -19884,7 +19884,7 @@
       ]
     },
     {
-      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.10.9",
+      "ref": "path+file:///Users/kooshapari/CodeProjects/Phenotype/repos/forgecode-release-hygiene/crates/forge_syntax#2.13.21",
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#unicode-segmentation@1.13.3",
         "registry+https://github.com/rust-lang/crates.io-index#unicode-width@0.2.2"

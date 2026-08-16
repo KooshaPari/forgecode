@@ -2230,7 +2230,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "forge3d"
-version = "2.10.9"
+version = "2.13.21"
 dependencies = [
  "chrono",
  "clap",
@@ -2386,7 +2386,7 @@ dependencies = [
 
 [[package]]
 name = "forge_dbd"
-version = "2.10.9"
+version = "2.13.21"
 dependencies = [
  "anyhow",
  "dirs",
@@ -2610,7 +2610,7 @@ dependencies = [
 
 [[package]]
 name = "forge_main"
-version = "2.10.9"
+version = "2.13.21"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2721,7 +2721,7 @@ dependencies = [
 
 [[package]]
 name = "forge_pheno_winterminal"
-version = "2.10.9"
+version = "2.13.21"
 dependencies = [
  "dirs",
  "regex",
@@ -2954,7 +2954,7 @@ dependencies = [
 
 [[package]]
 name = "forge_syntax"
-version = "2.10.9"
+version = "2.13.21"
 dependencies = [
  "pretty_assertions",
  "unicode-segmentation",
@@ -3020,7 +3020,7 @@ dependencies = [
 
 [[package]]
 name = "forge_tui"
-version = "2.10.9"
+version = "2.13.21"
 dependencies = [
  "anyhow",
  "forge3d",

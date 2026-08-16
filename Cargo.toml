@@ -53,7 +53,7 @@ resolver = "2"
 license = "MIT"
 # HeliosLite version. Keep this aligned with the published Forgecode release;
 # the first HeliosLite-only tag will be 3.0.0 at GA. See docs/RENAMES-STRATEGY.md.
-version = "2.10.9"
+version = "2.13.21"
 rust-version = "1.92"
 edition = "2024"
 # Publish surface flip — the canonical crate *name* (helioslite) is published
