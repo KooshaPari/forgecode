@@ -104,3 +104,18 @@ Verification commands (installed binaries, no env overrides):
   helioslite.exe export forge <dest>       -> 302/302 (swap 5), 304/304 (swap 6), 0 failures
   helioslite.exe conversation list         -> real sessions visible
   FORGE_LEGACY_DB_PATH=<path>              -> honored (swap 6)
+
+2026-08-16        Swap 10: installed release build of 3a2a86b0b (sync fork to
+                  upstream tailcallhq/forgecode v2.13.21 + version alignment
+                  2.13.21; merge 471374d86 + alignment 3a2a86b0b), built with
+                  APP_VERSION=2.13.21 at E:\caches\forge-21321-target
+                  (forge.exe 49,165,824 / helioslite.exe 49,165,824 /
+                  forge_dbd.exe 4,390,400).
+                  Verified: version 2.13.21 all three binaries. forge.exe
+                  heliosdoctor 461/29/165/267 (total +1 since swap 9),
+                  integrity ok; conversation list shows real sessions;
+                  integrity-only porcelain zero-count + write/legacy db
+                  lines, exit 0. helioslite.exe at ~/.helioslite fresh
+                  empty install per #160 home split (data lives at ~/.forge
+                  owned by forge.exe identity). CI green on 3a2a86b0b:
+                  lint/clippy + test/nextest + codeql success.
