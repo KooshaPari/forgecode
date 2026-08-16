@@ -991,7 +991,14 @@ mod tests {
         let home = std::path::Path::new("/Users/test");
         let targets = install_targets(ShellKind::Zsh, home, "forge");
         assert_eq!(targets.len(), 1);
-        assert!(targets[0].path.contains(".zsh/completions/_forge"));
+        // Path::join uses platform separators, so normalize before matching
+        // the unix-style expectation.
+        assert!(
+            targets[0]
+                .path
+                .replace('\\', "/")
+                .contains(".zsh/completions/_forge")
+        );
     }
 
     #[test]
@@ -1014,9 +1021,12 @@ mod tests {
         let home = std::path::Path::new("/Users/test");
         let targets = install_targets(ShellKind::Fish, home, "forge");
         assert_eq!(targets.len(), 1);
+        // Path::join uses platform separators, so normalize before matching
+        // the unix-style expectation.
         assert!(
             targets[0]
                 .path
+                .replace('\\', "/")
                 .contains(".config/fish/completions/forge.fish")
         );
     }
