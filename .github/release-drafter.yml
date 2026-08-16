@@ -1,5 +1,12 @@
 name-template: "v$RESOLVED_VERSION"
 tag-template: "v$RESOLVED_VERSION"
+# The version-resolver derives the next version from the last PUBLISHED
+# release, which lags the fork's synced upstream version (we sync to upstream
+# v2.13.x tags but only publish from the fork's release point). Without this
+# override, every main push drafts "v2.10.9" and bakes APP_VERSION=2.10.9
+# into release assets while the code is at 2.13.21. Bump this when the draft
+# is published.
+version: "2.13.22"
 categories:
   - title: "🚀 Features"
     labels:
