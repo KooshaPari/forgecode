@@ -537,11 +537,11 @@ impl DbServer {
             }
             Request::MutationV2 { workspace_id, mutation } => match mutation {
                 ConversationMutation::UpsertConversation { conversation } => {
-                    Self::upsert_conversation(conn, conversation, *workspace_id, true)?;
+                    Self::upsert_conversation(conn, conversation, *workspace_id)?;
                     Ok(Response::Ack)
                 }
                 ConversationMutation::UpsertConversationRef { conversation } => {
-                    Self::upsert_conversation(conn, conversation, *workspace_id, false)?;
+                    Self::upsert_conversation(conn, conversation, *workspace_id)?;
                     Ok(Response::Ack)
                 }
                 ConversationMutation::UpdateParentId { conversation_id, new_parent_id } => {
@@ -583,10 +583,9 @@ impl DbServer {
 
     /// INSERT ... ON CONFLICT(conversation_id) DO UPDATE ... against the
     /// `conversations` table, mirroring forge_repo's `upsert_conversation` /
-    /// `upsert_conversation_ref`. `full` selects the column set of
-    /// `upsert_conversation` (which also refreshes `context_zstd` /
-    /// `is_compressed` on conflict) vs `upsert_conversation_ref` (which
-    /// leaves those compression columns untouched).
+    /// `upsert_conversation_ref`. Both conflict paths replace the context
+    /// storage tuple atomically so legacy plain rows cannot retain stale
+    /// compression metadata.
     ///
     /// Values are derived from the domain [`Conversation`] the same way
     /// `ConversationRecord::new` / `new_ref` derive them. Context uses the
@@ -596,7 +595,6 @@ impl DbServer {
         conn: &Connection,
         conversation: &Conversation,
         workspace_id: i64,
-        full: bool,
     ) -> Result<()> {
         // Keep the daemon's wire bytes identical to forge_repo's direct
         // writer, including the legacy ContextRecord envelope and its
@@ -616,27 +614,16 @@ impl DbServer {
         // metrics on the read side, same as forge_repo.
         let metrics = serde_json::to_string(&conversation.metrics).ok();
 
-        let update_set = if full {
-            "title = excluded.title, \
-             context = excluded.context, \
-             context_zstd = excluded.context_zstd, \
-             is_compressed = excluded.is_compressed, \
-             updated_at = excluded.updated_at, \
-             metrics = excluded.metrics, \
-             parent_id = excluded.parent_id, \
-             source = excluded.source, \
-             cwd = excluded.cwd, \
-             message_count = excluded.message_count"
-        } else {
-            "title = excluded.title, \
-             context = excluded.context, \
-             updated_at = excluded.updated_at, \
-             metrics = excluded.metrics, \
-             parent_id = excluded.parent_id, \
-             source = excluded.source, \
-             cwd = excluded.cwd, \
-             message_count = excluded.message_count"
-        };
+        let update_set = "title = excluded.title, \
+                          context = excluded.context, \
+                          context_zstd = excluded.context_zstd, \
+                          is_compressed = excluded.is_compressed, \
+                          updated_at = excluded.updated_at, \
+                          metrics = excluded.metrics, \
+                          parent_id = excluded.parent_id, \
+                          source = excluded.source, \
+                          cwd = excluded.cwd, \
+                          message_count = excluded.message_count";
 
         conn.execute(
             &format!(
@@ -1097,42 +1084,38 @@ mod db_tests {
         assert_eq!(is_compressed, 1);
     }
 
-    /// A reference upsert inserts compression fields for a new row, but on
-    /// conflict intentionally preserves the existing compressed payload.
+    /// A reference upsert replaces a legacy plain context with its compressed
+    /// representation, matching forge_repo's direct ref-upsert behavior.
     #[test]
-    fn upsert_conversation_ref_conflict_preserves_compression_fields() {
+    fn upsert_conversation_ref_conflict_replaces_legacy_plain_context_with_compressed_context() {
         let dir = TempDir::new().unwrap();
         let conn = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
         create_conversations_schema(&conn);
 
-        let fixture = Conversation::generate()
-            .context(Context::default().add_message(ContextMessage::user("first", None)));
-        let id = fixture.id;
-        DbServer::execute_with_conn(
-            &conn,
-            &scoped(
+        let id = ConversationId::generate();
+        let legacy_context =
+            r#"{"messages":[{"message":{"text":{"role":"User","content":"legacy"}}}]}"#;
+        conn.execute(
+            "INSERT INTO conversations (conversation_id, workspace_id, context, created_at, message_count, is_compressed) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                id.into_string(),
                 TEST_WORKSPACE,
-                ConversationMutation::UpsertConversation { conversation: fixture.clone() },
-            ),
+                legacy_context,
+                "2026-08-15T00:00:00Z",
+                1,
+                0,
+            ],
         )
-        .expect("initial full upsert");
+        .expect("seed legacy plain context");
 
-        let before: (Option<String>, Option<Vec<u8>>, i32) = conn
-            .query_row(
-                "SELECT context, context_zstd, is_compressed FROM conversations \
-                 WHERE conversation_id = ?1",
-                [id.into_string()],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-
-        let updated =
-            fixture.context(Context::default().add_message(ContextMessage::user("second", None)));
+        let incoming = Conversation::new(id)
+            .context(Context::default().add_message(ContextMessage::user("incoming", None)));
         DbServer::execute_with_conn(
             &conn,
             &scoped(
                 TEST_WORKSPACE,
-                ConversationMutation::UpsertConversationRef { conversation: updated },
+                ConversationMutation::UpsertConversationRef { conversation: incoming },
             ),
         )
         .expect("reference conflict upsert");
@@ -1146,8 +1129,17 @@ mod db_tests {
             )
             .unwrap();
         assert_eq!(actual.0, None);
-        assert_eq!(actual.1, before.1);
-        assert_eq!(actual.2, before.2);
+        let compressed = actual
+            .1
+            .expect("incoming compressed context must replace legacy plain data");
+        let actual_context =
+            String::from_utf8(zstd::decode_all(compressed.as_slice()).expect("valid zstd context"))
+                .expect("UTF-8 context");
+        assert_eq!(
+            actual_context,
+            r#"{"messages":[{"message":{"text":{"role":"User","content":"incoming"}}}]}"#
+        );
+        assert_eq!(actual.2, 1);
     }
 
     /// A delete request must not remove an identically-addressed conversation
