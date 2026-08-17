@@ -147,7 +147,11 @@ Verification commands (installed binaries, no env overrides):
                   to the caller's workspace-filtered reads; (2) multi-client
                   accept loop — two simultaneous conversation deletes through
                   the same daemon PID (no respawn), both served, both rows
-                  removed in 0.28s. Full suite at HEAD: workspace sweep 98
-                  targets 3044/0 (1 filtered: zsh doctor test — bounded now,
-                  passes standalone 5.1s), forge_main lib 349/0, dbd 10/0,
-                  dual_harness 1/0.
+                  removed in 0.28s. Final all-inclusive workspace sweep at
+                  HEAD (no --exclude dual_harness, no --skip zsh doctor):
+                  102 targets 3047 passed / 0 failed / 23 ignored / 0
+                  filtered out; dual_harness shared_3task_all_pass +
+                  forge_dbd named_pipe_serves_concurrent_clients + forge_main
+                  test_run_zsh_doctor_streaming all green; one pre-existing
+                  forge_api http test pair (test_debug_requests_post_*) gives
+                  the binary its 600s wall time but both pass.
