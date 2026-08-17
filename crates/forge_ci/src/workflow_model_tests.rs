@@ -63,6 +63,7 @@ fn serializes_release_drafter_event_branches_and_token_environment() {
                         "5a60cd8ddda6dc14fce77159675b8fd2cdca4007",
                     )
                     .input("config-name", "release-drafter.yml")
+                    .input("version", crate::jobs::FORK_RELEASE_VERSION)
                     .env("GITHUB_TOKEN", "${{ secrets.GITHUB_TOKEN }}"),
             ),
         );
