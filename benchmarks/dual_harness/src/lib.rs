@@ -165,8 +165,19 @@ async fn run_one(task: &FixtureTask) -> Result<TaskOutcome, FixtureError> {
 
 async fn spawn_adapter(adapter: &AdapterSpec) -> Result<ProcRun, FixtureError> {
     let timeout_secs = adapter.timeout_secs.unwrap_or(30);
-    let mut cmd = Command::new(&adapter.cmd);
-    cmd.args(&adapter.args);
+    // On Windows `pwd` resolves to the MSYS shim, which prints /tmp-style
+    // remapped paths that fail the canonicalize comparison against the native
+    // workdir. `cmd /c cd` prints the current directory as a native path,
+    // keeping the fixture (and its workdir-isolation check) platform-neutral.
+    let mut cmd = if cfg!(windows) && adapter.cmd == "pwd" {
+        let mut c = Command::new("cmd");
+        c.args(["/c", "cd"]);
+        c
+    } else {
+        let mut c = Command::new(&adapter.cmd);
+        c.args(&adapter.args);
+        c
+    };
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
     cmd.kill_on_drop(true);
