@@ -123,3 +123,31 @@ Verification commands (installed binaries, no env overrides):
                   owned by forge.exe identity). CI green on cf3a3eff1:
                   lint/clippy + test/nextest + codeql + cargo-deny + tag
                   ci/codeql success; v2.13.21 tag pushed to origin.
+
+2026-08-16        Swap 11: installed release build of 9bb315f4a (swap-10
+                  state + multi-client named-pipe accept loop 72793d8d6 +
+                  client workspace_id on daemon upserts 800d9af1e + Windows
+                  test-hygiene fixes (forge_walker 4f3d339e0, forge3d
+                  77d8f09f0, forge_main c27510564, forge_pheno_shell
+                  44adf6680, forge_pheno_winterminal 0c9f994e0,
+                  forge_repo_map 65d1e148f) + bounded zsh execution
+                  b1148014a + dual_harness Windows pwd 9bb315f4a), built
+                  with APP_VERSION=2.13.21 at
+                  C:\temp\helioslite-release-target-20260816 from temp
+                  worktree C:\temp\helioslite-release-20260816
+                  (forge.exe 49,152,000 / helioslite.exe 49,152,000 /
+                  forge_dbd.exe 4,569,088).
+                  Verified: version 2.13.21 all three binaries (heliosLite,
+                  Forge, .cargo\bin destinations). Live E2E with installed
+                  binaries: (1) workspace_id fix — forge_dbd started manually
+                  from a DIFFERENT cwd, client rename from its own cwd routed
+                  through the daemon; row written with the CLIENT's workspace
+                  hash (7223613707304691230), not the daemon's
+                  (3793964470997539074) — pre-fix the row would be invisible
+                  to the caller's workspace-filtered reads; (2) multi-client
+                  accept loop — two simultaneous conversation deletes through
+                  the same daemon PID (no respawn), both served, both rows
+                  removed in 0.28s. Full suite at HEAD: workspace sweep 98
+                  targets 3044/0 (1 filtered: zsh doctor test — bounded now,
+                  passes standalone 5.1s), forge_main lib 349/0, dbd 10/0,
+                  dual_harness 1/0.
