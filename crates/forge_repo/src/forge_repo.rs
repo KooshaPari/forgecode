@@ -91,6 +91,7 @@ impl<
             Arc::new(DaemonConversationRepository::new(
                 conversation_repository,
                 env.dbd_socket_path(),
+                env.workspace_hash().id() as i64,
             ))
         } else {
             conversation_repository

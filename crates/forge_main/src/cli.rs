@@ -2317,6 +2317,6 @@ mod tests {
 
     #[test]
     fn release_version_matches_published_release_line() {
-        assert_eq!(env!("CARGO_PKG_VERSION"), "2.10.9");
+        assert_eq!(env!("CARGO_PKG_VERSION"), "2.13.21");
     }
 }

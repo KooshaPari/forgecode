@@ -65,6 +65,25 @@ installed state is traceable to a commit and verified result.
                   box. Full suite at HEAD: repo 372/0/1, services 210/0,
                   app 711/0, domain 659/0, dbd 9/0.
 
+2026-08-15 ~04:00 Swap 9: installed release build of 4b2af40e7 (swap-8 state
+                  + #155 version 2.10.9 + #157/#160/#161 + split-DB CLI
+                  integration test + clippy gates), detached worktree at HEAD
+                  (C:\temp\helioslite-release-20260815).
+                  Verified: version 2.10.9 all three binaries. BEHAVIOR CHANGE:
+                  #160 (d5136deb1) removed the legacy ~/.forge fallback for
+                  the canonical helioslite binary — it now resolves the
+                  isolated ~/.helioslite home and never reads ~/.forge
+                  (HELIOSLITE_HOME pointing at ~/.forge is rejected). The
+                  legacy forge.exe binary still resolves ~/.forge and owns the
+                  split-DB data: forge.exe heliosdoctor 460/29/165/266/0/156,
+                  integrity ok; conversation list shows real sessions; export
+                  dry-run "304 read, 304 exported, 0 decompression failures,
+                  0 errors" (no dest file created). helioslite.exe at
+                  ~/.helioslite is a fresh empty install until data is migrated
+                  or HELIOSLITE_HOME is pointed elsewhere. Full suite at HEAD:
+                  repo 376/0/1, services 210/0, app 711/0, domain 659/0,
+                  dbd 9/0, split_db_cli 2/0.
+
 Commits covered by the 2026-08-08 swaps:
   c30e21dac  feat(splitdb): complete read/write DB split with union reads by default
   87b4fbf43  fix(doctor): align infra stats with split-DB defaults
@@ -85,3 +104,18 @@ Verification commands (installed binaries, no env overrides):
   helioslite.exe export forge <dest>       -> 302/302 (swap 5), 304/304 (swap 6), 0 failures
   helioslite.exe conversation list         -> real sessions visible
   FORGE_LEGACY_DB_PATH=<path>              -> honored (swap 6)
+
+2026-08-16        Swap 10: installed release build of 3a2a86b0b (sync fork to
+                  upstream tailcallhq/forgecode v2.13.21 + version alignment
+                  2.13.21; merge 471374d86 + alignment 3a2a86b0b), built with
+                  APP_VERSION=2.13.21 at E:\caches\forge-21321-target
+                  (forge.exe 49,165,824 / helioslite.exe 49,165,824 /
+                  forge_dbd.exe 4,390,400).
+                  Verified: version 2.13.21 all three binaries. forge.exe
+                  heliosdoctor 461/29/165/267 (total +1 since swap 9),
+                  integrity ok; conversation list shows real sessions;
+                  integrity-only porcelain zero-count + write/legacy db
+                  lines, exit 0. helioslite.exe at ~/.helioslite fresh
+                  empty install per #160 home split (data lives at ~/.forge
+                  owned by forge.exe identity). CI green on 3a2a86b0b:
+                  lint/clippy + test/nextest + codeql success.

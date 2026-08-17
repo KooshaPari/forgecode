@@ -6,6 +6,12 @@ use forge_config::RetryConfig;
 const TRANSPORT_ERROR_CODES: [&str; 3] = ["ERR_STREAM_PREMATURE_CLOSE", "ECONNRESET", "ETIMEDOUT"];
 const OPENAI_RETRYABLE_ERROR_CODES: [&str; 2] = ["server_is_overloaded", "server_error"];
 
+/// Converts known transient provider failures into retryable domain errors.
+///
+/// # Arguments
+///
+/// * `error` - The provider error to classify.
+/// * `retry_config` - Configured retryable HTTP status codes.
 pub fn into_retry(error: anyhow::Error, retry_config: &RetryConfig) -> anyhow::Error {
     if let Some(code) = get_req_status_code(&error)
         .or(get_event_req_status_code(&error))
@@ -340,7 +346,7 @@ mod tests {
     fn test_openai_server_errors_are_retryable() {
         let retry_config = fixture_retry_config(vec![]);
 
-        for code in ["server_is_overloaded", "server_error"] {
+        for code in OPENAI_RETRYABLE_ERROR_CODES {
             let fixture = anyhow::Error::from(Error::Response(Box::new(
                 ErrorResponse::default().code(ErrorCode::String(code.to_string())),
             )));
