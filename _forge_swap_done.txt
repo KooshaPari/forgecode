@@ -155,3 +155,19 @@ Verification commands (installed binaries, no env overrides):
                   test_run_zsh_doctor_streaming all green; one pre-existing
                   forge_api http test pair (test_debug_requests_post_*) gives
                   the binary its 600s wall time but both pass.
+
+2026-08-16        Release-draft version fix (no binary swap): release-drafter's
+                  version-resolver derives from the last PUBLISHED release
+                  (v2.10.8), so every main push re-drafted v2.10.9 and burned
+                  APP_VERSION=v2.10.9 into release assets built from 2.13.21-
+                  synced code. The action's `version` input (config `version:`
+                  key is NOT honored by the pinned build) now overrides the
+                  resolved version with the fork scheme
+                  vUPSTREAM-h.FORK.MAJOR.FORK.MINOR.FORK.PATCH, sourced from
+                  forge_ci::jobs::FORK_RELEASE_VERSION = 2.13.21-h.0.1.1
+                  (commit e59b637f5; regenerated .github/workflows/ci.yml +
+                  release-drafter.yml; hand-maintained .github/release-drafter.yml
+                  carries the explanatory note). Bump the h-block on each fork
+                  release and keep the upstream block in step with the sync.
+                  Draft re-rendered as v2.13.21-h.0.1.1 with assets rebuilt
+                  (APP_VERSION=2.13.21-h.0.1.1) from ci run 32007289852.
