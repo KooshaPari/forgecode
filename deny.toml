@@ -42,7 +42,7 @@ ignore = [
     # (rocket 0.5.1 is the latest rocket; hyper 0.14.32 is the latest 0.14).
     # Re-evaluate when hyper 0.14 / rocket ship a fix or the dev-dep moves to
     # hyper 1 (which uses h2 0.4).
-    { id = "RUSTSEC-2026-0258", reason = "h2 0.3.27 via dev-only rocket->hyper 0.14 chain; no 0.3.x fix exists (patched in 0.4.16 only); low severity; pending upstream dep bump. h2 0.4 already bumped to 0.4.16 in Cargo.lock." },
+    { id = "RUSTSEC-2026-0258", version = ">=0.3.0, <0.4.0", reason = "h2 0.3.27 via dev-only rocket->hyper 0.14 chain; no 0.3.x fix exists (patched in 0.4.16 only); low severity; pending upstream dep bump." },
 
     # Note: RUSTSEC-2026-0049 (advisory-not-detected) entry already removed in 40114d8dc.
 ]

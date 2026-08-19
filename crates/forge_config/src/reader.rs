@@ -103,7 +103,22 @@ impl ConfigReader {
         BASE_PATH.clone()
     }
 
-    fn is_helioslite(binary_name: &str) -> bool {
+    /// Returns the Forge home directory (`~/.forge` or `FORGE_CONFIG` override)
+    /// independent of the current binary identity.
+    ///
+    /// Used by the HeliosLite upstream sync to locate `~/.forge` writes while
+    /// running as `helioslite` (whose `base_path()` is `~/.helioslite`).
+    pub fn forge_base_path() -> PathBuf {
+        Self::resolve_base_path_for("forge", dirs::home_dir().as_deref(), None)
+            .unwrap_or_else(|error| panic!("unable to resolve forge home: {error}"))
+    }
+
+    /// Whether the current binary is the canonical `helioslite` binary.
+    pub fn is_helioslite_binary() -> bool {
+        Self::is_helioslite(Self::binary_name())
+    }
+
+    pub fn is_helioslite(binary_name: &str) -> bool {
         binary_name.eq_ignore_ascii_case("helioslite")
     }
 

@@ -199,3 +199,30 @@ Verification commands (installed binaries, no env overrides):
                   before installing so the daemon-replace wasn't blocked
                   by file locks; restart any active forge/helioslite
                   sessions as needed.
+
+2026-08-19        Incident: Programs\Forge\forge.exe overwritten by upstream
+                  binary + release published (fork version). At 01:39-01:40
+                  an updater run replaced Programs\Forge\forge.exe with the
+                  UPSTREAM tailcallhq/forgecode v2.13.21 asset (sha256
+                  C7E4AD1A... identical to upstream's published windows
+                  asset; "forge 2.13.21"; NO heliosdoctor subcommand).
+                  Because the fork's draft was unpublished, releases/latest
+                  served v2.10.8 (or the updater resolved an upstream repo
+                  at run time ? HELIOSLITE_REPO unset at diagnosis), and the
+                  upstream binary reads the monolithic DB layout, so forge
+                  opened with no split-DB conversations (the user's "forge
+                  opens helioslite rather than real forge").
+                  FIX (1): published the draft as a NON-prerelease release
+                  v2.13.21-h.0.1.1 (36 assets, verified: releases/latest
+                  now serves the fork build 49,152,000 "forge 2.13.21-h.0.1.1"
+                  with heliosdoctor; base ~/.forge). Any updater rerun now
+                  pulls the fork build.
+                  FIX (2): staged restore of Programs\Forge\forge.exe from
+                  the verified fork build (Programs\heliosLite\forge.exe ->
+                  forge.exe.new + _forge_restore.cmd wait-loop). Per the
+                  AGENTS.md rule (never kill interactive forge sessions),
+                  the swap waits for forge.exe to exit and does not
+                  auto-start; 11 live forge processes were left running
+                  (10 fork-build from 01:37, 1 upstream from 01:42).
+                  Verify after close: forge.exe sha256 ==
+                  5f848557b4ad0697053d797252f6969e0b3c8818b8608f7817236234aac9bf87.

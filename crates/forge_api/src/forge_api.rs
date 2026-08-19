@@ -10,7 +10,7 @@ use forge_app::{
     FileDiscoveryService, ForgeApp, GitApp, GrpcInfra, McpConfigManager, McpService,
     ProviderAuthService, ProviderService, Services, User, UserUsage, Walker, WorkspaceService,
 };
-use forge_config::ForgeConfig;
+use forge_config::{ConfigReader, ForgeConfig};
 use forge_domain::{Agent, ConsoleWriter, *};
 use forge_infra::ForgeInfra;
 use forge_repo::ForgeRepo;
@@ -95,6 +95,8 @@ impl Drop for BackgroundTasks {
 impl ForgeAPI<ForgeServices<ForgeRepo<ForgeInfra>>, ForgeRepo<ForgeInfra>> {
     const FTS_REFRESH_DEFAULT_SECS: u64 = 300;
     const FTS_REFRESH_STARTUP_DELAY_SECS: u64 = 30;
+    const UPSTREAM_SYNC_DEFAULT_SECS: u64 = 5;
+    const UPSTREAM_SYNC_STARTUP_DELAY_SECS: u64 = 2;
 
     /// Creates a fully-initialized [`ForgeAPI`] from a pre-read configuration.
     ///
@@ -110,8 +112,17 @@ impl ForgeAPI<ForgeServices<ForgeRepo<ForgeInfra>>, ForgeRepo<ForgeInfra>> {
         let repo = Arc::new(ForgeRepo::new(infra.clone()));
         let cancel = CancellationToken::new();
         let fts_handle = Self::spawn_fts_refresh_task(repo.clone(), infra.as_ref(), cancel.clone());
+        let upstream_sync_handle =
+            Self::spawn_upstream_sync_task(repo.clone(), infra.as_ref(), cancel.clone());
         let app = Arc::new(ForgeServices::new(repo.clone()));
-        let bg = BackgroundTasks::new(cancel, fts_handle.into_iter().collect());
+        let mut handles = Vec::new();
+        if let Some(h) = fts_handle {
+            handles.push(h);
+        }
+        if let Some(h) = upstream_sync_handle {
+            handles.push(h);
+        }
+        let bg = BackgroundTasks::new(cancel, handles);
         Self { services: app, infra: repo, _background: Some(bg) }
     }
 
@@ -158,6 +169,124 @@ impl ForgeAPI<ForgeServices<ForgeRepo<ForgeInfra>>, ForgeRepo<ForgeInfra>> {
                     _ = tokio::time::sleep(interval) => {}
                     _ = shutdown.cancelled() => {
                         debug!("FTS refresh task cancelled");
+                        return;
+                    }
+                }
+            }
+        });
+
+        Some(handle)
+    }
+
+    /// Spawn the continuous Forge → HeliosLite upstream sync loop.
+    ///
+    /// Only runs when the current binary is `helioslite` and the forge home
+    /// (`~/.forge`) is distinct from the helioslite home (`~/.helioslite`).
+    /// Polls the forge DB every `UPSTREAM_SYNC_DEFAULT_SECS` (override via
+    /// `FORGE_SYNC_INTERVAL_SECS`, disable via `FORGE_SYNC_DISABLED=1` or
+    /// `FORGE_SYNC_INTERVAL_SECS=0`) and imports new conversations idempotently.
+    fn spawn_upstream_sync_task(
+        repo: Arc<ForgeRepo<ForgeInfra>>,
+        infra: &ForgeInfra,
+        shutdown: CancellationToken,
+    ) -> Option<JoinHandle<()>> {
+        if !ConfigReader::is_helioslite_binary() {
+            return None;
+        }
+
+        if infra
+            .get_env_var("FORGE_SYNC_DISABLED")
+            .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true"))
+            .unwrap_or(false)
+        {
+            debug!("Upstream sync disabled via FORGE_SYNC_DISABLED");
+            return None;
+        }
+
+        let sync_secs = infra
+            .get_env_var("FORGE_SYNC_INTERVAL_SECS")
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(Self::UPSTREAM_SYNC_DEFAULT_SECS);
+
+        if sync_secs == 0 {
+            debug!("Upstream sync disabled via FORGE_SYNC_INTERVAL_SECS=0");
+            return None;
+        }
+
+        let forge_home = ConfigReader::forge_base_path();
+        let helios_home = ConfigReader::base_path();
+        if forge_home == helios_home {
+            debug!("Upstream sync skipped: forge and helioslite homes are identical");
+            return None;
+        }
+
+        // Source is the official forge DB (legacy single-file). The fork's
+        // split-DB uses `.forge.writes.db` for the helioslite target, not the
+        // source, so we only watch the legacy file here.
+        let source_db = forge_home.join(".forge.db");
+
+        debug!(
+            forge_home = %forge_home.display(),
+            helios_home = %helios_home.display(),
+            source_db = %source_db.display(),
+            interval_secs = sync_secs,
+            "Upstream sync enabled: forge → helioslite"
+        );
+
+        let handle = tokio::spawn(async move {
+            // Initial startup delay — abort immediately if cancelled.
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(Self::UPSTREAM_SYNC_STARTUP_DELAY_SECS)) => {}
+                _ = shutdown.cancelled() => return,
+            }
+
+            let interval = Duration::from_secs(sync_secs);
+            let mut last_mtime: Option<std::time::SystemTime> = None;
+
+            loop {
+                // Cheap mtime check to avoid opening the DB when unchanged.
+                let current_mtime = std::fs::metadata(&source_db)
+                    .and_then(|m| m.modified())
+                    .ok();
+
+                let should_sync = match (current_mtime, &last_mtime) {
+                    (Some(cur), Some(last)) => cur != *last,
+                    (Some(_), None) => true,
+                    (None, _) => false, // source doesn't exist yet
+                };
+
+                if should_sync {
+                    if current_mtime.is_some() {
+                        last_mtime = current_mtime;
+                    }
+                    match repo.import_forge_db(source_db.clone()).await {
+                        Ok(report) => {
+                            if report.imported > 0 {
+                                debug!(
+                                    imported = report.imported,
+                                    skipped = report.skipped_existing,
+                                    source_total = report.source_total,
+                                    "Upstream sync imported new conversations"
+                                );
+                            }
+                        }
+                        Err(error) => {
+                            // Expected when source is missing or is already a
+                            // fork-schema DB (e.g. no upstream forge installed).
+                            let msg = error.to_string();
+                            if !msg.contains("source database not found")
+                                && !msg.contains("already a heliosLite/fork-schema")
+                            {
+                                warn!(%error, "Upstream sync failed");
+                            }
+                        }
+                    }
+                }
+
+                tokio::select! {
+                    _ = tokio::time::sleep(interval) => {}
+                    _ = shutdown.cancelled() => {
+                        debug!("Upstream sync task cancelled");
                         return;
                     }
                 }
