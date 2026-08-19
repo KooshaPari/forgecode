@@ -26,10 +26,10 @@ pub struct PruneReport {
 /// Strategy:
 /// 1. Compute available headroom: current_tokens - budget_tokens.
 /// 2. Score each message by importance (heuristic).
-/// 3. Remove lowest-scoring messages, from the middle outward,
-///    until within budget or out of removable messages.
-/// 4. Always preserve: system messages, first user message,
-///    last assistant message.
+/// 3. Remove lowest-scoring messages, from the middle outward, until within
+///    budget or out of removable messages.
+/// 4. Always preserve: system messages, first user message, last assistant
+///    message.
 pub fn prune(ctx: &Context, config: &Compact) -> (Context, PruneReport) {
     let mut report = PruneReport::default();
     let current_tokens = ctx.token_count_approx();

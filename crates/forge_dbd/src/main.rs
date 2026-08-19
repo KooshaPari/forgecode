@@ -12,8 +12,8 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Resolves the daemon's socket path.
 ///
 /// Mirrors [`forge_domain::Environment::dbd_socket_path`]:
-/// 1. `FORGE_DBD_SOCKET` environment variable, if set — so a spawned daemon
-///    can bind where the client expects it.
+/// 1. `FORGE_DBD_SOCKET` environment variable, if set — so a spawned daemon can
+///    bind where the client expects it.
 /// 2. Otherwise the default `~/.forge/.forge.db.sock`.
 fn socket_path() -> PathBuf {
     if let Ok(path) = std::env::var("FORGE_DBD_SOCKET") {

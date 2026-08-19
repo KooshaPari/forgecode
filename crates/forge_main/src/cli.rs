@@ -173,8 +173,8 @@ pub enum TopLevelCommand {
     /// database.
     Import(ImportCommandGroup),
 
-    /// One-way export of conversations from this repository to a freshly-created
-    /// official-schema SQLite file.
+    /// One-way export of conversations from this repository to a
+    /// freshly-created official-schema SQLite file.
     Export(ExportCommandGroup),
 
     /// Migrate the legacy ~/.forge data directory into the canonical

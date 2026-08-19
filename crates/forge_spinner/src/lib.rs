@@ -215,7 +215,8 @@ pub struct SpinnerManager<P: ConsoleWriter> {
     message: Option<String>,
     printer: Arc<P>,
     /// Whether stderr is a terminal. When false, the spinner thread is never
-    /// started and no ANSI escape codes are emitted, keeping piped output clean.
+    /// started and no ANSI escape codes are emitted, keeping piped output
+    /// clean.
     is_terminal: bool,
 }
 

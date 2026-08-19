@@ -201,10 +201,9 @@ impl EnvironmentInfra for ForgeEnvironmentInfra {
 /// `integrity_check` ("ok" when every checked DB is healthy) and records the
 /// paths checked on `write_db_path` / `legacy_db_path`.
 fn compute_database_integrity() -> HeliosdoctorDbStats {
-    use diesel::Connection;
-    use diesel::RunQueryDsl;
     use diesel::sql_types::Text;
     use diesel::sqlite::SqliteConnection;
+    use diesel::{Connection, RunQueryDsl};
 
     let write_path = database_write_path();
     let legacy_path = database_legacy_read_path();
@@ -451,9 +450,8 @@ fn compute_database_stats() -> HeliosdoctorDbStats {
 ///
 /// `table` must contain only `A-Za-z0-9_.` to prevent SQL injection.
 fn count_table(conn: &mut diesel::sqlite::SqliteConnection, table: &str) -> Option<i64> {
-    use diesel::QueryableByName;
-    use diesel::RunQueryDsl;
     use diesel::sql_types::BigInt;
+    use diesel::{QueryableByName, RunQueryDsl};
 
     if !table
         .chars()
@@ -485,9 +483,8 @@ fn count_where(
     table: &str,
     predicate: &str,
 ) -> Option<i64> {
-    use diesel::QueryableByName;
-    use diesel::RunQueryDsl;
     use diesel::sql_types::BigInt;
+    use diesel::{QueryableByName, RunQueryDsl};
 
     // Whitelist covers the fixed predicate literals used by compute_database_stats
     // (is_compressed/context_zstd comparisons, json_extract initiator checks,

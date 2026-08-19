@@ -6,8 +6,8 @@
 //! startup via `FORGE_WRITE_DB_PATH` / `FORGE_LEGACY_DB_PATH`, then asserts
 //! the `heliosdoctor` porcelain output:
 //!
-//! * `heliosdoctor --verbose` surfaces the UNION of both DBs — the legacy
-//!   rows must remain visible even though the write DB is the new primary.
+//! * `heliosdoctor --verbose` surfaces the UNION of both DBs — the legacy rows
+//!   must remain visible even though the write DB is the new primary.
 //! * `heliosdoctor --integrity-only` skips the COUNT queries entirely
 //!   (`db_total=0`) and reports only the PRAGMA integrity result.
 //!

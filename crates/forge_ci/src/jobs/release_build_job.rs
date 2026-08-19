@@ -1,8 +1,8 @@
-use crate::workflow_model::{Job, Level, Permissions, Step};
 use derive_setters::Setters;
 
 use crate::release_matrix::ReleaseMatrix;
 use crate::steps::setup_protoc;
+use crate::workflow_model::{Job, Level, Permissions, Step};
 
 #[derive(Clone, Default, Setters)]
 #[setters(strip_option, into)]

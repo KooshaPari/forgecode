@@ -67,7 +67,8 @@ impl EventHandle<EventData<ResponsePayload>> for CompactionHandler {
                 conversation.context = Some(compacted);
             } else {
                 debug!(agent_id = %self.agent.id, "Compaction not needed");
-                // Still apply the pruned/compressed version even if standard compaction isn't triggered
+                // Still apply the pruned/compressed version even if standard compaction isn't
+                // triggered
                 conversation.context = Some(pruned);
             }
         }

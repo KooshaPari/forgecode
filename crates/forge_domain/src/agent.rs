@@ -102,7 +102,8 @@ pub struct ReasoningConfig {
 }
 
 impl ReasoningConfig {
-    /// Fills fields that are absent from this configuration with values from `other`.
+    /// Fills fields that are absent from this configuration with values from
+    /// `other`.
     ///
     /// # Arguments
     ///

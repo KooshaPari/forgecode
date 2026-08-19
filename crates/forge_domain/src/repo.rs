@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use anyhow::Result;
+use url::Url;
+
 use crate::{
     AnyProvider, AuthCredential, ChatCompletionMessage, Context, Conversation, ConversationId,
     ConversationSummary, MigrationResult, Model, ModelId, Provider, ProviderId, ProviderTemplate,
     ResultStream, SearchMatch, Skill, Snapshot, WorkspaceAuth, WorkspaceId,
 };
-use anyhow::Result;
-use url::Url;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextPatchBlock {

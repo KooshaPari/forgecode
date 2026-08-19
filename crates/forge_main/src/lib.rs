@@ -26,8 +26,6 @@ mod vscode;
 mod zsh;
 
 mod update;
-pub use update::{DEFAULT_UPDATE_REPO, current_binary_prefix};
-
 use std::sync::LazyLock;
 
 pub use cli::{Cli, ListCommand, ListCommandGroup, TopLevelCommand};
@@ -35,6 +33,7 @@ use forge_domain::{AgentId, Effort};
 pub use sandbox::Sandbox;
 pub use title_display::*;
 pub use ui::UI;
+pub use update::{DEFAULT_UPDATE_REPO, current_binary_prefix};
 
 pub static TRACKER: LazyLock<forge_tracker::Tracker> =
     LazyLock::new(forge_tracker::Tracker::default);

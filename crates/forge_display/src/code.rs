@@ -44,7 +44,8 @@ impl SyntaxHighlighter {
         })
     }
 
-    /// Highlights supported language tokens and leaves unknown languages literal.
+    /// Highlights supported language tokens and leaves unknown languages
+    /// literal.
     pub fn highlight(&self, code: &str, lang: &str) -> String {
         code.split('\n')
             .map(|line| {

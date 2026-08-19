@@ -1,8 +1,9 @@
 //! CLI entry for forgecode dual-harness shared-3task smoker (FR-DH-001).
 
-use dual_harness::{default_shared_3task_path, load_fixture, run_forgecode_fixture};
 use std::path::PathBuf;
 use std::process::ExitCode;
+
+use dual_harness::{default_shared_3task_path, load_fixture, run_forgecode_fixture};
 
 #[tokio::main]
 async fn main() -> ExitCode {

@@ -224,9 +224,10 @@ pub struct Compact {
     pub on_turn_end: Option<bool>,
 
     /// Programmatic compression strategy for context reduction.
-    /// `TokenPrune` removes low-information tokens (default, fast, no API cost).
-    /// `StructuralDedup` merges similar tool calls and file reads.
-    /// `SemanticCompress` uses embeddings to cluster and merge related messages.
+    /// `TokenPrune` removes low-information tokens (default, fast, no API
+    /// cost). `StructuralDedup` merges similar tool calls and file reads.
+    /// `SemanticCompress` uses embeddings to cluster and merge related
+    /// messages.
     #[serde(default)]
     pub compression_strategy: CompressionStrategy,
 

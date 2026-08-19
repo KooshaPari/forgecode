@@ -154,7 +154,8 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let conversation_id = *conversation_id;
         self.run_with_connection(move |connection, _wid| {
             // Read from `conversations_all` so legacy rows are visible.
-            // We use explicit column selection (rather than `ConversationRecord::as_select()`)
+            // We use explicit column selection (rather than
+            // `ConversationRecord::as_select()`)
             // because `ConversationRecord::table_name = conversations` (it is also used
             // for writes). The TEMP VIEW has identical column types so the SELECT … load
             // works regardless.
@@ -1636,8 +1637,8 @@ impl diesel::QueryableByName<diesel::sqlite::Sqlite> for HeliosExportRow {
 /// - `Ok(Some(plain))` — the row has a context payload (plain or zstd) that
 ///   decompressed successfully.
 /// - `Ok(None)` — the row has **no** context payload at all. This is not a
-///   failure: the row is exported with a NULL context so its metadata
-///   (id, title, timestamps) is preserved in the export.
+///   failure: the row is exported with a NULL context so its metadata (id,
+///   title, timestamps) is preserved in the export.
 /// - `Err(())` — the row has a payload but zstd decompression failed. Only
 ///   these count as `decompression_failed` in export reports.
 fn export_context(row: &HeliosExportRow) -> Result<Option<String>, ()> {

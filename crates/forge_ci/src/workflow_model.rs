@@ -1,4 +1,5 @@
-//! Minimal ordered GitHub Actions model used by the Forge CI workflow generator.
+//! Minimal ordered GitHub Actions model used by the Forge CI workflow
+//! generator.
 
 use indexmap::IndexMap;
 use serde::Serialize;

@@ -28,7 +28,8 @@ pub fn sanitize_terminal_text(text: &str) -> String {
     )
 }
 
-/// Highlights one line for supported language tokens; unknown tokens stay literal.
+/// Highlights one line for supported language tokens; unknown tokens stay
+/// literal.
 pub fn highlight_line(line: &str, language: Option<&str>, theme: Theme) -> String {
     let sanitized = sanitize_terminal_text(line);
     let line = sanitized.as_str();
@@ -185,7 +186,8 @@ pub fn highlight_line(line: &str, language: Option<&str>, theme: Theme) -> Strin
     output
 }
 
-/// Wraps sanitized code by terminal display columns while preserving indentation.
+/// Wraps sanitized code by terminal display columns while preserving
+/// indentation.
 pub fn code_wrap(text: &str, width: usize, pretty_broken: bool) -> (usize, Vec<String>) {
     let sanitized = sanitize_terminal_text(text);
     let text = sanitized.as_str();
@@ -233,8 +235,9 @@ pub fn code_wrap(text: &str, width: usize, pretty_broken: bool) -> (usize, Vec<S
 
 #[cfg(test)]
 mod tests {
-    use super::{Theme, code_wrap, highlight_line, sanitize_terminal_text};
     use pretty_assertions::assert_eq;
+
+    use super::{Theme, code_wrap, highlight_line, sanitize_terminal_text};
     #[test]
     fn test_unknown_is_literal() {
         let actual = highlight_line("launch --safe", Some("unknown"), Theme::Dark);

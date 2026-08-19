@@ -10,13 +10,14 @@ use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::codec;
 use anyhow::{Context, Result, bail};
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use diesel::sql_types::{BigInt, Binary, Integer, Nullable, Text, Timestamp};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+use crate::codec;
 
 /// Version of the HeliosLite Forge-session snapshot contract.
 pub const SNAPSHOT_CONTRACT_VERSION: &str = "helioslite-forge-session-v2";
@@ -652,10 +653,12 @@ fn now_unix_ms() -> u128 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use diesel::{Connection, connection::SimpleConnection};
+    use diesel::Connection;
+    use diesel::connection::SimpleConnection;
     use pretty_assertions::assert_eq;
     use tempfile::tempdir;
+
+    use super::*;
 
     fn fixture(path: &Path, include_id_only: bool) -> Result<()> {
         let mut connection = diesel::sqlite::SqliteConnection::establish(path.to_str().unwrap())?;

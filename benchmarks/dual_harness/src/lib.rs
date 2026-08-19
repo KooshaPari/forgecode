@@ -4,10 +4,11 @@
 //! without model serving. Parity with helios-cli `harness_runner::dual_harness`
 //! and Planify2 `scripts/dual-harness/run_shared_3task.cjs`.
 
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+use serde::Deserialize;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::timeout;

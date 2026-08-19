@@ -1,7 +1,8 @@
 //! FR-DH-001: forgecode shared-3task.v1 process_smoke (no model serving).
 
-use dual_harness::{load_fixture, run_forgecode_fixture};
 use std::path::PathBuf;
+
+use dual_harness::{load_fixture, run_forgecode_fixture};
 
 fn fixture_path() -> PathBuf {
     if let Some(p) = std::env::var_os("DUAL_HARNESS_FIXTURE") {

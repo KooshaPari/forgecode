@@ -11,6 +11,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+#[cfg(windows)]
+use forge_dbd::protocol::named_pipe_name;
+use forge_dbd::protocol::{HealthStatus, Request, Response, read_frame, write_frame};
 use forge_domain::{Conversation, ConversationId};
 use rusqlite::Connection;
 #[cfg(unix)]
@@ -24,11 +27,6 @@ use tokio::time::timeout;
 #[cfg(unix)]
 use tracing::warn;
 use tracing::{debug, error, info};
-
-#[cfg(windows)]
-use forge_dbd::protocol::named_pipe_name;
-use forge_dbd::protocol::{HealthStatus, Request, Response};
-use forge_dbd::protocol::{read_frame, write_frame};
 
 // ---------------------------------------------------------------------------
 // Shared daemon state (cheap to clone; wraps Arcs internally)
@@ -542,12 +540,12 @@ impl DbServer {
     /// Execute a single request against the writer connection.
     ///
     /// - [`Request::CheckpointWal`] runs `PRAGMA wal_checkpoint(TRUNCATE)`.
-    /// - [`Request::OptimizeFts`] / [`Request::RefreshFts`] run
-    ///   `PRAGMA optimize`, which also maintains FTS indexes when present.
+    /// - [`Request::OptimizeFts`] / [`Request::RefreshFts`] run `PRAGMA
+    ///   optimize`, which also maintains FTS indexes when present.
     /// - Conversation writes mirror the exact SQL from forge_repo's
     ///   `ConversationRepositoryImpl` (conversation_repo.rs): the
-    ///   `conversations` table, the `conversation_id` conflict target, and
-    ///   the same updated-column sets.
+    ///   `conversations` table, the `conversation_id` conflict target, and the
+    ///   same updated-column sets.
     fn execute_with_conn(conn: &Connection, request: &Request) -> Result<Response> {
         match request {
             Request::CheckpointWal => {
@@ -629,8 +627,8 @@ impl DbServer {
     /// - `context` is stored as plain JSON (no zstd), so `context_zstd` stays
     ///   NULL and `is_compressed` stays 0.
     /// - `created_at` is the client-supplied RFC3339 timestamp, which diesel's
-    ///   SQLite timestamp reader accepts (`%FT%T%.fZ`); `updated_at` is
-    ///   stamped in SQL via `strftime`.
+    ///   SQLite timestamp reader accepts (`%FT%T%.fZ`); `updated_at` is stamped
+    ///   in SQL via `strftime`.
     fn upsert_conversation(
         conn: &Connection,
         conversation: &Conversation,
@@ -1286,11 +1284,11 @@ mod db_tests {
 mod windows_tests {
     use std::path::PathBuf;
 
+    use forge_dbd::client::DbClient;
     use tempfile::TempDir;
     use tokio::time::{Duration, sleep};
 
     use super::*;
-    use forge_dbd::client::DbClient;
 
     fn tmp_paths(dir: &TempDir) -> (PathBuf, PathBuf) {
         // Include the pid in the socket path so the derived pipe name is

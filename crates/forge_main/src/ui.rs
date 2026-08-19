@@ -6395,12 +6395,14 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
     use super::{
         MAX_AUTO_CONTINUE_ATTEMPTS, auto_continue_allowed, is_helioslite_binary_name,
         redact_api_key, validate_helioslite_sessions_root, validate_snapshot_destination,
     };
-    use std::fs;
-    use tempfile::tempdir;
 
     #[test]
     fn automatic_continuation_has_a_hard_boundary() {

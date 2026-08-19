@@ -222,9 +222,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::retain_trusted_servers;
-    use forge_app::domain::{McpConfig, McpServerConfig, ServerName};
     use std::collections::BTreeMap;
+
+    use forge_app::domain::{McpConfig, McpServerConfig, ServerName};
+
+    use super::retain_trusted_servers;
 
     #[test]
     fn rejected_local_definition_cannot_override_trusted_user_definition() {

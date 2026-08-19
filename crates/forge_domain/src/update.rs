@@ -32,11 +32,13 @@ pub struct Update {
 }
 
 impl Update {
-    /// Fills fields that are absent from this configuration with values from `other`.
+    /// Fills fields that are absent from this configuration with values from
+    /// `other`.
     ///
     /// # Arguments
     ///
-    /// * `other` - The lower-precedence update configuration to use as a fallback.
+    /// * `other` - The lower-precedence update configuration to use as a
+    ///   fallback.
     pub fn merge_from(&mut self, other: Self) {
         if self.frequency.is_none() {
             self.frequency = other.frequency;
@@ -49,8 +51,9 @@ impl Update {
 
 #[cfg(test)]
 mod tests {
-    use super::{Update, UpdateFrequency};
     use pretty_assertions::assert_eq;
+
+    use super::{Update, UpdateFrequency};
     #[test]
     fn test_update_merge_from_fills_only_unset_values() {
         let mut fixture = Update { frequency: Some(UpdateFrequency::Daily), auto_update: None };

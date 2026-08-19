@@ -158,8 +158,8 @@ fn update_command() -> String {
 /// 1. Download `{prefix}-{arch}-pc-windows-msvc.exe` to `<binary>.new` next to
 ///    the current binary using PowerShell (absolute paths only, immune to the
 ///    length-capped PATH that breaks `curl` resolution in cmd.exe).
-/// 2. Stage a small `.cmd` helper that waits for the running exe to exit,
-///    swaps `<binary>.new` over `<binary>`, cleans up, and relaunches.
+/// 2. Stage a small `.cmd` helper that waits for the running exe to exit, swaps
+///    `<binary>.new` over `<binary>`, cleans up, and relaunches.
 /// 3. Launch that helper detached, so it survives the binary exiting.
 ///
 /// The prefix and install directory are derived from the running binary's

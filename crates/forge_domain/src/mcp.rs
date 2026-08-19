@@ -287,7 +287,8 @@ impl From<BTreeMap<ServerName, McpServerConfig>> for McpConfig {
 }
 
 impl McpConfig {
-    /// Merges server definitions, giving same-name servers in `other` precedence.
+    /// Merges server definitions, giving same-name servers in `other`
+    /// precedence.
     ///
     /// # Arguments
     ///

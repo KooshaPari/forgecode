@@ -151,7 +151,8 @@ pub struct Compact {
     #[serde(default)]
     pub enable_structural_dedup: bool,
 
-    /// Compression strategy identifier ("programmatic", "semantic", "ai", "all").
+    /// Compression strategy identifier ("programmatic", "semantic", "ai",
+    /// "all").
     #[serde(default)]
     pub compression_strategy: String,
 

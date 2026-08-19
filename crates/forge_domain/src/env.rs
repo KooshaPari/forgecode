@@ -132,13 +132,13 @@ impl Environment {
     /// tables.
     ///
     /// Resolution order:
-    /// 1. `FORGE_WRITE_DB_PATH` environment variable, if set. Allows callers
-    ///    to point writes at any file (including a brand-new directory) so
-    ///    the existing `.forge.db` is left untouched.
-    /// 2. Otherwise `.forge.writes.db` — the split-DB default. The fork
-    ///    always writes new data into the separate write DB while reads go
-    ///    through the `conversations_all` UNION (legacy `.forge.db` +
-    ///    write DB), so pre-existing conversations remain visible.
+    /// 1. `FORGE_WRITE_DB_PATH` environment variable, if set. Allows callers to
+    ///    point writes at any file (including a brand-new directory) so the
+    ///    existing `.forge.db` is left untouched.
+    /// 2. Otherwise `.forge.writes.db` — the split-DB default. The fork always
+    ///    writes new data into the separate write DB while reads go through the
+    ///    `conversations_all` UNION (legacy `.forge.db` + write DB), so
+    ///    pre-existing conversations remain visible.
     ///
     /// Point `FORGE_LEGACY_DB_PATH` at a different file to change which
     /// legacy database the read-side UNION pulls from.
@@ -185,11 +185,11 @@ impl Environment {
     /// spawn on the first routed write when the socket is not live.
     ///
     /// Resolution order:
-    /// 1. `FORGE_DBD_BIN` environment variable, if set. Allows callers to
-    ///    point the client at a specific daemon binary — an absolute path, or
-    ///    a bare name resolved through `PATH`.
-    /// 2. Otherwise `None` — the client falls back to looking up `forge_dbd`
-    ///    on `PATH` at spawn time.
+    /// 1. `FORGE_DBD_BIN` environment variable, if set. Allows callers to point
+    ///    the client at a specific daemon binary — an absolute path, or a bare
+    ///    name resolved through `PATH`.
+    /// 2. Otherwise `None` — the client falls back to looking up `forge_dbd` on
+    ///    `PATH` at spawn time.
     pub fn dbd_bin_path(&self) -> Option<PathBuf> {
         std::env::var("FORGE_DBD_BIN").ok().map(PathBuf::from)
     }
