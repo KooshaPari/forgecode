@@ -171,3 +171,31 @@ Verification commands (installed binaries, no env overrides):
                   release and keep the upstream block in step with the sync.
                   Draft re-rendered as v2.13.21-h.0.1.1 with assets rebuilt
                   (APP_VERSION=2.13.21-h.0.1.1) from ci run 32007289852.
+
+2026-08-19        Swap 12: installed v2.13.21-h.0.1.1 fork release locally
+                  (HEAD ecc36a9da, after the fork-scheme pin landed in
+                  e59b637f5 + docs amendment ecc36a9da). CI had already
+                  built the cross-platform matrix for the draft release
+                  v2.13.21-h.0.1.1 at KooshaPari/forgecode, so the
+                  Windows x86_64 forge.exe + helioslite.exe were pulled
+                  directly from the draft (sha256
+                  5f848557b4ad0697053d797252f6969e0b3c8818b8608f7817236234aac9bf87,
+                  matches the published checksum). forge_dbd was built
+                  locally with APP_VERSION=2.13.21-h.0.1.1 (CI does not
+                  ship it).
+                  Verified: helioslite + forge (heliosLite + Forge
+                  destinations) report 2.13.21-h.0.1.1; heliosdoctor
+                  reports version=v2.13.21-h.0.1.1; forge_dbd reports
+                  2.13.21 (intentional: forge_dbd/src/main.rs uses
+                  env!("CARGO_PKG_VERSION") from the workspace
+                  Cargo.toml — the workspace version tracks the upstream
+                  sync and is intentionally distinct from the fork
+                  APP_VERSION, which is the public-facing release
+                  identifier on forge/forge.exe + helioslite/helioslite.exe).
+                  conversation list --porcelain returns real sessions;
+                  FORGE_DBD_ENABLED=1 still spawns the daemon cleanly
+                  (wire protocol unchanged across the version bump).
+                  10 stale forge.exe background processes were stopped
+                  before installing so the daemon-replace wasn't blocked
+                  by file locks; restart any active forge/helioslite
+                  sessions as needed.
