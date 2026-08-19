@@ -226,3 +226,4 @@ Verification commands (installed binaries, no env overrides):
                   (10 fork-build from 01:37, 1 upstream from 01:42).
                   Verify after close: forge.exe sha256 ==
                   5f848557b4ad0697053d797252f6969e0b3c8818b8608f7817236234aac9bf87.
+swap-13 2026-08-19T13:13Z 2.13.21-h.0.1.2 forge/helioslite x86_64-pc-windows-msvc 06d7452d78929b3ffa4f562f59224f0edc6d87e48bf31282c6bd589de79fdae7 6 dests rename-aside helioslite 2.13.21-h.0.1.2 forge 2.13.21-h.0.1.2 forge_dbd 2.13.21 (workspace) verify ok
