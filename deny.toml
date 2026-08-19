@@ -36,6 +36,14 @@ ignore = [
     { id = "RUSTSEC-2025-0141", reason = "bincode 1.x unmaintained; transitive via upstream workspace deps; bincode 2.x migration is upstream-owned." },
     { id = "RUSTSEC-2024-0436", reason = "paste unmaintained; transitive via proc-macro deps; paste! macro not invoked directly in Phenotype additions." },
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained (folded into rustls-pki-types); transitive via upstream rustls stack; pending upstream bump." },
+    # h2 0.3.x empty-DATA-frames (low severity). No fix exists in the 0.3 line
+    # (latest is 0.3.27; RustSec patched only 0.4.16), and the 0.3 instance is
+    # pinned by the dev-only chain rocket 0.5.1 -> rocket_http -> hyper 0.14
+    # (rocket 0.5.1 is the latest rocket; hyper 0.14.32 is the latest 0.14).
+    # Re-evaluate when hyper 0.14 / rocket ship a fix or the dev-dep moves to
+    # hyper 1 (which uses h2 0.4).
+    { id = "RUSTSEC-2026-0258", reason = "h2 0.3.27 via dev-only rocket->hyper 0.14 chain; no 0.3.x fix exists (patched in 0.4.16 only); low severity; pending upstream dep bump. h2 0.4 already bumped to 0.4.16 in Cargo.lock." },
+
     # Note: RUSTSEC-2026-0049 (advisory-not-detected) entry already removed in 40114d8dc.
 ]
 [bans]
