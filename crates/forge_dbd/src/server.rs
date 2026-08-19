@@ -1145,7 +1145,10 @@ mod db_tests {
         let id = fixture.id;
         DbServer::execute_with_conn(
             &conn,
-            &Request::UpsertConversation { conversation: fixture.clone() },
+            &Request::UpsertConversation {
+                conversation: fixture.clone(),
+                workspace_id: None,
+            },
         )
         .expect("initial full upsert");
 
@@ -1162,7 +1165,10 @@ mod db_tests {
             fixture.context(Context::default().add_message(ContextMessage::user("second", None)));
         DbServer::execute_with_conn(
             &conn,
-            &Request::UpsertConversationRef { conversation: updated },
+            &Request::UpsertConversationRef {
+                conversation: updated,
+                workspace_id: None,
+            },
         )
         .expect("reference conflict upsert");
 
