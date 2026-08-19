@@ -27,6 +27,11 @@ jobs:
       DRY_RUN: ${{ inputs.dry_run || vars.AGILEPLUS_BRANCH_CLEANUP_DRY_RUN || 'false' }}
       STALE_DAYS: '90'
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Audit and clean remote branches
         shell: bash
         run: |
