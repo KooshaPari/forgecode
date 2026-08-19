@@ -55,6 +55,10 @@ pub struct Cli {
     #[arg(long, default_value_t = false)]
     pub verbose: bool,
 
+    /// Run accessibility audit on CLI output.
+    #[arg(long, default_value_t = false)]
+    pub check_a11y: bool,
+
     /// Agent ID to use for this session.
     #[arg(long, alias = "aid")]
     pub agent: Option<AgentId>,
