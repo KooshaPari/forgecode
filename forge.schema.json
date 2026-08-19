@@ -21,7 +21,7 @@
         "compression_strategy": {
           "$ref": "#/$defs/CompressionStrategy",
           "default": "token_prune",
-          "description": "Programmatic compression strategy for context reduction.\n`TokenPrune` removes low-information tokens (default, fast, no API cost).\n`StructuralDedup` merges similar tool calls and file reads.\n`SemanticCompress` uses embeddings to cluster and merge related messages."
+          "description": "Programmatic compression strategy for context reduction.\n`TokenPrune` removes low-information tokens (default, fast, no API\ncost). `StructuralDedup` merges similar tool calls and file reads.\n`SemanticCompress` uses embeddings to cluster and merge related\nmessages."
         },
         "enable_adaptive_eviction": {
           "default": false,
