@@ -584,18 +584,10 @@ impl DbServer {
                 )?;
                 Ok(Response::Ack)
             }
-            Request::DeleteConversation { conversation_id } => {
-                // conversation_id is the table's PRIMARY KEY (a globally
-                // unique UUID; see forge_repo's database/schema.rs), so it
-                // uniquely identifies the row. forge_repo additionally
-                // filters by workspace_id as a cross-workspace guard, but the
-                // daemon derives workspace_id from ITS OWN current_dir hash,
-                // which can diverge from the client's (e.g. --directory mode
-                // canonicalizes paths on Windows). Reusing that predicate here
-                // would silently no-op the delete, so we key on the unique id.
+            Request::DeleteConversation { conversation_id, workspace_id } => {
                 conn.execute(
-                    "DELETE FROM conversations WHERE conversation_id = ?",
-                    rusqlite::params![conversation_id.into_string()],
+                    "DELETE FROM conversations WHERE conversation_id = ? AND workspace_id = ?",
+                    rusqlite::params![conversation_id.into_string(), workspace_id],
                 )?;
                 Ok(Response::Ack)
             }
@@ -635,19 +627,11 @@ impl DbServer {
         full: bool,
         workspace_id: Option<i64>,
     ) -> Result<()> {
-        // Only conversations with messages (or an initiator) get a context
-        // blob; tombstone conversations keep NULL, matching ConversationRecord.
-        let context_json = conversation
-            .context
-            .as_ref()
-            .filter(|ctx| !ctx.messages.is_empty() || ctx.initiator.is_some())
-            .map(serde_json::to_string)
-            .transpose()?;
-        let message_count = conversation
-            .context
-            .as_ref()
-            .filter(|ctx| !ctx.messages.is_empty() || ctx.initiator.is_some())
-            .map(|ctx| ctx.messages.len() as i32);
+        // Keep the daemon's wire bytes identical to forge_repo's direct
+        // writer, including the legacy ContextRecord envelope and its
+        // compressed-column fallback.
+        let persisted_context =
+            forge_dbd::conversation_storage::persist_context(conversation.context.as_ref());
 
         let conversation_value = serde_json::to_value(conversation)?;
         let created_at = conversation_value
@@ -697,7 +681,7 @@ impl DbServer {
                  ) VALUES (\
                      ?, ?, ?, ?, ?, \
                      strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?, ?, ?, ?, ?, \
-                     'pending', NULL, NULL, NULL, NULL, 0\
+                     'pending', NULL, NULL, NULL, ?, ?\
                  )\
                  ON CONFLICT(conversation_id) DO UPDATE SET {update_set}",
             ),
@@ -705,13 +689,15 @@ impl DbServer {
                 conversation.id.into_string(),
                 conversation.title.clone(),
                 workspace_id,
-                context_json,
+                persisted_context.context,
                 created_at,
                 metrics,
                 conversation.parent_id.map(|id| id.into_string()),
                 conversation.source.clone(),
                 conversation.cwd.clone(),
-                message_count,
+                persisted_context.message_count,
+                persisted_context.context_zstd,
+                persisted_context.is_compressed,
             ],
         )?;
         Ok(())
@@ -1084,10 +1070,10 @@ mod db_tests {
         assert_eq!(title.as_deref(), Some("second title"));
     }
 
-    /// The full upsert stores the serialised context, stamps `updated_at`, and
-    /// leaves the compression columns at their uncompressed defaults.
+    /// The full upsert stores the legacy context wire in zstd form, stamps
+    /// `updated_at`, and mirrors forge_repo's compression columns exactly.
     #[test]
-    fn upsert_conversation_with_context_stores_context_and_timestamps() {
+    fn upsert_conversation_with_context_stores_compressed_context_and_timestamps() {
         let dir = TempDir::new().unwrap();
         let conn = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
         create_conversations_schema(&conn);
@@ -1130,28 +1116,79 @@ mod db_tests {
             )
             .unwrap();
 
-        assert!(context.is_some(), "context blob should be stored");
+        assert_eq!(context, None, "compressed rows leave context NULL");
         assert_eq!(message_count, Some(1));
         assert!(
             updated_at.is_some(),
             "updated_at should be stamped on write"
         );
+        let compressed = context_zstd.expect("full upsert must persist zstd context");
+        let decompressed = zstd::decode_all(compressed.as_slice()).expect("valid zstd context");
+        let actual = String::from_utf8(decompressed).expect("UTF-8 context");
         assert_eq!(
-            context_zstd, None,
-            "no zstd compression in this wiring pass"
+            actual,
+            r#"{"messages":[{"message":{"text":{"role":"User","content":"hello"}}}]}"#
         );
-        assert_eq!(is_compressed, 0);
+        assert_eq!(is_compressed, 1);
     }
 
-    /// Delete keys on the conversation_id PRIMARY KEY alone: the row is
-    /// removed even when its workspace_id differs from the daemon's, because
-    /// the daemon's own current_dir hash can diverge from the client's (e.g.
-    /// --directory canonicalization on Windows) and a workspace-filtered
-    /// predicate would silently no-op. forge_repo's workspace guard is a
-    /// cross-user boundary that has no meaning inside a local single-user
-    /// daemon.
+    /// A reference upsert inserts compression fields for a new row, but on
+    /// conflict intentionally preserves the existing compressed payload.
     #[test]
-    fn delete_conversation_removes_row_by_unique_id_across_workspaces() {
+    fn upsert_conversation_ref_conflict_preserves_compression_fields() {
+        let dir = TempDir::new().unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
+        create_conversations_schema(&conn);
+
+        let fixture = Conversation::generate()
+            .context(Context::default().add_message(ContextMessage::user("first", None)));
+        let id = fixture.id;
+        DbServer::execute_with_conn(
+            &conn,
+            &Request::UpsertConversation {
+                conversation: fixture.clone(),
+                workspace_id: None,
+            },
+        )
+        .expect("initial full upsert");
+
+        let before: (Option<String>, Option<Vec<u8>>, i32) = conn
+            .query_row(
+                "SELECT context, context_zstd, is_compressed FROM conversations \
+                 WHERE conversation_id = ?1",
+                [id.into_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+
+        let updated =
+            fixture.context(Context::default().add_message(ContextMessage::user("second", None)));
+        DbServer::execute_with_conn(
+            &conn,
+            &Request::UpsertConversationRef {
+                conversation: updated,
+                workspace_id: None,
+            },
+        )
+        .expect("reference conflict upsert");
+
+        let actual: (Option<String>, Option<Vec<u8>>, i32) = conn
+            .query_row(
+                "SELECT context, context_zstd, is_compressed FROM conversations \
+                 WHERE conversation_id = ?1",
+                [id.into_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(actual.0, None);
+        assert_eq!(actual.1, before.1);
+        assert_eq!(actual.2, before.2);
+    }
+
+    /// A delete request must not remove an identically-addressed conversation
+    /// from a different workspace.
+    #[test]
+    fn delete_conversation_does_not_remove_row_from_another_workspace() {
         let dir = TempDir::new().unwrap();
         let conn = rusqlite::Connection::open(dir.path().join("test.db")).unwrap();
         create_conversations_schema(&conn);
@@ -1167,18 +1204,20 @@ mod db_tests {
             Response::Ack
         ));
 
-        // Simulate a workspace_id mismatch (client resolved a different cwd):
-        // the daemon must still delete the row by its unique id.
+        let other_workspace_id = DbServer::workspace_id() + 1;
         conn.execute(
             "UPDATE conversations SET workspace_id = ?1 WHERE conversation_id = ?2",
-            rusqlite::params![DbServer::workspace_id() + 1, id.into_string()],
+            rusqlite::params![other_workspace_id, id.into_string()],
         )
         .unwrap();
 
         assert!(matches!(
             DbServer::execute_with_conn(
                 &conn,
-                &Request::DeleteConversation { conversation_id: id }
+                &Request::DeleteConversation {
+                    conversation_id: id,
+                    workspace_id: DbServer::workspace_id(),
+                }
             )
             .expect("delete"),
             Response::Ack
@@ -1187,7 +1226,7 @@ mod db_tests {
         let total: i64 = conn
             .query_row("SELECT COUNT(*) FROM conversations", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(total, 0, "row deleted despite the workspace_id mismatch");
+        assert_eq!(total, 1, "row from the other workspace must remain");
     }
 
     /// update_parent_id mirrors forge_repo: it sets parent_id (and stamps
@@ -1258,7 +1297,10 @@ mod db_tests {
 
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
         let mut batch = vec![QueuedRequest {
-            request: Request::DeleteConversation { conversation_id: ConversationId::default() },
+            request: Request::DeleteConversation {
+                conversation_id: ConversationId::default(),
+                workspace_id: DbServer::workspace_id(),
+            },
             response_tx,
         }];
         DbServer::flush_batch(&mut batch, &mut conn, &db_path).await;

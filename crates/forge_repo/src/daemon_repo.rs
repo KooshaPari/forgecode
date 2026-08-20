@@ -60,11 +60,12 @@ static SPAWN_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 ///
 /// ## Fallback semantics
 ///
-/// The daemon path is BEST-EFFORT: on any failure — connect error, send error,
-/// `Response::Error`, or an unexpected response — we log and fall back to
-/// `inner`'s direct implementation. A daemon error is never propagated to the
-/// caller. Because the daemon write did not happen when we fall back, the
-/// direct path cannot double-write.
+/// A direct fallback is safe only before a daemon request can have been sent:
+/// failed initial connect or failed daemon spawn. Once [`DbClient::send`]
+/// starts its fresh request stream, a transport error, daemon error response,
+/// or unexpected response is indeterminate: the daemon may have committed the
+/// write. Those outcomes are surfaced to the caller and are never replayed
+/// through `inner`.
 pub struct DaemonConversationRepository {
     inner: Arc<ConversationRepositoryImpl>,
     socket_path: PathBuf,
@@ -80,6 +81,18 @@ pub struct DaemonConversationRepository {
     /// canonicalization). Reads filter by the client's hash, so daemon-written
     /// rows must carry it or they would be invisible to the caller.
     workspace_id: i64,
+}
+
+/// Result of attempting a daemon-routed conversation write.
+///
+/// `Unavailable` means no daemon request was sent, so the direct repository
+/// may safely execute the write. `Indeterminate` means the daemon had the
+/// opportunity to observe the request; direct fallback would risk a duplicate
+/// write and must be skipped.
+enum DaemonWriteOutcome {
+    Ack,
+    Unavailable,
+    Indeterminate(anyhow::Error),
 }
 
 impl DaemonConversationRepository {
@@ -115,12 +128,13 @@ impl DaemonConversationRepository {
         }
     }
 
-    /// Best-effort daemon round-trip for a write request.
+    /// Attempt one daemon round-trip for a write request.
     ///
-    /// Returns `true` when the daemon acknowledged the request. Returns
-    /// `false` (after logging) on any failure, so the caller falls back to
-    /// the direct implementation.
-    async fn try_daemon(&self, request: Request) -> bool {
+    /// Only an initial connection/spawn failure is classified as
+    /// [`DaemonWriteOutcome::Unavailable`]. All failures after
+    /// [`DbClient::send`] begins are indeterminate because the daemon may have
+    /// recorded the request before the client lost its response.
+    async fn try_daemon(&self, request: Request) -> DaemonWriteOutcome {
         let client = match self
             .client
             .get_or_try_init(|| DbClient::connect(&self.socket_path))
@@ -140,31 +154,55 @@ impl DaemonConversationRepository {
                             socket = %self.socket_path.display(),
                             "forge_dbd still unavailable; falling back to direct write"
                         );
-                        return false;
+                        return DaemonWriteOutcome::Unavailable;
                     }
                 }
             }
         };
         match client.send(request).await {
-            Ok(Response::Ack) => true,
+            Ok(Response::Ack) => DaemonWriteOutcome::Ack,
             Ok(Response::Error { message }) => {
                 warn!(
                     message = %message,
-                    "forge_dbd rejected write; falling back to direct write"
+                    "forge_dbd rejected write; not replaying an indeterminate write"
                 );
-                false
+                DaemonWriteOutcome::Indeterminate(anyhow::anyhow!(
+                    "forge_dbd rejected write after receiving the request: {message}"
+                ))
             }
             Ok(other) => {
-                debug!(
+                warn!(
                     response = ?other,
-                    "forge_dbd returned an unexpected response; falling back to direct write"
+                    "forge_dbd returned an unexpected response; not replaying an indeterminate write"
                 );
-                false
+                DaemonWriteOutcome::Indeterminate(anyhow::anyhow!(
+                    "forge_dbd returned an unexpected response after receiving the request: {other:?}"
+                ))
             }
             Err(err) => {
-                warn!(error = %err, "forge_dbd send failed; falling back to direct write");
-                false
+                warn!(
+                    error = %err,
+                    "forge_dbd request transport failed; not replaying an indeterminate write"
+                );
+                DaemonWriteOutcome::Indeterminate(err.context(
+                    "forge_dbd request outcome is indeterminate; direct fallback skipped to avoid duplicate write",
+                ))
             }
+        }
+    }
+
+    /// Apply the safety policy shared by every daemon-routed write.
+    ///
+    /// The direct fallback runs only when no daemon request was sent.
+    async fn write_or_fallback<F, Fut>(&self, request: Request, fallback: F) -> anyhow::Result<()>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = anyhow::Result<()>>,
+    {
+        match self.try_daemon(request).await {
+            DaemonWriteOutcome::Ack => Ok(()),
+            DaemonWriteOutcome::Unavailable => fallback().await,
+            DaemonWriteOutcome::Indeterminate(error) => Err(error),
         }
     }
 
@@ -264,29 +302,25 @@ impl ConversationRepository for DaemonConversationRepository {
     // -----------------------------------------------------------------------
 
     async fn upsert_conversation(&self, conversation: Conversation) -> anyhow::Result<()> {
-        if self
-            .try_daemon(Request::UpsertConversation {
+        self.write_or_fallback(
+            Request::UpsertConversation {
                 conversation: conversation.clone(),
                 workspace_id: Some(self.workspace_id),
-            })
-            .await
-        {
-            return Ok(());
-        }
-        self.inner.upsert_conversation(conversation).await
+            },
+            || self.inner.upsert_conversation(conversation),
+        )
+        .await
     }
 
     async fn upsert_conversation_ref(&self, conversation: &Conversation) -> anyhow::Result<()> {
-        if self
-            .try_daemon(Request::UpsertConversationRef {
+        self.write_or_fallback(
+            Request::UpsertConversationRef {
                 conversation: conversation.clone(),
                 workspace_id: Some(self.workspace_id),
-            })
-            .await
-        {
-            return Ok(());
-        }
-        self.inner.upsert_conversation_ref(conversation).await
+            },
+            || self.inner.upsert_conversation_ref(conversation),
+        )
+        .await
     }
 
     async fn update_parent_id(
@@ -294,28 +328,25 @@ impl ConversationRepository for DaemonConversationRepository {
         conversation_id: &ConversationId,
         new_parent_id: Option<&ConversationId>,
     ) -> anyhow::Result<()> {
-        if self
-            .try_daemon(Request::UpdateParentId {
+        self.write_or_fallback(
+            Request::UpdateParentId {
                 conversation_id: *conversation_id,
                 new_parent_id: new_parent_id.cloned(),
-            })
-            .await
-        {
-            return Ok(());
-        }
-        self.inner
-            .update_parent_id(conversation_id, new_parent_id)
-            .await
+            },
+            || self.inner.update_parent_id(conversation_id, new_parent_id),
+        )
+        .await
     }
 
     async fn delete_conversation(&self, conversation_id: &ConversationId) -> anyhow::Result<()> {
-        if self
-            .try_daemon(Request::DeleteConversation { conversation_id: *conversation_id })
-            .await
-        {
-            return Ok(());
-        }
-        self.inner.delete_conversation(conversation_id).await
+        self.write_or_fallback(
+            Request::DeleteConversation {
+                conversation_id: *conversation_id,
+                workspace_id: self.inner.workspace_id(),
+            },
+            || self.inner.delete_conversation(conversation_id),
+        )
+        .await
     }
 
     // -----------------------------------------------------------------------
@@ -486,8 +517,14 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    #[cfg(unix)]
+    use forge_dbd::protocol::read_frame;
     use forge_domain::{Conversation, ConversationId, WorkspaceHash};
     use pretty_assertions::assert_eq;
+    #[cfg(unix)]
+    use tokio::net::UnixListener;
+    #[cfg(unix)]
+    use tokio::sync::oneshot;
 
     use super::*;
     use crate::conversation::ConversationRepositoryImpl;
@@ -581,6 +618,51 @@ mod tests {
             Some("second".to_string())
         );
 
+        Ok(())
+    }
+
+    /// Once a daemon accepts a write request, a lost ACK is indeterminate: it
+    /// may have committed the write, so the decorator must return an explicit
+    /// error instead of replaying the request through the direct repository.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn does_not_fallback_after_daemon_records_request_then_loses_ack() -> anyhow::Result<()> {
+        let temp_dir = tempfile::tempdir()?;
+        let socket_path = temp_dir.path().join("forge-dbd.sock");
+        let listener = UnixListener::bind(&socket_path)?;
+        let (recorded_tx, recorded_rx) = oneshot::channel();
+
+        tokio::spawn(async move {
+            // DbClient::connect probes first; accepting and closing this
+            // connection makes the next one the actual write transport.
+            let (probe, _) = listener.accept().await.unwrap();
+            drop(probe);
+
+            let (mut write_stream, _) = listener.accept().await.unwrap();
+            let request: Request = read_frame(&mut write_stream).await.unwrap();
+            recorded_tx.send(request).unwrap();
+            // Simulate a daemon that committed/recorded the request, then
+            // crashes before emitting Ack.
+        });
+
+        let inner = in_memory_inner();
+        let repo = DaemonConversationRepository::new(inner.clone(), socket_path, 0);
+        let conversation =
+            Conversation::new(ConversationId::generate()).title(Some("ack-loss".to_string()));
+        let id = conversation.id;
+
+        let actual = repo.upsert_conversation(conversation.clone()).await;
+        assert!(actual.is_err());
+
+        let actual = recorded_rx.await.expect("daemon recorded request");
+        let expected = Request::UpsertConversation {
+            conversation,
+            workspace_id: Some(0),
+        };
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+
+        let actual = inner.get_conversation(&id).await?;
+        assert!(actual.is_none());
         Ok(())
     }
 }

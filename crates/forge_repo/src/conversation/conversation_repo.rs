@@ -71,6 +71,11 @@ impl ConversationRepositoryImpl {
         Self { pool, wid: workspace_id }
     }
 
+    /// Returns the workspace scope used for all conversation mutations.
+    pub(crate) fn workspace_id(&self) -> i64 {
+        self.wid.id() as i64
+    }
+
     async fn run_blocking<F, T>(&self, operation: F) -> anyhow::Result<T>
     where
         F: FnOnce(Arc<DatabasePool>, WorkspaceHash) -> anyhow::Result<T> + Send + 'static,
@@ -2055,6 +2060,54 @@ mod tests {
             actual.context_zstd.is_some() || actual.context.is_some(),
             "context should be stored in either context_zstd (compressed) or context (plain)"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn conversation_record_rich_context_uses_legacy_wire_format() -> anyhow::Result<()> {
+        let context = Context::default()
+            .add_entry(forge_domain::MessageEntry {
+                message: ContextMessage::assistant(
+                    "I will call the tool",
+                    Some("thought-signature".to_string()),
+                    None,
+                    Some(vec![ToolCallFull {
+                        name: ToolName::new("patch"),
+                        call_id: Some(ToolCallId::new("call-123".to_string())),
+                        arguments: forge_domain::ToolCallArguments::from(
+                            serde_json::json!({"path": "src/lib.rs"}),
+                        ),
+                        thought_signature: Some("tool-signature".to_string()),
+                    }]),
+                ),
+                usage: Some(Usage {
+                    prompt_tokens: forge_domain::TokenCount::Actual(11),
+                    completion_tokens: forge_domain::TokenCount::Actual(7),
+                    total_tokens: forge_domain::TokenCount::Actual(18),
+                    cached_tokens: forge_domain::TokenCount::Actual(3),
+                    cost: Some(0.001),
+                }),
+            })
+            .add_tool(ToolDefinition::new("patch").description("Patch a file"))
+            .reasoning(forge_domain::ReasoningConfig {
+                effort: Some(Effort::High),
+                max_tokens: Some(1024),
+                exclude: Some(false),
+                enabled: Some(true),
+            });
+        let legacy_json = serde_json::to_string(&ContextRecord::from(&context))?;
+        let fixture = Conversation::new(ConversationId::generate()).context(Some(context));
+
+        let record = ConversationRecord::new(fixture, WorkspaceHash::new(0));
+        let stored_json = if let Some(compressed) = record.context_zstd {
+            crate::codec::decompress(&compressed)?
+        } else {
+            record.context.expect("context must be persisted")
+        };
+
+        assert_eq!(stored_json, legacy_json);
+        assert_eq!(record.is_compressed, 1);
+        assert_eq!(record.message_count, Some(1));
         Ok(())
     }
 

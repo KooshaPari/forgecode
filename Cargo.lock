@@ -2443,6 +2443,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "zstd",
 ]
 
 [[package]]
