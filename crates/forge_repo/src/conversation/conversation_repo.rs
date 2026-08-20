@@ -99,6 +99,32 @@ impl ConversationRepositoryImpl {
         })
         .await
     }
+
+    /// Upsert the borrowed-conversation write representation. The context
+    /// columns form one storage value and must therefore be updated together.
+    fn upsert_conversation_ref_record(
+        connection: &mut PooledSqliteConnection,
+        record: &ConversationRecord,
+    ) -> anyhow::Result<()> {
+        diesel::insert_into(conversations::table)
+            .values(record)
+            .on_conflict(conversations::conversation_id)
+            .do_update()
+            .set((
+                conversations::title.eq(&record.title),
+                conversations::context.eq(&record.context),
+                conversations::context_zstd.eq(&record.context_zstd),
+                conversations::is_compressed.eq(record.is_compressed),
+                conversations::updated_at.eq(record.updated_at),
+                conversations::metrics.eq(&record.metrics),
+                conversations::parent_id.eq(&record.parent_id),
+                conversations::source.eq(&record.source),
+                conversations::cwd.eq(&record.cwd),
+                conversations::message_count.eq(record.message_count),
+            ))
+            .execute(connection)?;
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -107,22 +133,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let conversation = conversation.clone();
         self.run_with_connection(move |connection, wid| {
             let record = ConversationRecord::new_ref(&conversation, wid);
-            diesel::insert_into(conversations::table)
-                .values(&record)
-                .on_conflict(conversations::conversation_id)
-                .do_update()
-                .set((
-                    conversations::title.eq(&record.title),
-                    conversations::context.eq(&record.context),
-                    conversations::updated_at.eq(record.updated_at),
-                    conversations::metrics.eq(&record.metrics),
-                    conversations::parent_id.eq(&record.parent_id),
-                    conversations::source.eq(&record.source),
-                    conversations::cwd.eq(&record.cwd),
-                    conversations::message_count.eq(record.message_count),
-                ))
-                .execute(connection)?;
-            Ok(())
+            Self::upsert_conversation_ref_record(connection, &record)
         })
         .await
     }
@@ -1906,6 +1917,112 @@ mod tests {
         let actual = repo.get_conversation(&fixture.id).await?;
         assert!(actual.is_some());
         assert_eq!(actual.unwrap().title, Some("Updated Title".to_string()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ref_upsert_replaces_existing_plain_context_with_incoming_compressed_context()
+    -> anyhow::Result<()> {
+        let repo = repository()?;
+        let legacy_context =
+            Context::default().messages(vec![ContextMessage::user("legacy context", None).into()]);
+        let conversation = Conversation::new(ConversationId::generate())
+            .title(Some("legacy context row".to_string()))
+            .context(Some(legacy_context.clone()));
+
+        repo.upsert_conversation(conversation.clone()).await?;
+
+        // Model an existing pre-compression row. A ref write must replace the
+        // whole context representation, rather than leave stale columns behind.
+        let legacy_json = serde_json::to_string(&ContextRecord::from(&legacy_context))?;
+        let conversation_id = conversation.id.into_string();
+        repo.run_with_connection(move |connection, _wid| {
+            diesel::sql_query(
+                "UPDATE conversations \
+                 SET context = ?, context_zstd = NULL, is_compressed = 0 \
+                 WHERE conversation_id = ?",
+            )
+            .bind::<diesel::sql_types::Text, _>(&legacy_json)
+            .bind::<diesel::sql_types::Text, _>(&conversation_id)
+            .execute(connection)?;
+            Ok(())
+        })
+        .await?;
+
+        let incoming_context = Context::default()
+            .messages(vec![ContextMessage::user("incoming context", None).into()]);
+        let incoming = Conversation::new(conversation.id).context(Some(incoming_context.clone()));
+        repo.upsert_conversation_ref(&incoming).await?;
+
+        let stored = repo
+            .get_conversation(&conversation.id)
+            .await?
+            .expect("the existing conversation must remain readable");
+        assert_eq!(stored.context, Some(incoming_context));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ref_upsert_record_replaces_existing_compressed_context_with_incoming_plain_context()
+    -> anyhow::Result<()> {
+        let repo = repository()?;
+        let existing_context = Context::default().messages(vec![
+            ContextMessage::user("existing compressed context", None).into(),
+        ]);
+        let conversation = Conversation::new(ConversationId::generate())
+            .title(Some("compressed context row".to_string()))
+            .context(Some(existing_context));
+        repo.upsert_conversation(conversation.clone()).await?;
+
+        let incoming_context = Context::default().messages(vec![
+            ContextMessage::user("incoming plain context", None).into(),
+        ]);
+        let incoming = Conversation::new(conversation.id).context(Some(incoming_context.clone()));
+        // zstd compression succeeds deterministically in normal test runs, so
+        // construct the valid fallback representation directly. This exercises
+        // the ref conflict path with a real plain incoming payload.
+        let mut record = ConversationRecord::new_ref(&incoming, WorkspaceHash::new(0));
+        record.context = Some(serde_json::to_string(&ContextRecord::from(
+            &incoming_context,
+        ))?);
+        record.context_zstd = None;
+        record.is_compressed = 0;
+
+        repo.run_with_connection(move |connection, _wid| {
+            ConversationRepositoryImpl::upsert_conversation_ref_record(connection, &record)
+        })
+        .await?;
+
+        let stored = repo
+            .get_conversation(&conversation.id)
+            .await?
+            .expect("the incoming plain context must remain readable");
+        assert_eq!(stored.context, Some(incoming_context));
+
+        repo.run_with_connection(move |connection, _wid| {
+            #[derive(diesel::QueryableByName)]
+            struct StorageColumns {
+                #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Binary>)]
+                context_zstd: Option<Vec<u8>>,
+                #[diesel(sql_type = diesel::sql_types::Integer)]
+                is_compressed: i32,
+            }
+            let row: StorageColumns = diesel::sql_query(
+                "SELECT context_zstd, is_compressed FROM conversations WHERE conversation_id = ?",
+            )
+            .bind::<diesel::sql_types::Text, _>(conversation.id.into_string())
+            .get_result(connection)?;
+            assert!(
+                row.context_zstd.is_none(),
+                "stale compressed bytes must be cleared"
+            );
+            assert_eq!(
+                row.is_compressed, 0,
+                "plain payload must not be marked compressed"
+            );
+            Ok(())
+        })
+        .await?;
         Ok(())
     }
 
