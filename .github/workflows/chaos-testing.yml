@@ -1,0 +1,222 @@
+# Chaos Testing Workflow
+# Runs network chaos, resource chaos, service dependency chaos, and reports results.
+
+name: Chaos Testing
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly chaos tests every Monday at 03:00 UTC
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      chaos_suite:
+        description: "Chaos test suite to run"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - network
+          - resource
+          - dependency
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  network-chaos:
+    name: Network Chaos Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.chaos_suite == 'all' ||
+      github.event.inputs.chaos_suite == 'network'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pytest pytest-asyncio opentelemetry-api opentelemetry-sdk
+
+      - name: Run network chaos tests
+        run: |
+          pytest tests/chaos/test_resilience.py::TestNetworkPartition \
+                 tests/chaos/test_resilience.py::TestTimeoutHandling \
+                 -v --tb=short --junitxml=reports/network-chaos.xml \
+                 -o log_cli=true 2>&1 | tee reports/network-chaos.log
+
+      - name: Upload network chaos results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: network-chaos-results
+          path: |
+            reports/network-chaos.xml
+            reports/network-chaos.log
+          retention-days: 30
+
+  resource-chaos:
+    name: Resource Chaos Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.chaos_suite == 'all' ||
+      github.event.inputs.chaos_suite == 'resource'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pytest pytest-asyncio opentelemetry-api opentelemetry-sdk
+
+      - name: Run resource chaos tests
+        run: |
+          pytest tests/chaos/test_fault_injection.py::TestResourceExhaustion \
+                 tests/chaos/test_resilience.py::TestConnectionPoolExhaustion \
+                 -v --tb=short --junitxml=reports/resource-chaos.xml \
+                 -o log_cli=true 2>&1 | tee reports/resource-chaos.log
+
+      - name: Upload resource chaos results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resource-chaos-results
+          path: |
+            reports/resource-chaos.xml
+            reports/resource-chaos.log
+          retention-days: 30
+
+  dependency-chaos:
+    name: Service Dependency Chaos
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.chaos_suite == 'all' ||
+      github.event.inputs.chaos_suite == 'dependency'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pytest pytest-asyncio opentelemetry-api opentelemetry-sdk
+
+      - name: Run dependency chaos tests
+        run: |
+          pytest tests/chaos/test_fault_injection.py::TestRandomErrorInjection \
+                 tests/chaos/test_fault_injection.py::TestGracefulDegradation \
+                 tests/chaos/test_resilience.py::TestCircuitBreaker \
+                 tests/chaos/test_resilience.py::TestRetryBackoff \
+                 -v --tb=short --junitxml=reports/dependency-chaos.xml \
+                 -o log_cli=true 2>&1 | tee reports/dependency-chaos.log
+
+      - name: Upload dependency chaos results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-chaos-results
+          path: |
+            reports/dependency-chaos.xml
+            reports/dependency-chaos.log
+          retention-days: 30
+
+  report:
+    name: Chaos Test Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [network-chaos, resource-chaos, dependency-chaos]
+    if: always()
+
+    steps:
+      - name: Download all results
+        uses: actions/download-artifact@v4
+        with:
+          path: all-results
+
+      - name: Generate summary report
+        run: |
+          echo "# Chaos Test Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Run:** ${{ github.run_number }} | **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          total_pass=0
+          total_fail=0
+          total_error=0
+
+          for suite in network-chaos resource-chaos dependency-chaos; do
+            echo "## ${suite}" >> $GITHUB_STEP_SUMMARY
+            log_file=$(find all-results -name "${suite}.log" 2>/dev/null | head -1)
+            xml_file=$(find all-results -name "${suite}.xml" 2>/dev/null | head -1)
+
+            if [ -n "$xml_file" ]; then
+              pass=$(grep -oP 'tests="\K[0-9]+' "$xml_file" | head -1 || echo 0)
+              fails=$(grep -oP 'failures="\K[0-9]+' "$xml_file" | head -1 || echo 0)
+              errors=$(grep -oP 'errors="\K[0-9]+' "$xml_file" | head -1 || echo 0)
+              total_pass=$((total_pass + pass))
+              total_fail=$((total_fail + fails))
+              total_error=$((total_error + errors))
+              echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+              echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+              echo "| Tests | $pass |" >> $GITHUB_STEP_SUMMARY
+              echo "| Failures | $fails |" >> $GITHUB_STEP_SUMMARY
+              echo "| Errors | $errors |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| Status | Skipped |" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+          done
+
+          echo "## Totals" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Tests | $total_pass |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Failures | $total_fail |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Errors | $total_error |" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$total_fail" -gt 0 ] || [ "$total_error" -gt 0 ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> **Status: FAILED**" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "> **Status: PASSED**" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Fail if chaos tests failed
+        if: failure()
+        run: |
+          echo "Chaos tests failed - see report above"
+          exit 1
