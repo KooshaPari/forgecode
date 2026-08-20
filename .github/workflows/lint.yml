@@ -60,7 +60,7 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   lint:
-    name: lint
+    name: ci / lint
     if: always()
     needs: [fmt, clippy]
     runs-on: ubuntu-latest
