@@ -13,7 +13,9 @@ use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 
 #[cfg(windows)]
 use crate::protocol::named_pipe_name;
-use crate::protocol::{HealthStatus, MUTATION_PROTOCOL_VERSION, Request, Response, read_frame, write_frame};
+use crate::protocol::{
+    HealthStatus, MUTATION_PROTOCOL_VERSION, Request, Response, read_frame, write_frame,
+};
 
 /// Client for the `forge_dbd` daemon.
 ///

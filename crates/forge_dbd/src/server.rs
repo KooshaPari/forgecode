@@ -994,7 +994,10 @@ mod db_tests {
                 &conn,
                 &scoped(
                     TEST_WORKSPACE,
-                    ConversationMutation::UpsertConversationRef { conversation: updated, workspace_id: None },
+                    ConversationMutation::UpsertConversationRef {
+                        conversation: updated,
+                        workspace_id: None
+                    },
                 )
             )
             .expect("upsert on conflict"),
@@ -1038,10 +1041,7 @@ mod db_tests {
                 &conn,
                 &scoped(
                     TEST_WORKSPACE,
-                    ConversationMutation::UpsertConversation {
-                        conversation,
-                        workspace_id: None,
-                    },
+                    ConversationMutation::UpsertConversation { conversation, workspace_id: None },
                 ),
             )
             .expect("upsert"),
@@ -1119,7 +1119,10 @@ mod db_tests {
             &conn,
             &scoped(
                 TEST_WORKSPACE,
-                ConversationMutation::UpsertConversationRef { conversation: incoming, workspace_id: None },
+                ConversationMutation::UpsertConversationRef {
+                    conversation: incoming,
+                    workspace_id: None,
+                },
             ),
         )
         .expect("reference conflict upsert");
@@ -1217,7 +1220,10 @@ mod db_tests {
         {
             let request = Request::MutationV2 {
                 workspace_id,
-                mutation: ConversationMutation::UpsertConversationRef { conversation, workspace_id: None },
+                mutation: ConversationMutation::UpsertConversationRef {
+                    conversation,
+                    workspace_id: None,
+                },
             };
             assert!(matches!(
                 DbServer::execute_with_conn(&conn, &request).expect("upsert"),
@@ -1419,7 +1425,10 @@ mod windows_tests {
         let resp = client
             .send(Request::MutationV2 {
                 workspace_id: 42,
-                mutation: ConversationMutation::UpsertConversationRef { conversation, workspace_id: None },
+                mutation: ConversationMutation::UpsertConversationRef {
+                    conversation,
+                    workspace_id: None,
+                },
             })
             .await
             .expect("send upsert");

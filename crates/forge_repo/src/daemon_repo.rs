@@ -907,10 +907,7 @@ mod tests {
         let actual = recorded_rx.await.expect("daemon recorded request");
         let expected = Request::MutationV2 {
             workspace_id: TEST_WORKSPACE_ID,
-            mutation: ConversationMutation::UpsertConversation {
-                conversation,
-                workspace_id: None,
-            },
+            mutation: ConversationMutation::UpsertConversation { conversation, workspace_id: None },
         };
         assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
 
