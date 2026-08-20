@@ -79,12 +79,7 @@ pub struct DaemonConversationRepository {
     /// [`forge_domain::Environment::dbd_bin_path`]). `None` means "look up
     /// `forge_dbd` on PATH" at spawn time.
     dbd_bin: Option<PathBuf>,
-    /// The client's workspace id (hash of its cwd), stamped onto daemon-side
-    /// upserts. The daemon derives its own id from ITS current directory,
-    /// which diverges from the client's in `--directory` mode (Windows path
-    /// canonicalization). Reads filter by the client's hash, so daemon-written
-    /// rows must carry it or they would be invisible to the caller.
-    #[allow(dead_code)]
+    /// Client-owned workspace identity sent in every V2 mutation envelope.
     workspace_id: i64,
 }
 
@@ -105,14 +100,18 @@ impl DaemonConversationRepository {
         inner: Arc<ConversationRepositoryImpl>,
         socket_path: PathBuf,
         workspace_id: i64,
-    ) -> Self {
+    ) -> Self {} or die "daemon constructor signature not found
+";
+  s{            dbd_bin: default_dbd_bin(),
+        }}{            dbd_bin: default_dbd_bin(),
+            workspace_id,
+        }
         Self {
             inner,
             socket_path,
             client: tokio::sync::Mutex::new(None),
             lifecycle_lock: tokio::sync::Mutex::new(()),
             dbd_bin: default_dbd_bin(),
-            workspace_id,
         }
     }
 
@@ -124,14 +123,18 @@ impl DaemonConversationRepository {
         socket_path: PathBuf,
         dbd_bin: Option<PathBuf>,
         workspace_id: i64,
-    ) -> Self {
+    ) -> Self {} or die "daemon test constructor signature not found
+";
+  s{            dbd_bin,
+        }}{            dbd_bin,
+            workspace_id,
+        }
         Self {
             inner,
             socket_path,
             client: tokio::sync::Mutex::new(None),
             lifecycle_lock: tokio::sync::Mutex::new(()),
             dbd_bin,
-            workspace_id,
         }
     }
 
@@ -341,10 +344,9 @@ impl ConversationRepository for DaemonConversationRepository {
     async fn upsert_conversation(&self, conversation: Conversation) -> anyhow::Result<()> {
         self.write_or_fallback(
             Request::MutationV2 {
-                workspace_id: self.inner.workspace_id(),
+                workspace_id: self.workspace_id,
                 mutation: ConversationMutation::UpsertConversation {
                     conversation: conversation.clone(),
-                    workspace_id: None,
                 },
             },
             || self.inner.upsert_conversation(conversation),
@@ -355,10 +357,9 @@ impl ConversationRepository for DaemonConversationRepository {
     async fn upsert_conversation_ref(&self, conversation: &Conversation) -> anyhow::Result<()> {
         self.write_or_fallback(
             Request::MutationV2 {
-                workspace_id: self.inner.workspace_id(),
+                workspace_id: self.workspace_id,
                 mutation: ConversationMutation::UpsertConversationRef {
                     conversation: conversation.clone(),
-                    workspace_id: None,
                 },
             },
             || self.inner.upsert_conversation_ref(conversation),
@@ -373,7 +374,7 @@ impl ConversationRepository for DaemonConversationRepository {
     ) -> anyhow::Result<()> {
         self.write_or_fallback(
             Request::MutationV2 {
-                workspace_id: self.inner.workspace_id(),
+                workspace_id: self.workspace_id,
                 mutation: ConversationMutation::UpdateParentId {
                     conversation_id: *conversation_id,
                     new_parent_id: new_parent_id.cloned(),
@@ -387,7 +388,7 @@ impl ConversationRepository for DaemonConversationRepository {
     async fn delete_conversation(&self, conversation_id: &ConversationId) -> anyhow::Result<()> {
         self.write_or_fallback(
             Request::MutationV2 {
-                workspace_id: self.inner.workspace_id(),
+                workspace_id: self.workspace_id,
                 mutation: ConversationMutation::DeleteConversation {
                     conversation_id: *conversation_id,
                 },
@@ -604,7 +605,7 @@ mod tests {
         let repo = DaemonConversationRepository::new(
             inner.clone(),
             PathBuf::from("/nonexistent/.forge.db.sock"),
-            0,
+            TEST_WORKSPACE_ID,
         );
 
         let conversation = Conversation::new(ConversationId::generate())
@@ -639,7 +640,7 @@ mod tests {
             inner.clone(),
             PathBuf::from("/nonexistent/.forge.db.sock"),
             Some(PathBuf::from("/definitely/missing/forge_dbd_bin")),
-            0,
+            TEST_WORKSPACE_ID,
         );
 
         let conversation =
@@ -685,7 +686,7 @@ mod tests {
             inner,
             PathBuf::from("/nonexistent/forge-dbd-delayed.sock"),
             Some(PathBuf::from("/usr/bin/true")),
-            0,
+            TEST_WORKSPACE_ID,
         );
         let first = Conversation::new(ConversationId::generate())
             .title(Some("first-startup-write".to_string()));
@@ -726,7 +727,7 @@ mod tests {
         let socket_path = temp_dir.path().join("forge-dbd.sock");
         let listener = UnixListener::bind(&socket_path)?;
         let inner = in_memory_inner();
-        let repo = Arc::new(DaemonConversationRepository::new(inner, socket_path, 0));
+        let repo = Arc::new(DaemonConversationRepository::new(inner, socket_path, TEST_WORKSPACE_ID));
 
         let (first_received_tx, first_received_rx) = oneshot::channel();
         let (second_received_tx, second_received_rx) = oneshot::channel();
@@ -820,7 +821,7 @@ mod tests {
         let socket_path = temp_dir.path().join("forge-dbd.sock");
         let listener = UnixListener::bind(&socket_path)?;
         let inner = in_memory_inner();
-        let repo = DaemonConversationRepository::new(inner.clone(), socket_path, 0);
+        let repo = DaemonConversationRepository::new(inner.clone(), socket_path, TEST_WORKSPACE_ID);
         let server = tokio::spawn(async move {
             // `DbClient::connect` first negotiates the mutation protocol.
             // Complete that non-mutating exchange before removing the daemon.
@@ -896,7 +897,7 @@ mod tests {
         });
 
         let inner = in_memory_inner();
-        let repo = DaemonConversationRepository::new(inner.clone(), socket_path, 0);
+        let repo = DaemonConversationRepository::new(inner.clone(), socket_path, TEST_WORKSPACE_ID);
         let conversation =
             Conversation::new(ConversationId::generate()).title(Some("ack-loss".to_string()));
         let id = conversation.id;
@@ -907,7 +908,7 @@ mod tests {
         let actual = recorded_rx.await.expect("daemon recorded request");
         let expected = Request::MutationV2 {
             workspace_id: TEST_WORKSPACE_ID,
-            mutation: ConversationMutation::UpsertConversation { conversation, workspace_id: None },
+            mutation: ConversationMutation::UpsertConversation { conversation },
         };
         assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
 
