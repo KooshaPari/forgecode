@@ -30,6 +30,9 @@ jobs:
       - name: Install tarpaulin
         run: cargo install cargo-tarpaulin --locked
 
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install --yes protobuf-compiler
+
       - name: Measure coverage
         id: cov
         run: |
@@ -49,15 +52,15 @@ jobs:
 
       - name: Check ratchet
         run: |
-          CUR=$(echo "${{ steps.cov.outputs.percentage }}")
-          BASE=$(echo "${{ steps.base.outputs.baseline }}")
+          CUR="${{ steps.cov.outputs.percentage }}"
+          BASE="${{ steps.base.outputs.baseline }}"
           awk -v cur="$CUR" -v base="$BASE" 'BEGIN { if (cur+0 < base+0) { printf "FAIL: coverage %s dropped below ratchet %s\n", cur, base; exit 1 } else { printf "OK: coverage %s >= ratchet %s\n", cur, base } }'
 
       - name: Update ratchet (only on main)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          CUR=$(echo "${{ steps.cov.outputs.percentage }}")
-          BASE=$(echo "${{ steps.base.outputs.baseline }}")
+          CUR="${{ steps.cov.outputs.percentage }}"
+          BASE="${{ steps.base.outputs.baseline }}"
           awk -v cur="$CUR" -v base="$BASE" 'BEGIN { if (cur+0 > base+0) printf "%.4f", cur+0; else printf "%.4f", base+0 }' > /tmp/new_base
           NEW=$(cat /tmp/new_base)
           printf '{\n  "baseline_percentage": %s,\n  "last_updated": "%s",\n  "source": "tarpaulin"\n}\n' "$NEW" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > agileplus/coverage-ratchet.json
