@@ -655,10 +655,7 @@ mod tests {
         assert!(actual.is_err());
 
         let actual = recorded_rx.await.expect("daemon recorded request");
-        let expected = Request::UpsertConversation {
-            conversation,
-            workspace_id: Some(0),
-        };
+        let expected = Request::UpsertConversation { conversation, workspace_id: Some(0) };
         assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
 
         let actual = inner.get_conversation(&id).await?;
