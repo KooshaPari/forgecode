@@ -115,6 +115,25 @@ pre-commit: ## Run all pre-commit hooks
 	$(VENV)/Scripts/pre-commit run --all-files 2>/dev/null || $(VENV)/bin/pre-commit run --all-files
 
 # ──────────────────────────────────────────────
+# OTel Production Observability
+# ──────────────────────────────────────────────
+
+otel-up: ## Start production OTel stack (collector, jaeger, prometheus, grafana)
+	cd deploy/otel && bash deploy.sh up
+
+otel-down: ## Stop production OTel stack
+	cd deploy/otel && bash deploy.sh down
+
+otel-logs: ## Tail logs from production OTel stack
+	cd deploy/otel && bash deploy.sh logs
+
+otel-status: ## Show status of production OTel stack
+	cd deploy/otel && bash deploy.sh status
+
+otel-restart: ## Restart production OTel stack
+	cd deploy/otel && bash deploy.sh restart
+
+# ──────────────────────────────────────────────
 # Full quality gate
 # ──────────────────────────────────────────────
 
