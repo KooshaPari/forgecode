@@ -100,18 +100,14 @@ impl DaemonConversationRepository {
         inner: Arc<ConversationRepositoryImpl>,
         socket_path: PathBuf,
         workspace_id: i64,
-    ) -> Self {} or die "daemon constructor signature not found
-";
-  s{            dbd_bin: default_dbd_bin(),
-        }}{            dbd_bin: default_dbd_bin(),
-            workspace_id,
-        }
+    ) -> Self {
         Self {
             inner,
             socket_path,
             client: tokio::sync::Mutex::new(None),
             lifecycle_lock: tokio::sync::Mutex::new(()),
             dbd_bin: default_dbd_bin(),
+            workspace_id,
         }
     }
 
@@ -123,18 +119,14 @@ impl DaemonConversationRepository {
         socket_path: PathBuf,
         dbd_bin: Option<PathBuf>,
         workspace_id: i64,
-    ) -> Self {} or die "daemon test constructor signature not found
-";
-  s{            dbd_bin,
-        }}{            dbd_bin,
-            workspace_id,
-        }
+    ) -> Self {
         Self {
             inner,
             socket_path,
             client: tokio::sync::Mutex::new(None),
             lifecycle_lock: tokio::sync::Mutex::new(()),
             dbd_bin,
+            workspace_id,
         }
     }
 
@@ -347,6 +339,7 @@ impl ConversationRepository for DaemonConversationRepository {
                 workspace_id: self.workspace_id,
                 mutation: ConversationMutation::UpsertConversation {
                     conversation: conversation.clone(),
+                    workspace_id: None,
                 },
             },
             || self.inner.upsert_conversation(conversation),
@@ -360,6 +353,7 @@ impl ConversationRepository for DaemonConversationRepository {
                 workspace_id: self.workspace_id,
                 mutation: ConversationMutation::UpsertConversationRef {
                     conversation: conversation.clone(),
+                    workspace_id: None,
                 },
             },
             || self.inner.upsert_conversation_ref(conversation),
@@ -727,7 +721,11 @@ mod tests {
         let socket_path = temp_dir.path().join("forge-dbd.sock");
         let listener = UnixListener::bind(&socket_path)?;
         let inner = in_memory_inner();
-        let repo = Arc::new(DaemonConversationRepository::new(inner, socket_path, TEST_WORKSPACE_ID));
+        let repo = Arc::new(DaemonConversationRepository::new(
+            inner,
+            socket_path,
+            TEST_WORKSPACE_ID,
+        ));
 
         let (first_received_tx, first_received_rx) = oneshot::channel();
         let (second_received_tx, second_received_rx) = oneshot::channel();
@@ -908,7 +906,7 @@ mod tests {
         let actual = recorded_rx.await.expect("daemon recorded request");
         let expected = Request::MutationV2 {
             workspace_id: TEST_WORKSPACE_ID,
-            mutation: ConversationMutation::UpsertConversation { conversation },
+            mutation: ConversationMutation::UpsertConversation { conversation, workspace_id: None },
         };
         assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
 

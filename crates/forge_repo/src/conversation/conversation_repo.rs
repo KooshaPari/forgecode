@@ -71,11 +71,6 @@ impl ConversationRepositoryImpl {
         Self { pool, wid: workspace_id }
     }
 
-    /// Returns the workspace scope used for all conversation mutations.
-    pub(crate) fn workspace_id(&self) -> i64 {
-        self.wid.id() as i64
-    }
-
     async fn run_blocking<F, T>(&self, operation: F) -> anyhow::Result<T>
     where
         F: FnOnce(Arc<DatabasePool>, WorkspaceHash) -> anyhow::Result<T> + Send + 'static,
