@@ -3,8 +3,14 @@
 
 mod db;
 mod github;
+mod labels;
+mod sprint;
 
 use db::{CreateIssueRequest, Database, UpdateIssueRequest};
+use labels::CreateLabelRequest;
+use sprint::{
+    AddItemRequest, CreateSprintRequest, UpdateItemStatusRequest,
+};
 use std::sync::Arc;
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -77,6 +83,127 @@ async fn import_github_issues(
         .map_err(|e| e.to_string())
 }
 
+// ── Sprint IPC Handlers ─────────────────────────────────────────────────
+
+#[tauri::command]
+fn create_sprint(
+    state: tauri::State<'_, AppState>,
+    request: CreateSprintRequest,
+) -> Result<sprint::Sprint, String> {
+    let conn = state.db.get_conn();
+    sprint::create_sprint(&conn, request).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_sprints(state: tauri::State<'_, AppState>) -> Result<Vec<sprint::Sprint>, String> {
+    let conn = state.db.get_conn();
+    sprint::list_sprints(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_active_sprint(state: tauri::State<'_, AppState>) -> Result<Option<sprint::Sprint>, String> {
+    let conn = state.db.get_conn();
+    sprint::get_active_sprint(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn activate_sprint(
+    state: tauri::State<'_, AppState>,
+    sprint_id: String,
+) -> Result<(), String> {
+    let conn = state.db.get_conn();
+    sprint::activate_sprint(&conn, &sprint_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn close_sprint(
+    state: tauri::State<'_, AppState>,
+    sprint_id: String,
+) -> Result<(), String> {
+    let conn = state.db.get_conn();
+    sprint::close_sprint(&conn, &sprint_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn add_to_sprint(
+    state: tauri::State<'_, AppState>,
+    request: AddItemRequest,
+) -> Result<sprint::SprintItem, String> {
+    let conn = state.db.get_conn();
+    sprint::add_item_to_sprint(&conn, request).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn remove_sprint_item(
+    state: tauri::State<'_, AppState>,
+    item_id: String,
+) -> Result<bool, String> {
+    let conn = state.db.get_conn();
+    sprint::remove_item_from_sprint(&conn, &item_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_sprint_item(
+    state: tauri::State<'_, AppState>,
+    request: UpdateItemStatusRequest,
+) -> Result<sprint::SprintItem, String> {
+    let conn = state.db.get_conn();
+    sprint::update_item_status(&conn, request).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_sprint_items(
+    state: tauri::State<'_, AppState>,
+    sprint_id: String,
+) -> Result<Vec<sprint::SprintItem>, String> {
+    let conn = state.db.get_conn();
+    sprint::get_sprint_items(&conn, &sprint_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn calculate_velocity(
+    state: tauri::State<'_, AppState>,
+    num_sprints: i32,
+) -> Result<Vec<sprint::VelocityData>, String> {
+    let conn = state.db.get_conn();
+    sprint::calculate_velocity(&conn, num_sprints).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_sprint_burndown(
+    state: tauri::State<'_, AppState>,
+    sprint_id: String,
+) -> Result<sprint::BurndownData, String> {
+    let conn = state.db.get_conn();
+    sprint::get_sprint_burndown(&conn, &sprint_id).map_err(|e| e.to_string())
+}
+
+// ── Label IPC Handlers ──────────────────────────────────────────────────
+
+#[tauri::command]
+fn create_label(
+    state: tauri::State<'_, AppState>,
+    request: CreateLabelRequest,
+) -> Result<labels::Label, String> {
+    let conn = state.db.get_conn();
+    labels::create_label(&conn, request).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_labels(state: tauri::State<'_, AppState>) -> Result<Vec<labels::Label>, String> {
+    let conn = state.db.get_conn();
+    labels::list_labels(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_label(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<bool, String> {
+    let conn = state.db.get_conn();
+    labels::delete_label(&conn, &id).map_err(|e| e.to_string())
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 fn main() {
@@ -105,6 +232,22 @@ fn main() {
             update_issue,
             delete_issue,
             import_github_issues,
+            // Sprint
+            create_sprint,
+            list_sprints,
+            get_active_sprint,
+            activate_sprint,
+            close_sprint,
+            add_to_sprint,
+            remove_sprint_item,
+            update_sprint_item,
+            get_sprint_items,
+            calculate_velocity,
+            get_sprint_burndown,
+            // Labels
+            create_label,
+            list_labels,
+            delete_label,
         ])
         .setup(|app| {
             // ── System Tray ────────────────────────────────────────────────

@@ -8,6 +8,9 @@ import IssueList from "./components/IssueList";
 import IssueDetail from "./components/IssueDetail";
 import CreateIssue from "./components/CreateIssue";
 import Settings from "./components/Settings";
+import SprintBoard from "./components/SprintBoard";
+import SprintSettings from "./components/SprintSettings";
+import LabelManager from "./components/LabelManager";
 
 export default function App() {
   const [view, setView] = useState<View>("dashboard");
@@ -94,6 +97,17 @@ export default function App() {
             onRefresh={refreshIssues}
           />
         );
+      case "sprint":
+        return (
+          <SprintBoard
+            issues={issues}
+            onIssueMoved={handleIssueMoved}
+          />
+        );
+      case "sprint-settings":
+        return <SprintSettings />;
+      case "labels":
+        return <LabelManager />;
       case "settings":
         return <Settings />;
       default:
@@ -105,6 +119,9 @@ export default function App() {
     dashboard: "Dashboard",
     board: "Board",
     issues: "Issues",
+    sprint: "Sprint Board",
+    "sprint-settings": "Sprint Settings",
+    labels: "Labels",
     settings: "Settings",
   };
 

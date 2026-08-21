@@ -72,6 +72,11 @@ impl Database {
         Ok(db)
     }
 
+    /// Get a reference to the underlying connection (for external module use).
+    pub fn get_conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap()
+    }
+
     fn init_db(&self) -> SqlResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute_batch(
@@ -92,6 +97,13 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_issues_priority ON issues(priority);
             ",
         )?;
+
+        // Initialize sprint tables
+        crate::sprint::init_sprints_table(&conn)?;
+
+        // Initialize labels table
+        crate::labels::init_labels_table(&conn)?;
+
         Ok(())
     }
 

@@ -5,6 +5,8 @@ description = "Tracera - Project Management Desktop App"
 authors = ["kooshapari"]
 edition = "2021"
 
+[workspace]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

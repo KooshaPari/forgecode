@@ -9,6 +9,9 @@ const navItems: { id: View; label: string; icon: string }[] = [
   { id: "dashboard", label: "Dashboard", icon: "\u25A0" },
   { id: "board", label: "Board", icon: "\u2637" },
   { id: "issues", label: "Issues", icon: "\u25CF" },
+  { id: "sprint", label: "Sprint Board", icon: "\u25B6" },
+  { id: "sprint-settings", label: "Sprint Settings", icon: "\u2699" },
+  { id: "labels", label: "Labels", icon: "\u25C6" },
   { id: "settings", label: "Settings", icon: "\u2699" },
 ];
 
