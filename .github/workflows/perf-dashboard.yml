@@ -17,6 +17,9 @@ on:
         default: "true"
         type: boolean
 
+permissions:
+  contents: read
+
 env:
   PYTHON_VERSION: "3.12"
   BENCHMARK_OUTPUT: benchmarks/results
@@ -30,12 +33,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v4
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -48,7 +51,7 @@ jobs:
                       psutil pyyaml tabulate
 
       - name: Set up Rust (if applicable)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b3b07ba65f4f16d06598f36e4b18e40d8c33f9d5 # stable
         with:
           components: rustfmt, clippy
 
@@ -95,7 +98,7 @@ jobs:
           "
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@6546bc8a69833fcf6316d16834862a82a1603095 # v4.6.0
         with:
           name: benchmark-results
           path: ${{ env.BENCHMARK_OUTPUT }}/
@@ -112,10 +115,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
@@ -124,13 +127,13 @@ jobs:
         run: pip install tabulate pyyaml
 
       - name: Download previous benchmark results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0c49b3d997b43cc297dda2f58e98a3 # v4.1.8
         with:
           name: benchmark-results
           path: current
 
       - name: Download trend history
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0c49b3d997b43cc297dda2f58e98a3 # v4.1.8
         with:
           name: perf-trend-history
           path: historical
@@ -203,7 +206,7 @@ jobs:
           "
 
       - name: Upload trend data
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@6546bc8a69833fcf6316d16834862a82a1603095 # v4.6.0
         with:
           name: perf-trend-analysis
           path: trend/
@@ -225,10 +228,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -236,13 +239,13 @@ jobs:
         run: pip install tabulate pyyaml
 
       - name: Download benchmark results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0c49b3d997b43cc297dda2f58e98a3 # v4.1.8
         with:
           name: benchmark-results
           path: current
 
       - name: Download trend analysis
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0c49b3d997b43cc297dda2f58e98a3 # v4.1.8
         with:
           name: perf-trend-analysis
           path: trend
@@ -355,13 +358,13 @@ jobs:
           "
 
       - name: Setup Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@983d7736d9b0ae60b3802e304ab6c1d76d1b9ff3 # v5.0.0
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@f27444803d35864aad0c3cc2b2d32419227bc850 # v3.0.1
         with:
           path: "_site"
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@af913532fba33368d8630324553d3b4dd8018248 # v4.0.5
