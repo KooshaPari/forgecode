@@ -77,6 +77,15 @@ impl From<ReleaseBuilderJob> for Job {
                     .input("cross-version", "0.2.5")
                     .env("POSTHOG_API_SECRET", "${{secrets.POSTHOG_API_SECRET}}")
                     .env("APP_VERSION", value.version.to_string()),
+            )
+            .add_step(
+                Step::new("Build forge_dbd Binary")
+                    .uses("ClementTsang", "cargo-action", "2438cc5f3ba4e971289fffca2a00dedea6911f14")
+                    .input("command", "build --release")
+                    .input("args", "--target ${{ matrix.target }} -p forge_dbd")
+                    .input("use-cross", "${{ matrix.cross }}")
+                    .input("cross-version", "0.2.5")
+                    .env("APP_VERSION", value.version.to_string()),
             );
 
         if let Some(release_id) = value.release_id {
@@ -139,9 +148,67 @@ impl From<ReleaseBuilderJob> for Job {
                             "upload-to-github-release",
                             "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
                         )
-                        .input("release_id", release_id)
+                        .input("release_id", release_id.clone())
                         .input("file", "${{ matrix.helioslite_name }}.sha256")
                         .input("overwrite", "true"),
+                )
+                .add_step(
+                    Step::new("Copy forge_dbd Binary")
+                        .run("if [[ \"${{ matrix.target }}\" == *windows* ]]; then cp \"target/${{ matrix.target }}/release/forge_dbd.exe\" \"forge_dbd-${{ matrix.target }}.exe\"; else cp \"target/${{ matrix.target }}/release/forge_dbd\" \"forge_dbd-${{ matrix.target }}\"; fi")
+                        .shell("bash"),
+                )
+                .add_step(
+                    Step::new("Generate forge_dbd SHA-256")
+                        .run("if [[ \"${{ matrix.target }}\" == *windows* ]]; then if command -v sha256sum >/dev/null 2>&1; then sha256sum \"forge_dbd-${{ matrix.target }}.exe\" > \"forge_dbd-${{ matrix.target }}.exe.sha256\"; else shasum -a 256 \"forge_dbd-${{ matrix.target }}.exe\" > \"forge_dbd-${{ matrix.target }}.exe.sha256\"; fi; else if command -v sha256sum >/dev/null 2>&1; then sha256sum \"forge_dbd-${{ matrix.target }}\" > \"forge_dbd-${{ matrix.target }}.sha256\"; else shasum -a 256 \"forge_dbd-${{ matrix.target }}\" > \"forge_dbd-${{ matrix.target }}.sha256\"; fi; fi")
+                        .shell("bash"),
+                )
+                .add_step(
+                    Step::new("Upload forge_dbd to Release (unix)")
+                        .uses(
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                        )
+                        .input("release_id", release_id.clone())
+                        .input("file", "forge_dbd-${{ matrix.target }}")
+                        .input("overwrite", "true")
+                        .if_condition("!contains(matrix.target, 'windows')"),
+                )
+                .add_step(
+                    Step::new("Upload forge_dbd checksum to Release (unix)")
+                        .uses(
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                        )
+                        .input("release_id", release_id.clone())
+                        .input("file", "forge_dbd-${{ matrix.target }}.sha256")
+                        .input("overwrite", "true")
+                        .if_condition("!contains(matrix.target, 'windows')"),
+                )
+                .add_step(
+                    Step::new("Upload forge_dbd to Release (windows)")
+                        .uses(
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                        )
+                        .input("release_id", release_id.clone())
+                        .input("file", "forge_dbd-${{ matrix.target }}.exe")
+                        .input("overwrite", "true")
+                        .if_condition("contains(matrix.target, 'windows')"),
+                )
+                .add_step(
+                    Step::new("Upload forge_dbd checksum to Release (windows)")
+                        .uses(
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                        )
+                        .input("release_id", release_id)
+                        .input("file", "forge_dbd-${{ matrix.target }}.exe.sha256")
+                        .input("overwrite", "true")
+                        .if_condition("contains(matrix.target, 'windows')"),
                 );
         }
 

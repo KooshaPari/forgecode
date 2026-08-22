@@ -106,6 +106,15 @@ jobs:
       env:
         POSTHOG_API_SECRET: ${{secrets.POSTHOG_API_SECRET}}
         APP_VERSION: ${{ github.event.release.tag_name }}
+    - name: Build forge_dbd Binary
+      uses: ClementTsang/cargo-action@2438cc5f3ba4e971289fffca2a00dedea6911f14
+      with:
+        command: build --release
+        args: --target ${{ matrix.target }} -p forge_dbd
+        use-cross: ${{ matrix.cross }}
+        cross-version: 0.2.5
+      env:
+        APP_VERSION: ${{ github.event.release.tag_name }}
     - name: Copy Binary
       run: |-
         cp ${{ matrix.binary_path }} ${{ matrix.binary_name }}
@@ -139,6 +148,40 @@ jobs:
       with:
         release_id: ${{ github.event.release.id }}
         file: ${{ matrix.helioslite_name }}.sha256
+        overwrite: 'true'
+    - name: Copy forge_dbd Binary
+      run: if [[ "${{ matrix.target }}" == *windows* ]]; then cp "target/${{ matrix.target }}/release/forge_dbd.exe" "forge_dbd-${{ matrix.target }}.exe"; else cp "target/${{ matrix.target }}/release/forge_dbd" "forge_dbd-${{ matrix.target }}"; fi
+      shell: bash
+    - name: Generate forge_dbd SHA-256
+      run: if [[ "${{ matrix.target }}" == *windows* ]]; then if command -v sha256sum >/dev/null 2>&1; then sha256sum "forge_dbd-${{ matrix.target }}.exe" > "forge_dbd-${{ matrix.target }}.exe.sha256"; else shasum -a 256 "forge_dbd-${{ matrix.target }}.exe" > "forge_dbd-${{ matrix.target }}.exe.sha256"; fi; else if command -v sha256sum >/dev/null 2>&1; then sha256sum "forge_dbd-${{ matrix.target }}" > "forge_dbd-${{ matrix.target }}.sha256"; else shasum -a 256 "forge_dbd-${{ matrix.target }}" > "forge_dbd-${{ matrix.target }}.sha256"; fi; fi
+      shell: bash
+    - if: '!contains(matrix.target, ''windows'')'
+      name: Upload forge_dbd to Release (unix)
+      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      with:
+        release_id: ${{ github.event.release.id }}
+        file: forge_dbd-${{ matrix.target }}
+        overwrite: 'true'
+    - if: '!contains(matrix.target, ''windows'')'
+      name: Upload forge_dbd checksum to Release (unix)
+      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      with:
+        release_id: ${{ github.event.release.id }}
+        file: forge_dbd-${{ matrix.target }}.sha256
+        overwrite: 'true'
+    - if: contains(matrix.target, 'windows')
+      name: Upload forge_dbd to Release (windows)
+      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      with:
+        release_id: ${{ github.event.release.id }}
+        file: forge_dbd-${{ matrix.target }}.exe
+        overwrite: 'true'
+    - if: contains(matrix.target, 'windows')
+      name: Upload forge_dbd checksum to Release (windows)
+      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      with:
+        release_id: ${{ github.event.release.id }}
+        file: forge_dbd-${{ matrix.target }}.exe.sha256
         overwrite: 'true'
   attest_release_assets:
     name: Attest release assets
