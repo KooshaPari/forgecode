@@ -241,7 +241,3 @@ forge_mux = { path = "crates/forge_mux" }
 
 [workspace.dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-
-[[bench]]
-name = "forge_benchmarks"
-harness = false
