@@ -5,6 +5,8 @@
 # https://docs.trunk.io/check/reference
 # =============================================================================
 
+version: 0.1
+
 plugins:
   sources:
     - id: trunk
