@@ -61,11 +61,11 @@ static SPAWN_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 /// ## Fallback semantics
 ///
 /// A direct fallback is safe only before a daemon request can have been sent:
-/// failed initial connect or failed daemon spawn. Once [`DbClient::send_classified`]
-/// starts its fresh request stream, a transport error, daemon error response,
-/// or unexpected response is indeterminate: the daemon may have committed the
-/// write. Those outcomes are surfaced to the caller and are never replayed
-/// through `inner`.
+/// failed initial connect or failed daemon spawn. Once
+/// [`DbClient::send_classified`] starts its fresh request stream, a transport
+/// error, daemon error response, or unexpected response is indeterminate: the
+/// daemon may have committed the write. Those outcomes are surfaced to the
+/// caller and are never replayed through `inner`.
 pub struct DaemonConversationRepository {
     inner: Arc<ConversationRepositoryImpl>,
     socket_path: PathBuf,
@@ -139,8 +139,9 @@ impl DaemonConversationRepository {
     ///
     /// Only an initial connection/spawn failure is classified as
     /// [`DaemonWriteOutcome::Unavailable`]. All failures after
-    /// [`DbClient::send_classified`] begins are indeterminate because the daemon may have
-    /// recorded the request before the client lost its response.
+    /// [`DbClient::send_classified`] begins are indeterminate because the
+    /// daemon may have recorded the request before the client lost its
+    /// response.
     async fn try_daemon(&self, request: Request) -> DaemonWriteOutcome {
         // Only daemon startup and probe-cache access share the lifecycle
         // lock. `send_classified` opens a fresh stream and can wait on daemon

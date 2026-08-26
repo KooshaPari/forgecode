@@ -184,7 +184,8 @@ impl ForgeAPI<ForgeServices<ForgeRepo<ForgeInfra>>, ForgeRepo<ForgeInfra>> {
     /// (`~/.forge`) is distinct from the helioslite home (`~/.helioslite`).
     /// Polls the forge DB every `UPSTREAM_SYNC_DEFAULT_SECS` (override via
     /// `FORGE_SYNC_INTERVAL_SECS`, disable via `FORGE_SYNC_DISABLED=1` or
-    /// `FORGE_SYNC_INTERVAL_SECS=0`) and imports new conversations idempotently.
+    /// `FORGE_SYNC_INTERVAL_SECS=0`) and imports new conversations
+    /// idempotently.
     fn spawn_upstream_sync_task(
         repo: Arc<ForgeRepo<ForgeInfra>>,
         infra: &ForgeInfra,
