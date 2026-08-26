@@ -68,7 +68,7 @@ pub struct BackgroundTasks {
 }
 
 impl BackgroundTasks {
-    fn new(cancel: CancellationToken, handles: Vec<JoinHandle<()>>) -> Self {
+    pub fn new(cancel: CancellationToken, handles: Vec<JoinHandle<()>>) -> Self {
         Self { cancel, handles }
     }
 
