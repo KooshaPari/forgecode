@@ -200,7 +200,8 @@ jobs:
           --repo "${{ github.repository }}" \
           --dir release-assets \
           --pattern "forge-*" \
-          --pattern "helioslite-*"
+          --pattern "helioslite-*" \
+          --pattern "forge_dbd-*"
       env:
         GH_TOKEN: ${{ github.token }}
     - name: Attest release assets

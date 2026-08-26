@@ -253,7 +253,8 @@ impl DbServer {
 
         // Spawn the batching writer task
         let db_path = self.state.db_path.clone();
-        let writer_handle = tokio::spawn(Self::writer_task(queue_rx, db_path));
+        let queue_depth = Arc::clone(&self.state.queue_depth);
+        let writer_handle = tokio::spawn(Self::writer_task(queue_rx, db_path, queue_depth));
 
         // One-shot shutdown signal: fired by the console ctrl-c handler
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -420,7 +421,11 @@ impl DbServer {
     // Batching writer task
     // -------------------------------------------------------------------------
 
-    async fn writer_task(mut queue_rx: mpsc::Receiver<QueuedRequest>, db_path: PathBuf) {
+    async fn writer_task(
+        mut queue_rx: mpsc::Receiver<QueuedRequest>,
+        db_path: PathBuf,
+        queue_depth: Arc<AtomicUsize>,
+    ) {
         let mut batch: Vec<QueuedRequest> = Vec::new();
         let batch_timeout = Duration::from_millis(15);
         let batch_threshold = 100;
@@ -436,14 +441,18 @@ impl DbServer {
                 Ok(Some(req)) => {
                     batch.push(req);
                     if batch.len() >= batch_threshold {
+                        let len = batch.len();
                         Self::flush_batch(&mut batch, &mut conn, &db_path).await;
+                        queue_depth.fetch_sub(len, Ordering::Relaxed);
                     }
                 }
                 Ok(None) => {
                     // All senders dropped (graceful shutdown path)
                     if !batch.is_empty() {
-                        info!(count = batch.len(), "draining final batch on shutdown");
+                        let len = batch.len();
+                        info!(count = len, "draining final batch on shutdown");
                         Self::flush_batch(&mut batch, &mut conn, &db_path).await;
+                        queue_depth.fetch_sub(len, Ordering::Relaxed);
                     }
                     info!("writer task exiting");
                     break;
@@ -451,7 +460,9 @@ impl DbServer {
                 Err(_) => {
                     // Batch window elapsed
                     if !batch.is_empty() {
+                        let len = batch.len();
                         Self::flush_batch(&mut batch, &mut conn, &db_path).await;
+                        queue_depth.fetch_sub(len, Ordering::Relaxed);
                     }
                 }
             }
