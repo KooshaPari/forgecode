@@ -123,6 +123,10 @@ fn test_release_workflow() {
         "shell continuations must have exactly one trailing backslash"
     );
     assert!(generated.contains("actions/attest-build-provenance@"));
+    assert!(generated.contains("anchore/sbom-action@"));
+    assert!(generated.contains("format: cyclonedx-json"));
+    assert!(generated.contains("upload-release-assets: 'true'"));
+    assert!(generated.contains("path: release-assets"));
 
     let expected = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&expected).unwrap();
     let actual = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&generated).unwrap();
