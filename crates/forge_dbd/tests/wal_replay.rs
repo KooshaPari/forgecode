@@ -17,10 +17,10 @@ use rusqlite::Connection;
 use tempfile::TempDir;
 use tokio::time::sleep;
 
-#[cfg(unix)]
-use tokio::net::UnixStream;
 #[cfg(windows)]
 use forge_dbd::client::DbClient;
+#[cfg(unix)]
+use tokio::net::UnixStream;
 
 const TEST_WORKSPACE: i64 = 42;
 
@@ -166,7 +166,9 @@ async fn wal_replay_recovers_committed_writes_and_checkpoint_truncates() {
                     workspace_id: None,
                 },
             };
-            write_frame(&mut stream, &req).await.expect("write mutation");
+            write_frame(&mut stream, &req)
+                .await
+                .expect("write mutation");
             let resp: Response = read_frame(&mut stream).await.expect("read ack");
             assert!(
                 matches!(resp, Response::Ack),
@@ -222,7 +224,10 @@ async fn wal_replay_recovers_committed_writes_and_checkpoint_truncates() {
     let integrity: String = conn
         .query_row("PRAGMA integrity_check", [], |row| row.get(0))
         .expect("integrity_check");
-    assert_eq!(integrity, "ok", "database should pass integrity_check after WAL replay");
+    assert_eq!(
+        integrity, "ok",
+        "database should pass integrity_check after WAL replay"
+    );
 
     let journal_mode: String = conn
         .query_row("PRAGMA journal_mode", [], |row| row.get(0))
@@ -242,7 +247,9 @@ async fn wal_replay_recovers_committed_writes_and_checkpoint_truncates() {
     // Not strictly required to be >0 on all platforms/FS timings, but log it
     // for diagnostics if it is zero.
     if wal_len_before == 0 {
-        eprintln!("note: WAL file already empty before explicit checkpoint (auto-checkpoint may have run)");
+        eprintln!(
+            "note: WAL file already empty before explicit checkpoint (auto-checkpoint may have run)"
+        );
     }
     drop(conn);
 
@@ -270,11 +277,8 @@ async fn wal_replay_recovers_committed_writes_and_checkpoint_truncates() {
         }
     };
 
-    let server2 = DbServer::new_with_idle(
-        checkpoint_sock.clone(),
-        db.clone(),
-        Duration::from_secs(5),
-    );
+    let server2 =
+        DbServer::new_with_idle(checkpoint_sock.clone(), db.clone(), Duration::from_secs(5));
     let handle2 = tokio::spawn(server2.run());
     wait_for_socket(&checkpoint_sock).await;
 

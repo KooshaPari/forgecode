@@ -10,13 +10,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
 #[cfg(windows)]
 use crate::protocol::named_pipe_name;
 use crate::protocol::{
     ConversationMutation, HealthStatus, MUTATION_PROTOCOL_VERSION, Request, Response, read_frame,
     write_frame,
 };
+use anyhow::{Context, Result};
 use forge_domain::{Conversation, ConversationId};
 use rusqlite::Connection;
 #[cfg(unix)]
