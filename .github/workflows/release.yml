@@ -126,28 +126,28 @@ jobs:
       run: if command -v sha256sum >/dev/null 2>&1; then sha256sum "${{ matrix.helioslite_name }}" > "${{ matrix.helioslite_name }}.sha256"; else shasum -a 256 "${{ matrix.helioslite_name }}" > "${{ matrix.helioslite_name }}.sha256"; fi
       shell: bash
     - name: Upload to Release
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e
       with:
-        release_id: ${{ github.event.release.id }}
-        file: ${{ matrix.binary_name }}
+        tag: ${{ github.event.release.tag_name }}
+        files: ${{ matrix.binary_name }}
         overwrite: 'true'
     - name: Upload checksum to Release
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e
       with:
-        release_id: ${{ github.event.release.id }}
-        file: ${{ matrix.binary_name }}.sha256
+        tag: ${{ github.event.release.tag_name }}
+        files: ${{ matrix.binary_name }}.sha256
         overwrite: 'true'
     - name: Upload helioslite to Release
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e
       with:
-        release_id: ${{ github.event.release.id }}
-        file: ${{ matrix.helioslite_name }}
+        tag: ${{ github.event.release.tag_name }}
+        files: ${{ matrix.helioslite_name }}
         overwrite: 'true'
     - name: Upload helioslite checksum to Release
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e
       with:
-        release_id: ${{ github.event.release.id }}
-        file: ${{ matrix.helioslite_name }}.sha256
+        tag: ${{ github.event.release.tag_name }}
+        files: ${{ matrix.helioslite_name }}.sha256
         overwrite: 'true'
     - name: Copy forge_dbd Binary
       run: if [[ "${{ matrix.target }}" == *windows* ]]; then cp "target/${{ matrix.target }}/release/forge_dbd.exe" "forge_dbd-${{ matrix.target }}.exe"; else cp "target/${{ matrix.target }}/release/forge_dbd" "forge_dbd-${{ matrix.target }}"; fi
@@ -157,31 +157,31 @@ jobs:
       shell: bash
     - if: '!contains(matrix.target, ''windows'')'
       name: Upload forge_dbd to Release (unix)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e
       with:
-        release_id: ${{ github.event.release.id }}
-        file: forge_dbd-${{ matrix.target }}
+        tag: ${{ github.event.release.tag_name }}
+        files: forge_dbd-${{ matrix.target }}
         overwrite: 'true'
     - if: '!contains(matrix.target, ''windows'')'
       name: Upload forge_dbd checksum to Release (unix)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e
       with:
-        release_id: ${{ github.event.release.id }}
-        file: forge_dbd-${{ matrix.target }}.sha256
+        tag: ${{ github.event.release.tag_name }}
+        files: forge_dbd-${{ matrix.target }}.sha256
         overwrite: 'true'
     - if: contains(matrix.target, 'windows')
       name: Upload forge_dbd to Release (windows)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e
       with:
-        release_id: ${{ github.event.release.id }}
-        file: forge_dbd-${{ matrix.target }}.exe
+        tag: ${{ github.event.release.tag_name }}
+        files: forge_dbd-${{ matrix.target }}.exe
         overwrite: 'true'
     - if: contains(matrix.target, 'windows')
       name: Upload forge_dbd checksum to Release (windows)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e
       with:
-        release_id: ${{ github.event.release.id }}
-        file: forge_dbd-${{ matrix.target }}.exe.sha256
+        tag: ${{ github.event.release.tag_name }}
+        files: forge_dbd-${{ matrix.target }}.exe.sha256
         overwrite: 'true'
   sbom_release_assets:
     name: Generate release SBOM
@@ -208,10 +208,6 @@ jobs:
         path: release-assets
         format: cyclonedx-json
         artifact-name: forgecode-${{ github.event.release.tag_name }}.cdx.json
-        # Fixed filesystem-safe output path; the release asset name
-        # (artifact-name above) keeps the dynamic tag because
-        # `gh release upload` accepts `/` in asset names but
-        # nested parent directories are not auto-created.
         output-file: release-assets/sbom.cdx.json
         upload-artifact: 'false'
         upload-release-assets: 'true'

@@ -111,45 +111,45 @@ impl From<ReleaseBuilderJob> for Job {
                 .add_step(
                     Step::new("Upload to Release")
                         .uses(
-                            "xresloader",
-                            "upload-to-github-release",
-                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                            "softprops",
+                            "action-gh-release",
+                            "4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e",
                         )
-                        .input("release_id", release_id.clone())
-                        .input("file", "${{ matrix.binary_name }}")
+                        .input("tag", "${{ github.event.release.tag_name }}")
+                        .input("files", "${{ matrix.binary_name }}")
                         .input("overwrite", "true"),
                 )
                 .add_step(
                     Step::new("Upload checksum to Release")
                         .uses(
-                            "xresloader",
-                            "upload-to-github-release",
-                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                            "softprops",
+                            "action-gh-release",
+                            "4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e",
                         )
-                        .input("release_id", release_id.clone())
-                        .input("file", "${{ matrix.binary_name }}.sha256")
+                        .input("tag", "${{ github.event.release.tag_name }}")
+                        .input("files", "${{ matrix.binary_name }}.sha256")
                         .input("overwrite", "true"),
                 )
                 .add_step(
                     Step::new("Upload helioslite to Release")
                         .uses(
-                            "xresloader",
-                            "upload-to-github-release",
-                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                            "softprops",
+                            "action-gh-release",
+                            "4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e",
                         )
-                        .input("release_id", release_id.clone())
-                        .input("file", "${{ matrix.helioslite_name }}")
+                        .input("tag", "${{ github.event.release.tag_name }}")
+                        .input("files", "${{ matrix.helioslite_name }}")
                         .input("overwrite", "true"),
                 )
                 .add_step(
                     Step::new("Upload helioslite checksum to Release")
                         .uses(
-                            "xresloader",
-                            "upload-to-github-release",
-                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                            "softprops",
+                            "action-gh-release",
+                            "4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e",
                         )
-                        .input("release_id", release_id.clone())
-                        .input("file", "${{ matrix.helioslite_name }}.sha256")
+                        .input("tag", "${{ github.event.release.tag_name }}")
+                        .input("files", "${{ matrix.helioslite_name }}.sha256")
                         .input("overwrite", "true"),
                 )
                 .add_step(
@@ -165,48 +165,48 @@ impl From<ReleaseBuilderJob> for Job {
                 .add_step(
                     Step::new("Upload forge_dbd to Release (unix)")
                         .uses(
-                            "xresloader",
-                            "upload-to-github-release",
-                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                            "softprops",
+                            "action-gh-release",
+                            "4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e",
                         )
-                        .input("release_id", release_id.clone())
-                        .input("file", "forge_dbd-${{ matrix.target }}")
+                        .input("tag", "${{ github.event.release.tag_name }}")
+                        .input("files", "forge_dbd-${{ matrix.target }}")
                         .input("overwrite", "true")
                         .if_condition("!contains(matrix.target, 'windows')"),
                 )
                 .add_step(
                     Step::new("Upload forge_dbd checksum to Release (unix)")
                         .uses(
-                            "xresloader",
-                            "upload-to-github-release",
-                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                            "softprops",
+                            "action-gh-release",
+                            "4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e",
                         )
-                        .input("release_id", release_id.clone())
-                        .input("file", "forge_dbd-${{ matrix.target }}.sha256")
+                        .input("tag", "${{ github.event.release.tag_name }}")
+                        .input("files", "forge_dbd-${{ matrix.target }}.sha256")
                         .input("overwrite", "true")
                         .if_condition("!contains(matrix.target, 'windows')"),
                 )
                 .add_step(
                     Step::new("Upload forge_dbd to Release (windows)")
                         .uses(
-                            "xresloader",
-                            "upload-to-github-release",
-                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                            "softprops",
+                            "action-gh-release",
+                            "4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e",
                         )
-                        .input("release_id", release_id.clone())
-                        .input("file", "forge_dbd-${{ matrix.target }}.exe")
+                        .input("tag", "${{ github.event.release.tag_name }}")
+                        .input("files", "forge_dbd-${{ matrix.target }}.exe")
                         .input("overwrite", "true")
                         .if_condition("contains(matrix.target, 'windows')"),
                 )
                 .add_step(
                     Step::new("Upload forge_dbd checksum to Release (windows)")
                         .uses(
-                            "xresloader",
-                            "upload-to-github-release",
-                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                            "softprops",
+                            "action-gh-release",
+                            "4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e",
                         )
-                        .input("release_id", release_id)
-                        .input("file", "forge_dbd-${{ matrix.target }}.exe.sha256")
+                        .input("tag", "${{ github.event.release.tag_name }}")
+                        .input("files", "forge_dbd-${{ matrix.target }}.exe.sha256")
                         .input("overwrite", "true")
                         .if_condition("contains(matrix.target, 'windows')"),
                 );
