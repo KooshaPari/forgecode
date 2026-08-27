@@ -126,25 +126,25 @@ jobs:
       run: if command -v sha256sum >/dev/null 2>&1; then sha256sum "${{ matrix.helioslite_name }}" > "${{ matrix.helioslite_name }}.sha256"; else shasum -a 256 "${{ matrix.helioslite_name }}" > "${{ matrix.helioslite_name }}.sha256"; fi
       shell: bash
     - name: Upload to Release
-      uses: softprops/action-gh-release@4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
         tag: ${{ github.event.release.tag_name }}
         files: ${{ matrix.binary_name }}
         overwrite: 'true'
     - name: Upload checksum to Release
-      uses: softprops/action-gh-release@4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
         tag: ${{ github.event.release.tag_name }}
         files: ${{ matrix.binary_name }}.sha256
         overwrite: 'true'
     - name: Upload helioslite to Release
-      uses: softprops/action-gh-release@4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
         tag: ${{ github.event.release.tag_name }}
         files: ${{ matrix.helioslite_name }}
         overwrite: 'true'
     - name: Upload helioslite checksum to Release
-      uses: softprops/action-gh-release@4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
         tag: ${{ github.event.release.tag_name }}
         files: ${{ matrix.helioslite_name }}.sha256
@@ -157,28 +157,28 @@ jobs:
       shell: bash
     - if: '!contains(matrix.target, ''windows'')'
       name: Upload forge_dbd to Release (unix)
-      uses: softprops/action-gh-release@4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
         tag: ${{ github.event.release.tag_name }}
         files: forge_dbd-${{ matrix.target }}
         overwrite: 'true'
     - if: '!contains(matrix.target, ''windows'')'
       name: Upload forge_dbd checksum to Release (unix)
-      uses: softprops/action-gh-release@4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
         tag: ${{ github.event.release.tag_name }}
         files: forge_dbd-${{ matrix.target }}.sha256
         overwrite: 'true'
     - if: contains(matrix.target, 'windows')
       name: Upload forge_dbd to Release (windows)
-      uses: softprops/action-gh-release@4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
         tag: ${{ github.event.release.tag_name }}
         files: forge_dbd-${{ matrix.target }}.exe
         overwrite: 'true'
     - if: contains(matrix.target, 'windows')
       name: Upload forge_dbd checksum to Release (windows)
-      uses: softprops/action-gh-release@4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
         tag: ${{ github.event.release.tag_name }}
         files: forge_dbd-${{ matrix.target }}.exe.sha256

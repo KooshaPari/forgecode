@@ -113,7 +113,7 @@ impl From<ReleaseBuilderJob> for Job {
                         .uses(
                             "softprops",
                             "action-gh-release",
-                            "4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e",
+                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
                         .input("tag", "${{ github.event.release.tag_name }}")
                         .input("files", "${{ matrix.binary_name }}")
@@ -124,7 +124,7 @@ impl From<ReleaseBuilderJob> for Job {
                         .uses(
                             "softprops",
                             "action-gh-release",
-                            "4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e",
+                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
                         .input("tag", "${{ github.event.release.tag_name }}")
                         .input("files", "${{ matrix.binary_name }}.sha256")
@@ -135,7 +135,7 @@ impl From<ReleaseBuilderJob> for Job {
                         .uses(
                             "softprops",
                             "action-gh-release",
-                            "4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e",
+                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
                         .input("tag", "${{ github.event.release.tag_name }}")
                         .input("files", "${{ matrix.helioslite_name }}")
@@ -146,7 +146,7 @@ impl From<ReleaseBuilderJob> for Job {
                         .uses(
                             "softprops",
                             "action-gh-release",
-                            "4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e",
+                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
                         .input("tag", "${{ github.event.release.tag_name }}")
                         .input("files", "${{ matrix.helioslite_name }}.sha256")
@@ -167,7 +167,7 @@ impl From<ReleaseBuilderJob> for Job {
                         .uses(
                             "softprops",
                             "action-gh-release",
-                            "4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e",
+                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
                         .input("tag", "${{ github.event.release.tag_name }}")
                         .input("files", "forge_dbd-${{ matrix.target }}")
@@ -179,7 +179,7 @@ impl From<ReleaseBuilderJob> for Job {
                         .uses(
                             "softprops",
                             "action-gh-release",
-                            "4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e",
+                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
                         .input("tag", "${{ github.event.release.tag_name }}")
                         .input("files", "forge_dbd-${{ matrix.target }}.sha256")
@@ -191,7 +191,7 @@ impl From<ReleaseBuilderJob> for Job {
                         .uses(
                             "softprops",
                             "action-gh-release",
-                            "4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e",
+                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
                         .input("tag", "${{ github.event.release.tag_name }}")
                         .input("files", "forge_dbd-${{ matrix.target }}.exe")
@@ -203,7 +203,7 @@ impl From<ReleaseBuilderJob> for Job {
                         .uses(
                             "softprops",
                             "action-gh-release",
-                            "4a6d2885b914a7e953d942d8b6a05d8a7e5cc15e",
+                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
                         .input("tag", "${{ github.event.release.tag_name }}")
                         .input("files", "forge_dbd-${{ matrix.target }}.exe.sha256")
