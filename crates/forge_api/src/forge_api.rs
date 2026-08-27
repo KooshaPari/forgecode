@@ -75,6 +75,18 @@ impl BackgroundTasks {
         Self { cancel, handles, shutdown_timeout: Duration::from_secs(5) }
     }
 
+    /// Test-only constructor that mirrors [`BackgroundTasks::new`].
+    ///
+    /// `BackgroundTasks::new` is `pub(crate)` so the API surface stays tight;
+    /// integration tests in `crates/forge_api/tests/` cannot reach `pub(crate)`
+    /// items, so this alternate name is exposed only under `#[cfg(test)]` to
+    /// keep the constructor accessible to external test crates without leaking
+    /// it into the public API.
+    #[cfg(test)]
+    pub fn new_for_test(cancel: CancellationToken, handles: Vec<JoinHandle<()>>) -> Self {
+        Self { cancel, handles, shutdown_timeout: Duration::from_secs(5) }
+    }
+
     /// Cancel all background tasks and wait for them to finish.
     ///
     /// Each task is given `shutdown_timeout` (default 5s) to complete
