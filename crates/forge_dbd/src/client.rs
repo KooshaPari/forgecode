@@ -34,9 +34,10 @@ pub struct DbClient {
 ///
 /// [`DbClientSendError::Unavailable`] means the fresh transport connection
 /// could not be established, so no request bytes were sent and a caller may
-/// safely choose its direct-storage fallback. [`DbClientSendError::Indeterminate`]
-/// means the connection was established and the request exchange began; the
-/// daemon may have observed the request, so callers must not replay it.
+/// safely choose its direct-storage fallback.
+/// [`DbClientSendError::Indeterminate`] means the connection was established
+/// and the request exchange began; the daemon may have observed the request, so
+/// callers must not replay it.
 #[derive(Debug)]
 pub enum DbClientSendError {
     Unavailable(anyhow::Error),
@@ -139,9 +140,10 @@ impl DbClient {
 
     /// Send `request` while preserving whether it was safe to replay.
     ///
-    /// Only a fresh transport connection failure is [`DbClientSendError::Unavailable`].
-    /// Once a stream has connected, write, read, framing, decode, and response
-    /// failures are all [`DbClientSendError::Indeterminate`].
+    /// Only a fresh transport connection failure is
+    /// [`DbClientSendError::Unavailable`]. Once a stream has connected,
+    /// write, read, framing, decode, and response failures are all
+    /// [`DbClientSendError::Indeterminate`].
     pub async fn send_classified(
         &self,
         request: Request,
@@ -231,10 +233,11 @@ impl DbClient {
 
 #[cfg(test)]
 mod tests {
-    use super::{DbClient, DbClientSendError};
-    use crate::protocol::Request;
     #[cfg(unix)]
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::{DbClient, DbClientSendError};
+    use crate::protocol::Request;
 
     #[cfg(unix)]
     fn test_socket_path(label: &str) -> std::path::PathBuf {

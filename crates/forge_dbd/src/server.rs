@@ -11,6 +11,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+#[cfg(windows)]
+use forge_dbd::protocol::named_pipe_name;
+use forge_dbd::protocol::{
+    ConversationMutation, HealthStatus, MUTATION_PROTOCOL_VERSION, Request, Response, read_frame,
+    write_frame,
+};
 use forge_domain::{Conversation, ConversationId};
 use rusqlite::Connection;
 #[cfg(unix)]
@@ -22,13 +28,6 @@ use tokio::time::timeout;
 #[cfg(unix)]
 use tracing::warn;
 use tracing::{debug, error, info};
-
-#[cfg(windows)]
-use forge_dbd::protocol::named_pipe_name;
-use forge_dbd::protocol::{
-    ConversationMutation, HealthStatus, MUTATION_PROTOCOL_VERSION, Request, Response,
-};
-use forge_dbd::protocol::{read_frame, write_frame};
 
 // ---------------------------------------------------------------------------
 // Shared daemon state (cheap to clone; wraps Arcs internally)
@@ -147,7 +146,8 @@ impl DbServer {
 
         // Spawn the batching writer task
         let db_path = self.state.db_path.clone();
-        let writer_handle = tokio::spawn(Self::writer_task(queue_rx, db_path));
+        let queue_depth = Arc::clone(&self.state.queue_depth);
+        let writer_handle = tokio::spawn(Self::writer_task(queue_rx, db_path, queue_depth));
 
         // One-shot shutdown signal: fired by OS signal handlers
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -253,7 +253,8 @@ impl DbServer {
 
         // Spawn the batching writer task
         let db_path = self.state.db_path.clone();
-        let writer_handle = tokio::spawn(Self::writer_task(queue_rx, db_path));
+        let queue_depth = Arc::clone(&self.state.queue_depth);
+        let writer_handle = tokio::spawn(Self::writer_task(queue_rx, db_path, queue_depth));
 
         // One-shot shutdown signal: fired by the console ctrl-c handler
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
@@ -420,7 +421,11 @@ impl DbServer {
     // Batching writer task
     // -------------------------------------------------------------------------
 
-    async fn writer_task(mut queue_rx: mpsc::Receiver<QueuedRequest>, db_path: PathBuf) {
+    async fn writer_task(
+        mut queue_rx: mpsc::Receiver<QueuedRequest>,
+        db_path: PathBuf,
+        queue_depth: Arc<AtomicUsize>,
+    ) {
         let mut batch: Vec<QueuedRequest> = Vec::new();
         let batch_timeout = Duration::from_millis(15);
         let batch_threshold = 100;
@@ -436,14 +441,18 @@ impl DbServer {
                 Ok(Some(req)) => {
                     batch.push(req);
                     if batch.len() >= batch_threshold {
+                        let len = batch.len();
                         Self::flush_batch(&mut batch, &mut conn, &db_path).await;
+                        queue_depth.fetch_sub(len, Ordering::Relaxed);
                     }
                 }
                 Ok(None) => {
                     // All senders dropped (graceful shutdown path)
                     if !batch.is_empty() {
-                        info!(count = batch.len(), "draining final batch on shutdown");
+                        let len = batch.len();
+                        info!(count = len, "draining final batch on shutdown");
                         Self::flush_batch(&mut batch, &mut conn, &db_path).await;
+                        queue_depth.fetch_sub(len, Ordering::Relaxed);
                     }
                     info!("writer task exiting");
                     break;
@@ -451,7 +460,9 @@ impl DbServer {
                 Err(_) => {
                     // Batch window elapsed
                     if !batch.is_empty() {
+                        let len = batch.len();
                         Self::flush_batch(&mut batch, &mut conn, &db_path).await;
+                        queue_depth.fetch_sub(len, Ordering::Relaxed);
                     }
                 }
             }
@@ -513,12 +524,12 @@ impl DbServer {
     /// Execute a single request against the writer connection.
     ///
     /// - [`Request::CheckpointWal`] runs `PRAGMA wal_checkpoint(TRUNCATE)`.
-    /// - [`Request::OptimizeFts`] / [`Request::RefreshFts`] run
-    ///   `PRAGMA optimize`, which also maintains FTS indexes when present.
+    /// - [`Request::OptimizeFts`] / [`Request::RefreshFts`] run `PRAGMA
+    ///   optimize`, which also maintains FTS indexes when present.
     /// - Conversation writes mirror the exact SQL from forge_repo's
     ///   `ConversationRepositoryImpl` (conversation_repo.rs): the
-    ///   `conversations` table, the `conversation_id` conflict target, and
-    ///   the same updated-column sets.
+    ///   `conversations` table, the `conversation_id` conflict target, and the
+    ///   same updated-column sets.
     fn execute_with_conn(conn: &Connection, request: &Request) -> Result<Response> {
         match request {
             Request::CheckpointWal => {
@@ -1370,12 +1381,12 @@ mod db_tests {
 mod windows_tests {
     use std::path::PathBuf;
 
+    use forge_dbd::client::DbClient;
+    use forge_dbd::protocol::ConversationMutation;
     use tempfile::TempDir;
     use tokio::time::{Duration, sleep};
 
     use super::*;
-    use forge_dbd::client::DbClient;
-    use forge_dbd::protocol::ConversationMutation;
 
     fn tmp_paths(dir: &TempDir) -> (PathBuf, PathBuf) {
         // Include the pid in the socket path so the derived pipe name is
