@@ -15,10 +15,7 @@ fn ctx_with_message(content: &str) -> Context {
 
 /// Build a `Context` that has an `initiator` but zero messages.
 fn ctx_initiator_only(initiator: &str) -> Context {
-    Context {
-        initiator: Some(initiator.to_string()),
-        ..Context::default()
-    }
+    Context { initiator: Some(initiator.to_string()), ..Context::default() }
 }
 
 /// Build a `Context` with many messages so the compressed blob is non-trivial.
