@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 #[cfg(windows)]
-use forge_dbd::protocol::named_pipe_name;
-use forge_dbd::protocol::{
+use crate::protocol::named_pipe_name;
+use crate::protocol::{
     ConversationMutation, HealthStatus, MUTATION_PROTOCOL_VERSION, Request, Response, read_frame,
     write_frame,
 };
@@ -611,7 +611,7 @@ impl DbServer {
         // writer, including the legacy ContextRecord envelope and its
         // compressed-column fallback.
         let persisted_context =
-            forge_dbd::conversation_storage::persist_context(conversation.context.as_ref());
+            crate::conversation_storage::persist_context(conversation.context.as_ref());
 
         let conversation_value = serde_json::to_value(conversation)?;
         let created_at = conversation_value
@@ -980,7 +980,7 @@ mod tests {
 
 #[cfg(test)]
 mod db_tests {
-    use forge_dbd::protocol::ConversationMutation;
+    use crate::protocol::ConversationMutation;
     use forge_domain::{Context, ContextMessage, Conversation, ConversationId};
     use tempfile::TempDir;
 
@@ -1453,8 +1453,8 @@ mod db_tests {
 mod windows_tests {
     use std::path::PathBuf;
 
-    use forge_dbd::client::DbClient;
-    use forge_dbd::protocol::ConversationMutation;
+    use crate::client::DbClient;
+    use crate::protocol::ConversationMutation;
     use tempfile::TempDir;
     use tokio::time::{Duration, sleep};
 

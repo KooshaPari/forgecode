@@ -1,8 +1,7 @@
-mod server;
-
 use std::path::PathBuf;
 
 use anyhow::Result;
+use forge_dbd::server::DbServer;
 use tracing::info;
 
 /// Version string reported by `--version`; mirrors the workspace release
@@ -57,6 +56,6 @@ async fn main() -> Result<()> {
     let db_path = db_path();
     info!(socket = %socket_path.display(), "starting forge-dbd");
 
-    let server = server::DbServer::new(socket_path, db_path);
+    let server = DbServer::new(socket_path, db_path);
     server.run().await
 }

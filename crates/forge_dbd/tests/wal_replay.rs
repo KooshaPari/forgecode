@@ -8,7 +8,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use forge_dbd::protocol::{ConversationMutation, Request, Response, read_frame, write_frame};
+use forge_dbd::protocol::{ConversationMutation, Request, Response};
+#[cfg(unix)]
+use forge_dbd::protocol::{read_frame, write_frame};
 use forge_dbd::server::DbServer;
 use forge_domain::Conversation;
 use rusqlite::Connection;
