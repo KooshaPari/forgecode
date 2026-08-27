@@ -97,9 +97,9 @@ impl BackgroundTasks {
         self.cancel.cancel();
         for handle in self.handles.drain(..) {
             let timeout = self.shutdown_timeout;
-            match tokio::time::timeout(timeout, handle).await {
-                _ => { /* ignore JoinError / TimeoutError */ }
-            }
+            // Ignore JoinError / TimeoutError; the handle is either finished or
+            // timed out — both are acceptable shutdown outcomes.
+            let _ = tokio::time::timeout(timeout, handle).await;
         }
     }
 }
