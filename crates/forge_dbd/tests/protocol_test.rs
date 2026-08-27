@@ -5,8 +5,8 @@
 //! and the Windows named_pipe_name helper.
 
 use forge_dbd::protocol::{
-    ConversationMutation, HealthStatus, Request, Response, LEGACY_PROTOCOL_VERSION,
-    MUTATION_PROTOCOL_VERSION,
+    ConversationMutation, HealthStatus, LEGACY_PROTOCOL_VERSION, MUTATION_PROTOCOL_VERSION,
+    Request, Response,
 };
 use forge_domain::{Conversation, ConversationId};
 
@@ -99,10 +99,7 @@ fn request_upsert_conversation_ref_roundtrip() {
 fn request_update_parent_id_roundtrip() {
     let cid = ConversationId::generate();
     let new_parent = Some(ConversationId::generate());
-    let req = Request::UpdateParentId {
-        conversation_id: cid,
-        new_parent_id: new_parent,
-    };
+    let req = Request::UpdateParentId { conversation_id: cid, new_parent_id: new_parent };
     let de = roundtrip(&req);
     match de {
         Request::UpdateParentId { conversation_id, new_parent_id } => {
@@ -303,7 +300,8 @@ fn health_status_deserializes_with_missing_protocol_version() {
 
 #[test]
 fn health_status_deserializes_with_explicit_protocol_version() {
-    let json = r#"{"protocol_version": 2, "uptime_secs": 0, "queue_depth": 0, "db_reachable": false}"#;
+    let json =
+        r#"{"protocol_version": 2, "uptime_secs": 0, "queue_depth": 0, "db_reachable": false}"#;
     let status: HealthStatus = serde_json::from_str(json).expect("deserialize");
     assert_eq!(status.protocol_version, 2);
     assert!(!status.db_reachable);
@@ -316,10 +314,8 @@ fn health_status_deserializes_with_explicit_protocol_version() {
 #[test]
 fn mutation_upsert_conversation_roundtrip() {
     let conv = sample_conversation();
-    let mutation = ConversationMutation::UpsertConversation {
-        conversation: conv,
-        workspace_id: Some(100),
-    };
+    let mutation =
+        ConversationMutation::UpsertConversation { conversation: conv, workspace_id: Some(100) };
     let de = roundtrip(&mutation);
     match de {
         ConversationMutation::UpsertConversation { conversation, workspace_id } => {
@@ -333,10 +329,8 @@ fn mutation_upsert_conversation_roundtrip() {
 #[test]
 fn mutation_upsert_conversation_ref_roundtrip() {
     let conv = sample_conversation();
-    let mutation = ConversationMutation::UpsertConversationRef {
-        conversation: conv,
-        workspace_id: None,
-    };
+    let mutation =
+        ConversationMutation::UpsertConversationRef { conversation: conv, workspace_id: None };
     let de = roundtrip(&mutation);
     match de {
         ConversationMutation::UpsertConversationRef { conversation, workspace_id } => {
@@ -351,10 +345,8 @@ fn mutation_upsert_conversation_ref_roundtrip() {
 fn mutation_update_parent_id_roundtrip() {
     let cid = ConversationId::generate();
     let parent = Some(ConversationId::generate());
-    let mutation = ConversationMutation::UpdateParentId {
-        conversation_id: cid,
-        new_parent_id: parent,
-    };
+    let mutation =
+        ConversationMutation::UpdateParentId { conversation_id: cid, new_parent_id: parent };
     let de = roundtrip(&mutation);
     match de {
         ConversationMutation::UpdateParentId { conversation_id, new_parent_id } => {
@@ -368,10 +360,8 @@ fn mutation_update_parent_id_roundtrip() {
 #[test]
 fn mutation_update_parent_id_none_roundtrip() {
     let cid = ConversationId::generate();
-    let mutation = ConversationMutation::UpdateParentId {
-        conversation_id: cid,
-        new_parent_id: None,
-    };
+    let mutation =
+        ConversationMutation::UpdateParentId { conversation_id: cid, new_parent_id: None };
     let de = roundtrip(&mutation);
     match de {
         ConversationMutation::UpdateParentId { new_parent_id, .. } => {
@@ -550,7 +540,10 @@ fn named_pipe_name_alphanumeric_path() {
         "pipe name should have correct prefix: {name}"
     );
     // Alphanumeric, dots, and hyphens are preserved
-    assert!(name.contains("forge-dbd-"), "should contain forge-dbd-: {name}");
+    assert!(
+        name.contains("forge-dbd-"),
+        "should contain forge-dbd-: {name}"
+    );
 }
 
 #[cfg(windows)]
@@ -564,7 +557,10 @@ fn named_pipe_name_special_chars_folded() {
     // The pipe prefix is "\\.\pipe\forge-dbd-" which contains backslashes.
     // Verify the *sanitized suffix* (after the prefix) has no backslashes.
     let prefix = r"\\.\pipe\forge-dbd-";
-    assert!(name.starts_with(prefix), "pipe name should have correct prefix: {name}");
+    assert!(
+        name.starts_with(prefix),
+        "pipe name should have correct prefix: {name}"
+    );
     let suffix = &name[prefix.len()..];
     assert!(
         !suffix.contains('\\'),
@@ -582,7 +578,8 @@ fn named_pipe_name_lowercase() {
     let name = named_pipe_name(&path);
     // The implementation lowercases the path
     assert!(
-        name.chars().all(|c| c.is_ascii_lowercase() || !c.is_ascii_alphabetic()),
+        name.chars()
+            .all(|c| c.is_ascii_lowercase() || !c.is_ascii_alphabetic()),
         "pipe name should be lowercase: {name}"
     );
 }

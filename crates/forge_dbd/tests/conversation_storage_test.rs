@@ -24,8 +24,10 @@ fn ctx_initiator_only(initiator: &str) -> Context {
 fn ctx_many_messages(n: usize) -> Context {
     let mut ctx = Context::default();
     for i in 0..n {
-        let msg =
-            ContextMessage::Text(TextMessage::new(Role::User, format!("message-{i}: padding content for compression")));
+        let msg = ContextMessage::Text(TextMessage::new(
+            Role::User,
+            format!("message-{i}: padding content for compression"),
+        ));
         ctx = ctx.add_message(msg);
     }
     ctx

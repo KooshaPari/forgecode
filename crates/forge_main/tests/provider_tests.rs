@@ -32,7 +32,11 @@ fn all_ten_core_provider_ids_are_distinct() {
             if i == j {
                 continue;
             }
-            assert_ne!(a, b, "ProviderId::{:?} == ProviderId::{:?} (indices {i}, {j})", a, b);
+            assert_ne!(
+                a, b,
+                "ProviderId::{:?} == ProviderId::{:?} (indices {i}, {j})",
+                a, b
+            );
         }
     }
 }
@@ -71,7 +75,10 @@ fn display_names_for_core_providers() {
     assert_eq!(ProviderId::ZAI_CODING.to_string(), "ZaiCoding");
     assert_eq!(ProviderId::CEREBRAS.to_string(), "Cerebras");
     assert_eq!(ProviderId::VERTEX_AI.to_string(), "VertexAI");
-    assert_eq!(ProviderId::VERTEX_AI_ANTHROPIC.to_string(), "VertexAIAnthropic");
+    assert_eq!(
+        ProviderId::VERTEX_AI_ANTHROPIC.to_string(),
+        "VertexAIAnthropic"
+    );
     assert_eq!(ProviderId::AZURE.to_string(), "Azure");
     assert_eq!(ProviderId::GITHUB_COPILOT.to_string(), "GithubCopilot");
     assert_eq!(ProviderId::BEDROCK.to_string(), "Bedrock");
@@ -109,10 +116,7 @@ fn display_names_for_newer_providers() {
     );
     assert_eq!(ProviderId::NOVITA.to_string(), "Novita");
     assert_eq!(ProviderId::VIVGRID.to_string(), "Vivgrid");
-    assert_eq!(
-        ProviderId::GOOGLE_AI_STUDIO.to_string(),
-        "GoogleAIStudio"
-    );
+    assert_eq!(ProviderId::GOOGLE_AI_STUDIO.to_string(), "GoogleAIStudio");
     assert_eq!(ProviderId::MODAL.to_string(), "Modal");
     assert_eq!(ProviderId::ADAL.to_string(), "AdaL");
     assert_eq!(ProviderId::XIAOMI_MIMO.to_string(), "XiaomiMimo");
@@ -159,7 +163,10 @@ fn provider_id_json_roundtrip_for_all_built_ins() {
 #[test]
 fn provider_id_json_is_quoted_string() {
     let json = serde_json::to_string(&ProviderId::OPENAI).unwrap();
-    assert!(json.starts_with('"'), "JSON must be a quoted string: {json}");
+    assert!(
+        json.starts_with('"'),
+        "JSON must be a quoted string: {json}"
+    );
     assert!(json.ends_with('"'), "JSON must be a quoted string: {json}");
     // Value should be "openai".
     assert_eq!(json, "\"openai\"");
@@ -242,10 +249,7 @@ fn built_in_providers_contains_all_core() {
     ];
 
     for id in &expected {
-        assert!(
-            built_in.contains(id),
-            "built-in list must contain {id}"
-        );
+        assert!(built_in.contains(id), "built-in list must contain {id}");
     }
 }
 
@@ -259,10 +263,22 @@ fn built_in_providers_first_is_forge() {
 fn built_in_providers_ordering_is_stable() {
     let built_in = ProviderId::built_in_providers();
     // Verify a known prefix ordering.
-    let forge_idx = built_in.iter().position(|id| *id == ProviderId::FORGE).unwrap();
-    let openai_idx = built_in.iter().position(|id| *id == ProviderId::OPENAI).unwrap();
-    let openrouter_idx = built_in.iter().position(|id| *id == ProviderId::OPEN_ROUTER).unwrap();
-    let anthropic_idx = built_in.iter().position(|id| *id == ProviderId::ANTHROPIC).unwrap();
+    let forge_idx = built_in
+        .iter()
+        .position(|id| *id == ProviderId::FORGE)
+        .unwrap();
+    let openai_idx = built_in
+        .iter()
+        .position(|id| *id == ProviderId::OPENAI)
+        .unwrap();
+    let openrouter_idx = built_in
+        .iter()
+        .position(|id| *id == ProviderId::OPEN_ROUTER)
+        .unwrap();
+    let anthropic_idx = built_in
+        .iter()
+        .position(|id| *id == ProviderId::ANTHROPIC)
+        .unwrap();
 
     assert!(forge_idx < openai_idx);
     assert!(openai_idx < openrouter_idx);

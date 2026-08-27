@@ -8,8 +8,8 @@
 use std::sync::{Mutex, MutexGuard};
 
 use forge_config::{
-    ConfigReader, ForgeConfig, ModelConfig, ProviderAuthMethod,
-    ProviderResponseType, ProviderTypeEntry,
+    ConfigReader, ForgeConfig, ModelConfig, ProviderAuthMethod, ProviderResponseType,
+    ProviderTypeEntry,
 };
 
 // ---------------------------------------------------------------------------
@@ -227,10 +227,7 @@ input_modalities = ["text"]
     assert_eq!(entry.id, "my_custom_provider");
     assert_eq!(entry.url, "http://localhost:8080/v1/chat/completions");
     assert_eq!(entry.response_type, Some(ProviderResponseType::OpenAI));
-    assert_eq!(
-        entry.api_key_var.as_deref(),
-        Some("MY_CUSTOM_API_KEY")
-    );
+    assert_eq!(entry.api_key_var.as_deref(), Some("MY_CUSTOM_API_KEY"));
     assert_eq!(entry.auth_methods, vec![ProviderAuthMethod::ApiKey]);
     assert!(entry.models.is_some());
 }
@@ -250,10 +247,7 @@ auth_methods = ["google_adc"]
         .expect("build must succeed");
 
     let entry = &config.providers[0];
-    assert_eq!(
-        entry.auth_methods,
-        vec![ProviderAuthMethod::GoogleAdc]
-    );
+    assert_eq!(entry.auth_methods, vec![ProviderAuthMethod::GoogleAdc]);
 }
 
 #[test]
@@ -271,10 +265,7 @@ provider_type = "context_engine"
         .expect("build must succeed");
 
     let entry = &config.providers[0];
-    assert_eq!(
-        entry.provider_type,
-        Some(ProviderTypeEntry::ContextEngine)
-    );
+    assert_eq!(entry.provider_type, Some(ProviderTypeEntry::ContextEngine));
 }
 
 #[test]
@@ -313,10 +304,7 @@ enabled = true
         .expect("build must succeed");
 
     let reasoning = config.reasoning.expect("reasoning must be Some");
-    assert_eq!(
-        reasoning.effort,
-        Some(forge_config::Effort::High)
-    );
+    assert_eq!(reasoning.effort, Some(forge_config::Effort::High));
     assert_eq!(reasoning.max_tokens, Some(8192));
     assert_eq!(reasoning.enabled, Some(true));
 }
@@ -423,7 +411,10 @@ fn cache_path_is_under_base() {
     let cache = ConfigReader::cache_path();
     let base = ConfigReader::base_path();
     assert!(cache.starts_with(&base));
-    assert_eq!(cache.file_name().unwrap().to_string_lossy().as_ref(), "cache");
+    assert_eq!(
+        cache.file_name().unwrap().to_string_lossy().as_ref(),
+        "cache"
+    );
 }
 
 #[test]
@@ -439,7 +430,10 @@ fn locks_path_is_under_base() {
     let locks = ConfigReader::locks_path();
     let base = ConfigReader::base_path();
     assert!(locks.starts_with(&base));
-    assert_eq!(locks.file_name().unwrap().to_string_lossy().as_ref(), "locks");
+    assert_eq!(
+        locks.file_name().unwrap().to_string_lossy().as_ref(),
+        "locks"
+    );
 }
 
 #[test]

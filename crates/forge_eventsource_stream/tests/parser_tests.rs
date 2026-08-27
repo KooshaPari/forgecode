@@ -21,28 +21,63 @@ fn event_default() {
 
 #[test]
 fn event_equality() {
-    let a = Event { event: "msg".into(), data: "hello".into(), id: "1".into(), retry: None };
-    let b = Event { event: "msg".into(), data: "hello".into(), id: "1".into(), retry: None };
+    let a = Event {
+        event: "msg".into(),
+        data: "hello".into(),
+        id: "1".into(),
+        retry: None,
+    };
+    let b = Event {
+        event: "msg".into(),
+        data: "hello".into(),
+        id: "1".into(),
+        retry: None,
+    };
     assert_eq!(a, b);
 }
 
 #[test]
 fn event_inequality_different_data() {
-    let a = Event { event: "msg".into(), data: "hello".into(), id: "1".into(), retry: None };
-    let b = Event { event: "msg".into(), data: "world".into(), id: "1".into(), retry: None };
+    let a = Event {
+        event: "msg".into(),
+        data: "hello".into(),
+        id: "1".into(),
+        retry: None,
+    };
+    let b = Event {
+        event: "msg".into(),
+        data: "world".into(),
+        id: "1".into(),
+        retry: None,
+    };
     assert_ne!(a, b);
 }
 
 #[test]
 fn event_inequality_different_retry() {
-    let a = Event { event: "".into(), data: "".into(), id: "".into(), retry: None };
-    let b = Event { event: "".into(), data: "".into(), id: "".into(), retry: Some(Duration::from_secs(3)) };
+    let a = Event {
+        event: "".into(),
+        data: "".into(),
+        id: "".into(),
+        retry: None,
+    };
+    let b = Event {
+        event: "".into(),
+        data: "".into(),
+        id: "".into(),
+        retry: Some(Duration::from_secs(3)),
+    };
     assert_ne!(a, b);
 }
 
 #[test]
 fn event_clone() {
-    let e = Event { event: "test".into(), data: "data".into(), id: "42".into(), retry: Some(Duration::from_millis(500)) };
+    let e = Event {
+        event: "test".into(),
+        data: "data".into(),
+        id: "42".into(),
+        retry: Some(Duration::from_millis(500)),
+    };
     let cloned = e.clone();
     assert_eq!(e, cloned);
     assert_eq!(cloned.event, "test");
@@ -71,7 +106,10 @@ fn event_retry_zero() {
 
 #[test]
 fn event_retry_large() {
-    let e = Event { retry: Some(Duration::from_secs(u64::MAX)), ..Default::default() };
+    let e = Event {
+        retry: Some(Duration::from_secs(u64::MAX)),
+        ..Default::default()
+    };
     assert_eq!(e.retry, Some(Duration::from_secs(u64::MAX)));
 }
 
@@ -85,7 +123,12 @@ fn event_empty_strings() {
 
 #[test]
 fn event_debug_format() {
-    let e = Event { event: "test".into(), data: "data".into(), id: "1".into(), retry: None };
+    let e = Event {
+        event: "test".into(),
+        data: "data".into(),
+        id: "1".into(),
+        retry: None,
+    };
     let debug = format!("{:?}", e);
     assert!(debug.contains("Event"));
     assert!(debug.contains("test"));
@@ -146,7 +189,9 @@ fn eventsource_trait_creates_stream() {
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
     fn noop_waker() -> Waker {
-        fn clone(_: *const ()) -> RawWaker { RawWaker::new(std::ptr::null(), &VTABLE) }
+        fn clone(_: *const ()) -> RawWaker {
+            RawWaker::new(std::ptr::null(), &VTABLE)
+        }
         fn noop(_: *const ()) {}
         static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, noop, noop, noop);
         unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) }
