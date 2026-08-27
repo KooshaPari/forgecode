@@ -859,11 +859,11 @@ mod tests {
                 .await
                 .expect("write ping");
             let resp: Response = read_frame(&mut probe).await.expect("read health");
-            if let Response::Health(status) = resp {
-                if status.queue_depth > 0 {
-                    saw_contended = true;
-                    break;
-                }
+            if let Response::Health(status) = resp
+                && status.queue_depth > 0
+            {
+                saw_contended = true;
+                break;
             }
             // If all writers already finished we may have missed the window;
             // break early only after confirming still no contention.
@@ -876,11 +876,11 @@ mod tests {
                     .await
                     .expect("write ping");
                 let resp: Response = read_frame(&mut probe).await.expect("read health");
-                if let Response::Health(status) = resp {
-                    if status.queue_depth > 0 {
-                        saw_contended = true;
-                        break;
-                    }
+                if let Response::Health(status) = resp
+                    && status.queue_depth > 0
+                {
+                    saw_contended = true;
+                    break;
                 }
                 break;
             }
@@ -904,11 +904,11 @@ mod tests {
                 .await
                 .expect("write ping");
             let resp: Response = read_frame(&mut probe).await.expect("read health");
-            if let Response::Health(status) = resp {
-                if status.queue_depth == 0 {
-                    drained = true;
-                    break;
-                }
+            if let Response::Health(status) = resp
+                && status.queue_depth == 0
+            {
+                drained = true;
+                break;
             }
             sleep(Duration::from_millis(20)).await;
         }

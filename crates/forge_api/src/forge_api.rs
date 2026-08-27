@@ -71,19 +71,16 @@ pub struct BackgroundTasks {
 }
 
 impl BackgroundTasks {
-    pub(crate) fn new(cancel: CancellationToken, handles: Vec<JoinHandle<()>>) -> Self {
-        Self { cancel, handles, shutdown_timeout: Duration::from_secs(5) }
-    }
-
-    /// Test-only constructor that mirrors [`BackgroundTasks::new`].
+    /// Construct a new `BackgroundTasks` from a cancellation token and a set
+    /// of in-flight task handles.
     ///
-    /// `BackgroundTasks::new` is `pub(crate)` so the API surface stays tight;
-    /// integration tests in `crates/forge_api/tests/` cannot reach `pub(crate)`
-    /// items, so this alternate name is exposed only under `#[cfg(test)]` to
-    /// keep the constructor accessible to external test crates without leaking
-    /// it into the public API.
-    #[cfg(test)]
-    pub fn new_for_test(cancel: CancellationToken, handles: Vec<JoinHandle<()>>) -> Self {
+    /// Note: a previous hardening pass (ca0e601f6) marked this `pub(crate)`
+    /// to keep the API surface tight, but the integration tests in
+    /// `crates/forge_api/tests/api_contract.rs` (which are external crates)
+    /// cannot reach `pub(crate)` items, so we restore `pub` here. The
+    /// `shutdown_timeout` is still private; this constructor is the only
+    /// public way to set up a `BackgroundTasks`.
+    pub fn new(cancel: CancellationToken, handles: Vec<JoinHandle<()>>) -> Self {
         Self { cancel, handles, shutdown_timeout: Duration::from_secs(5) }
     }
 

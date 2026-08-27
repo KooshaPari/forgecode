@@ -34,7 +34,7 @@ async fn shutdown_cancels_running_tasks() {
         }
     });
 
-    let tasks = BackgroundTasks::new_for_test(cancel, vec![handle]);
+    let tasks = BackgroundTasks::new(cancel, vec![handle]);
     tasks.shutdown().await;
 
     assert_eq!(
@@ -63,7 +63,7 @@ async fn drop_cancels_running_tasks() {
     });
 
     // Drop the BackgroundTasks — Drop impl cancels handles
-    let _tasks = BackgroundTasks::new_for_test(cancel, vec![handle]);
+    let _tasks = BackgroundTasks::new(cancel, vec![handle]);
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     assert_eq!(
@@ -93,7 +93,7 @@ async fn cancels_multiple_concurrent_tasks() {
         })
         .collect();
 
-    let tasks = BackgroundTasks::new_for_test(cancel, handles);
+    let tasks = BackgroundTasks::new(cancel, handles);
     tasks.shutdown().await;
 
     assert_eq!(
@@ -120,7 +120,7 @@ async fn shutdown_waits_for_tasks_to_finish() {
         }
     });
 
-    let tasks = BackgroundTasks::new_for_test(cancel, vec![handle]);
+    let tasks = BackgroundTasks::new(cancel, vec![handle]);
     tasks.shutdown().await;
 
     // After shutdown, the task should have exited and incremented the counter
@@ -139,6 +139,6 @@ async fn already_completed_task_is_handled_gracefully() {
         // Task completes immediately
     });
 
-    let tasks = BackgroundTasks::new_for_test(cancel, vec![handle]);
+    let tasks = BackgroundTasks::new(cancel, vec![handle]);
     tasks.shutdown().await; // should not panic
 }
