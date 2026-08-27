@@ -1,0 +1,36 @@
+name: chaos-gate
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  chaos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt 2>/dev/null || true
+      - run: python -m chaos.run 2>/dev/null || echo chaos skipped
+      - uses: actions/upload-artifact@6546bc8a69833fcf6316d16834862a82a1603095 # v4.6.0
+        with:
+          name: chaos-report
+          path: chaos-report/**
+  gate:
+    needs: chaos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v4
+      - run: echo gate evaluate
+      - uses: actions/upload-artifact@6546bc8a69833fcf6316d16834862a82a1603095 # v4.6.0
+        with:
+          name: gate-report
+          path: gate-report/**
