@@ -88,7 +88,7 @@ impl From<ReleaseBuilderJob> for Job {
                     .env("APP_VERSION", value.version.to_string()),
             );
 
-        if let Some(release_id) = value.release_id {
+        if value.release_id.is_some() {
             job = job
                 // Rename binary to the forge asset name and mirror it under
                 // the helioslite asset name so both binary identities can
