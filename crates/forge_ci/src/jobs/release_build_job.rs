@@ -115,9 +115,9 @@ impl From<ReleaseBuilderJob> for Job {
                             "action-gh-release",
                             "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("tag", "${{ github.event.release.tag_name }}")
+                        .input("tag_name", "${{ github.event.release.tag_name }}")
                         .input("files", "${{ matrix.binary_name }}")
-                        .input("overwrite", "true"),
+                        .input("overwrite_files", "true"),
                 )
                 .add_step(
                     Step::new("Upload checksum to Release")
@@ -126,9 +126,9 @@ impl From<ReleaseBuilderJob> for Job {
                             "action-gh-release",
                             "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("tag", "${{ github.event.release.tag_name }}")
+                        .input("tag_name", "${{ github.event.release.tag_name }}")
                         .input("files", "${{ matrix.binary_name }}.sha256")
-                        .input("overwrite", "true"),
+                        .input("overwrite_files", "true"),
                 )
                 .add_step(
                     Step::new("Upload helioslite to Release")
@@ -137,9 +137,9 @@ impl From<ReleaseBuilderJob> for Job {
                             "action-gh-release",
                             "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("tag", "${{ github.event.release.tag_name }}")
+                        .input("tag_name", "${{ github.event.release.tag_name }}")
                         .input("files", "${{ matrix.helioslite_name }}")
-                        .input("overwrite", "true"),
+                        .input("overwrite_files", "true"),
                 )
                 .add_step(
                     Step::new("Upload helioslite checksum to Release")
@@ -148,9 +148,9 @@ impl From<ReleaseBuilderJob> for Job {
                             "action-gh-release",
                             "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("tag", "${{ github.event.release.tag_name }}")
+                        .input("tag_name", "${{ github.event.release.tag_name }}")
                         .input("files", "${{ matrix.helioslite_name }}.sha256")
-                        .input("overwrite", "true"),
+                        .input("overwrite_files", "true"),
                 )
                 .add_step(
                     Step::new("Copy forge_dbd Binary")
@@ -169,9 +169,9 @@ impl From<ReleaseBuilderJob> for Job {
                             "action-gh-release",
                             "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("tag", "${{ github.event.release.tag_name }}")
+                        .input("tag_name", "${{ github.event.release.tag_name }}")
                         .input("files", "forge_dbd-${{ matrix.target }}")
-                        .input("overwrite", "true")
+                        .input("overwrite_files", "true")
                         .if_condition("!contains(matrix.target, 'windows')"),
                 )
                 .add_step(
@@ -181,9 +181,9 @@ impl From<ReleaseBuilderJob> for Job {
                             "action-gh-release",
                             "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("tag", "${{ github.event.release.tag_name }}")
+                        .input("tag_name", "${{ github.event.release.tag_name }}")
                         .input("files", "forge_dbd-${{ matrix.target }}.sha256")
-                        .input("overwrite", "true")
+                        .input("overwrite_files", "true")
                         .if_condition("!contains(matrix.target, 'windows')"),
                 )
                 .add_step(
@@ -193,9 +193,9 @@ impl From<ReleaseBuilderJob> for Job {
                             "action-gh-release",
                             "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("tag", "${{ github.event.release.tag_name }}")
+                        .input("tag_name", "${{ github.event.release.tag_name }}")
                         .input("files", "forge_dbd-${{ matrix.target }}.exe")
-                        .input("overwrite", "true")
+                        .input("overwrite_files", "true")
                         .if_condition("contains(matrix.target, 'windows')"),
                 )
                 .add_step(
@@ -205,9 +205,9 @@ impl From<ReleaseBuilderJob> for Job {
                             "action-gh-release",
                             "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("tag", "${{ github.event.release.tag_name }}")
+                        .input("tag_name", "${{ github.event.release.tag_name }}")
                         .input("files", "forge_dbd-${{ matrix.target }}.exe.sha256")
-                        .input("overwrite", "true")
+                        .input("overwrite_files", "true")
                         .if_condition("contains(matrix.target, 'windows')"),
                 );
         }
