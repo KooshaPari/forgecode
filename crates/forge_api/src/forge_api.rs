@@ -65,24 +65,22 @@ impl<A, F> ForgeAPI<A, F> {
 pub struct BackgroundTasks {
     cancel: CancellationToken,
     handles: Vec<JoinHandle<()>>,
-    /// Per-task graceful-shutdown timeout (5s). After this, handle is `.abort()`ed.
+    /// Per-task graceful-shutdown timeout (5s). After this, handle is
+    /// `.abort()`ed.
     shutdown_timeout: Duration,
 }
 
 impl BackgroundTasks {
     pub(crate) fn new(cancel: CancellationToken, handles: Vec<JoinHandle<()>>) -> Self {
-        Self {
-            cancel,
-            handles,
-            shutdown_timeout: Duration::from_secs(5),
-        }
+        Self { cancel, handles, shutdown_timeout: Duration::from_secs(5) }
     }
 
     /// Cancel all background tasks and wait for them to finish.
     ///
-    /// Each task is given `shutdown_timeout` (default 5s) to complete gracefully
-    /// after cancellation; if it has not finished, the handle is `.abort()`ed.
-    /// `JoinError` is treated as success (already-cancelled / panicked / finished).
+    /// Each task is given `shutdown_timeout` (default 5s) to complete
+    /// gracefully after cancellation; if it has not finished, the handle is
+    /// `.abort()`ed. `JoinError` is treated as success (already-cancelled /
+    /// panicked / finished).
     pub async fn shutdown(mut self) {
         self.cancel.cancel();
         for handle in self.handles.drain(..) {
