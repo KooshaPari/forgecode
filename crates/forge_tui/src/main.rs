@@ -141,8 +141,14 @@ fn main() {
 
 #[cfg(not(unix))]
 fn main() {
-    eprintln!(
-        "forge_tui requires Unix domain socket support and is not available on this platform"
-    );
-    std::process::exit(1);
+    println!("forge_tui — Agent Dashboard");
+    println!();
+    println!("Note: forge_tui requires Unix domain sockets (forge3d daemon).");
+    println!("On Windows, use the forge CLI directly instead:");
+    println!("  forge chat    — Start an interactive session");
+    println!("  forge status  — Show daemon status");
+    println!("  forge --help  — Full command reference");
+    println!();
+    println!("Alternatively, run forge_tui under WSL2:");
+    println!("  wsl forge-tui");
 }
