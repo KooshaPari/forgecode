@@ -93,3 +93,15 @@ Shortcuts: `just build`, `just test`, `just lint`, `just fmt`, `just ci`
 Open an issue for questions or discussions. Use the issue templates
 (`.github/ISSUE_TEMPLATE/`) — feature requests, bug reports, and performance
 reports have dedicated forms.
+
+## Sign your work (DCO)
+
+By making a contribution to this project, I certify that:
+- The contribution was created in whole or in part by me and I have the right to submit it under the project's open source license.
+- I understand and agree that this project and my contribution are public and that a record of the contribution (including all personal information I submit with it) is maintained indefinitely.
+
+To certify your contribution, use `git commit -s` (which adds the `Signed-off-by: Name <email>` trailer).
+
+## Maintainers
+
+See [`MAINTAINERS.md`](MAINTAINERS.md) for current maintainers and how to become one.
