@@ -126,29 +126,29 @@ jobs:
       run: if command -v sha256sum >/dev/null 2>&1; then sha256sum "${{ matrix.helioslite_name }}" > "${{ matrix.helioslite_name }}.sha256"; else shasum -a 256 "${{ matrix.helioslite_name }}" > "${{ matrix.helioslite_name }}.sha256"; fi
       shell: bash
     - name: Upload to Release
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
-        release_id: ${{ github.event.release.id }}
-        file: ${{ matrix.binary_name }}
-        overwrite: 'true'
+        tag_name: ${{ github.event.release.tag_name }}
+        files: ${{ matrix.binary_name }}
+        overwrite_files: 'true'
     - name: Upload checksum to Release
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
-        release_id: ${{ github.event.release.id }}
-        file: ${{ matrix.binary_name }}.sha256
-        overwrite: 'true'
+        tag_name: ${{ github.event.release.tag_name }}
+        files: ${{ matrix.binary_name }}.sha256
+        overwrite_files: 'true'
     - name: Upload helioslite to Release
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
-        release_id: ${{ github.event.release.id }}
-        file: ${{ matrix.helioslite_name }}
-        overwrite: 'true'
+        tag_name: ${{ github.event.release.tag_name }}
+        files: ${{ matrix.helioslite_name }}
+        overwrite_files: 'true'
     - name: Upload helioslite checksum to Release
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
-        release_id: ${{ github.event.release.id }}
-        file: ${{ matrix.helioslite_name }}.sha256
-        overwrite: 'true'
+        tag_name: ${{ github.event.release.tag_name }}
+        files: ${{ matrix.helioslite_name }}.sha256
+        overwrite_files: 'true'
     - name: Copy forge_dbd Binary
       run: if [[ "${{ matrix.target }}" == *windows* ]]; then cp "target/${{ matrix.target }}/release/forge_dbd.exe" "forge_dbd-${{ matrix.target }}.exe"; else cp "target/${{ matrix.target }}/release/forge_dbd" "forge_dbd-${{ matrix.target }}"; fi
       shell: bash
@@ -157,32 +157,32 @@ jobs:
       shell: bash
     - if: '!contains(matrix.target, ''windows'')'
       name: Upload forge_dbd to Release (unix)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
-        release_id: ${{ github.event.release.id }}
-        file: forge_dbd-${{ matrix.target }}
-        overwrite: 'true'
+        tag_name: ${{ github.event.release.tag_name }}
+        files: forge_dbd-${{ matrix.target }}
+        overwrite_files: 'true'
     - if: '!contains(matrix.target, ''windows'')'
       name: Upload forge_dbd checksum to Release (unix)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
-        release_id: ${{ github.event.release.id }}
-        file: forge_dbd-${{ matrix.target }}.sha256
-        overwrite: 'true'
+        tag_name: ${{ github.event.release.tag_name }}
+        files: forge_dbd-${{ matrix.target }}.sha256
+        overwrite_files: 'true'
     - if: contains(matrix.target, 'windows')
       name: Upload forge_dbd to Release (windows)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
-        release_id: ${{ github.event.release.id }}
-        file: forge_dbd-${{ matrix.target }}.exe
-        overwrite: 'true'
+        tag_name: ${{ github.event.release.tag_name }}
+        files: forge_dbd-${{ matrix.target }}.exe
+        overwrite_files: 'true'
     - if: contains(matrix.target, 'windows')
       name: Upload forge_dbd checksum to Release (windows)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
-        release_id: ${{ github.event.release.id }}
-        file: forge_dbd-${{ matrix.target }}.exe.sha256
-        overwrite: 'true'
+        tag_name: ${{ github.event.release.tag_name }}
+        files: forge_dbd-${{ matrix.target }}.exe.sha256
+        overwrite_files: 'true'
   sbom_release_assets:
     name: Generate release SBOM
     runs-on: ubuntu-latest
@@ -198,7 +198,8 @@ jobs:
           --repo "${{ github.repository }}" \
           --dir release-assets \
           --pattern "forge-*" \
-          --pattern "helioslite-*"
+          --pattern "helioslite-*" \
+          --pattern "forge_dbd-*"
       env:
         GH_TOKEN: ${{ github.token }}
     - name: Generate CycloneDX SBOM
@@ -207,13 +208,19 @@ jobs:
         path: release-assets
         format: cyclonedx-json
         artifact-name: forgecode-${{ github.event.release.tag_name }}.cdx.json
-        output-file: forgecode-${{ github.event.release.tag_name }}.cdx.json
+        output-file: release-assets/sbom.cdx.json
         upload-artifact: 'false'
         upload-release-assets: 'true'
+    - name: Upload SBOM to Release
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+      with:
+        tag_name: ${{ github.event.release.tag_name }}
+        files: release-assets/sbom.cdx.json
+        overwrite_files: 'true'
   attest_release_assets:
     name: Attest release assets
     runs-on: ubuntu-latest
-    needs: build_release
+    needs: sbom_release_assets
     permissions:
       contents: read
       id-token: write
@@ -228,7 +235,8 @@ jobs:
           --dir release-assets \
           --pattern "forge-*" \
           --pattern "helioslite-*" \
-          --pattern "forge_dbd-*"
+          --pattern "forge_dbd-*" \
+          --pattern "*.cdx.json"
       env:
         GH_TOKEN: ${{ github.token }}
     - name: Attest release assets

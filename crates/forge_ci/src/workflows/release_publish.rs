@@ -15,7 +15,7 @@ pub fn release_publish() {
             Step::new("Download release assets")
                 .env("GH_TOKEN", "${{ github.token }}")
                 .run(
-                    "set -euo pipefail\nmkdir -p release-assets\ngh release download \"${{ github.event.release.tag_name }}\" \\\n  --repo \"${{ github.repository }}\" \\\n  --dir release-assets \\\n  --pattern \"forge-*\" \\\n  --pattern \"helioslite-*\"",
+                    "set -euo pipefail\nmkdir -p release-assets\ngh release download \"${{ github.event.release.tag_name }}\" \\\n  --repo \"${{ github.repository }}\" \\\n  --dir release-assets \\\n  --pattern \"forge-*\" \\\n  --pattern \"helioslite-*\" \\\n  --pattern \"forge_dbd-*\"",
                 ),
         )
         .add_step(
@@ -31,15 +31,35 @@ pub fn release_publish() {
                     "artifact-name",
                     "forgecode-${{ github.event.release.tag_name }}.cdx.json",
                 )
+                // Fixed filesystem-safe output path; the release asset name
+                // (artifact-name above) keeps the dynamic tag because
+                // `gh release upload` accepts `/` in asset names but
+                // nested parent directories are not auto-created.
                 .input(
                     "output-file",
-                    "forgecode-${{ github.event.release.tag_name }}.cdx.json",
+                    "release-assets/sbom.cdx.json",
                 )
                 .input("upload-artifact", "false")
                 .input("upload-release-assets", "true"),
+        )
+        // anchore/sbom-action's `upload-release-assets: 'true'` is unreliable
+        // for attaching to releases with binary assets (it depends on a
+        // specific upload mechanism that can silently no-op). Attach the
+        // generated SBOM explicitly via softprops/action-gh-release to
+        // guarantee the asset lands on the release.
+        .add_step(
+            Step::new("Upload SBOM to Release")
+                .uses(
+                    "softprops",
+                    "action-gh-release",
+                    "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
+                )
+                .input("tag_name", "${{ github.event.release.tag_name }}")
+                .input("files", "release-assets/sbom.cdx.json")
+                .input("overwrite_files", "true"),
         );
     let attest_job = Job::new("Attest release assets")
-        .needs("build_release")
+        .needs("sbom_release_assets")
         .permissions(
             Permissions::default()
                 .contents(Level::Read)
@@ -50,7 +70,7 @@ pub fn release_publish() {
             Step::new("Download release assets")
                 .env("GH_TOKEN", "${{ github.token }}")
                 .run(
-                    "set -euo pipefail\nmkdir -p release-assets\ngh release download \"${{ github.event.release.tag_name }}\" \\\n  --repo \"${{ github.repository }}\" \\\n  --dir release-assets \\\n  --pattern \"forge-*\" \\\n  --pattern \"helioslite-*\" \\\n  --pattern \"forge_dbd-*\"",
+                    "set -euo pipefail\nmkdir -p release-assets\ngh release download \"${{ github.event.release.tag_name }}\" \\\n  --repo \"${{ github.repository }}\" \\\n  --dir release-assets \\\n  --pattern \"forge-*\" \\\n  --pattern \"helioslite-*\" \\\n  --pattern \"forge_dbd-*\" \\\n  --pattern \"*.cdx.json\"",
                 ),
         )
         .add_step(

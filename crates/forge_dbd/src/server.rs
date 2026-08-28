@@ -10,13 +10,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
 #[cfg(windows)]
-use forge_dbd::protocol::named_pipe_name;
-use forge_dbd::protocol::{
+use crate::protocol::named_pipe_name;
+use crate::protocol::{
     ConversationMutation, HealthStatus, MUTATION_PROTOCOL_VERSION, Request, Response, read_frame,
     write_frame,
 };
+use anyhow::{Context, Result};
 use forge_domain::{Conversation, ConversationId};
 use rusqlite::Connection;
 #[cfg(unix)]
@@ -611,7 +611,7 @@ impl DbServer {
         // writer, including the legacy ContextRecord envelope and its
         // compressed-column fallback.
         let persisted_context =
-            forge_dbd::conversation_storage::persist_context(conversation.context.as_ref());
+            crate::conversation_storage::persist_context(conversation.context.as_ref());
 
         let conversation_value = serde_json::to_value(conversation)?;
         let created_at = conversation_value
@@ -827,20 +827,92 @@ mod tests {
 
     #[tokio::test]
     async fn health_probe_reflects_queue_depth() {
-        // This test verifies the atomic counter path is exercised.
-        // Because the writer drains quickly, we just confirm the probe succeeds
-        // (depth may already be 0 by the time we probe — that is correct behavior).
         let dir = TempDir::new().unwrap();
         let (sock, db) = tmp_paths(&dir);
         let _handle = spawn_server(sock.clone(), db.clone()).await;
         wait_for_socket(&sock).await;
 
-        let mut stream = UnixStream::connect(&sock).await.expect("connect");
-        write_frame(&mut stream, &Request::Ping)
-            .await
-            .expect("write ping");
-        let resp: Response = read_frame(&mut stream).await.expect("read health");
-        assert!(matches!(resp, Response::Health(_)));
+        // Enqueue 200 writes concurrently so the writer queue is contended.
+        // Each client holds its connection open waiting for Ack, which keeps
+        // its request (or its batch) counted in queue_depth until flushed.
+        let mut writers = Vec::new();
+        for _ in 0..200 {
+            let sock_clone = sock.clone();
+            writers.push(tokio::spawn(async move {
+                let mut stream = UnixStream::connect(&sock_clone).await.expect("connect");
+                write_frame(&mut stream, &Request::OptimizeFts)
+                    .await
+                    .expect("write request");
+                let resp: Response = read_frame(&mut stream).await.expect("read response");
+                assert!(matches!(resp, Response::Ack));
+            }));
+        }
+
+        // Poll health via a separate probe connection until we observe
+        // queue_depth > 0, proving the atomic counter reflects contended work.
+        let mut saw_contended = false;
+        for _ in 0..100 {
+            // Give writers a chance to enqueue before probing
+            sleep(Duration::from_millis(5)).await;
+            let mut probe = UnixStream::connect(&sock).await.expect("probe connect");
+            write_frame(&mut probe, &Request::Ping)
+                .await
+                .expect("write ping");
+            let resp: Response = read_frame(&mut probe).await.expect("read health");
+            if let Response::Health(status) = resp
+                && status.queue_depth > 0
+            {
+                saw_contended = true;
+                break;
+            }
+            // If all writers already finished we may have missed the window;
+            // break early only after confirming still no contention.
+            if writers.iter().all(|h| h.is_finished()) {
+                // one more probe after writers done to avoid false negative
+                // due to scheduling; if still 0 we will fail below
+                sleep(Duration::from_millis(10)).await;
+                let mut probe = UnixStream::connect(&sock).await.expect("probe connect");
+                write_frame(&mut probe, &Request::Ping)
+                    .await
+                    .expect("write ping");
+                let resp: Response = read_frame(&mut probe).await.expect("read health");
+                if let Response::Health(status) = resp
+                    && status.queue_depth > 0
+                {
+                    saw_contended = true;
+                    break;
+                }
+                break;
+            }
+        }
+        assert!(
+            saw_contended,
+            "expected queue_depth > 0 while 200 writes are contended"
+        );
+
+        // Drain: wait for all writers to be acknowledged
+        for handle in writers {
+            handle.await.expect("writer task");
+        }
+
+        // After drain the queue must be empty. The writer decrements the
+        // counter on flush, so allow a brief window for the final batch.
+        let mut drained = false;
+        for _ in 0..20 {
+            let mut probe = UnixStream::connect(&sock).await.expect("probe connect");
+            write_frame(&mut probe, &Request::Ping)
+                .await
+                .expect("write ping");
+            let resp: Response = read_frame(&mut probe).await.expect("read health");
+            if let Response::Health(status) = resp
+                && status.queue_depth == 0
+            {
+                drained = true;
+                break;
+            }
+            sleep(Duration::from_millis(20)).await;
+        }
+        assert!(drained, "expected queue_depth == 0 after drain");
     }
 
     // -------------------------------------------------------------------------
@@ -908,7 +980,7 @@ mod tests {
 
 #[cfg(test)]
 mod db_tests {
-    use forge_dbd::protocol::ConversationMutation;
+    use crate::protocol::ConversationMutation;
     use forge_domain::{Context, ContextMessage, Conversation, ConversationId};
     use tempfile::TempDir;
 
@@ -1381,8 +1453,8 @@ mod db_tests {
 mod windows_tests {
     use std::path::PathBuf;
 
-    use forge_dbd::client::DbClient;
-    use forge_dbd::protocol::ConversationMutation;
+    use crate::client::DbClient;
+    use crate::protocol::ConversationMutation;
     use tempfile::TempDir;
     use tokio::time::{Duration, sleep};
 

@@ -8,3 +8,4 @@
 pub mod client;
 pub mod conversation_storage;
 pub mod protocol;
+pub mod server;

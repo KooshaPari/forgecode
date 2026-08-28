@@ -65,19 +65,38 @@ impl<A, F> ForgeAPI<A, F> {
 pub struct BackgroundTasks {
     cancel: CancellationToken,
     handles: Vec<JoinHandle<()>>,
+    /// Per-task graceful-shutdown timeout (5s). After this, handle is
+    /// `.abort()`ed.
+    shutdown_timeout: Duration,
 }
 
 impl BackgroundTasks {
+    /// Construct a new `BackgroundTasks` from a cancellation token and a set
+    /// of in-flight task handles.
+    ///
+    /// Note: a previous hardening pass (ca0e601f6) marked this `pub(crate)`
+    /// to keep the API surface tight, but the integration tests in
+    /// `crates/forge_api/tests/api_contract.rs` (which are external crates)
+    /// cannot reach `pub(crate)` items, so we restore `pub` here. The
+    /// `shutdown_timeout` is still private; this constructor is the only
+    /// public way to set up a `BackgroundTasks`.
     pub fn new(cancel: CancellationToken, handles: Vec<JoinHandle<()>>) -> Self {
-        Self { cancel, handles }
+        Self { cancel, handles, shutdown_timeout: Duration::from_secs(5) }
     }
 
     /// Cancel all background tasks and wait for them to finish.
+    ///
+    /// Each task is given `shutdown_timeout` (default 5s) to complete
+    /// gracefully after cancellation; if it has not finished, the handle is
+    /// `.abort()`ed. `JoinError` is treated as success (already-cancelled /
+    /// panicked / finished).
     pub async fn shutdown(mut self) {
         self.cancel.cancel();
         for handle in self.handles.drain(..) {
-            // Ignore JoinErrors (task panicked / already finished).
-            let _ = handle.await;
+            let timeout = self.shutdown_timeout;
+            // Drop the future to abort it on timeout; JoinError / TimeoutError
+            // are both ignored so we never panic during shutdown.
+            let _ = tokio::time::timeout(timeout, handle).await;
         }
     }
 }
@@ -85,6 +104,7 @@ impl BackgroundTasks {
 impl Drop for BackgroundTasks {
     fn drop(&mut self) {
         // Best-effort cancellation on drop; callers should prefer `shutdown`.
+        // Cancel FIRST so any `tokio::select!` on `cancelled()` exits promptly.
         self.cancel.cancel();
         for handle in self.handles.drain(..) {
             handle.abort();

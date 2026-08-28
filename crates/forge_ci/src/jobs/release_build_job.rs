@@ -88,7 +88,7 @@ impl From<ReleaseBuilderJob> for Job {
                     .env("APP_VERSION", value.version.to_string()),
             );
 
-        if let Some(release_id) = value.release_id {
+        if value.release_id.is_some() {
             job = job
                 // Rename binary to the forge asset name and mirror it under
                 // the helioslite asset name so both binary identities can
@@ -111,46 +111,46 @@ impl From<ReleaseBuilderJob> for Job {
                 .add_step(
                     Step::new("Upload to Release")
                         .uses(
-                            "xresloader",
-                            "upload-to-github-release",
-                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                            "softprops",
+                            "action-gh-release",
+                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("release_id", release_id.clone())
-                        .input("file", "${{ matrix.binary_name }}")
-                        .input("overwrite", "true"),
+                        .input("tag_name", value.version.to_string())
+                        .input("files", "${{ matrix.binary_name }}")
+                        .input("overwrite_files", "true"),
                 )
                 .add_step(
                     Step::new("Upload checksum to Release")
                         .uses(
-                            "xresloader",
-                            "upload-to-github-release",
-                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                            "softprops",
+                            "action-gh-release",
+                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("release_id", release_id.clone())
-                        .input("file", "${{ matrix.binary_name }}.sha256")
-                        .input("overwrite", "true"),
+                        .input("tag_name", value.version.to_string())
+                        .input("files", "${{ matrix.binary_name }}.sha256")
+                        .input("overwrite_files", "true"),
                 )
                 .add_step(
                     Step::new("Upload helioslite to Release")
                         .uses(
-                            "xresloader",
-                            "upload-to-github-release",
-                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                            "softprops",
+                            "action-gh-release",
+                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("release_id", release_id.clone())
-                        .input("file", "${{ matrix.helioslite_name }}")
-                        .input("overwrite", "true"),
+                        .input("tag_name", value.version.to_string())
+                        .input("files", "${{ matrix.helioslite_name }}")
+                        .input("overwrite_files", "true"),
                 )
                 .add_step(
                     Step::new("Upload helioslite checksum to Release")
                         .uses(
-                            "xresloader",
-                            "upload-to-github-release",
-                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                            "softprops",
+                            "action-gh-release",
+                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("release_id", release_id.clone())
-                        .input("file", "${{ matrix.helioslite_name }}.sha256")
-                        .input("overwrite", "true"),
+                        .input("tag_name", value.version.to_string())
+                        .input("files", "${{ matrix.helioslite_name }}.sha256")
+                        .input("overwrite_files", "true"),
                 )
                 .add_step(
                     Step::new("Copy forge_dbd Binary")
@@ -165,49 +165,49 @@ impl From<ReleaseBuilderJob> for Job {
                 .add_step(
                     Step::new("Upload forge_dbd to Release (unix)")
                         .uses(
-                            "xresloader",
-                            "upload-to-github-release",
-                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                            "softprops",
+                            "action-gh-release",
+                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("release_id", release_id.clone())
-                        .input("file", "forge_dbd-${{ matrix.target }}")
-                        .input("overwrite", "true")
+                        .input("tag_name", value.version.to_string())
+                        .input("files", "forge_dbd-${{ matrix.target }}")
+                        .input("overwrite_files", "true")
                         .if_condition("!contains(matrix.target, 'windows')"),
                 )
                 .add_step(
                     Step::new("Upload forge_dbd checksum to Release (unix)")
                         .uses(
-                            "xresloader",
-                            "upload-to-github-release",
-                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                            "softprops",
+                            "action-gh-release",
+                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("release_id", release_id.clone())
-                        .input("file", "forge_dbd-${{ matrix.target }}.sha256")
-                        .input("overwrite", "true")
+                        .input("tag_name", value.version.to_string())
+                        .input("files", "forge_dbd-${{ matrix.target }}.sha256")
+                        .input("overwrite_files", "true")
                         .if_condition("!contains(matrix.target, 'windows')"),
                 )
                 .add_step(
                     Step::new("Upload forge_dbd to Release (windows)")
                         .uses(
-                            "xresloader",
-                            "upload-to-github-release",
-                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                            "softprops",
+                            "action-gh-release",
+                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("release_id", release_id.clone())
-                        .input("file", "forge_dbd-${{ matrix.target }}.exe")
-                        .input("overwrite", "true")
+                        .input("tag_name", value.version.to_string())
+                        .input("files", "forge_dbd-${{ matrix.target }}.exe")
+                        .input("overwrite_files", "true")
                         .if_condition("contains(matrix.target, 'windows')"),
                 )
                 .add_step(
                     Step::new("Upload forge_dbd checksum to Release (windows)")
                         .uses(
-                            "xresloader",
-                            "upload-to-github-release",
-                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                            "softprops",
+                            "action-gh-release",
+                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("release_id", release_id)
-                        .input("file", "forge_dbd-${{ matrix.target }}.exe.sha256")
-                        .input("overwrite", "true")
+                        .input("tag_name", value.version.to_string())
+                        .input("files", "forge_dbd-${{ matrix.target }}.exe.sha256")
+                        .input("overwrite_files", "true")
                         .if_condition("contains(matrix.target, 'windows')"),
                 );
         }

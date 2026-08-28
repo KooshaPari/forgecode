@@ -88,7 +88,7 @@ jobs:
       uses: release-drafter/release-drafter@5a60cd8ddda6dc14fce77159675b8fd2cdca4007
       with:
         config-name: release-drafter.yml
-        version: 2.13.21-h.0.1.3
+        version: 2.13.21-h.0.1.4
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - id: set_output
@@ -220,29 +220,29 @@ jobs:
       run: if command -v sha256sum >/dev/null 2>&1; then sha256sum "${{ matrix.helioslite_name }}" > "${{ matrix.helioslite_name }}.sha256"; else shasum -a 256 "${{ matrix.helioslite_name }}" > "${{ matrix.helioslite_name }}.sha256"; fi
       shell: bash
     - name: Upload to Release
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
-        release_id: ${{ needs.draft_release.outputs.crate_release_id }}
-        file: ${{ matrix.binary_name }}
-        overwrite: 'true'
+        tag_name: ${{ needs.draft_release.outputs.crate_release_name }}
+        files: ${{ matrix.binary_name }}
+        overwrite_files: 'true'
     - name: Upload checksum to Release
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
-        release_id: ${{ needs.draft_release.outputs.crate_release_id }}
-        file: ${{ matrix.binary_name }}.sha256
-        overwrite: 'true'
+        tag_name: ${{ needs.draft_release.outputs.crate_release_name }}
+        files: ${{ matrix.binary_name }}.sha256
+        overwrite_files: 'true'
     - name: Upload helioslite to Release
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
-        release_id: ${{ needs.draft_release.outputs.crate_release_id }}
-        file: ${{ matrix.helioslite_name }}
-        overwrite: 'true'
+        tag_name: ${{ needs.draft_release.outputs.crate_release_name }}
+        files: ${{ matrix.helioslite_name }}
+        overwrite_files: 'true'
     - name: Upload helioslite checksum to Release
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
-        release_id: ${{ needs.draft_release.outputs.crate_release_id }}
-        file: ${{ matrix.helioslite_name }}.sha256
-        overwrite: 'true'
+        tag_name: ${{ needs.draft_release.outputs.crate_release_name }}
+        files: ${{ matrix.helioslite_name }}.sha256
+        overwrite_files: 'true'
     - name: Copy forge_dbd Binary
       run: if [[ "${{ matrix.target }}" == *windows* ]]; then cp "target/${{ matrix.target }}/release/forge_dbd.exe" "forge_dbd-${{ matrix.target }}.exe"; else cp "target/${{ matrix.target }}/release/forge_dbd" "forge_dbd-${{ matrix.target }}"; fi
       shell: bash
@@ -251,32 +251,32 @@ jobs:
       shell: bash
     - if: '!contains(matrix.target, ''windows'')'
       name: Upload forge_dbd to Release (unix)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
-        release_id: ${{ needs.draft_release.outputs.crate_release_id }}
-        file: forge_dbd-${{ matrix.target }}
-        overwrite: 'true'
+        tag_name: ${{ needs.draft_release.outputs.crate_release_name }}
+        files: forge_dbd-${{ matrix.target }}
+        overwrite_files: 'true'
     - if: '!contains(matrix.target, ''windows'')'
       name: Upload forge_dbd checksum to Release (unix)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
-        release_id: ${{ needs.draft_release.outputs.crate_release_id }}
-        file: forge_dbd-${{ matrix.target }}.sha256
-        overwrite: 'true'
+        tag_name: ${{ needs.draft_release.outputs.crate_release_name }}
+        files: forge_dbd-${{ matrix.target }}.sha256
+        overwrite_files: 'true'
     - if: contains(matrix.target, 'windows')
       name: Upload forge_dbd to Release (windows)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
-        release_id: ${{ needs.draft_release.outputs.crate_release_id }}
-        file: forge_dbd-${{ matrix.target }}.exe
-        overwrite: 'true'
+        tag_name: ${{ needs.draft_release.outputs.crate_release_name }}
+        files: forge_dbd-${{ matrix.target }}.exe
+        overwrite_files: 'true'
     - if: contains(matrix.target, 'windows')
       name: Upload forge_dbd checksum to Release (windows)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
       with:
-        release_id: ${{ needs.draft_release.outputs.crate_release_id }}
-        file: forge_dbd-${{ matrix.target }}.exe.sha256
-        overwrite: 'true'
+        tag_name: ${{ needs.draft_release.outputs.crate_release_name }}
+        files: forge_dbd-${{ matrix.target }}.exe.sha256
+        overwrite_files: 'true'
   build_release_pr:
     if: 'github.event_name == ''pull_request'' && contains(github.event.pull_request.labels.*.name, ''ci: build all targets'')'
     name: build-release

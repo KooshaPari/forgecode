@@ -75,3 +75,10 @@ yarn-error.log*
 # Local credential store (0o600, never commit)
 .credentials.json
 bench/
+
+# ── Python bytecode (Scorecard: BinaryArtifacts) ────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
