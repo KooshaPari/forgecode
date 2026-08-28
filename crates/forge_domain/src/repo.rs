@@ -416,6 +416,28 @@ pub trait ConversationRepository: Send + Sync {
         token_count: usize,
     ) -> Result<Option<String>>;
 
+    /// Return the full FTS5-highlighted context for a (conversation, query)
+    /// pair with caller-supplied opening/closing markup. The returned string
+    /// is the entire context column with each match span wrapped in the
+    /// supplied markup (e.g. `<b>foo</b>`), or `None` if the conversation
+    /// rowid is missing or the query has no match for that row.
+    ///
+    /// Distinguished from [`Self::get_conversation_snippet`] which returns
+    /// a short passage (typically a few words around the match); this
+    /// method returns the whole column with markup preserved so callers
+    /// can render a hit and its surrounding context without further work.
+    ///
+    /// # Errors
+    /// Returns an error if the FTS query is malformed or the database
+    /// call fails.
+    async fn get_conversation_highlight(
+        &self,
+        conversation_id: &ConversationId,
+        query: &str,
+        open_mark: &str,
+        close_mark: &str,
+    ) -> Result<Option<String>>;
+
     /// Reclaims FTS5 segment shadow data by running
     /// `INSERT INTO conversations_fts(conversations_fts) VALUES('optimize')`.
     ///

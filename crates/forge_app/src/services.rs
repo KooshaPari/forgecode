@@ -361,6 +361,19 @@ pub trait ConversationService: Send + Sync {
         token_count: usize,
     ) -> anyhow::Result<Option<String>>;
 
+    /// Return the full FTS5-highlighted context for a (conversation, query)
+    /// pair with caller-supplied opening/closing markup (e.g. `<b>`, `</b>`).
+    /// The returned string is the entire context column with each match
+    /// span wrapped in the supplied markup; used by the `forge search
+    /// --full-context` CLI mode and the TUI's expanded hit view.
+    async fn get_conversation_highlight(
+        &self,
+        conversation_id: &ConversationId,
+        query: &str,
+        open_mark: &str,
+        close_mark: &str,
+    ) -> anyhow::Result<Option<String>>;
+
     /// Roll the conversation back to its last compaction point — the most
     /// recent user-turn boundary in the context. Used by the `/rewind`
     /// slash command. Returns the rewound conversation, or `None` if no
@@ -886,6 +899,18 @@ impl<I: Services> ConversationService for I {
     ) -> anyhow::Result<Option<String>> {
         self.conversation_service()
             .get_conversation_snippet(conversation_id, query, token_count)
+            .await
+    }
+
+    async fn get_conversation_highlight(
+        &self,
+        conversation_id: &ConversationId,
+        query: &str,
+        open_mark: &str,
+        close_mark: &str,
+    ) -> anyhow::Result<Option<String>> {
+        self.conversation_service()
+            .get_conversation_highlight(conversation_id, query, open_mark, close_mark)
             .await
     }
 

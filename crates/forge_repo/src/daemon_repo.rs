@@ -471,6 +471,18 @@ impl ConversationRepository for DaemonConversationRepository {
             .await
     }
 
+    async fn get_conversation_highlight(
+        &self,
+        conversation_id: &ConversationId,
+        query: &str,
+        open_mark: &str,
+        close_mark: &str,
+    ) -> anyhow::Result<Option<String>> {
+        self.inner
+            .get_conversation_highlight(conversation_id, query, open_mark, close_mark)
+            .await
+    }
+
     async fn optimize_fts_index(&self) -> anyhow::Result<()> {
         self.inner.optimize_fts_index().await
     }
