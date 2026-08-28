@@ -49,11 +49,19 @@ DROP TABLE IF EXISTS conversations_fts;
 -- unicode61 handles Unicode text per Unicode Standard Annex #29 (word
 -- boundaries); remove_diacritics=1 folds accents so users searching
 -- "cafe" find "cafe-accent" rows.
+--
+-- The tokenize value is unquoted-space-separated form (the most basic
+-- FTS5 syntax). The prior attempt used the quoted form
+--   tokenize = 'unicode61 "remove_diacritics 1"'
+-- which bundled SQLite 3.51.x rejected with "parse error in tokenize
+-- directive" - apparently the FTS5 tokenizer parser in this build does
+-- not consume the inner double-quoted arg correctly. The unquoted form
+-- works on every SQLite version that supports unicode61 (>= 3.27).
 CREATE VIRTUAL TABLE conversations_fts USING fts5(
     title,
     content,
     cwd,
-    tokenize = 'unicode61 "remove_diacritics 1"'
+    tokenize='unicode61 remove_diacritics 1'
 );
 
 -- Table is created EMPTY. Application-side refresh_fts_index will populate it
