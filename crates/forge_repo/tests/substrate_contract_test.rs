@@ -86,7 +86,10 @@ mod tests {
         let req: LLMRequest = serde_json::from_str(payload).expect("LLMRequest parse failed");
 
         assert!(!req.model.is_empty(), "Model must be non-empty");
-        assert!(req.messages.len() >= 1, "Messages must have at least 1 entry");
+        assert!(
+            !req.messages.is_empty(),
+            "Messages must have at least 1 entry"
+        );
         assert!(
             req.messages[0].role == "system" || req.messages[0].role == "user",
             "First message role must be system or user"
@@ -121,7 +124,10 @@ mod tests {
         let resp: LLMResponse = serde_json::from_str(payload).expect("LLMResponse parse failed");
 
         assert!(!resp.id.is_empty(), "ID must be non-empty");
-        assert!(!resp.choices.is_empty(), "Choices must have at least 1 entry");
+        assert!(
+            !resp.choices.is_empty(),
+            "Choices must have at least 1 entry"
+        );
         assert_eq!(resp.choices[0].message.role, "assistant");
         assert_eq!(
             resp.usage.total_tokens,
@@ -141,8 +147,7 @@ mod tests {
     fn test_streaming_chunk_contract() {
         let chunk = r#"{"id":"chatcmpl-abc","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}"#;
 
-        let c: StreamingChunk =
-            serde_json::from_str(chunk).expect("Streaming chunk parse failed");
+        let c: StreamingChunk = serde_json::from_str(chunk).expect("Streaming chunk parse failed");
 
         assert!(!c.id.is_empty(), "Chunk ID must be non-empty");
         assert!(!c.choices.is_empty(), "Choices must have at least 1 entry");
@@ -156,10 +161,7 @@ mod tests {
     fn test_request_response_roundtrip() {
         let req = LLMRequest {
             model: "claude-3".to_string(),
-            messages: vec![LLMMessage {
-                role: "user".to_string(),
-                content: "Hello".to_string(),
-            }],
+            messages: vec![LLMMessage { role: "user".to_string(), content: "Hello".to_string() }],
             temperature: Some(0.5),
             max_tokens: Some(512),
             stream: false,
