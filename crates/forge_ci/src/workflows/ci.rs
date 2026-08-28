@@ -51,12 +51,6 @@ pub fn generate_ci_workflow() {
     let build_release_pr_job = ReleaseBuilderJob::new("${{ needs.draft_release_pr.outputs.crate_release_name }}")
         .into_job().needs("draft_release_pr")
         .if_condition("github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci: build all targets')");
-    let build_release_job =
-        ReleaseBuilderJob::new("${{ needs.draft_release.outputs.crate_release_name }}")
-            .release_id("${{ needs.draft_release.outputs.crate_release_id }}")
-            .into_job()
-            .needs("draft_release")
-            .if_condition("github.event_name == 'push' && github.ref == 'refs/heads/main'");
     let events = Event::default()
         .push(Push::default().add_branch("main").add_tag("v*"))
         .pull_request(["opened", "synchronize", "reopened", "labeled"], ["main"]);
@@ -70,7 +64,6 @@ pub fn generate_ci_workflow() {
         .add_job("zsh_rprompt_perf", perf_test_job)
         .add_job("draft_release", draft_release_job)
         .add_job("draft_release_pr", draft_release_pr_job)
-        .add_job("build_release", build_release_job)
         .add_job("build_release_pr", build_release_pr_job);
     super::generate_private_workflow(workflow, "ci.yml");
 }
