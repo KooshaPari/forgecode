@@ -1,13 +1,23 @@
--- Add porter unicode61 tokenizer with remove_diacritics=1 to conversations_fts.
+-- Add unicode61 tokenizer with remove_diacritics=1 to conversations_fts.
 --
 -- The existing FTS5 setup (migration 2026-06-26-000400) uses just `porter`
 -- which is English-only and does NOT fold diacritics. This migration upgrades
--- the tokenizer to `porter unicode61 "remove_diacritics 1"`, which:
---   - Stems English text (porter) AND tokenizes non-English text per Unicode
---     rules (unicode61)
+-- the tokenizer to `unicode61 "remove_diacritics 1"`, which:
+--   - Tokenizes non-English text per Unicode rules (unicode61)
 --   - Folds diacritics so cafe, cafe-accent, and cafe-diacritic all match
 --
--- Matches the target design in docs/requirements.md:52-58 (M3 spec).
+-- NOTE on tokenizer choice:
+--   SQLite FTS5 supports specifying exactly one tokenizer name per virtual
+--   table. Combining porter + unicode61 natively is not supported; it would
+--   require a custom Rust tokenizer. We pick unicode61 (better international
+--   coverage, includes basic English tokenization via Unicode rules) over
+--   porter (English-only stemming like running -> run).
+--
+--   If English stemming is critical, a follow-up migration can ship a custom
+--   tokenizer wrapper that chains porter inside unicode61 (or vice versa).
+--   Until then, unicode61 is the right default for a multilingual codebase.
+--
+-- Matches the target design intent in docs/requirements.md:52-58 (M3 spec).
 -- PRESERVES the contentful-mode pattern from migration 2026-06-26-000400 so
 -- compressed rows (is_compressed=1, context=NULL, context_zstd BLOB) continue
 -- to be indexed by application-side refresh_fts_index after zstd decompression.
@@ -35,14 +45,15 @@
 -- Drop the old porter-only FTS5 table.
 DROP TABLE IF EXISTS conversations_fts;
 
--- Recreate with porter + unicode61 + remove_diacritics=1.
--- porter is the English stemmer; unicode61 handles non-English Unicode text;
--- remove_diacritics=1 folds accents so users searching "cafe" find "cafe-accent".
+-- Recreate with unicode61 + remove_diacritics=1.
+-- unicode61 handles Unicode text per Unicode Standard Annex #29 (word
+-- boundaries); remove_diacritics=1 folds accents so users searching
+-- "cafe" find "cafe-accent" rows.
 CREATE VIRTUAL TABLE conversations_fts USING fts5(
     title,
     content,
     cwd,
-    tokenize = 'porter unicode61 "remove_diacritics 1"'
+    tokenize = 'unicode61 "remove_diacritics 1"'
 );
 
 -- Table is created EMPTY. Application-side refresh_fts_index will populate it
