@@ -115,7 +115,7 @@ impl From<ReleaseBuilderJob> for Job {
                             "action-gh-release",
                             "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("tag_name", "${{ github.event.release.tag_name }}")
+                        .input("tag_name", value.version.to_string())
                         .input("files", "${{ matrix.binary_name }}")
                         .input("overwrite_files", "true"),
                 )
@@ -126,7 +126,7 @@ impl From<ReleaseBuilderJob> for Job {
                             "action-gh-release",
                             "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("tag_name", "${{ github.event.release.tag_name }}")
+                        .input("tag_name", value.version.to_string())
                         .input("files", "${{ matrix.binary_name }}.sha256")
                         .input("overwrite_files", "true"),
                 )
@@ -137,7 +137,7 @@ impl From<ReleaseBuilderJob> for Job {
                             "action-gh-release",
                             "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("tag_name", "${{ github.event.release.tag_name }}")
+                        .input("tag_name", value.version.to_string())
                         .input("files", "${{ matrix.helioslite_name }}")
                         .input("overwrite_files", "true"),
                 )
@@ -148,7 +148,7 @@ impl From<ReleaseBuilderJob> for Job {
                             "action-gh-release",
                             "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("tag_name", "${{ github.event.release.tag_name }}")
+                        .input("tag_name", value.version.to_string())
                         .input("files", "${{ matrix.helioslite_name }}.sha256")
                         .input("overwrite_files", "true"),
                 )
@@ -169,7 +169,7 @@ impl From<ReleaseBuilderJob> for Job {
                             "action-gh-release",
                             "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("tag_name", "${{ github.event.release.tag_name }}")
+                        .input("tag_name", value.version.to_string())
                         .input("files", "forge_dbd-${{ matrix.target }}")
                         .input("overwrite_files", "true")
                         .if_condition("!contains(matrix.target, 'windows')"),
@@ -181,7 +181,7 @@ impl From<ReleaseBuilderJob> for Job {
                             "action-gh-release",
                             "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("tag_name", "${{ github.event.release.tag_name }}")
+                        .input("tag_name", value.version.to_string())
                         .input("files", "forge_dbd-${{ matrix.target }}.sha256")
                         .input("overwrite_files", "true")
                         .if_condition("!contains(matrix.target, 'windows')"),
@@ -193,7 +193,7 @@ impl From<ReleaseBuilderJob> for Job {
                             "action-gh-release",
                             "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("tag_name", "${{ github.event.release.tag_name }}")
+                        .input("tag_name", value.version.to_string())
                         .input("files", "forge_dbd-${{ matrix.target }}.exe")
                         .input("overwrite_files", "true")
                         .if_condition("contains(matrix.target, 'windows')"),
@@ -205,7 +205,7 @@ impl From<ReleaseBuilderJob> for Job {
                             "action-gh-release",
                             "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
                         )
-                        .input("tag_name", "${{ github.event.release.tag_name }}")
+                        .input("tag_name", value.version.to_string())
                         .input("files", "forge_dbd-${{ matrix.target }}.exe.sha256")
                         .input("overwrite_files", "true")
                         .if_condition("contains(matrix.target, 'windows')"),
