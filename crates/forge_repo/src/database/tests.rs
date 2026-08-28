@@ -106,11 +106,14 @@ mod integration_tests {
 
             // CONTENTFUL FTS5 tables do NOT have 'content=' clause (P2c fix: compressed rows)
             // They store a copy of indexed columns in _content table.
-            // tokenizer may be 'porter' (legacy) or 'porter unicode61 "remove_diacritics 1"'
-            // (M3 upgrade, migration 2026-08-27-180000) - assert porter stemmer is in use.
+            // tokenizer may be any of:
+            //   - 'porter' (legacy)
+            //   - 'porter unicode61 "remove_diacritics 1"' (planned, invalid SQLite syntax)
+            //   - 'unicode61 remove_diacritics 1' (current per migration 2026-08-27-180000)
+            // Accept any of these by checking for either porter or unicode61.
             assert!(
-                fts_schema.name.contains("porter"),
-                "FTS5 should use porter stemmer (optionally combined with unicode61): {}",
+                fts_schema.name.contains("porter") || fts_schema.name.contains("unicode61"),
+                "FTS5 should use a recognized tokenizer (porter or unicode61): {}",
                 fts_schema.name
             );
             // Should NOT be external-content anymore
@@ -399,13 +402,14 @@ mod integration_tests {
                 "SELECT sql as name FROM sqlite_master WHERE type='table' AND name='conversations_fts'",
             )
             .get_result(&mut *conn)?;
-
+            // Verify FTS5 uses porter stemmer or unicode61 tokenizer (per migration
+            // 2026-08-27-180000 which upgraded from porter-only to unicode61 +
+            // remove_diacritics=1).
             assert!(
-                fts_schema.name.contains("porter"),
-                "FTS5 should use porter stemmer: {}",
+                fts_schema.name.contains("porter") || fts_schema.name.contains("unicode61"),
+                "FTS5 should use porter or unicode61 tokenizer: {}",
                 fts_schema.name
             );
-            // Verify FTS5 is CONTENTFUL (not external-content) for compressed-row support
             // CONTENTFUL FTS5 indexes: title, content (decompressed context), cwd
             assert!(
                 fts_schema.name.contains("title") && fts_schema.name.contains("content") && fts_schema.name.contains("cwd"),
