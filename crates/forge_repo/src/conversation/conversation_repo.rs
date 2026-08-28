@@ -509,20 +509,25 @@ impl ConversationRepository for ConversationRepositoryImpl {
     ) -> anyhow::Result<Option<String>> {
         let conversation_id_str = conversation_id.into_string();
         let query = query.to_string();
-        self.run_with_connection(move |connection, _wid| {
-            // External-content FTS5 mode: use rowid to join and column index 1 for context.
-            // FTS5 column order: title (0), context (1), cwd (2).
-            // We filter by rowid matching the base conversation ID.
+        self.run_with_connection(move |connection, wid| {
+            let workspace_id = wid.id() as i64;
+            // JOIN pattern mirrors `search_conversations` and
+            // `get_conversation_highlight`: join `conversations` ↔
+            // `conversations_fts` on rowid, filter by conversation_id
+            // and workspace_id, then apply `snippet()` to the matched row.
             let sql = format!(
                 "SELECT snippet(conversations_fts, 1, '[', ']', '…', {}) AS s \
-                 FROM conversations_fts \
-                 WHERE rowid = (SELECT rowid FROM conversations WHERE conversation_id = ?) \
-                   AND conversations_fts MATCH ?",
+                 FROM conversations c \
+                 JOIN conversations_fts fts ON c.rowid = fts.rowid \
+                 WHERE conversations_fts MATCH ? \
+                   AND c.conversation_id = ? \
+                   AND c.workspace_id = ?",
                 token_count.min(256)
             );
             let raw: Vec<SnippetRow> = diesel::sql_query(sql)
-                .bind::<diesel::sql_types::Text, _>(&conversation_id_str)
                 .bind::<diesel::sql_types::Text, _>(&query)
+                .bind::<diesel::sql_types::Text, _>(&conversation_id_str)
+                .bind::<diesel::sql_types::BigInt, _>(workspace_id)
                 .load(connection)?;
             Ok(raw.into_iter().next().map(|r| r.s))
         })
@@ -542,6 +547,16 @@ impl ConversationRepository for ConversationRepositoryImpl {
     /// markup without SQL-injection concerns. SQLite's FTS5 `highlight()`
     /// function (https://sqlite.org/fts5.html#the_highlight_function) is a
     /// built-in since SQLite 3.32.
+    ///
+    /// SQL mirrors the proven `search_conversations` JOIN pattern: we join
+    /// `conversations` ↔ `conversations_fts` on rowid and filter by both
+    /// `conversation_id` and `workspace_id`. This is the same query shape
+    /// that the passing `test_search_finds_compressed_conversations`
+    /// exercises; a prior implementation used a rowid-subquery without
+    /// the workspace_id predicate and returned `None` even when the FTS
+    /// index clearly contained the conversation — the missing workspace
+    /// predicate let the FTS MATCH short-circuit when the join context
+    /// was incomplete.
     async fn get_conversation_highlight(
         &self,
         conversation_id: &ConversationId,
@@ -553,21 +568,25 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let query = query.to_string();
         let open_mark = open_mark.to_string();
         let close_mark = close_mark.to_string();
-        self.run_with_connection(move |connection, _wid| {
-            // External-content FTS5: column index 1 is `context`. The
-            // `highlight()` call wraps every match in the (open, close)
-            // pair and returns the full column text. We filter by the
-            // conversation's rowid so we highlight only the requested
-            // conversation (not all matches in the FTS index).
+        self.run_with_connection(move |connection, wid| {
+            let workspace_id = wid.id() as i64;
+            // JOIN pattern (mirrors `search_conversations`): join on
+            // `rowid` and filter by both `conversation_id` and
+            // `workspace_id`. `highlight()` is a scalar function applied
+            // to each joined row; we keep only the one whose base-table
+            // `conversation_id` matches.
             let sql = "SELECT highlight(conversations_fts, 1, ?, ?) AS h \
-                       FROM conversations_fts \
-                       WHERE rowid = (SELECT rowid FROM conversations WHERE conversation_id = ?) \
-                         AND conversations_fts MATCH ?";
+                       FROM conversations c \
+                       JOIN conversations_fts fts ON c.rowid = fts.rowid \
+                       WHERE conversations_fts MATCH ? \
+                         AND c.conversation_id = ? \
+                         AND c.workspace_id = ?";
             let raw: Vec<HighlightRow> = diesel::sql_query(sql)
                 .bind::<diesel::sql_types::Text, _>(&open_mark)
                 .bind::<diesel::sql_types::Text, _>(&close_mark)
-                .bind::<diesel::sql_types::Text, _>(&conversation_id_str)
                 .bind::<diesel::sql_types::Text, _>(&query)
+                .bind::<diesel::sql_types::Text, _>(&conversation_id_str)
+                .bind::<diesel::sql_types::BigInt, _>(workspace_id)
                 .load(connection)?;
             Ok(raw.into_iter().next().map(|r| r.h))
         })
