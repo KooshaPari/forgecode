@@ -41,6 +41,22 @@ pub fn release_publish() {
                 )
                 .input("upload-artifact", "false")
                 .input("upload-release-assets", "true"),
+        )
+        // anchore/sbom-action's `upload-release-assets: 'true'` is unreliable
+        // for attaching to releases with binary assets (it depends on a
+        // specific upload mechanism that can silently no-op). Attach the
+        // generated SBOM explicitly via softprops/action-gh-release to
+        // guarantee the asset lands on the release.
+        .add_step(
+            Step::new("Upload SBOM to Release")
+                .uses(
+                    "softprops",
+                    "action-gh-release",
+                    "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
+                )
+                .input("tag_name", "${{ github.event.release.tag_name }}")
+                .input("files", "release-assets/sbom.cdx.json")
+                .input("overwrite_files", "true"),
         );
     let attest_job = Job::new("Attest release assets")
         .needs("sbom_release_assets")
