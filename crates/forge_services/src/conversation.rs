@@ -139,6 +139,18 @@ impl<S: ConversationRepository> ConversationService for ForgeConversationService
             .await
     }
 
+    async fn get_conversation_highlight(
+        &self,
+        conversation_id: &ConversationId,
+        query: &str,
+        open_mark: &str,
+        close_mark: &str,
+    ) -> Result<Option<String>> {
+        self.conversation_repository
+            .get_conversation_highlight(conversation_id, query, open_mark, close_mark)
+            .await
+    }
+
     async fn optimize_fts_index(&self) -> Result<()> {
         let _ = self.conversation_repository.optimize_fts_index().await?;
         Ok(())

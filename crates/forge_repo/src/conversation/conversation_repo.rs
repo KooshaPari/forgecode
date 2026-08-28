@@ -31,6 +31,25 @@ impl diesel::QueryableByName<diesel::sqlite::Sqlite> for SnippetRow {
     }
 }
 
+/// Lightweight row type for FTS5 `highlight()` results. The query returns
+/// exactly one column (`h`) — the full column text with matches wrapped
+/// in caller-supplied markup (e.g. `<b>...</b>`). Compared to
+/// [`SnippetRow`] which returns a short passage, `highlight()` returns
+/// the entire column with match-spans preserved.
+#[derive(Debug, Clone)]
+struct HighlightRow {
+    h: String,
+}
+
+impl diesel::QueryableByName<diesel::sqlite::Sqlite> for HighlightRow {
+    fn build<'a>(
+        row: &impl diesel::row::NamedRow<'a, diesel::sqlite::Sqlite>,
+    ) -> diesel::deserialize::Result<Self> {
+        let h = diesel::row::NamedRow::get::<diesel::sql_types::Text, _>(row, "h")?;
+        Ok(HighlightRow { h })
+    }
+}
+
 /// Row type for reading conversations during FTS refresh.
 /// Used to populate FTS5 with decompressed context from both compressed and
 /// uncompressed rows.
@@ -506,6 +525,51 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 .bind::<diesel::sql_types::Text, _>(&query)
                 .load(connection)?;
             Ok(raw.into_iter().next().map(|r| r.s))
+        })
+        .await
+    }
+
+    /// Return the full `context` column with every match span wrapped in
+    /// caller-supplied markup. Distinct from [`Self::get_conversation_snippet`]
+    /// which truncates to a passage. Use cases:
+    ///
+    /// - CLI's `forge search --full-context` mode
+    /// - TUI's expanded hit view (where hits need to be preserved inline)
+    /// - External integrations that pre-render markup on the server
+    ///
+    /// `open_mark` and `close_mark` are written into the SQL via diesel
+    /// `bind()` (not string interpolation) so the caller can pass arbitrary
+    /// markup without SQL-injection concerns. SQLite's FTS5 `highlight()`
+    /// function (https://sqlite.org/fts5.html#the_highlight_function) is a
+    /// built-in since SQLite 3.32.
+    async fn get_conversation_highlight(
+        &self,
+        conversation_id: &ConversationId,
+        query: &str,
+        open_mark: &str,
+        close_mark: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let conversation_id_str = conversation_id.into_string();
+        let query = query.to_string();
+        let open_mark = open_mark.to_string();
+        let close_mark = close_mark.to_string();
+        self.run_with_connection(move |connection, _wid| {
+            // External-content FTS5: column index 1 is `context`. The
+            // `highlight()` call wraps every match in the (open, close)
+            // pair and returns the full column text. We filter by the
+            // conversation's rowid so we highlight only the requested
+            // conversation (not all matches in the FTS index).
+            let sql = "SELECT highlight(conversations_fts, 1, ?, ?) AS h \
+                       FROM conversations_fts \
+                       WHERE rowid = (SELECT rowid FROM conversations WHERE conversation_id = ?) \
+                         AND conversations_fts MATCH ?";
+            let raw: Vec<HighlightRow> = diesel::sql_query(sql)
+                .bind::<diesel::sql_types::Text, _>(&open_mark)
+                .bind::<diesel::sql_types::Text, _>(&close_mark)
+                .bind::<diesel::sql_types::Text, _>(&conversation_id_str)
+                .bind::<diesel::sql_types::Text, _>(&query)
+                .load(connection)?;
+            Ok(raw.into_iter().next().map(|r| r.h))
         })
         .await
     }
@@ -3971,6 +4035,52 @@ mod tests {
             drop(repo);
             let _ = std::fs::remove_dir_all(renamed);
         }
+        Ok(())
+    }
+
+    /// Verify that `get_conversation_highlight` returns the full context
+    /// column with match spans wrapped in caller-supplied markup, distinct
+    /// from `get_conversation_snippet` which returns a short passage.
+    #[tokio::test]
+    async fn test_get_conversation_highlight_wraps_match_in_markup() -> anyhow::Result<()> {
+        let repo = repository()?;
+
+        // Mirror test_search_finds_compressed_conversations: insert one conv
+        // via upsert_conversation, refresh FTS, then call highlight().
+        let msg = ContextMessage::user("SEARCHABLE_HIGHLIGHT_TERM", None);
+        let context = Context::default().messages(vec![msg.into()]);
+        let conv = Conversation::new(ConversationId::generate())
+            .title(Some("Highlight Test Conversation".to_string()))
+            .context(Some(context));
+        repo.upsert_conversation(conv.clone()).await?;
+        repo.refresh_fts_index().await?;
+
+        // Call the new method with caller-supplied markup.
+        let highlighted = repo
+            .get_conversation_highlight(&conv.id, "SEARCHABLE_HIGHLIGHT_TERM", "<b>", "</b>")
+            .await?;
+
+        assert!(
+            highlighted.is_some(),
+            "highlight() must return Some for a matched conversation",
+        );
+        let h = highlighted.unwrap();
+
+        // The markup must wrap the needle exactly.
+        assert!(
+            h.contains("<b>SEARCHABLE_HIGHLIGHT_TERM</b>"),
+            "highlight() output must wrap the matched needle in caller-supplied markup; got: {h}",
+        );
+
+        // Sanity: a non-matching query returns None.
+        let none = repo
+            .get_conversation_highlight(&conv.id, "DEFINITELY_NOT_THERE", "<b>", "</b>")
+            .await?;
+        assert!(
+            none.is_none(),
+            "highlight() must return None when the query has no match",
+        );
+
         Ok(())
     }
 }

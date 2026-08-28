@@ -166,6 +166,19 @@ pub trait API: Sync + Send {
         token_count: usize,
     ) -> Result<Option<String>>;
 
+    /// Return the full FTS5-highlighted context for a (conversation, query)
+    /// pair with caller-supplied opening/closing markup (e.g. `<b>`, `</b>`).
+    /// Returns the entire context column with each match span wrapped in
+    /// markup, or `None` if the conversation rowid is missing or the FTS5
+    /// query has no match for that row.
+    async fn get_conversation_highlight(
+        &self,
+        conversation_id: &ConversationId,
+        query: &str,
+        open_mark: &str,
+        close_mark: &str,
+    ) -> Result<Option<String>>;
+
     /// Renames a conversation by setting its title
     ///
     /// # Arguments
