@@ -48,6 +48,18 @@ fn generated_workflows_are_parseable_and_identify_forge_ci_generator() {
     assert!(release.contains("attest_release_assets:"));
     assert!(release.contains("needs: build_release"));
 
+    let ci =
+        std::fs::read_to_string(generated_workflow_path("ci.yml")).expect("generated CI workflow");
+    assert!(ci.contains("draft_release:"));
+    assert!(
+        !ci.contains("\n  build_release:\n"),
+        "main-push CI must not publish release assets; release.yml owns that lifecycle"
+    );
+    assert!(
+        !ci.contains("softprops/action-gh-release"),
+        "main-push CI must not invoke the release asset publisher"
+    );
+
     let bounty = std::fs::read_to_string(generated_workflow_path("bounty.yml"))
         .expect("generated bounty workflow");
     assert!(bounty.contains(
