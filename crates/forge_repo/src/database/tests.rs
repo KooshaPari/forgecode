@@ -106,9 +106,11 @@ mod integration_tests {
 
             // CONTENTFUL FTS5 tables do NOT have 'content=' clause (P2c fix: compressed rows)
             // They store a copy of indexed columns in _content table.
+            // tokenizer may be 'porter' (legacy) or 'porter unicode61 "remove_diacritics 1"'
+            // (M3 upgrade, migration 2026-08-27-180000) - assert porter stemmer is in use.
             assert!(
-                fts_schema.name.contains("tokenize='porter'"),
-                "FTS5 should have porter tokenizer: {}",
+                fts_schema.name.contains("porter"),
+                "FTS5 should use porter stemmer (optionally combined with unicode61): {}",
                 fts_schema.name
             );
             // Should NOT be external-content anymore
@@ -391,18 +393,18 @@ mod integration_tests {
                 "FTS triggers should be dropped by P2"
             );
 
-            // Verify FTS5 has the correct tokenizer (porter) for stemming
+            // Verify FTS5 uses porter stemmer (optionally combined with unicode61 +
+            // remove_diacritics=1 per migration 2026-08-27-180000) for stemming.
             let fts_schema: StringResult = diesel::sql_query(
                 "SELECT sql as name FROM sqlite_master WHERE type='table' AND name='conversations_fts'",
             )
             .get_result(&mut *conn)?;
 
             assert!(
-                fts_schema.name.contains("tokenize='porter'"),
-                "FTS5 should use porter tokenizer for stemming: {}",
+                fts_schema.name.contains("porter"),
+                "FTS5 should use porter stemmer: {}",
                 fts_schema.name
             );
-
             // Verify FTS5 is CONTENTFUL (not external-content) for compressed-row support
             // CONTENTFUL FTS5 indexes: title, content (decompressed context), cwd
             assert!(
