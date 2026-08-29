@@ -413,7 +413,7 @@ fn sha256_inline(message: &[u8]) -> [u8; 32] {
         x.rotate_right(17) ^ x.rotate_right(19) ^ (x >> 10)
     }
 
-    #[allow(clippy::manual_chunks)]
+    #[allow(clippy::chunks_exact_to_as_chunks)]
     for chunk in msg.chunks_exact(64) {
         let mut w = [0u32; 64];
         for i in 0..16 {
