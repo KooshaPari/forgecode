@@ -25,7 +25,7 @@ ForgeConversationService --async--> DaemonConversationRepository --DbClient::sen
 - `crates/forge_ci` — workflow model → `.github/workflows/*.yml` (generated, `FORK_RELEASE_VERSION` input)
 
 ## Workflows
-`ci.yml` (Build and Test, zsh perf, Draft Release with `version: 2.13.21-h.0.1.4`) + `release-drafter.yml` (standalone) share `release-drafter@SHA` + `config-name`. Scorecard-relevant workflows `perf-dashboard`, `otel-health`, `chaos-testing` are pinned + `contents: read`.
+`ci.yml` (Build and Test, zsh perf, Draft Release with `version: 2.13.21-h.0.1.5`) + `release-drafter.yml` (standalone) share `release-drafter@SHA` + `config-name`. Scorecard-relevant workflows `perf-dashboard`, `otel-health`, `chaos-testing` are pinned + `contents: read`.
 
 ## Data flow (conversation)
 `Conversation { id, workspace_id, context (zstd), metrics, parent_id }` → `ConversationRecord::new/new_ref` → `persist_context` → SQLite `conversations` (`conversation_id PK`, `workspace_id`, `context`, `context_zstd`, `is_compressed`, `message_count`, `updated_at` via `strftime`). `conversations_all` view unions `~/.forge` + `helioslite_home`.
