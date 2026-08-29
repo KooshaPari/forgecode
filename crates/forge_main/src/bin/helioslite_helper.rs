@@ -59,22 +59,24 @@
 
 #![cfg_attr(not(windows), allow(dead_code))]
 
+#[cfg(windows)]
 use std::ffi::OsString;
+#[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 use std::process::ExitCode;
 use std::time::Duration;
 
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, ERROR_INVALID_PARAMETER, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    CloseHandle, ERROR_INVALID_PARAMETER, GetLastError, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
-    DeleteFileW, MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    DeleteFileW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
 };
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
-    CreateProcessW, OpenProcess, WaitForSingleObject, PROCESS_INFORMATION, STARTUPINFOW,
+    CreateProcessW, OpenProcess, PROCESS_INFORMATION, STARTUPINFOW, WaitForSingleObject,
 };
 
 // ---------- constants --------------------------------------------------------
@@ -115,7 +117,7 @@ fn validate_repo(repo: &str) -> Result<(), String> {
     Ok(())
 }
 
-
+#[cfg(windows)]
 #[derive(Debug)]
 struct Args {
     release_repo: String,
@@ -126,6 +128,7 @@ struct Args {
     self_path: Vec<u16>,   // helper's own exe path, for self-delete
 }
 
+#[cfg(windows)]
 fn parse_args() -> Result<Args, String> {
     // Skip argv[0]; expected: download repo asset wait pid swap from to
     let raw: Vec<String> = std::env::args_os()
@@ -159,9 +162,9 @@ fn parse_args() -> Result<Args, String> {
     }
 
     let parent_pid_str = raw[4].as_str();
-    let parent_pid: u32 = parent_pid_str.parse().map_err(|_| {
-        format!("invalid parent pid {:?}", parent_pid_str)
-    })?;
+    let parent_pid: u32 = parent_pid_str
+        .parse()
+        .map_err(|_| format!("invalid parent pid {:?}", parent_pid_str))?;
 
     let source_path = wide(raw[6].as_str());
     let target_path = wide(raw[7].as_str());
@@ -186,12 +189,20 @@ fn parse_args() -> Result<Args, String> {
         self_path,
     })
 }
+#[cfg(windows)]
 fn wide(s: &str) -> Vec<u16> {
-    OsString::from(s).encode_wide().chain(std::iter::once(0)).collect()
+    OsString::from(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
+#[cfg(windows)]
 fn wide_path(p: &std::path::Path) -> Vec<u16> {
-    p.as_os_str().encode_wide().chain(std::iter::once(0)).collect()
+    p.as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 // ---------- main -------------------------------------------------------------
@@ -200,7 +211,7 @@ fn main() -> ExitCode {
     #[cfg(not(windows))]
     {
         eprintln!("helioslite_helper is Windows-only; nothing to do on this platform");
-        return ExitCode::from(2);
+        ExitCode::from(2)
     }
 
     #[cfg(windows)]
@@ -253,9 +264,7 @@ fn run() -> Result<(), u8> {
             );
         }
         Err(e) => {
-            eprintln!(
-                "helioslite_helper: .sha256 fetch errored ({e}); proceeding unverified"
-            );
+            eprintln!("helioslite_helper: .sha256 fetch errored ({e}); proceeding unverified");
         }
     }
 
@@ -322,7 +331,7 @@ fn fetch_expected_sha256(url: &str) -> Result<Option<String>, String> {
             let hex = s
                 .split_whitespace()
                 .next()
-                .ok_or_else(|| format!("empty sha256 body"))?
+                .ok_or_else(|| "empty sha256 body".to_string())?
                 .to_ascii_lowercase();
             Ok(Some(hex))
         }
@@ -349,6 +358,11 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+fn decode_sha256_word(bytes: &[u8]) -> Option<u32> {
+    let bytes: [u8; 4] = bytes.try_into().ok()?;
+    Some(u32::from_be_bytes(bytes))
 }
 
 /// Minimal SHA-256 (FIPS 180-4 §6.2).  Not optimised — runs once per release
@@ -403,30 +417,31 @@ fn sha256_inline(message: &[u8]) -> [u8; 32] {
         x.rotate_right(17) ^ x.rotate_right(19) ^ (x >> 10)
     }
 
-    for chunk in msg.chunks_exact(64) {
+    let (chunks, _) = msg.as_chunks::<64>();
+    for chunk in chunks {
         let mut w = [0u32; 64];
-        for i in 0..16 {
-            w[i] = u32::from_be_bytes([
-                chunk[i * 4],
-                chunk[i * 4 + 1],
-                chunk[i * 4 + 2],
-                chunk[i * 4 + 3],
-            ]);
+        let (word_chunks, remainder) = chunk.as_chunks::<4>();
+        debug_assert!(remainder.is_empty());
+        for (word, bytes) in w.iter_mut().zip(word_chunks) {
+            *word = decode_sha256_word(bytes).expect("SHA-256 chunks are exactly four bytes");
         }
         for i in 16..64 {
-            w[i] = small_sigma1(w[i - 2])
-                .wrapping_add(w[i - 7])
-                .wrapping_add(small_sigma0(w[i - 15]))
-                .wrapping_add(w[i - 16]);
+            let next = small_sigma1(*w.get(i - 2).expect("SHA-256 schedule index is valid"))
+                .wrapping_add(*w.get(i - 7).expect("SHA-256 schedule index is valid"))
+                .wrapping_add(small_sigma0(
+                    *w.get(i - 15).expect("SHA-256 schedule index is valid"),
+                ))
+                .wrapping_add(*w.get(i - 16).expect("SHA-256 schedule index is valid"));
+            *w.get_mut(i).expect("SHA-256 schedule index is valid") = next;
         }
         let (mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut hh) =
             (h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7]);
-        for i in 0..64 {
+        for (constant, word) in K.iter().zip(w.iter()) {
             let t1 = hh
                 .wrapping_add(big_sigma1(e))
                 .wrapping_add(ch(e, f, g))
-                .wrapping_add(K[i])
-                .wrapping_add(w[i]);
+                .wrapping_add(*constant)
+                .wrapping_add(*word);
             let t2 = big_sigma0(a).wrapping_add(maj(a, b, c));
             hh = g;
             g = f;
@@ -448,8 +463,10 @@ fn sha256_inline(message: &[u8]) -> [u8; 32] {
     }
 
     let mut out = [0u8; 32];
-    for (i, word) in h.iter().enumerate() {
-        out[i * 4..i * 4 + 4].copy_from_slice(&word.to_be_bytes());
+    let (out_words, remainder) = out.as_chunks_mut::<4>();
+    debug_assert!(remainder.is_empty());
+    for (word, bytes) in h.iter().zip(out_words) {
+        bytes.copy_from_slice(&word.to_be_bytes());
     }
     out
 }
@@ -504,7 +521,13 @@ fn move_into_place(source: &[u16], target: &[u16]) -> Result<(), u32> {
     // MOVEFILE_WRITE_THROUGH      = 0x00000008
     // MOVEFILE_DELAY_UNTIL_REBOOT is intentionally NOT set: we want the swap
     // to land now, atomically, not at next boot.
-    let ok = unsafe { MoveFileExW(source.as_ptr(), target.as_ptr(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) };
+    let ok = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            target.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
     if ok == 0 {
         Err(unsafe { GetLastError() })
     } else {
@@ -556,6 +579,14 @@ fn relaunch(exe: &[u16]) -> Result<(), u32> {
 mod tests {
     use super::*;
 
+    #[cfg(not(windows))]
+    #[test]
+    fn main_rejects_non_windows_platforms() {
+        let actual = main();
+        let expected = ExitCode::from(2);
+        assert_eq!(actual, expected);
+    }
+
     #[test]
     fn validate_repo_accepts_canonical() {
         assert!(validate_repo("KooshaPari/forgecode").is_ok());
@@ -598,5 +629,24 @@ mod tests {
             hex,
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
+    }
+
+    #[test]
+    fn decode_sha256_word_accepts_complete_big_endian_chunk() {
+        let fixture = [0x12, 0x34, 0x56, 0x78];
+
+        let actual = decode_sha256_word(&fixture);
+
+        let expected = Some(0x12345678);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn decode_sha256_word_rejects_short_chunk() {
+        let fixture = [0x12, 0x34, 0x56];
+
+        let actual = decode_sha256_word(&fixture);
+
+        assert_eq!(actual, None);
     }
 }
