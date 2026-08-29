@@ -453,10 +453,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
         // Try FTS5 first; if the virtual table is missing/corrupt or the
         // MATCH expression has a syntax error, fall back to a LIKE scan so
         // the UI never silently drops results.
-        match self
-            .search_conversations_fts(&query, limit_value)
-            .await
-        {
+        match self.search_conversations_fts(&query, limit_value).await {
             Ok(rows) => Ok(rows),
             Err(error) => {
                 warn!(
@@ -4233,7 +4230,9 @@ mod tests {
 
         // A query that hits no rows is still empty (not an error) in the
         // fallback path.
-        let empty = repo.search_conversations("DEFINITELY_NOT_THERE", None).await?;
+        let empty = repo
+            .search_conversations("DEFINITELY_NOT_THERE", None)
+            .await?;
         assert!(
             empty.is_empty(),
             "LIKE fallback must return empty Vec for non-matching queries",
