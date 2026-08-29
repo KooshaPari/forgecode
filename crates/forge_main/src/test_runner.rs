@@ -78,13 +78,15 @@ impl TestRunner {
 
     /// Runs `cargo test` without any filters (all tests in the workspace).
     pub fn run_all(&self) -> Result<TestResult> {
-        let cmd = Command::new("cargo").arg("test");
+        let mut cmd = Command::new("cargo");
+        cmd.arg("test");
         self.execute(cmd)
     }
 
     /// Runs `cargo bench` in the working directory.
     pub fn run_benchmarks(&self) -> Result<TestResult> {
-        let cmd = Command::new("cargo").arg("bench");
+        let mut cmd = Command::new("cargo");
+        cmd.arg("bench");
         self.execute(cmd)
     }
 

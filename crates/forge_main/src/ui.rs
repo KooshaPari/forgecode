@@ -1473,6 +1473,34 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 ))?;
                 return Ok(());
             }
+            TopLevelCommand::Test(test_group) => {
+                let runner = crate::test_runner::TestRunner::with_dir(self.state.cwd.clone());
+                let result = match test_group.command {
+                    crate::cli::TestSubcommand::Run { package, test, bench } => {
+                        if bench {
+                            runner.run_benchmarks()
+                        } else {
+                            runner.run_test(package.as_deref(), test.as_deref())
+                        }
+                    }
+                    crate::cli::TestSubcommand::All => runner.run_all(),
+                    crate::cli::TestSubcommand::Bench => runner.run_benchmarks(),
+                };
+                match result {
+                    Ok(test_result) => {
+                        self.writeln(&test_result.output)?;
+                        if !test_result.success {
+                            std::process::exit(1);
+                        }
+                    }
+                    Err(e) => {
+                        self.writeln_title(TitleFormat::error(format!(
+                            "Test runner failed: {e}"
+                        )))?;
+                    }
+                }
+                return Ok(());
+            }
         }
         Ok(())
     }
