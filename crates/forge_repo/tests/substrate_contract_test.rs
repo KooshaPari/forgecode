@@ -1,4 +1,5 @@
-// Cross-ecosystem contract: forgecode (AI coding agent) <-> substrate (LLM dispatch)
+// Cross-ecosystem contract: forgecode (AI coding agent) <-> substrate (LLM
+// dispatch)
 //
 // These tests verify the LLM request/response contracts between the forgecode
 // agent and the substrate gateway. They validate schema alignment without
