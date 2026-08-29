@@ -59,6 +59,7 @@
 
 #![cfg_attr(not(windows), allow(dead_code))]
 
+#[cfg(windows)]
 use std::ffi::OsString;
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
@@ -211,7 +212,7 @@ fn main() -> ExitCode {
     #[cfg(not(windows))]
     {
         eprintln!("helioslite_helper is Windows-only; nothing to do on this platform");
-        return ExitCode::from(2);
+        ExitCode::from(2)
     }
 
     #[cfg(windows)]
@@ -331,7 +332,7 @@ fn fetch_expected_sha256(url: &str) -> Result<Option<String>, String> {
             let hex = s
                 .split_whitespace()
                 .next()
-                .ok_or_else(|| format!("empty sha256 body"))?
+                .ok_or_else(|| "empty sha256 body".to_string())?
                 .to_ascii_lowercase();
             Ok(Some(hex))
         }
@@ -412,6 +413,7 @@ fn sha256_inline(message: &[u8]) -> [u8; 32] {
         x.rotate_right(17) ^ x.rotate_right(19) ^ (x >> 10)
     }
 
+    #[allow(clippy::manual_chunks_exact)]
     for chunk in msg.chunks_exact(64) {
         let mut w = [0u32; 64];
         for i in 0..16 {
