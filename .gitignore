@@ -82,3 +82,7 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+
+# ── Stray lock-blocked files left by cmd.exe redirection failures ──
+/1980
+/580
