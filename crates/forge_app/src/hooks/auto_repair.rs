@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use forge_domain::{
-    Conversation, ContextMessage, EventData, EventHandle, Role, TextMessage, ToolcallEndPayload,
+    ContextMessage, Conversation, EventData, EventHandle, Role, TextMessage, ToolcallEndPayload,
 };
 use forge_template::Element;
 use tracing::debug;
@@ -133,12 +133,10 @@ impl EventHandle<EventData<ToolcallEndPayload>> for AutoRepairHook {
         let message_text = self.build_repair_message();
 
         if let Some(context) = &mut conversation.context {
-            let repair_message =
-                ContextMessage::Text(TextMessage::new(Role::System, message_text));
-            context.messages.push(forge_domain::ContextEntry {
-                message: repair_message,
-                is_compact: false,
-            });
+            let repair_message = ContextMessage::Text(TextMessage::new(Role::System, message_text));
+            context
+                .messages
+                .push(forge_domain::ContextEntry { message: repair_message, is_compact: false });
 
             debug!(
                 tool = %tool_call.name,
@@ -187,20 +185,16 @@ mod tests {
     #[tokio::test]
     async fn test_auto_repair_triggers_on_write() {
         let hook = AutoRepairHook::new();
-        let mut conversation = Conversation::generate().context(
-            forge_domain::Context::default().append_message(
-                forge_domain::ContextMessage::Text(TextMessage::new(
-                    Role::User,
-                    "test message",
-                )),
+        let mut conversation =
+            Conversation::generate().context(forge_domain::Context::default().append_message(
+                forge_domain::ContextMessage::Text(TextMessage::new(Role::User, "test message")),
                 None,
                 None,
                 None,
                 Default::default(),
                 vec![],
                 None,
-            ),
-        );
+            ));
 
         let event = make_toolcall_end_event("write", false);
         hook.handle(&event, &mut conversation).await.unwrap();
@@ -261,20 +255,16 @@ mod tests {
     #[tokio::test]
     async fn test_auto_repair_custom_commands() {
         let hook = AutoRepairHook::with_commands("npm test", "npm run lint");
-        let mut conversation = Conversation::generate().context(
-            forge_domain::Context::default().append_message(
-                forge_domain::ContextMessage::Text(TextMessage::new(
-                    Role::User,
-                    "test message",
-                )),
+        let mut conversation =
+            Conversation::generate().context(forge_domain::Context::default().append_message(
+                forge_domain::ContextMessage::Text(TextMessage::new(Role::User, "test message")),
                 None,
                 None,
                 None,
                 Default::default(),
                 vec![],
                 None,
-            ),
-        );
+            ));
 
         let event = make_toolcall_end_event("patch", false);
         hook.handle(&event, &mut conversation).await.unwrap();
@@ -293,20 +283,16 @@ mod tests {
     #[tokio::test]
     async fn test_auto_repair_triggers_on_multi_patch() {
         let hook = AutoRepairHook::new();
-        let mut conversation = Conversation::generate().context(
-            forge_domain::Context::default().append_message(
-                forge_domain::ContextMessage::Text(TextMessage::new(
-                    Role::User,
-                    "test message",
-                )),
+        let mut conversation =
+            Conversation::generate().context(forge_domain::Context::default().append_message(
+                forge_domain::ContextMessage::Text(TextMessage::new(Role::User, "test message")),
                 None,
                 None,
                 None,
                 Default::default(),
                 vec![],
                 None,
-            ),
-        );
+            ));
 
         let event = make_toolcall_end_event("multi_patch", false);
         hook.handle(&event, &mut conversation).await.unwrap();
@@ -318,20 +304,16 @@ mod tests {
     #[tokio::test]
     async fn test_auto_repair_triggers_on_remove() {
         let hook = AutoRepairHook::new();
-        let mut conversation = Conversation::generate().context(
-            forge_domain::Context::default().append_message(
-                forge_domain::ContextMessage::Text(TextMessage::new(
-                    Role::User,
-                    "test message",
-                )),
+        let mut conversation =
+            Conversation::generate().context(forge_domain::Context::default().append_message(
+                forge_domain::ContextMessage::Text(TextMessage::new(Role::User, "test message")),
                 None,
                 None,
                 None,
                 Default::default(),
                 vec![],
                 None,
-            ),
-        );
+            ));
 
         let event = make_toolcall_end_event("remove", false);
         hook.handle(&event, &mut conversation).await.unwrap();
