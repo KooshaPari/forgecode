@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use anyhow::{Context, Result};
+use bstr::ByteSlice;
 
 /// Result of a test or benchmark run.
 ///
@@ -96,8 +97,8 @@ impl TestRunner {
 
         let output = cmd.output().context("failed to execute cargo command")?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = decode_lossy(&output.stdout);
+        let stderr = decode_lossy(&output.stderr);
         let combined = format!("{stdout}{stderr}");
 
         let (passed, failed, ignored) = parse_cargo_test_output(&combined);
@@ -105,6 +106,10 @@ impl TestRunner {
 
         Ok(TestResult { passed, failed, ignored, output: combined, success })
     }
+}
+
+fn decode_lossy(bytes: &[u8]) -> String {
+    bytes.to_str_lossy().into_owned()
 }
 
 /// Parses `cargo test` output to extract pass/fail/ignore counts from summary
@@ -215,6 +220,16 @@ mod tests {
         let dir = PathBuf::from("/tmp/test-project");
         let runner = TestRunner::with_dir(dir.clone());
         assert_eq!(runner.working_dir, dir);
+    }
+
+    #[test]
+    fn decode_lossy_replaces_invalid_utf8() {
+        let fixture = [b'f', b'o', 0x80, b'o'];
+
+        let actual = decode_lossy(&fixture);
+
+        let expected = "fo\u{fffd}o";
+        assert_eq!(actual, expected);
     }
 
     #[test]
