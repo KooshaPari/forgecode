@@ -98,6 +98,7 @@ const GITHUB_LATEST: &str = "https://github.com";
 
 /// Strict `[owner]/[repo]` validator. Matches the regex the on-disk PS1 and
 /// `install.ps1` were both *meant* to enforce but never did.
+#[cfg(windows)]
 fn validate_repo(repo: &str) -> Result<(), String> {
     let mut parts = repo.splitn(2, '/');
     let owner = parts.next().unwrap_or("");
@@ -116,6 +117,7 @@ fn validate_repo(repo: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(windows)]
 #[derive(Debug)]
 struct Args {
     release_repo: String,
@@ -126,6 +128,7 @@ struct Args {
     self_path: Vec<u16>,   // helper's own exe path, for self-delete
 }
 
+#[cfg(windows)]
 fn parse_args() -> Result<Args, String> {
     // Skip argv[0]; expected: download repo asset wait pid swap from to
     let raw: Vec<String> = std::env::args_os()
