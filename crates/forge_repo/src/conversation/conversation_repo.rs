@@ -453,7 +453,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
         // Try FTS5 first; if the virtual table is missing/corrupt or the
         // MATCH expression has a syntax error, fall back to a LIKE scan so
         // the UI never silently drops results.
-        match self.search_conversations_fts(&query, limit_value).await {
+        match self.search_conversations_fts(query.clone(), limit_value).await {
             Ok(rows) => Ok(rows),
             Err(error) => {
                 warn!(
@@ -461,16 +461,20 @@ impl ConversationRepository for ConversationRepositoryImpl {
                     query = %query,
                     "FTS5 search failed, falling back to LIKE scan"
                 );
-                self.search_conversations_like(&query, limit_value).await
+                self.search_conversations_like(query, limit_value).await
             }
         }
     }
+}
 
-    /// FTS5 BM25 primary path. Errors propagate so the caller can decide
-    /// whether to fall back.
+impl ConversationRepositoryImpl {
+    /// Inherent helpers: FTS5 primary path + LIKE fallback. They live on the
+    /// concrete impl (not the trait) because they take an owned `String` so
+    /// the closure passed to `run_with_connection` can move the value into
+    /// the `spawn_blocking` future without borrowing `self` for `'life1`.
     async fn search_conversations_fts(
         &self,
-        query: &str,
+        query: String,
         limit_value: Option<i64>,
     ) -> anyhow::Result<Vec<Conversation>> {
         self.run_with_connection(move |connection, wid| {
@@ -528,7 +532,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
     /// returns something useful for the user rather than an empty result.
     async fn search_conversations_like(
         &self,
-        query: &str,
+        query: String,
         limit_value: Option<i64>,
     ) -> anyhow::Result<Vec<Conversation>> {
         self.run_with_connection(move |connection, wid| {
@@ -568,7 +572,10 @@ impl ConversationRepository for ConversationRepositoryImpl {
         })
         .await
     }
+}
 
+#[async_trait::async_trait]
+impl ConversationRepository for ConversationRepositoryImpl {
     /// Return a single FTS5 snippet for a (conversation, query) pair.
     /// Used by the UI to render a "matched passage" preview for the
     /// currently selected search hit. Returns `None` if no match.
