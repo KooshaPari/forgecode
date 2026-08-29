@@ -7,6 +7,7 @@ use forge_domain::{
     Context, Conversation, ConversationId, ConversationRepository, ConversationSummary,
     ForgeImportReport, WorkspaceHash,
 };
+use tracing::warn;
 
 use crate::conversation::conversation_record::{
     ContextRecord, ConversationRecord, ConversationRecordLite, MetricsRecord,
@@ -449,6 +450,32 @@ impl ConversationRepository for ConversationRepositoryImpl {
     ) -> anyhow::Result<Vec<Conversation>> {
         let query = query.to_string();
         let limit_value = limit.map(|n| n as i64);
+        // Try FTS5 first; if the virtual table is missing/corrupt or the
+        // MATCH expression has a syntax error, fall back to a LIKE scan so
+        // the UI never silently drops results.
+        match self
+            .search_conversations_fts(&query, limit_value)
+            .await
+        {
+            Ok(rows) => Ok(rows),
+            Err(error) => {
+                warn!(
+                    %error,
+                    query = %query,
+                    "FTS5 search failed, falling back to LIKE scan"
+                );
+                self.search_conversations_like(&query, limit_value).await
+            }
+        }
+    }
+
+    /// FTS5 BM25 primary path. Errors propagate so the caller can decide
+    /// whether to fall back.
+    async fn search_conversations_fts(
+        &self,
+        query: &str,
+        limit_value: Option<i64>,
+    ) -> anyhow::Result<Vec<Conversation>> {
         self.run_with_connection(move |connection, wid| {
             let workspace_id = wid.id() as i64;
             // FTS5 BM25 search joined back to the base table on
@@ -484,8 +511,55 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // MATCH operator when used as a column. Use the lower-level
             // `sql_query` so we can read back the typed rows.
             let mut q = diesel::sql_query(sql).into_boxed();
-            q = q.bind::<diesel::sql_types::Text, _>(&query);
+            q = q.bind::<diesel::sql_types::Text, _>(query);
             q = q.bind::<diesel::sql_types::BigInt, _>(workspace_id);
+            if let Some(l) = limit_value {
+                q = q.bind::<diesel::sql_types::BigInt, _>(l);
+            }
+
+            let raw_rows: Vec<ConversationRecord> = q.load(connection)?;
+            let conversations: Result<Vec<Conversation>, _> =
+                raw_rows.into_iter().map(Conversation::try_from).collect();
+            conversations
+        })
+        .await
+    }
+
+    /// Defensive fallback for when `conversations_fts` is unreachable or the
+    /// query has an FTS5 syntax error. A full table scan over `title` and
+    /// `context` with `LIKE '%term%'` is much slower than FTS5 but always
+    /// returns something useful for the user rather than an empty result.
+    async fn search_conversations_like(
+        &self,
+        query: &str,
+        limit_value: Option<i64>,
+    ) -> anyhow::Result<Vec<Conversation>> {
+        self.run_with_connection(move |connection, wid| {
+            let workspace_id = wid.id() as i64;
+            // Escape LIKE wildcards so a query for "100%" doesn't try to
+            // match everything. Backslash is the default ESCAPE in SQLite.
+            let escaped = query
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            let like_pattern = format!("%{escaped}%");
+            let mut sql = String::from(
+                "SELECT * FROM conversations \
+                 WHERE workspace_id = ? \
+                   AND (title LIKE ? ESCAPE '\\' \
+                        OR context LIKE ? ESCAPE '\\' \
+                        OR cwd LIKE ? ESCAPE '\\') \
+                 ORDER BY updated_at DESC",
+            );
+            if limit_value.is_some() {
+                sql.push_str(" LIMIT ?");
+            }
+
+            let mut q = diesel::sql_query(sql).into_boxed();
+            q = q.bind::<diesel::sql_types::BigInt, _>(workspace_id);
+            q = q.bind::<diesel::sql_types::Text, _>(&like_pattern);
+            q = q.bind::<diesel::sql_types::Text, _>(&like_pattern);
+            q = q.bind::<diesel::sql_types::Text, _>(&like_pattern);
             if let Some(l) = limit_value {
                 q = q.bind::<diesel::sql_types::BigInt, _>(l);
             }
@@ -4098,6 +4172,71 @@ mod tests {
         assert!(
             none.is_none(),
             "highlight() must return None when the query has no match",
+        );
+
+        Ok(())
+    }
+
+    /// Verify that `search_conversations` falls back to the LIKE scan when
+    /// the `conversations_fts` virtual table is missing (the recovery path
+    /// for migration failures / database corruption). The user must still
+    /// get search results, just slower and ranked by `updated_at` rather than
+    /// BM25. Without this guarantee, an FTS5 outage would silently drop
+    /// search hits in the UI.
+    #[tokio::test]
+    async fn test_search_falls_back_to_like_when_fts_table_missing() -> anyhow::Result<()> {
+        let repo = repository()?;
+
+        // Insert a conversation with a known term; refresh FTS so the
+        // happy-path search would succeed (sanity check).
+        let needle = "LIKEFALLBACKNEEDLE";
+        let msg = ContextMessage::user(needle, None);
+        let context = Context::default().messages(vec![msg.into()]);
+        let conv = Conversation::new(ConversationId::generate())
+            .title(Some("LIKE Fallback Test".to_string()))
+            .context(Some(context));
+        repo.upsert_conversation(conv.clone()).await?;
+        repo.refresh_fts_index().await?;
+
+        // Sanity: FTS path works while the index is intact.
+        let fts_hits = repo.search_conversations(needle, None).await?;
+        assert_eq!(
+            fts_hits.len(),
+            1,
+            "FTS5 happy path must find the inserted conversation",
+        );
+
+        // Simulate the FTS5 outage: DROP the virtual table. Subsequent
+        // FTS5 MATCH queries will return a "no such table" error which
+        // `search_conversations` must catch and recover from via LIKE.
+        repo.run_with_connection(move |connection, _wid| {
+            diesel::sql_query("DROP TABLE conversations_fts").execute(connection)?;
+            Ok(())
+        })
+        .await?;
+
+        // The recovery path: `search_conversations` should still return the
+        // inserted conversation via the LIKE fallback. The result count is
+        // the same as the FTS path.
+        let like_hits = repo.search_conversations(needle, None).await?;
+        assert_eq!(
+            like_hits.len(),
+            1,
+            "search_conversations must fall back to LIKE when FTS5 is unavailable; \
+             got {} hits instead of 1",
+            like_hits.len(),
+        );
+        assert_eq!(
+            like_hits[0].id, conv.id,
+            "LIKE fallback must return the same conversation as the FTS path",
+        );
+
+        // A query that hits no rows is still empty (not an error) in the
+        // fallback path.
+        let empty = repo.search_conversations("DEFINITELY_NOT_THERE", None).await?;
+        assert!(
+            empty.is_empty(),
+            "LIKE fallback must return empty Vec for non-matching queries",
         );
 
         Ok(())
