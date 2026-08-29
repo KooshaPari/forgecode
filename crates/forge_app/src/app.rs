@@ -10,8 +10,8 @@ use crate::apply_tunable_parameters::ApplyTunableParameters;
 use crate::changed_files::ChangedFiles;
 use crate::dto::ToolsOverview;
 use crate::hooks::{
-    CompactionHandler, DoomLoopDetector, PendingTodosHandler, TitleGenerationHandler,
-    TracingHandler,
+    AutoRepairHook, CompactionHandler, DoomLoopDetector, PendingTodosHandler,
+    TitleGenerationHandler, TracingHandler,
 };
 use crate::init_conversation_metrics::InitConversationMetrics;
 use crate::orch::Orchestrator;
@@ -168,7 +168,7 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ForgeAp
                     .and(CompactionHandler::new(agent.clone(), environment.clone())),
             )
             .on_toolcall_start(tracing_handler.clone())
-            .on_toolcall_end(tracing_handler)
+            .on_toolcall_end(tracing_handler.and(AutoRepairHook::new()))
             .on_end(on_end_hook);
 
         let orch = Orchestrator::new(
