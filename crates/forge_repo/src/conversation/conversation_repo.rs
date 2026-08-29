@@ -453,7 +453,10 @@ impl ConversationRepository for ConversationRepositoryImpl {
         // Try FTS5 first; if the virtual table is missing/corrupt or the
         // MATCH expression has a syntax error, fall back to a LIKE scan so
         // the UI never silently drops results.
-        match self.search_conversations_fts(query.clone(), limit_value).await {
+        match self
+            .search_conversations_fts(query.clone(), limit_value)
+            .await
+        {
             Ok(rows) => Ok(rows),
             Err(error) => {
                 warn!(
