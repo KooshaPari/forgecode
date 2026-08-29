@@ -131,18 +131,26 @@ async fn execute_update_command(api: Arc<impl API>, auto_update: bool) {
 
 /// Returns the update command for the current platform.
 ///
-/// On Windows this returns a PowerShell invocation that downloads the release
-/// binary and stages an atomic swap; on other platforms it returns the official
-/// `curl … | sh` one-liner.
+/// On Windows, the `helioslite_helper.exe` sibling binary is the primary
+/// update mechanism (download → SHA-256 verify → wait → atomic swap →
+/// relaunch, all in one detached process). The PowerShell scaffolder
+/// (`windows_update_command`) remains as a fallback for installations that
+/// predate the helper binary. On other platforms the POSIX `curl … | sh`
+/// one-liner is used.
 fn update_command() -> String {
     #[cfg(windows)]
     {
-        windows_update_command().unwrap_or_else(|| "exit 1".to_string())
+        windows_update_with_helper()
+            .or_else(windows_update_command)
+            .unwrap_or_else(|| "exit 1".to_string())
     }
     #[cfg(not(windows))]
     {
-        // Phenotype rename: prefer the renamed endpoint, falling back to the
-        // upstream forgecode.dev/cli URL so pre-rename builds keep working.
+        // Both URLs serve the same installer script from our own
+        // infrastructure (helioslite.dev is the canonical, forgecode.dev
+        // is the legacy pre-rename URL we still maintain for older
+        // clients). The fallback is plain CDN redundancy, not a switch
+        // to a different code source.
         let primary = std::env::var("HELIOSLITE_UPDATE_URL")
             .unwrap_or_else(|_| "https://helioslite.dev/cli".to_string());
         let fallback = "https://forgecode.dev/cli";
@@ -150,23 +158,137 @@ fn update_command() -> String {
     }
 }
 
-/// Builds a native Windows update command.
+/// Primary Windows update path: spawn the `helioslite_helper.exe` sibling
+/// binary which handles the entire download → verify → wait → swap → relaunch
+/// flow in one detached process. Returns `None` if the helper isn't
+/// present alongside the running exe (e.g. older installs that predate the
+/// helper binary), in which case the caller falls back to
+/// `windows_update_command`.
+#[cfg(windows)]
+fn windows_update_with_helper() -> Option<String> {
+    use std::io::Write;
+
+    // Mirror the path resolution in `windows_update_command` so the asset
+    // name, install dir, and target exe paths stay consistent between the
+    // two code paths.
+    let target = if cfg!(target_arch = "aarch64") {
+        "aarch64-pc-windows-msvc"
+    } else {
+        "x86_64-pc-windows-msvc"
+    };
+    let prefix = current_binary_prefix();
+    let asset = release_asset_for_target_with_prefix(target, prefix)?;
+
+    let binary_stem = match prefix {
+        "helioslite" => "helioslite",
+        _ => "forge",
+    };
+    let install_dir_name = match prefix {
+        "helioslite" => "heliosLite",
+        _ => "Forge",
+    };
+
+    let local_app_data = std::env::var("LOCALAPPDATA").ok()?;
+    let install_dir = format!(r"{local_app_data}\Programs\{install_dir_name}");
+    let exe_name = format!("{binary_stem}.exe");
+    let new_exe = format!(r"{install_dir}\{exe_name}.new");
+    let exe = format!(r"{install_dir}\{exe_name}");
+    let helper_exe = format!(r"{install_dir}\helioslite_helper.exe");
+
+    // Bail out so the PS1 scaffolder can run if the helper isn't shipped.
+    // This is the common case for any install that predates the helper
+    // landing in the release archive.
+    if !std::path::Path::new(&helper_exe).exists() {
+        return None;
+    }
+
+    let release_repo =
+        std::env::var("HELIOSLITE_REPO").unwrap_or_else(|_| DEFAULT_UPDATE_REPO.to_string());
+    let parent_pid = std::process::id();
+
+    // Drive the helper detached so it outlives us. Stdin/stdout/stderr are
+    // closed so closing the parent terminal doesn't propagate to the helper.
+    let log_path = format!(r"{install_dir}\helioslite-update.log");
+    // `CREATE_NO_WINDOW` (0x08000000) so the helper doesn't pop a console.
+    // `DETACHED_PROCESS` (0x00000008) so closing our terminal doesn't
+    // propagate a kill to the helper mid-swap.
+    const FLAGS: u32 = 0x08000000 | 0x00000008;
+    let mut cmd = std::process::Command::new(&helper_exe);
+    cmd.args([
+        "download",
+        &release_repo,
+        &asset,
+        "wait",
+        &parent_pid.to_string(),
+        "swap",
+        &new_exe,
+        &exe,
+    ])
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null());
+    // Detach on Windows by passing CREATE_NO_WINDOW + DETACHED_PROCESS via
+    // CommandExt::creation_flags.  We need to reach for windows-sys here.
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(FLAGS);
+    }
+    match cmd.spawn() {
+        Ok(_) => {
+            // Best-effort log note: the helper writes its own per-step log to
+            // stderr-equivalent, but operators want a "spawned OK" trail too.
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+            {
+                let _ = writeln!(
+                    f,
+                    "{}  repo={}  asset={}  helper=spawned pid_parent={}",
+                    chrono::Utc::now().to_rfc3339(),
+                    release_repo,
+                    asset,
+                    parent_pid,
+                );
+            }
+            // Returning "exit 0" here signals "we handed off the update,
+            // don't try anything else".  The caller will spawn this string
+            // via execute_shell_command_raw which will short-circuit on
+            // success; the helper does the real work in the background.
+            Some("exit 0".to_string())
+        }
+        Err(e) => {
+            // Helper refused to spawn. Fall through to PS1 scaffolder by
+            // returning None.
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+            {
+                let _ = writeln!(
+                    f,
+                    "{}  repo={}  helper spawn failed: {e}; falling back to PS1",
+                    chrono::Utc::now().to_rfc3339(),
+                    release_repo,
+                );
+            }
+            None
+        }
+    }
+}
+
+/// Fallback Windows update path: generate a small PowerShell downloader +
+/// `.cmd` swap script on disk and run it via `powershell.exe`. Kept so
+/// installs that predate the `helioslite_helper.exe` binary landing in the
+/// release archive still self-update. New installs (or any install where
+/// the helper is present) skip this entirely via `windows_update_with_helper`.
 ///
-/// The running `forge.exe` (or `helioslite.exe`) is locked while the process
-/// is alive, so the new binary cannot be replaced in place. Instead we:
-///
-/// 1. Download `{prefix}-{arch}-pc-windows-msvc.exe` to `<binary>.new` next to
-///    the current binary using PowerShell (absolute paths only, immune to the
-///    length-capped PATH that breaks `curl` resolution in cmd.exe).
-/// 2. Stage a small `.cmd` helper that waits for the running exe to exit, swaps
-///    `<binary>.new` over `<binary>`, cleans up, and relaunches.
-/// 3. Launch that helper detached, so it survives the binary exiting.
-///
-/// The prefix and install directory are derived from the running binary's
-/// file stem so `helioslite.exe` self-updates from `helioslite-*.exe` assets
-/// under `%LOCALAPPDATA%\Programs\heliosLite\`, while `forge.exe` keeps its
-/// historical `%LOCALAPPDATA%\Programs\Forge\` + `forge-*.exe` layout. This
-/// keeps the two identities' self-update channels separate.
+/// The PowerShell scaffolder is retained only because removing it outright
+/// would brick the upgrade path for anyone running a build older than the
+/// first release that ships the helper. Once every supported build has the
+/// helper in its install dir for ≥2 minor releases, this function can be
+/// deleted along with the `_forge_swap.cmd` / `forge-update.ps1` files it
+/// produces.
 #[cfg(windows)]
 fn windows_update_command() -> Option<String> {
     use std::io::Write;
@@ -320,30 +442,25 @@ pub async fn on_update(api: Arc<impl API>, update: Option<&Update>) {
         return;
     }
 
-    // Phenotype rename: prefer the renamed-binary GitHub repo
-    // (`KooshaPari/heliosLite`). In flight, the `KooshaPari/forgecode` releases
-    // are kept as the canonical source for both name chains; `HELIOSLITE_REPO`
-    // overrides the lookup so nightlies can target a third-party fork without
-    // recompiling.
+    // Repo mapping: the HeliosLite fork (the package you are running) lives
+    // at `KooshaPari/forgecode` on GitHub. The "helioslite" binary name and
+    // the "forgecode" repo name are not the same axis; the binary is the
+    // Phenotype rename of upstream tailcallhq/forgecode, and the repo is the
+    // canonical fork we ship from. `HELIOSLITE_REPO` overrides the lookup
+    // for nightlies or third-party forks.
     //
-    // Tombstone: until the rename is pushed to remote (Gate 4b),
-    // `KooshaPari/heliosLite` doesn't exist and the lookup 404s. We swallow
-    // that case and try the legacy `KooshaPari/forgecode` releases so users on
-    // pre-rename builds keep getting notified. This branch will be removed once
-    // the rename is permanent.
-    let primary_repo =
-        std::env::var("HELIOSLITE_REPO").unwrap_or_else(|_| "KooshaPari/heliosLite".to_string());
-    let legacy_repo = "KooshaPari/forgecode";
-    let informer_primary = update_informer::new(registry::GitHub, primary_repo.as_str(), VERSION)
-        .interval(frequency.clone().into());
-    let informer_legacy =
-        update_informer::new(registry::GitHub, legacy_repo, VERSION).interval(frequency.into());
+    // NO FALLBACK POLICY: if the configured repo is unreachable or has no
+    // release, we do NOT silently switch to upstream tailcallhq/forgecode
+    // or to the previously-suggested `KooshaPari/heliosLite` (which doesn't
+    // exist). The informer reports the version; if it's `None` we stay
+    // quiet. The actual download path (helper / PS1 scaffolder) does the
+    // same: log a one-line reason and stay on the current binary.
+    let repo =
+        std::env::var("HELIOSLITE_REPO").unwrap_or_else(|_| DEFAULT_UPDATE_REPO.to_string());
+    let informer =
+        update_informer::new(registry::GitHub, repo.as_str(), VERSION).interval(frequency.into());
 
-    if let Some(version) = informer_primary
-        .check_version()
-        .ok()
-        .flatten()
-        .or_else(|| informer_legacy.check_version().ok().flatten())
+    if let Some(version) = informer.check_version().ok().flatten()
         && (auto_update || confirm_update(version).await)
     {
         execute_update_command(api, auto_update).await;
@@ -482,7 +599,7 @@ mod tests {
             "release-2.10.2",
             "2.10.2/../../x",
             "2.10.2?download=1",
-            "2.10.2#x",
+            "2.10.2#frag",
         ] {
             assert!(
                 release_asset_url_with_prefix(version, "aarch64-apple-darwin", "forge").is_none()
@@ -490,6 +607,38 @@ mod tests {
         }
         assert!(
             release_asset_url_with_prefix("2.10.2", "x86_64-pc-windows-gnu", "forge").is_none()
+        );
+    }
+
+    /// Pins the default repo to `KooshaPari/forgecode`.  HeliosLite's live
+    /// releases ship from there; the upstream `tailcallhq/forgecode` and the
+    /// previously-suggested `KooshaPari/heliosLite` (which doesn't exist) are
+    /// never auto-fallbacks.  Override via $env:HELIOSLITE_REPO at runtime.
+    /// If this test breaks, the in-app informer (and the helper binary's
+    /// download URL by extension) is silently pointing at the wrong repo.
+    #[test]
+    fn default_update_repo_resolves_to_kooshapari_forgecode() {
+        assert_eq!(DEFAULT_UPDATE_REPO, "KooshaPari/forgecode");
+        // The helper-driven download URL must not include the phantom
+        // `KooshaPari/heliosLite` repo anywhere in its composition.
+        let url = release_asset_url_with_prefix(
+            "9.9.9",
+            "x86_64-pc-windows-msvc",
+            current_binary_prefix(),
+        )
+        .expect("Windows target must produce a URL")
+        .to_string();
+        assert!(
+            url.starts_with("https://github.com/KooshaPari/forgecode/"),
+            "default update URL must target KooshaPari/forgecode; got {url}"
+        );
+        assert!(
+            !url.contains("KooshaPari/heliosLite"),
+            "default update URL must not reference the non-existent KooshaPari/heliosLite; got {url}"
+        );
+        assert!(
+            !url.contains("tailcallhq/forgecode"),
+            "default update URL must not target upstream tailcallhq; got {url}"
         );
     }
 }
