@@ -1494,9 +1494,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                         }
                     }
                     Err(e) => {
-                        self.writeln_title(TitleFormat::error(format!(
-                            "Test runner failed: {e}"
-                        )))?;
+                        self.writeln_title(TitleFormat::error(format!("Test runner failed: {e}")))?;
                     }
                 }
                 return Ok(());

@@ -96,8 +96,8 @@ impl TestRunner {
 
         let output = cmd.output().context("failed to execute cargo command")?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = String::from_utf8(output.stdout).unwrap_or_default();
+        let stderr = String::from_utf8(output.stderr).unwrap_or_default();
         let combined = format!("{stdout}{stderr}");
 
         let (passed, failed, ignored) = parse_cargo_test_output(&combined);
