@@ -413,7 +413,7 @@ fn sha256_inline(message: &[u8]) -> [u8; 32] {
         x.rotate_right(17) ^ x.rotate_right(19) ^ (x >> 10)
     }
 
-    #[allow(clippy::manual_chunks_exact)]
+    #[allow(clippy::manual_chunks)]
     for chunk in msg.chunks_exact(64) {
         let mut w = [0u32; 64];
         for i in 0..16 {
@@ -570,6 +570,7 @@ fn relaunch(exe: &[u16]) -> Result<(), u32> {
 // ---------- tests ------------------------------------------------------------
 
 #[cfg(test)]
+#[cfg(windows)]
 mod tests {
     use super::*;
 
