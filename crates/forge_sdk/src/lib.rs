@@ -47,8 +47,8 @@ pub use forge_api::*;
 
 // Re-export key domain types
 pub use forge_domain::{
-    Agent, AgentId, Conversation, ConversationId, Context, Model, ModelId, Provider,
-    ProviderId, ToolCallFull, ToolResult,
+    Agent, AgentId, Context, Conversation, ConversationId, Model, ModelId, Provider, ProviderId,
+    ToolCallFull, ToolResult,
 };
 
 // Re-export configuration

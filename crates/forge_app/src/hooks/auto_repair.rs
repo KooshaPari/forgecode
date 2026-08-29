@@ -213,9 +213,7 @@ mod tests {
     #[tokio::test]
     async fn test_auto_repair_skips_read_tool() {
         let hook = AutoRepairHook::new();
-        let mut conversation = Conversation::generate().context(
-            forge_domain::Context::default(),
-        );
+        let mut conversation = Conversation::generate().context(forge_domain::Context::default());
 
         let event = make_toolcall_end_event("read", false);
         hook.handle(&event, &mut conversation).await.unwrap();
@@ -227,9 +225,7 @@ mod tests {
     #[tokio::test]
     async fn test_auto_repair_skips_failed_tool() {
         let hook = AutoRepairHook::new();
-        let mut conversation = Conversation::generate().context(
-            forge_domain::Context::default(),
-        );
+        let mut conversation = Conversation::generate().context(forge_domain::Context::default());
 
         let event = make_toolcall_end_event("write", true);
         hook.handle(&event, &mut conversation).await.unwrap();
@@ -241,9 +237,7 @@ mod tests {
     #[tokio::test]
     async fn test_auto_repair_disabled() {
         let hook = AutoRepairHook::disabled();
-        let mut conversation = Conversation::generate().context(
-            forge_domain::Context::default(),
-        );
+        let mut conversation = Conversation::generate().context(forge_domain::Context::default());
 
         let event = make_toolcall_end_event("write", false);
         hook.handle(&event, &mut conversation).await.unwrap();
