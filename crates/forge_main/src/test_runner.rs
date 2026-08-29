@@ -78,13 +78,15 @@ impl TestRunner {
 
     /// Runs `cargo test` without any filters (all tests in the workspace).
     pub fn run_all(&self) -> Result<TestResult> {
-        let cmd = Command::new("cargo").arg("test");
+        let mut cmd = Command::new("cargo");
+        cmd.arg("test");
         self.execute(cmd)
     }
 
     /// Runs `cargo bench` in the working directory.
     pub fn run_benchmarks(&self) -> Result<TestResult> {
-        let cmd = Command::new("cargo").arg("bench");
+        let mut cmd = Command::new("cargo");
+        cmd.arg("bench");
         self.execute(cmd)
     }
 
@@ -169,6 +171,8 @@ fn extract_count(line: &str, label: &str) -> Option<usize> {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_parse_cargo_test_output_ok() {
@@ -211,6 +215,30 @@ mod tests {
         let dir = PathBuf::from("/tmp/test-project");
         let runner = TestRunner::with_dir(dir.clone());
         assert_eq!(runner.working_dir, dir);
+    }
+
+    #[test]
+    fn run_all_executes_tests_in_the_runner_directory() {
+        let fixture = tempdir().unwrap();
+        let source_dir = fixture.path().join("src");
+        fs::create_dir(&source_dir).unwrap();
+        fs::write(
+            fixture.path().join("Cargo.toml"),
+            "[package]\nname = \"runner_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        fs::write(
+            source_dir.join("lib.rs"),
+            "#[cfg(test)]\nmod tests {\n    #[test]\n    fn passes() {}\n}\n",
+        )
+        .unwrap();
+
+        let actual = TestRunner::with_dir(fixture.path().to_path_buf())
+            .run_all()
+            .unwrap();
+
+        assert!(actual.success, "{}", actual.output);
+        assert_eq!((actual.passed, actual.failed, actual.ignored), (1, 0, 0));
     }
 
     #[test]
