@@ -46,6 +46,7 @@ impl AutoRepairHook {
     }
 
     /// Creates a new auto-repair hook with custom commands.
+    #[cfg(test)]
     pub fn with_commands(test_command: impl Into<String>, lint_command: impl Into<String>) -> Self {
         Self {
             enabled: true,
@@ -55,6 +56,7 @@ impl AutoRepairHook {
     }
 
     /// Creates a disabled auto-repair hook.
+    #[cfg(test)]
     pub fn disabled() -> Self {
         Self { enabled: false, test_command: None, lint_command: None }
     }
@@ -154,12 +156,7 @@ mod tests {
         };
 
         EventData::new(
-            Agent {
-                id: AgentId::new("test"),
-                model: ModelId::new("test-model"),
-                provider: ProviderId::new("test-provider"),
-                ..Default::default()
-            },
+            Agent::new(AgentId::new("test"), ProviderId::OPENAI, ModelId::new("test-model")),
             ModelId::new("test-model"),
             ToolcallEndPayload::new(tool_call, result),
         )
