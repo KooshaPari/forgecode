@@ -156,10 +156,9 @@ pub fn parse_cargo_test_output(output: &str) -> (usize, usize, usize) {
 /// `"5 passed"` → `Some(5)`).
 fn extract_count(line: &str, label: &str) -> Option<usize> {
     let marker = format!(" {label}");
-    let idx = line.find(&marker)?;
 
     // Walk backwards from the marker to find the numeric run.
-    let before = &line[..idx];
+    let before = prefix_before_marker(line, &marker)?;
     let num_str = before
         .chars()
         .rev()
@@ -170,6 +169,11 @@ fn extract_count(line: &str, label: &str) -> Option<usize> {
         .collect::<String>();
 
     num_str.parse().ok()
+}
+
+fn prefix_before_marker<'a>(line: &'a str, marker: &str) -> Option<&'a str> {
+    let idx = line.find(marker)?;
+    line.get(..idx)
 }
 
 #[cfg(test)]
@@ -204,6 +208,16 @@ mod tests {
     fn test_parse_cargo_test_output_empty() {
         let (passed, failed, ignored) = parse_cargo_test_output("");
         assert_eq!((passed, failed, ignored), (0, 0, 0));
+    }
+
+    #[test]
+    fn prefix_before_marker_preserves_unicode_boundaries() {
+        let fixture = "result: ok. caf\u{00e9} 5 passed";
+
+        let actual = prefix_before_marker(fixture, " passed").unwrap();
+
+        let expected = "result: ok. caf\u{00e9} 5";
+        assert_eq!(actual, expected);
     }
 
     #[test]
