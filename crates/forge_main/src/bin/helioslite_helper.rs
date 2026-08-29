@@ -299,12 +299,9 @@ fn run() -> Result<(), u8> {
 
 fn download(url: &str) -> Result<Vec<u8>, String> {
     let resp = http_get(url).map_err(|e| format!("GET {url}: {e}"))?;
-    let mut body = resp.into_reader();
-    let mut buf = Vec::with_capacity(64 * 1024);
-    use std::io::Read;
-    body.read_to_end(&mut buf)
-        .map_err(|e| format!("read body: {e}"))?;
-    Ok(buf)
+    resp.into_body()
+        .read_to_vec()
+        .map_err(|e| format!("read body: {e}"))
 }
 
 /// Fetch `<asset_url>.sha256` and return the expected hex digest.
@@ -316,10 +313,9 @@ fn download(url: &str) -> Result<Vec<u8>, String> {
 fn fetch_expected_sha256(url: &str) -> Result<Option<String>, String> {
     match http_get(url) {
         Ok(resp) => {
-            use std::io::Read;
-            let mut s = String::new();
-            resp.into_reader()
-                .read_to_string(&mut s)
+            let s = resp
+                .into_body()
+                .read_to_string()
                 .map_err(|e| format!("read sha256 body: {e}"))?;
             // `<hex>  \n` — split on whitespace, take the first
             // token, lowercase, strip non-hex.
@@ -338,9 +334,10 @@ fn fetch_expected_sha256(url: &str) -> Result<Option<String>, String> {
 }
 
 fn http_get(url: &str) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
-    let agent = ureq::Agent::config_builder()
+    let config = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS)))
         .build();
+    let agent = config.new_agent();
     agent.get(url).call()
 }
 

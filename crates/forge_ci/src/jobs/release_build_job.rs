@@ -86,9 +86,26 @@ impl From<ReleaseBuilderJob> for Job {
                     .input("use-cross", "${{ matrix.cross }}")
                     .input("cross-version", "0.2.5")
                     .env("APP_VERSION", value.version.to_string()),
+            )
+            // Build the Windows self-update helper binary (see
+            // forge_main/src/bin/helioslite_helper.rs). Without this binary
+            // the running forge.exe falls back to the legacy PS1 scaffolder
+            // in forge_main::update::windows_update_command, which is the
+            // pre-refactor path that was the source of the
+            // ": not recognized" + IO error bugs. Conditional on Windows
+            // because the helper is winapi-only.
+            .add_step(
+                Step::new("Build helioslite_helper Binary")
+                    .uses("ClementTsang", "cargo-action", "2438cc5f3ba4e971289fffca2a00dedea6911f14")
+                    .input("command", "build --release")
+                    .input("args", "--target ${{ matrix.target }} -p forge_main --bin helioslite_helper")
+                    .input("use-cross", "${{ matrix.cross }}")
+                    .input("cross-version", "0.2.5")
+                    .env("APP_VERSION", value.version.to_string())
+                    .if_condition("contains(matrix.target, 'windows')"),
             );
 
-        if value.release_id.is_some() {
+        if let Some(release_id) = value.release_id {
             job = job
                 // Rename binary to the forge asset name and mirror it under
                 // the helioslite asset name so both binary identities can
@@ -111,46 +128,46 @@ impl From<ReleaseBuilderJob> for Job {
                 .add_step(
                     Step::new("Upload to Release")
                         .uses(
-                            "softprops",
-                            "action-gh-release",
-                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
                         )
-                        .input("tag_name", value.version.to_string())
-                        .input("files", "${{ matrix.binary_name }}")
-                        .input("overwrite_files", "true"),
+                        .input("release_id", release_id.clone())
+                        .input("file", "${{ matrix.binary_name }}")
+                        .input("overwrite", "true"),
                 )
                 .add_step(
                     Step::new("Upload checksum to Release")
                         .uses(
-                            "softprops",
-                            "action-gh-release",
-                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
                         )
-                        .input("tag_name", value.version.to_string())
-                        .input("files", "${{ matrix.binary_name }}.sha256")
-                        .input("overwrite_files", "true"),
+                        .input("release_id", release_id.clone())
+                        .input("file", "${{ matrix.binary_name }}.sha256")
+                        .input("overwrite", "true"),
                 )
                 .add_step(
                     Step::new("Upload helioslite to Release")
                         .uses(
-                            "softprops",
-                            "action-gh-release",
-                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
                         )
-                        .input("tag_name", value.version.to_string())
-                        .input("files", "${{ matrix.helioslite_name }}")
-                        .input("overwrite_files", "true"),
+                        .input("release_id", release_id.clone())
+                        .input("file", "${{ matrix.helioslite_name }}")
+                        .input("overwrite", "true"),
                 )
                 .add_step(
                     Step::new("Upload helioslite checksum to Release")
                         .uses(
-                            "softprops",
-                            "action-gh-release",
-                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
                         )
-                        .input("tag_name", value.version.to_string())
-                        .input("files", "${{ matrix.helioslite_name }}.sha256")
-                        .input("overwrite_files", "true"),
+                        .input("release_id", release_id.clone())
+                        .input("file", "${{ matrix.helioslite_name }}.sha256")
+                        .input("overwrite", "true"),
                 )
                 .add_step(
                     Step::new("Copy forge_dbd Binary")
@@ -165,49 +182,92 @@ impl From<ReleaseBuilderJob> for Job {
                 .add_step(
                     Step::new("Upload forge_dbd to Release (unix)")
                         .uses(
-                            "softprops",
-                            "action-gh-release",
-                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
                         )
-                        .input("tag_name", value.version.to_string())
-                        .input("files", "forge_dbd-${{ matrix.target }}")
-                        .input("overwrite_files", "true")
+                        .input("release_id", release_id.clone())
+                        .input("file", "forge_dbd-${{ matrix.target }}")
+                        .input("overwrite", "true")
                         .if_condition("!contains(matrix.target, 'windows')"),
                 )
                 .add_step(
                     Step::new("Upload forge_dbd checksum to Release (unix)")
                         .uses(
-                            "softprops",
-                            "action-gh-release",
-                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
                         )
-                        .input("tag_name", value.version.to_string())
-                        .input("files", "forge_dbd-${{ matrix.target }}.sha256")
-                        .input("overwrite_files", "true")
+                        .input("release_id", release_id.clone())
+                        .input("file", "forge_dbd-${{ matrix.target }}.sha256")
+                        .input("overwrite", "true")
                         .if_condition("!contains(matrix.target, 'windows')"),
                 )
                 .add_step(
                     Step::new("Upload forge_dbd to Release (windows)")
                         .uses(
-                            "softprops",
-                            "action-gh-release",
-                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
                         )
-                        .input("tag_name", value.version.to_string())
-                        .input("files", "forge_dbd-${{ matrix.target }}.exe")
-                        .input("overwrite_files", "true")
+                        .input("release_id", release_id.clone())
+                        .input("file", "forge_dbd-${{ matrix.target }}.exe")
+                        .input("overwrite", "true")
                         .if_condition("contains(matrix.target, 'windows')"),
                 )
                 .add_step(
                     Step::new("Upload forge_dbd checksum to Release (windows)")
                         .uses(
-                            "softprops",
-                            "action-gh-release",
-                            "3bb12739c298aeb8a4eeaf626c5b8d85266b0e65",
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
                         )
-                        .input("tag_name", value.version.to_string())
-                        .input("files", "forge_dbd-${{ matrix.target }}.exe.sha256")
-                        .input("overwrite_files", "true")
+                        .input("release_id", release_id.clone())
+                        .input("file", "forge_dbd-${{ matrix.target }}.exe.sha256")
+                        .input("overwrite", "true")
+                        .if_condition("contains(matrix.target, 'windows')"),
+                )
+                // Windows self-update helper: copy from cargo target dir to
+                // the asset name, generate a sidecar SHA-256, upload both.
+                // Windows-only because the helper is a winapi-only binary
+                // (it uses OpenProcess/WaitForSingleObject/MoveFileExW/
+                // CreateProcessW). The runner locates the helper next to
+                // the running exe and spawns it with `helioslite_helper.exe
+                // download <repo> <asset> wait <pid> swap <from> <to>`.
+                .add_step(
+                    Step::new("Copy helioslite_helper Binary")
+                        .run("cp \"${{ matrix.helper_path }}\" \"${{ matrix.helper_name }}\"")
+                        .shell("bash")
+                        .if_condition("contains(matrix.target, 'windows')"),
+                )
+                .add_step(
+                    Step::new("Generate helioslite_helper SHA-256 checksum")
+                        .run(r#"if command -v sha256sum >/dev/null 2>&1; then sha256sum "${{ matrix.helper_name }}" > "${{ matrix.helper_name }}.sha256"; else shasum -a 256 "${{ matrix.helper_name }}" > "${{ matrix.helper_name }}.sha256"; fi"#)
+                        .shell("bash")
+                        .if_condition("contains(matrix.target, 'windows')"),
+                )
+                .add_step(
+                    Step::new("Upload helioslite_helper to Release (windows)")
+                        .uses(
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                        )
+                        .input("release_id", release_id.clone())
+                        .input("file", "${{ matrix.helper_name }}")
+                        .input("overwrite", "true")
+                        .if_condition("contains(matrix.target, 'windows')"),
+                )
+                .add_step(
+                    Step::new("Upload helioslite_helper checksum to Release (windows)")
+                        .uses(
+                            "xresloader",
+                            "upload-to-github-release",
+                            "7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0",
+                        )
+                        .input("release_id", release_id)
+                        .input("file", "${{ matrix.helper_name }}.sha256")
+                        .input("overwrite", "true")
                         .if_condition("contains(matrix.target, 'windows')"),
                 );
         }

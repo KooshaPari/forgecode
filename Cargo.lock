@@ -2721,6 +2721,7 @@ dependencies = [
  "toml_edit 0.25.13+spec-1.1.0",
  "tracing",
  "update-informer",
+ "ureq",
  "url",
  "windows-sys 0.61.2",
 ]
@@ -2867,6 +2868,15 @@ dependencies = [
  "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-typescript",
+]
+
+[[package]]
+name = "forge_sdk"
+version = "0.1.0"
+dependencies = [
+ "forge_api",
+ "forge_config",
+ "forge_domain",
 ]
 
 [[package]]

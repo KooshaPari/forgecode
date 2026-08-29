@@ -30,6 +30,23 @@ name = "helioslite"
 path = "src/main.rs"
 
 
+# Self-update helper.  Replaces the scaffolded PowerShell + cmd pair
+# (`helioslite-update.ps1` and `_helioslite_swap.cmd`) that the main binary
+# used to generate at runtime via `crates/forge_main/src/update.rs::
+# windows_update_command()`.  Doing the whole download+verify+wait+swap
+# +relaunch flow in one small binary removes the encoding traps the PS1
+# scaffold hit on Windows PowerShell 5.1 and collapses six process hops into
+# one detached subprocess.  See crates/forge_main/src/bin/helioslite_helper.rs
+# for the invocation contract.
+#
+# Cross-platform builds compile a stub that returns exit code 2; the helper
+# is Windows-only at runtime (the main binary's update.rs short-circuits to
+# the POSIX `curl | sh` path on non-Windows).
+[[bin]]
+name = "helioslite_helper"
+path = "src/bin/helioslite_helper.rs"
+
+
 [dependencies]
 thiserror = { workspace = true }
 clap.workspace = true
@@ -87,6 +104,12 @@ forge_embed.workspace = true
 include_dir.workspace = true
 indexmap.workspace = true
 async-recursion.workspace = true
+
+# ureq is in the dep graph transitively via `update-informer`, but we also
+# use it directly in `helioslite_helper` to download the new binary at
+# runtime. Pinned to the same major as the transitive dep so we share one
+# build of the crate.
+ureq = { version = "3.4", default-features = false, features = ["_tls"] }
 
 forge_markdown_stream.workspace = true
 strip-ansi-escapes.workspace = true
