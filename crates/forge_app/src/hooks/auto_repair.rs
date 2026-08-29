@@ -156,16 +156,19 @@ mod tests {
         };
 
         EventData::new(
-            Agent::new(AgentId::new("test"), ProviderId::OPENAI, ModelId::new("test-model")),
+            Agent::new(
+                AgentId::new("test"),
+                ProviderId::OPENAI,
+                ModelId::new("test-model"),
+            ),
             ModelId::new("test-model"),
             ToolcallEndPayload::new(tool_call, result),
         )
     }
 
     fn make_conversation_with_message() -> Conversation {
-        Conversation::generate().context(
-            Context::default().add_message(ContextMessage::user("test message", None)),
-        )
+        Conversation::generate()
+            .context(Context::default().add_message(ContextMessage::user("test message", None)))
     }
 
     #[tokio::test]
