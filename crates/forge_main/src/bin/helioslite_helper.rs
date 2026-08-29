@@ -59,7 +59,9 @@
 
 #![cfg_attr(not(windows), allow(dead_code))]
 
+#[cfg(windows)]
 use std::ffi::OsString;
+#[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 use std::process::ExitCode;
 use std::time::Duration;
@@ -115,6 +117,7 @@ fn validate_repo(repo: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(windows)]
 #[derive(Debug)]
 struct Args {
     release_repo: String,
@@ -125,6 +128,7 @@ struct Args {
     self_path: Vec<u16>,   // helper's own exe path, for self-delete
 }
 
+#[cfg(windows)]
 fn parse_args() -> Result<Args, String> {
     // Skip argv[0]; expected: download repo asset wait pid swap from to
     let raw: Vec<String> = std::env::args_os()
@@ -185,6 +189,7 @@ fn parse_args() -> Result<Args, String> {
         self_path,
     })
 }
+#[cfg(windows)]
 fn wide(s: &str) -> Vec<u16> {
     OsString::from(s)
         .encode_wide()
@@ -192,6 +197,7 @@ fn wide(s: &str) -> Vec<u16> {
         .collect()
 }
 
+#[cfg(windows)]
 fn wide_path(p: &std::path::Path) -> Vec<u16> {
     p.as_os_str()
         .encode_wide()
@@ -564,6 +570,14 @@ fn relaunch(exe: &[u16]) -> Result<(), u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(windows))]
+    #[test]
+    fn main_rejects_non_windows_platforms() {
+        let actual = main();
+        let expected = ExitCode::from(2);
+        assert_eq!(actual, expected);
+    }
 
     #[test]
     fn validate_repo_accepts_canonical() {
