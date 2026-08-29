@@ -185,6 +185,9 @@ pub enum TopLevelCommand {
     /// ~/.helioslite data directory.
     Migrate(MigrateArgs),
 
+    /// Run tests or benchmarks using `cargo test` / `cargo bench`.
+    Test(TestCommandGroup),
+
     /// Delete conversations by exact id, source, or age.
     Forget(ForgetArgs),
 
@@ -223,6 +226,38 @@ pub struct MigrateArgs {
     /// or rename anything.
     #[arg(long)]
     pub dry_run: bool,
+}
+
+/// Command group for running tests and benchmarks.
+#[derive(Parser, Debug, Clone)]
+pub struct TestCommandGroup {
+    #[command(subcommand)]
+    pub command: TestSubcommand,
+}
+
+/// Sub-commands for `forge test`.
+#[derive(Subcommand, Debug, Clone)]
+pub enum TestSubcommand {
+    /// Run tests with optional package and test name filters.
+    Run {
+        /// Package name to test (passes `--package` to cargo).
+        #[arg(long)]
+        package: Option<String>,
+
+        /// Test name filter (passed as a cargo test filter argument).
+        #[arg(long)]
+        test: Option<String>,
+
+        /// Run benchmarks via `cargo bench` instead of `cargo test`.
+        #[arg(long)]
+        bench: bool,
+    },
+
+    /// Run all tests in the workspace.
+    All,
+
+    /// Run benchmarks using `cargo bench`.
+    Bench,
 }
 
 /// Arguments for `helioslite forget` (or `forge forget`).
@@ -2317,6 +2352,83 @@ mod tests {
             _ => panic!("Expected Update command"),
         };
         assert!(!actual);
+    }
+
+    #[test]
+    fn test_test_subcommand_run() {
+        let fixture = Cli::parse_from(["forge", "test", "run"]);
+        let actual = match fixture.subcommands {
+            Some(TopLevelCommand::Test(group)) => {
+                matches!(group.command, TestSubcommand::Run { .. })
+            }
+            _ => false,
+        };
+        assert!(actual);
+    }
+
+    #[test]
+    fn test_test_subcommand_all() {
+        let fixture = Cli::parse_from(["forge", "test", "all"]);
+        let actual = match fixture.subcommands {
+            Some(TopLevelCommand::Test(group)) => {
+                matches!(group.command, TestSubcommand::All)
+            }
+            _ => false,
+        };
+        assert!(actual);
+    }
+
+    #[test]
+    fn test_test_subcommand_bench() {
+        let fixture = Cli::parse_from(["forge", "test", "bench"]);
+        let actual = match fixture.subcommands {
+            Some(TopLevelCommand::Test(group)) => {
+                matches!(group.command, TestSubcommand::Bench)
+            }
+            _ => false,
+        };
+        assert!(actual);
+    }
+
+    #[test]
+    fn test_test_run_with_package() {
+        let fixture = Cli::parse_from(["forge", "test", "run", "--package", "forge_main"]);
+        let actual = match fixture.subcommands {
+            Some(TopLevelCommand::Test(group)) => match group.command {
+                TestSubcommand::Run { package, .. } => package,
+                _ => None,
+            },
+            _ => None,
+        };
+        let expected = Some("forge_main".to_string());
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_test_run_with_test_name() {
+        let fixture = Cli::parse_from(["forge", "test", "run", "--test", "test_foo"]);
+        let actual = match fixture.subcommands {
+            Some(TopLevelCommand::Test(group)) => match group.command {
+                TestSubcommand::Run { test, .. } => test,
+                _ => None,
+            },
+            _ => None,
+        };
+        let expected = Some("test_foo".to_string());
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_test_run_with_bench_flag() {
+        let fixture = Cli::parse_from(["forge", "test", "run", "--bench"]);
+        let actual = match fixture.subcommands {
+            Some(TopLevelCommand::Test(group)) => match group.command {
+                TestSubcommand::Run { bench, .. } => bench,
+                _ => false,
+            },
+            _ => false,
+        };
+        assert!(actual);
     }
 
     #[test]
