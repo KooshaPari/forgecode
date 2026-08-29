@@ -1,7 +1,7 @@
 [
   {
     "id": "ollama",
-    "api_key_vars": [],
+    "api_key_vars": "",
     "url_param_vars": [],
     "response_type": "OpenAI",
     "url": "http://localhost:11434/v1/chat/completions",
