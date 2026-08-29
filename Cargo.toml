@@ -7,6 +7,7 @@
 members = [
   "crates/forge_api",
   "crates/forge_app",
+  "crates/forge_sdk",
   "crates/forge_ci",
   "crates/forge_config",
   "crates/forge_dbd",
@@ -209,6 +210,7 @@ mimalloc = { version = "0.1", default-features = false }
 forge_embed = { path = "crates/forge_embed" }
 forge_api = { path = "crates/forge_api" }
 forge_app = { path = "crates/forge_app" }
+forge_sdk = { path = "crates/forge_sdk" }
 forge_ci = { path = "crates/forge_ci" }
 forge_display = { path = "crates/forge_display" }
 forge_domain = { path = "crates/forge_domain" }
