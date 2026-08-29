@@ -561,7 +561,7 @@ mod tests {
         assert!(validate_repo("KooshaPari/forgecode").is_ok());
         assert!(validate_repo("a/b").is_ok());
         assert!(validate_repo("Owner.With.Dots/Repo_With_Underscores-and-dashes").is_ok());
-        assert!(validate_repo("o".repeat(100).as_str() + "/r").is_ok());
+        assert!(validate_repo(&format!("{}{}", "o".repeat(100), "/r")).is_ok());
     }
 
     #[test]

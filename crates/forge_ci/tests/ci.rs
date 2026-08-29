@@ -121,6 +121,7 @@ fn test_release_workflow() {
     assert!(generated.contains("--repo \"${{ github.repository }}\""));
     assert!(generated.contains("--pattern \"forge-*\""));
     assert!(generated.contains("--pattern \"helioslite-*\""));
+    assert!(generated.contains("--pattern \"helioslite_helper-*\""));
     assert!(generated.contains("helioslite_name: helioslite-x86_64-unknown-linux-musl"));
     assert!(generated.contains("helioslite_name: helioslite-x86_64-pc-windows-msvc.exe"));
     assert!(generated.contains("Generate helioslite SHA-256 checksum"));

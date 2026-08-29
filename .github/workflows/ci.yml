@@ -155,12 +155,16 @@ jobs:
           binary_path: target/x86_64-pc-windows-msvc/release/forge.exe
           cross: 'false'
           helioslite_name: helioslite-x86_64-pc-windows-msvc.exe
+          helper_name: helioslite_helper-x86_64-pc-windows-msvc.exe
+          helper_path: target/x86_64-pc-windows-msvc/release/helioslite_helper.exe
           os: windows-latest
           target: x86_64-pc-windows-msvc
         - binary_name: forge-aarch64-pc-windows-msvc.exe
           binary_path: target/aarch64-pc-windows-msvc/release/forge.exe
           cross: 'false'
           helioslite_name: helioslite-aarch64-pc-windows-msvc.exe
+          helper_name: helioslite_helper-aarch64-pc-windows-msvc.exe
+          helper_path: target/aarch64-pc-windows-msvc/release/helioslite_helper.exe
           os: windows-latest
           target: aarch64-pc-windows-msvc
         - binary_name: forge-aarch64-linux-android
@@ -205,6 +209,16 @@ jobs:
       with:
         command: build --release
         args: --target ${{ matrix.target }} -p forge_dbd
+        use-cross: ${{ matrix.cross }}
+        cross-version: 0.2.5
+      env:
+        APP_VERSION: ${{ needs.draft_release_pr.outputs.crate_release_name }}
+    - if: contains(matrix.target, 'windows')
+      name: Build helioslite_helper Binary
+      uses: ClementTsang/cargo-action@2438cc5f3ba4e971289fffca2a00dedea6911f14
+      with:
+        command: build --release
+        args: --target ${{ matrix.target }} -p forge_main --bin helioslite_helper
         use-cross: ${{ matrix.cross }}
         cross-version: 0.2.5
       env:
