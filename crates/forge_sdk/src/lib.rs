@@ -9,10 +9,13 @@
 //!
 //! ```rust,no_run
 //! use forge_sdk::*;
+//! use std::path::PathBuf;
 //!
 //! # async fn example() -> anyhow::Result<()> {
 //! // Create an API instance
-//! let api = ForgeAPI::<ForgeServices>::init().await?;
+//! let cwd = PathBuf::from(".");
+//! let config = ForgeConfig::from_cwd(cwd.clone())?;
+//! let api = ForgeAPI::init(cwd, config);
 //!
 //! // List available models
 //! let models = api.models().await?;
