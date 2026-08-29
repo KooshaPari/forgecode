@@ -60,6 +60,7 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 
 use std::ffi::OsString;
+#[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 use std::process::ExitCode;
 use std::time::Duration;
@@ -185,6 +186,7 @@ fn parse_args() -> Result<Args, String> {
         self_path,
     })
 }
+#[cfg(windows)]
 fn wide(s: &str) -> Vec<u16> {
     OsString::from(s)
         .encode_wide()
@@ -192,6 +194,7 @@ fn wide(s: &str) -> Vec<u16> {
         .collect()
 }
 
+#[cfg(windows)]
 fn wide_path(p: &std::path::Path) -> Vec<u16> {
     p.as_os_str()
         .encode_wide()
