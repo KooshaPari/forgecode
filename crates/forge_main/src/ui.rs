@@ -36,7 +36,7 @@ use url::Url;
 
 use crate::cli::{
     Cli, CommitCommandGroup, ConversationCommand, ExportSubcommand, ImportSubcommand, ListCommand,
-    MaintenanceSubcommand, McpCommand, SelectCommand, TopLevelCommand,
+    MaintenanceSubcommand, McpCommand, SelectCommand, TestSubcommand, TopLevelCommand,
 };
 use crate::conversation_selector::ConversationSelector;
 use crate::display_constants::{CommandType, headers, markers, status};
@@ -791,6 +791,25 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
 
     async fn handle_subcommands(&mut self, subcommand: TopLevelCommand) -> anyhow::Result<()> {
         match subcommand {
+            TopLevelCommand::Test(test_group) => {
+                let runner = crate::TestRunner::new()?;
+                let result = match test_group.command {
+                    TestSubcommand::Run { package, test, bench } => {
+                        if bench {
+                            runner.run_benchmarks()?
+                        } else {
+                            runner.run_test(package.as_deref(), test.as_deref())?
+                        }
+                    }
+                    TestSubcommand::All => runner.run_all()?,
+                    TestSubcommand::Bench => runner.run_benchmarks()?,
+                };
+                self.writeln(result.output.trim_end())?;
+                if result.success {
+                    return Ok(());
+                }
+                anyhow::bail!("cargo test command failed")
+            }
             TopLevelCommand::Agent(agent_group) => {
                 match agent_group.command {
                     crate::cli::AgentCommand::List => {

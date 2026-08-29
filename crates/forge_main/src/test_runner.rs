@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use anyhow::{Context, Result};
+use bstr::ByteSlice;
 
 /// Result of a test or benchmark run.
 ///
@@ -78,13 +79,15 @@ impl TestRunner {
 
     /// Runs `cargo test` without any filters (all tests in the workspace).
     pub fn run_all(&self) -> Result<TestResult> {
-        let cmd = Command::new("cargo").arg("test");
+        let mut cmd = Command::new("cargo");
+        cmd.arg("test");
         self.execute(cmd)
     }
 
     /// Runs `cargo bench` in the working directory.
     pub fn run_benchmarks(&self) -> Result<TestResult> {
-        let cmd = Command::new("cargo").arg("bench");
+        let mut cmd = Command::new("cargo");
+        cmd.arg("bench");
         self.execute(cmd)
     }
 
@@ -94,8 +97,8 @@ impl TestRunner {
 
         let output = cmd.output().context("failed to execute cargo command")?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = decode_lossy(&output.stdout);
+        let stderr = decode_lossy(&output.stderr);
         let combined = format!("{stdout}{stderr}");
 
         let (passed, failed, ignored) = parse_cargo_test_output(&combined);
@@ -103,6 +106,10 @@ impl TestRunner {
 
         Ok(TestResult { passed, failed, ignored, output: combined, success })
     }
+}
+
+fn decode_lossy(bytes: &[u8]) -> String {
+    bytes.to_str_lossy().into_owned()
 }
 
 /// Parses `cargo test` output to extract pass/fail/ignore counts from summary
@@ -149,10 +156,9 @@ pub fn parse_cargo_test_output(output: &str) -> (usize, usize, usize) {
 /// `"5 passed"` → `Some(5)`).
 fn extract_count(line: &str, label: &str) -> Option<usize> {
     let marker = format!(" {label}");
-    let idx = line.find(&marker)?;
 
     // Walk backwards from the marker to find the numeric run.
-    let before = &line[..idx];
+    let before = prefix_before_marker(line, &marker)?;
     let num_str = before
         .chars()
         .rev()
@@ -165,10 +171,17 @@ fn extract_count(line: &str, label: &str) -> Option<usize> {
     num_str.parse().ok()
 }
 
+fn prefix_before_marker<'a>(line: &'a str, marker: &str) -> Option<&'a str> {
+    let idx = line.find(marker)?;
+    line.get(..idx)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_parse_cargo_test_output_ok() {
@@ -198,6 +211,16 @@ mod tests {
     }
 
     #[test]
+    fn prefix_before_marker_preserves_unicode_boundaries() {
+        let fixture = "result: ok. caf\u{00e9} 5 passed";
+
+        let actual = prefix_before_marker(fixture, " passed").unwrap();
+
+        let expected = "result: ok. caf\u{00e9} 5";
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn test_test_runner_new() {
         let runner = TestRunner::new();
         assert!(runner.is_ok());
@@ -211,6 +234,40 @@ mod tests {
         let dir = PathBuf::from("/tmp/test-project");
         let runner = TestRunner::with_dir(dir.clone());
         assert_eq!(runner.working_dir, dir);
+    }
+
+    #[test]
+    fn decode_lossy_replaces_invalid_utf8() {
+        let fixture = [b'f', b'o', 0x80, b'o'];
+
+        let actual = decode_lossy(&fixture);
+
+        let expected = "fo\u{fffd}o";
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn run_all_executes_tests_in_the_runner_directory() {
+        let fixture = tempdir().unwrap();
+        let source_dir = fixture.path().join("src");
+        fs::create_dir(&source_dir).unwrap();
+        fs::write(
+            fixture.path().join("Cargo.toml"),
+            "[package]\nname = \"runner_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .unwrap();
+        fs::write(
+            source_dir.join("lib.rs"),
+            "#[cfg(test)]\nmod tests {\n    #[test]\n    fn passes() {}\n}\n",
+        )
+        .unwrap();
+
+        let actual = TestRunner::with_dir(fixture.path().to_path_buf())
+            .run_all()
+            .unwrap();
+
+        assert!(actual.success, "{}", actual.output);
+        assert_eq!((actual.passed, actual.failed, actual.ignored), (1, 0, 0));
     }
 
     #[test]
