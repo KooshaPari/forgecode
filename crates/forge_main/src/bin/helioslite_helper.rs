@@ -142,16 +142,41 @@ fn parse_args() -> Result<Args, String> {
             raw
         ));
     }
-    if raw[0] != "download" || raw[3] != "wait" || raw[5] != "swap" {
-        return Err(format!(
-            "unexpected arg layout; expected 'download <repo> <asset> wait <pid> swap <from> <to>', got: {:?}",
-            raw
-        ));
+    let mut iter = raw.iter();
+    let cmd_download = iter.next().ok_or_else(|| "missing download".to_string())?;
+    if cmd_download != "download" {
+        return Err(format!("expected first arg 'download', got {:?}", cmd_download));
     }
+    let release_repo = iter
+        .next()
+        .ok_or_else(|| "missing release_repo".to_string())?
+        .clone();
+    let asset_name = iter
+        .next()
+        .ok_or_else(|| "missing asset_name".to_string())?
+        .clone();
+    let cmd_wait = iter.next().ok_or_else(|| "missing wait".to_string())?;
+    if cmd_wait != "wait" {
+        return Err(format!("expected 'wait', got {:?}", cmd_wait));
+    }
+    let parent_pid_str = iter
+        .next()
+        .ok_or_else(|| "missing parent_pid".to_string())?
+        .clone();
+    let cmd_swap = iter.next().ok_or_else(|| "missing swap".to_string())?;
+    if cmd_swap != "swap" {
+        return Err(format!("expected 'swap', got {:?}", cmd_swap));
+    }
+    let source_path_str = iter
+        .next()
+        .ok_or_else(|| "missing source_path".to_string())?
+        .clone();
+    let target_path_str = iter
+        .next()
+        .ok_or_else(|| "missing target_path".to_string())?
+        .clone();
 
-    let release_repo = raw[1].clone();
     validate_repo(&release_repo)?;
-    let asset_name = raw[2].clone();
     if asset_name.is_empty()
         || asset_name.len() > 200
         || !asset_name
@@ -161,13 +186,12 @@ fn parse_args() -> Result<Args, String> {
         return Err(format!("invalid asset_name {:?}", asset_name));
     }
 
-    let parent_pid_str = raw[4].as_str();
     let parent_pid: u32 = parent_pid_str
         .parse()
         .map_err(|_| format!("invalid parent pid {:?}", parent_pid_str))?;
 
-    let source_path = wide(raw[6].as_str());
-    let target_path = wide(raw[7].as_str());
+    let source_path = wide(&source_path_str);
+    let target_path = wide(&target_path_str);
 
     // self_path is argv[0] in UTF-16.  Resolve to a fully-qualified path so
     // DeleteFileW doesn't depend on the current working directory.
@@ -377,6 +401,9 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// on a ~10 MB binary, ~50ms cold-path on a modern CPU.  Not constant-time
 /// on the message but that's fine: the hash itself is the secret-independent
 /// output; the comparison `actual == expected` is constant-time below.
+// Indexing into fixed-size arrays within tight loop bounds is panic-free
+// by construction (i < 16 on a [u8; 64] chunk; i < 64 on a [u32; 64]).
+#[allow(clippy::indexing_slicing)]
 fn sha256_inline(message: &[u8]) -> [u8; 32] {
     const K: [u32; 64] = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
