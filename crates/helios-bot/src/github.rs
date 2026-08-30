@@ -14,6 +14,7 @@ pub struct InstallationToken {
 ///
 /// We keep the dependency surface tiny — only `reqwest` is required for
 /// HTTP, and the token cache lives in-process.
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct GitHubClient {
     app_id: u64,
@@ -23,6 +24,7 @@ pub struct GitHubClient {
     http: reqwest::Client,
 }
 
+#[allow(dead_code)]
 impl GitHubClient {
     pub fn new(app_id: u64, installation_id: u64) -> Self {
         Self {
@@ -38,10 +40,10 @@ impl GitHubClient {
         // Check the cache first.
         {
             let guard = self.cached_token.lock().unwrap();
-            if let Some(tok) = guard.as_ref() {
-                if !is_expired(&tok.expires_at) {
-                    return Ok(tok.token.clone());
-                }
+            if let Some(tok) = guard.as_ref()
+                && !is_expired(&tok.expires_at)
+            {
+                return Ok(tok.token.clone());
             }
         }
 
@@ -114,6 +116,7 @@ impl GitHubClient {
     }
 }
 
+#[allow(dead_code)]
 fn is_expired(_expires_at: &str) -> bool {
     // Stub: never expire. Real impl parses the ISO-8601 timestamp and
     // compares against current UTC.

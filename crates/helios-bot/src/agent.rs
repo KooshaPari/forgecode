@@ -5,6 +5,7 @@
 //! real LLM provider.
 
 use anyhow::Result;
+use bstr::ByteSlice;
 use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
@@ -24,10 +25,11 @@ pub struct AgentResult {
 ///
 /// `repo_dir` is the path to a checked-out working copy of the target repo.
 /// `request` is the natural-language ask from the issue/PR comment.
+#[allow(dead_code)]
 pub async fn run_agent(repo_dir: &Path, request: &str, llm_api_key: &str) -> Result<AgentResult> {
     // Real implementation: spawn `forge --request "$request"` and capture its
     // output.  We pipe via stdin for the long request to avoid argv limits.
-    let mut child = Command::new("forge")
+    let child = Command::new("forge")
         .arg("--request")
         .arg(request)
         .arg("--output-format")
@@ -41,13 +43,13 @@ pub async fn run_agent(repo_dir: &Path, request: &str, llm_api_key: &str) -> Res
 
     let output = child.wait_with_output().await?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = output.stderr.to_str_lossy();
         anyhow::bail!("forge exited {}: {}", output.status, stderr);
     }
 
     // Parse the JSON response.  We accept either the canonical schema
     // (`{"response": "...", "pr_number": ...}`) or just plain text on stdout.
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = output.stdout.to_str_lossy();
     if let Ok(parsed) = serde_json::from_str::<ForgeJsonOutput>(&stdout) {
         Ok(AgentResult {
             response: parsed.response,
@@ -64,6 +66,7 @@ pub async fn run_agent(repo_dir: &Path, request: &str, llm_api_key: &str) -> Res
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, serde::Deserialize)]
 struct ForgeJsonOutput {
     response: String,

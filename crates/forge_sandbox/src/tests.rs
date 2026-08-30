@@ -5,8 +5,7 @@
 //! backends have their own integration tests in `tests/` (TODO).
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod sandbox_tests {
     use crate::backend::Backend;
     use crate::config::SandboxConfig;
     use crate::disabled::DisabledBackend;

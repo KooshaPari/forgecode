@@ -13,6 +13,7 @@ use crate::backend::Backend;
 use crate::config::{FilesystemRule, NetworkPolicy, SandboxConfig};
 use crate::{SandboxError, SandboxOutput};
 use async_trait::async_trait;
+use bstr::ByteSlice;
 
 #[derive(Clone)]
 pub struct LinuxBackend {
@@ -78,8 +79,8 @@ impl Backend for LinuxBackend {
 
         let output = cmd.output().await?;
         Ok(SandboxOutput {
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            stdout: output.stdout.to_str_lossy().into_owned(),
+            stderr: output.stderr.to_str_lossy().into_owned(),
             exit_code: output.status.code().unwrap_or(-1),
             sandboxed: true,
         })
@@ -90,6 +91,7 @@ impl Backend for LinuxBackend {
 ///
 /// The default build (no `landlock-runtime` feature) is a no-op.  When the
 /// feature is enabled, the real `landlock::Ruleset` plumbing kicks in.
+#[allow(dead_code)]
 fn setup_landlock(fs_rules: &[FilesystemRule], net_policy: &NetworkPolicy) -> std::io::Result<()> {
     #[cfg(feature = "landlock-runtime")]
     {

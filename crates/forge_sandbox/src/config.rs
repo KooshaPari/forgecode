@@ -20,9 +20,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 /// What network access is allowed inside the sandbox.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum NetworkPolicy {
     /// No outbound network at all (most secure; default for code execution).
+    #[default]
     DenyAll,
     /// Only loopback is reachable (for local services like a test database).
     LoopbackOnly,
@@ -30,13 +31,6 @@ pub enum NetworkPolicy {
     AllowAll,
     /// Specific hosts only (DNS names or IPs).
     AllowList(Vec<String>),
-}
-
-impl Default for NetworkPolicy {
-    fn default() -> Self {
-        // Default to no network for code execution — explicit allow required.
-        NetworkPolicy::DenyAll
-    }
 }
 
 /// Filesystem access rule applied to a path.
@@ -111,10 +105,10 @@ impl SandboxConfig {
                 ));
             }
         }
-        if let Some(timeout) = self.timeout {
-            if timeout.is_zero() {
-                return Err("timeout must be positive".to_string());
-            }
+        if let Some(timeout) = self.timeout
+            && timeout.is_zero()
+        {
+            return Err("timeout must be positive".to_string());
         }
         Ok(())
     }

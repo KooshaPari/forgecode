@@ -62,6 +62,7 @@ pub struct WebhookContext {
     pub comment_id: Option<u64>,
     pub author: String,
     pub request: String,
+    #[allow(dead_code)]
     pub is_issue: bool,
 }
 

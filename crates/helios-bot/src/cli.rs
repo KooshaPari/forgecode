@@ -7,19 +7,27 @@ use std::path::PathBuf;
 pub enum Command {
     /// Run the webhook server.
     Serve {
+        #[allow(dead_code)]
         bind: String,
         /// Path to the GitHub App private key (PEM).
+        #[allow(dead_code)]
         private_key: PathBuf,
+        #[allow(dead_code)]
         app_id: u64,
+        #[allow(dead_code)]
         installation_id: u64,
         /// Webhook signing secret.
+        #[allow(dead_code)]
         webhook_secret: String,
     },
     /// Run the agent on a single request, one-shot.
     Run {
+        #[allow(dead_code)]
         repo: String,
+        #[allow(dead_code)]
         request: String,
         /// Optional checkout directory (defaults to /tmp/<repo>).
+        #[allow(dead_code)]
         checkout_dir: Option<PathBuf>,
     },
 }

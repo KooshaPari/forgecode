@@ -10,6 +10,7 @@ use crate::backend::Backend;
 use crate::config::{FilesystemRule, NetworkPolicy, SandboxConfig};
 use crate::{SandboxError, SandboxOutput};
 use async_trait::async_trait;
+use bstr::ByteSlice;
 
 #[derive(Clone)]
 pub struct MacOsBackend {
@@ -125,8 +126,8 @@ impl Backend for MacOsBackend {
 
         let output = cmd.output().await?;
         Ok(SandboxOutput {
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            stdout: output.stdout.to_str_lossy().into_owned(),
+            stderr: output.stderr.to_str_lossy().into_owned(),
             exit_code: output.status.code().unwrap_or(-1),
             sandboxed: true,
         })
