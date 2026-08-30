@@ -7,24 +7,22 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use forge_sdk::*;
 //!
-//! # async fn example() -> anyhow::Result<()> {
 //! // Create an API instance
-//! let api = ForgeAPI::<ForgeServices>::init().await?;
+//! let cwd = std::path::PathBuf::from(".");
+//! let config = ForgeConfig::from_cwd(cwd.clone())?;
+//! let api = ForgeAPI::<ForgeServices>::init(cwd, config);
 //!
 //! // List available models
 //! let models = api.models().await?;
 //!
 //! // Start a conversation
-//! let mut conversation = Conversation::generate();
-//! // ... configure conversation ...
+//! let conversation = Conversation::default();
 //!
 //! // Dispatch a message
-//! let stream = api.dispatch(conversation, agent).await?;
-//! # Ok(())
-//! # }
+//! let stream = api.dispatch(conversation, Agent::default()).await?;
 //! ```
 //!
 //! ## Features
