@@ -166,6 +166,7 @@ mod tests {
     #[cfg(unix)]
     use tempfile::tempdir;
 
+    #[cfg(unix)]
     use super::*;
 
     #[test]

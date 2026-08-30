@@ -145,7 +145,10 @@ fn parse_args() -> Result<Args, String> {
     let mut iter = raw.iter();
     let cmd_download = iter.next().ok_or_else(|| "missing download".to_string())?;
     if cmd_download != "download" {
-        return Err(format!("expected first arg 'download', got {:?}", cmd_download));
+        return Err(format!(
+            "expected first arg 'download', got {:?}",
+            cmd_download
+        ));
     }
     let release_repo = iter
         .next()
