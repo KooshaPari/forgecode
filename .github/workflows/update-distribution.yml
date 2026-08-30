@@ -12,6 +12,8 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      with:
+        ref: main
     - name: Download SHA256 checksums
       run: |
         set -euo pipefail
@@ -19,15 +21,20 @@ jobs:
         mkdir -p checksums
         
         # Download all SHA256 files
-        for asset in forge-x86_64-apple-darwin forge-aarch64-apple-darwin \
-                     forge-x86_64-unknown-linux-gnu forge-aarch64-unknown-linux-gnu \
+        for asset in forge-x86_64-apple-darwin forge-aarch64-apple-darwin
+                     forge-x86_64-unknown-linux-gnu forge-aarch64-unknown-linux-gnu
                      forge-x86_64-pc-windows-msvc.exe forge-aarch64-pc-windows-msvc.exe; do
-          gh release download "$TAG" \
+          if ! gh release download "$TAG" \
             --repo "${{ github.repository }}" \
             --pattern "${asset}.sha256" \
-            --dir checksums \
-            || echo "Warning: Could not download ${asset}.sha256"
+            --dir checksums 2>/dev/null; then
+            echo "Warning: Could not download ${asset}.sha256, trying curl"
+            curl -sL "https://github.com/${{ github.repository }}/releases/download/${TAG}/${asset}.sha256" \
+              -o "checksums/${asset}.sha256" || echo "Error: Failed to download ${asset}.sha256"
+          fi
         done
+        echo "Downloaded checksums:"
+        ls -la checksums/
       env:
         GH_TOKEN: ${{ github.token }}
     - name: Extract SHA256 values
@@ -140,7 +147,9 @@ jobs:
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git add distribution/
-        git diff --staged --quiet || git commit -m "chore(distribution): update Homebrew and Scoop manifests for ${{ github.event.release.tag_name }}"
-        git push
+        if ! git diff --staged --quiet; then
+          git commit -m "chore(distribution): update Homebrew and Scoop manifests for ${{ github.event.release.tag_name }}"
+          git push origin main
+        fi
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
