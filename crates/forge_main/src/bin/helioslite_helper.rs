@@ -360,10 +360,7 @@ fn http_get(url: &str) -> Result<ureq::http::Response<ureq::Body>, String> {
         .timeout_global(Some(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS)))
         .build();
     let agent = ureq::Agent::new_with_config(config);
-    agent
-        .get(url)
-        .call()
-        .map_err(|e| format!("GET {url}: {e}"))
+    agent.get(url).call().map_err(|e| format!("GET {url}: {e}"))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
