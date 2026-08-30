@@ -188,6 +188,7 @@ fn parse_args() -> Result<Args, String> {
         self_path,
     })
 }
+#[cfg(windows)]
 fn wide(s: &str) -> Vec<u16> {
     OsString::from(s)
         .encode_wide()
@@ -195,6 +196,7 @@ fn wide(s: &str) -> Vec<u16> {
         .collect()
 }
 
+#[cfg(windows)]
 fn wide_path(p: &std::path::Path) -> Vec<u16> {
     p.as_os_str()
         .encode_wide()
@@ -580,7 +582,7 @@ mod tests {
         assert!(validate_repo("KooshaPari/forgecode").is_ok());
         assert!(validate_repo("a/b").is_ok());
         assert!(validate_repo("Owner.With.Dots/Repo_With_Underscores-and-dashes").is_ok());
-        assert!(validate_repo("o".repeat(100).as_str() + "/r").is_ok());
+        assert!(validate_repo(&("o".repeat(100) + "/r")).is_ok());
     }
 
     #[test]
