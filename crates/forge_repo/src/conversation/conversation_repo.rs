@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use bstr::ByteSlice;
 use diesel::prelude::*;
 use forge_domain::{
     Context, Conversation, ConversationId, ConversationRepository, ConversationSummary,
@@ -266,21 +267,23 @@ impl ConversationRepositoryImpl {
                   AND context IS NULL \
                   AND context_zstd IS NOT NULL \
                 ORDER BY updated_at DESC";
-            let compressed_rows: Vec<ConversationRecord> =
-                diesel::sql_query(compressed_sql)
-                    .bind::<diesel::sql_types::BigInt, _>(workspace_id)
-                    .load(connection)?;
+            let compressed_rows: Vec<ConversationRecord> = diesel::sql_query(compressed_sql)
+                .bind::<diesel::sql_types::BigInt, _>(workspace_id)
+                .load(connection)?;
 
             let needle_lower = query.to_lowercase();
             for row in compressed_rows {
                 // Skip rows already found by the plaintext scan.
-                if raw_rows.iter().any(|r| r.conversation_id == row.conversation_id) {
+                if raw_rows
+                    .iter()
+                    .any(|r| r.conversation_id == row.conversation_id)
+                {
                     continue;
                 }
                 if let Some(ref compressed) = row.context_zstd {
                     match zstd::decode_all(&compressed[..]) {
                         Ok(decompressed) => {
-                            let text = String::from_utf8_lossy(&decompressed);
+                            let text = decompressed[..].to_str_lossy();
                             if text.to_lowercase().contains(&needle_lower) {
                                 raw_rows.push(row);
                             }
@@ -289,10 +292,10 @@ impl ConversationRepositoryImpl {
                     }
                 }
                 // Respect limit: stop after we've collected enough.
-                if let Some(limit) = limit_value {
-                    if raw_rows.len() as i64 >= limit {
-                        break;
-                    }
+                if let Some(limit) = limit_value
+                    && raw_rows.len() as i64 >= limit
+                {
+                    break;
                 }
             }
 
