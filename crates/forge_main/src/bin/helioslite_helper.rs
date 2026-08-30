@@ -59,6 +59,7 @@
 
 #![cfg_attr(not(windows), allow(dead_code))]
 
+#[cfg(windows)]
 use std::ffi::OsString;
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
