@@ -46,6 +46,7 @@ schemars.workspace = true
 glob.workspace = true
 lazy_static.workspace = true
 forge_json_repair.workspace = true
+forge_sandbox.workspace = true
 
 tonic.workspace = true
 

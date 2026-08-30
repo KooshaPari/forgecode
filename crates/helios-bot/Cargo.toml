@@ -21,6 +21,8 @@ test = false
 anyhow.workspace = true
 async-trait.workspace = true
 bstr = { workspace = true }
+forge_sdk = { workspace = true }
+forge_config = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 hmac = "0.12"

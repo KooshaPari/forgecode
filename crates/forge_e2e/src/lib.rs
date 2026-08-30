@@ -59,4 +59,4 @@ mod scenario;
 
 pub use assertions::{ExpectedText, ExpectedTool};
 pub use mock_llm::{MockLlm, ScriptedResponse};
-pub use scenario::Scenario;
+pub use scenario::{Scenario, Step};

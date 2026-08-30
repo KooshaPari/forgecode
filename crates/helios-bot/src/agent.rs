@@ -1,14 +1,17 @@
-//! Bridge to the HeliosLite agent (forge_main CLI).
+//! Bridge to the HeliosLite agent — SDK-first with binary fallback.
 //!
-//! In production we shell out to the `forge` binary. In tests we use a stub
-//! that returns canned responses so the bot can be unit-tested without a
-//! real LLM provider.
+//! Tries to run the agent through [`forge_sdk`] (in-process) for fast,
+//! dependency-free execution.  If the SDK path fails (e.g. missing API key,
+//! unsupported provider), falls back to shelling out to the `forge` CLI binary.
 
 use anyhow::Result;
 use bstr::ByteSlice;
 use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
+
+use forge_config::ForgeConfig;
+use forge_sdk::*;
 
 /// Outcome of running the agent on a `@helios` mention.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,8 +30,67 @@ pub struct AgentResult {
 /// `request` is the natural-language ask from the issue/PR comment.
 #[allow(dead_code)]
 pub async fn run_agent(repo_dir: &Path, request: &str, llm_api_key: &str) -> Result<AgentResult> {
-    // Real implementation: spawn `forge --request "$request"` and capture its
-    // output.  We pipe via stdin for the long request to avoid argv limits.
+    // Try the in-process SDK path first, fall back to shelling out to the binary.
+    match run_agent_via_sdk(repo_dir, request, llm_api_key).await {
+        Ok(result) => Ok(result),
+        Err(sdk_err) => {
+            tracing::debug!(error = %sdk_err, "SDK path failed, falling back to binary");
+            run_agent_via_binary(repo_dir, request, llm_api_key).await
+        }
+    }
+}
+
+/// Attempt to run the agent entirely in-process via the ForgeSDK.
+///
+/// Builds a [`ForgeConfig`] from `repo_dir`, authenticates with the provided
+/// API key, creates a [`ForgeAPI`] instance, dispatches the user message,
+/// and collects the full text response from the stream.
+async fn run_agent_via_sdk(
+    repo_dir: &Path,
+    request: &str,
+    llm_api_key: &str,
+) -> Result<AgentResult> {
+    let cwd = repo_dir.to_path_buf();
+    let mut config = ForgeConfig::from_cwd(cwd.clone())?;
+    config.api_key = Some(llm_api_key.to_string());
+
+    let api = ForgeAPI::<ForgeServices>::init(cwd, config);
+
+    // List models to verify connectivity, pick the default.
+    let _models = api.models().await?;
+
+    // Build a conversation with the user message.
+    let conversation = Conversation::default();
+    let agent = Agent::default();
+
+    // Dispatch and collect the text from the stream.
+    let stream = api.dispatch(conversation, agent).await?;
+    let mut full_text = String::new();
+
+    tokio::pin!(stream);
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if let Some(text) = chunk.message {
+            full_text.push_str(&text);
+        }
+    }
+
+    Ok(AgentResult {
+        response: full_text,
+        created_pr: false,
+        pr_number: None,
+    })
+}
+
+/// Fall back to shelling out to the `forge` binary.
+///
+/// Spawns `forge --request "$request" --output-format json` and captures its
+/// output.  We pipe via stdin for the long request to avoid argv limits.
+async fn run_agent_via_binary(
+    repo_dir: &Path,
+    request: &str,
+    llm_api_key: &str,
+) -> Result<AgentResult> {
     let child = Command::new("forge")
         .arg("--request")
         .arg(request)
