@@ -832,13 +832,21 @@ mod tests {
         let _handle = spawn_server(sock.clone(), db.clone()).await;
         wait_for_socket(&sock).await;
 
-        // Enqueue 200 writes concurrently so the writer queue is contended.
+        // Enqueue enough writes to contend the queue, while limiting active
+        // Unix streams below macOS's listener and descriptor limits.
         // Each client holds its connection open waiting for Ack, which keeps
         // its request (or its batch) counted in queue_depth until flushed.
+        const MAX_IN_FLIGHT_WRITERS: usize = 32;
+        let permits = Arc::new(tokio::sync::Semaphore::new(MAX_IN_FLIGHT_WRITERS));
         let mut writers = Vec::new();
         for _ in 0..200 {
             let sock_clone = sock.clone();
+            let permits = Arc::clone(&permits);
             writers.push(tokio::spawn(async move {
+                let _permit = permits
+                    .acquire_owned()
+                    .await
+                    .expect("acquire writer permit");
                 let mut stream = UnixStream::connect(&sock_clone).await.expect("connect");
                 write_frame(&mut stream, &Request::OptimizeFts)
                     .await
