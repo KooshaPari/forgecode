@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use bstr::ByteSlice;
 use diesel::prelude::*;
 use forge_domain::{
     Context, Conversation, ConversationId, ConversationRepository, ConversationSummary,
@@ -282,8 +283,7 @@ impl ConversationRepositoryImpl {
                 if let Some(ref compressed) = row.context_zstd {
                     match zstd::decode_all(&compressed[..]) {
                         Ok(decompressed) => {
-                            #[allow(clippy::string_from_utf8_lossy)]
-                            let text = String::from_utf8_lossy(&decompressed);
+                            let text = decompressed[..].to_str_lossy();
                             if text.to_lowercase().contains(&needle_lower) {
                                 raw_rows.push(row);
                             }
