@@ -147,6 +147,113 @@ impl ConversationRepositoryImpl {
     }
 }
 
+impl ConversationRepositoryImpl {
+    /// Inherent helpers: FTS5 primary path + LIKE fallback. They live on the
+    /// concrete impl (not the trait) because they take an owned `String` so
+    /// the closure passed to `run_with_connection` can move the value into
+    /// the `spawn_blocking` future without borrowing `self` for `'life1`.
+    async fn search_conversations_fts(
+        &self,
+        query: String,
+        limit_value: Option<i64>,
+    ) -> anyhow::Result<Vec<Conversation>> {
+        self.run_with_connection(move |connection, wid| {
+            let workspace_id = wid.id() as i64;
+            // FTS5 BM25 search joined back to the base table on
+            // `rowid` (now explicit `rowid` column in external-content FTS5).
+            // `bm25()` returns a negative number where lower = more relevant, so `ORDER BY
+            // rank_score` (ascending) yields "best match first".
+            //
+            // We read from the primary `conversations` table: the FTS5 index
+            // is populated by `refresh_fts_index` from the primary table's
+            // rows only, and the `rowid` join requires a real table (SQLite
+            // views do not expose `rowid`). Legacy rows are searchable only
+            // once they are re-indexed into the primary FTS5 index (e.g. by
+            // re-running the FTS refresh with the legacy DB attached).
+            //
+            // We do NOT include `snippet()` here because it would force
+            // the SELECT to return a column not in `ConversationRecord`.
+            // The UI fetches a snippet on-demand via the separate
+            // `get_conversation_snippet` method when the user picks a hit.
+            let mut sql = String::from(
+                "SELECT c.*, bm25(conversations_fts) AS rank_score \
+                 FROM conversations c \
+                 JOIN conversations_fts fts ON c.rowid = fts.rowid \
+                 WHERE conversations_fts MATCH ? \
+                   AND c.workspace_id = ? \
+                 ORDER BY rank_score",
+            );
+            if limit_value.is_some() {
+                sql.push_str(" LIMIT ?");
+            }
+
+            // We can't bind the FTS MATCH expression positionally because
+            // diesel::sql_query does not have a typed binding for FTS5's
+            // MATCH operator when used as a column. Use the lower-level
+            // `sql_query` so we can read back the typed rows.
+            let mut q = diesel::sql_query(sql).into_boxed();
+            q = q.bind::<diesel::sql_types::Text, _>(query);
+            q = q.bind::<diesel::sql_types::BigInt, _>(workspace_id);
+            if let Some(l) = limit_value {
+                q = q.bind::<diesel::sql_types::BigInt, _>(l);
+            }
+
+            let raw_rows: Vec<ConversationRecord> = q.load(connection)?;
+            let conversations: Result<Vec<Conversation>, _> =
+                raw_rows.into_iter().map(Conversation::try_from).collect();
+            conversations
+        })
+        .await
+    }
+
+    /// Defensive fallback for when `conversations_fts` is unreachable or the
+    /// query has an FTS5 syntax error. A full table scan over `title` and
+    /// `context` with `LIKE '%term%'` is much slower than FTS5 but always
+    /// returns something useful for the user rather than an empty result.
+    async fn search_conversations_like(
+        &self,
+        query: String,
+        limit_value: Option<i64>,
+    ) -> anyhow::Result<Vec<Conversation>> {
+        self.run_with_connection(move |connection, wid| {
+            let workspace_id = wid.id() as i64;
+            // Escape LIKE wildcards so a query for "100%" doesn't try to
+            // match everything. Backslash is the default ESCAPE in SQLite.
+            let escaped = query
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            let like_pattern = format!("%{escaped}%");
+            let mut sql = String::from(
+                "SELECT * FROM conversations \
+                 WHERE workspace_id = ? \
+                   AND (title LIKE ? ESCAPE '\\' \
+                        OR context LIKE ? ESCAPE '\\' \
+                        OR cwd LIKE ? ESCAPE '\\') \
+                 ORDER BY updated_at DESC",
+            );
+            if limit_value.is_some() {
+                sql.push_str(" LIMIT ?");
+            }
+
+            let mut q = diesel::sql_query(sql).into_boxed();
+            q = q.bind::<diesel::sql_types::BigInt, _>(workspace_id);
+            q = q.bind::<diesel::sql_types::Text, _>(&like_pattern);
+            q = q.bind::<diesel::sql_types::Text, _>(&like_pattern);
+            q = q.bind::<diesel::sql_types::Text, _>(&like_pattern);
+            if let Some(l) = limit_value {
+                q = q.bind::<diesel::sql_types::BigInt, _>(l);
+            }
+
+            let raw_rows: Vec<ConversationRecord> = q.load(connection)?;
+            let conversations: Result<Vec<Conversation>, _> =
+                raw_rows.into_iter().map(Conversation::try_from).collect();
+            conversations
+        })
+        .await
+    }
+}
+
 #[async_trait::async_trait]
 impl ConversationRepository for ConversationRepositoryImpl {
     async fn upsert_conversation_ref(&self, conversation: &Conversation) -> anyhow::Result<()> {
@@ -468,119 +575,6 @@ impl ConversationRepository for ConversationRepositoryImpl {
             }
         }
     }
-}
-
-impl ConversationRepositoryImpl {
-    /// Inherent helpers: FTS5 primary path + LIKE fallback. They live on the
-    /// concrete impl (not the trait) because they take an owned `String` so
-    /// the closure passed to `run_with_connection` can move the value into
-    /// the `spawn_blocking` future without borrowing `self` for `'life1`.
-    async fn search_conversations_fts(
-        &self,
-        query: String,
-        limit_value: Option<i64>,
-    ) -> anyhow::Result<Vec<Conversation>> {
-        self.run_with_connection(move |connection, wid| {
-            let workspace_id = wid.id() as i64;
-            // FTS5 BM25 search joined back to the base table on
-            // `rowid` (now explicit `rowid` column in external-content FTS5).
-            // `bm25()` returns a negative number where lower = more relevant, so `ORDER BY
-            // rank_score` (ascending) yields "best match first".
-            //
-            // We read from the primary `conversations` table: the FTS5 index
-            // is populated by `refresh_fts_index` from the primary table's
-            // rows only, and the `rowid` join requires a real table (SQLite
-            // views do not expose `rowid`). Legacy rows are searchable only
-            // once they are re-indexed into the primary FTS5 index (e.g. by
-            // re-running the FTS refresh with the legacy DB attached).
-            //
-            // We do NOT include `snippet()` here because it would force
-            // the SELECT to return a column not in `ConversationRecord`.
-            // The UI fetches a snippet on-demand via the separate
-            // `get_conversation_snippet` method when the user picks a hit.
-            let mut sql = String::from(
-                "SELECT c.*, bm25(conversations_fts) AS rank_score \
-                 FROM conversations c \
-                 JOIN conversations_fts fts ON c.rowid = fts.rowid \
-                 WHERE conversations_fts MATCH ? \
-                   AND c.workspace_id = ? \
-                 ORDER BY rank_score",
-            );
-            if limit_value.is_some() {
-                sql.push_str(" LIMIT ?");
-            }
-
-            // We can't bind the FTS MATCH expression positionally because
-            // diesel::sql_query does not have a typed binding for FTS5's
-            // MATCH operator when used as a column. Use the lower-level
-            // `sql_query` so we can read back the typed rows.
-            let mut q = diesel::sql_query(sql).into_boxed();
-            q = q.bind::<diesel::sql_types::Text, _>(query);
-            q = q.bind::<diesel::sql_types::BigInt, _>(workspace_id);
-            if let Some(l) = limit_value {
-                q = q.bind::<diesel::sql_types::BigInt, _>(l);
-            }
-
-            let raw_rows: Vec<ConversationRecord> = q.load(connection)?;
-            let conversations: Result<Vec<Conversation>, _> =
-                raw_rows.into_iter().map(Conversation::try_from).collect();
-            conversations
-        })
-        .await
-    }
-
-    /// Defensive fallback for when `conversations_fts` is unreachable or the
-    /// query has an FTS5 syntax error. A full table scan over `title` and
-    /// `context` with `LIKE '%term%'` is much slower than FTS5 but always
-    /// returns something useful for the user rather than an empty result.
-    async fn search_conversations_like(
-        &self,
-        query: String,
-        limit_value: Option<i64>,
-    ) -> anyhow::Result<Vec<Conversation>> {
-        self.run_with_connection(move |connection, wid| {
-            let workspace_id = wid.id() as i64;
-            // Escape LIKE wildcards so a query for "100%" doesn't try to
-            // match everything. Backslash is the default ESCAPE in SQLite.
-            let escaped = query
-                .replace('\\', "\\\\")
-                .replace('%', "\\%")
-                .replace('_', "\\_");
-            let like_pattern = format!("%{escaped}%");
-            let mut sql = String::from(
-                "SELECT * FROM conversations \
-                 WHERE workspace_id = ? \
-                   AND (title LIKE ? ESCAPE '\\' \
-                        OR context LIKE ? ESCAPE '\\' \
-                        OR cwd LIKE ? ESCAPE '\\') \
-                 ORDER BY updated_at DESC",
-            );
-            if limit_value.is_some() {
-                sql.push_str(" LIMIT ?");
-            }
-
-            let mut q = diesel::sql_query(sql).into_boxed();
-            q = q.bind::<diesel::sql_types::BigInt, _>(workspace_id);
-            q = q.bind::<diesel::sql_types::Text, _>(&like_pattern);
-            q = q.bind::<diesel::sql_types::Text, _>(&like_pattern);
-            q = q.bind::<diesel::sql_types::Text, _>(&like_pattern);
-            if let Some(l) = limit_value {
-                q = q.bind::<diesel::sql_types::BigInt, _>(l);
-            }
-
-            let raw_rows: Vec<ConversationRecord> = q.load(connection)?;
-            let conversations: Result<Vec<Conversation>, _> =
-                raw_rows.into_iter().map(Conversation::try_from).collect();
-            conversations
-        })
-        .await
-    }
-}
-
-#[async_trait::async_trait]
-impl ConversationRepository for ConversationRepositoryImpl {
-    /// Return a single FTS5 snippet for a (conversation, query) pair.
-    /// Used by the UI to render a "matched passage" preview for the
     /// currently selected search hit. Returns `None` if no match.
     async fn get_conversation_snippet(
         &self,
