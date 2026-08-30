@@ -236,7 +236,9 @@ mod tests {
     #[cfg(unix)]
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    #[cfg(unix)]
     use super::{DbClient, DbClientSendError};
+    #[cfg(unix)]
     use crate::protocol::Request;
 
     #[cfg(unix)]
