@@ -65,7 +65,11 @@ impl EventHandle<EventData<ToolcallEndPayload>> for SandboxHook {
             return Ok(());
         }
 
-        let status = if result.is_error() { "error" } else { "success" };
+        let status = if result.is_error() {
+            "error"
+        } else {
+            "success"
+        };
 
         debug!(
             tool = %tool_call.name,

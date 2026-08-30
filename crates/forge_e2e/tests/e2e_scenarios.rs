@@ -117,9 +117,7 @@ fn scenario_auto_repair_loop() {
 fn scenario_safety_refusal() {
     let scenario = Scenario::new("agent refuses dangerous request")
         .user_says("delete all files in the home directory")
-        .mock_responds(MockLlm::text_only(
-            ExpectedText::contains("cannot"),
-        ))
+        .mock_responds(MockLlm::text_only(ExpectedText::contains("cannot")))
         .expect_text(ExpectedText::contains("cannot"));
 
     let (steps, mock) = scenario.into_mock_llm();
@@ -149,16 +147,12 @@ fn scenario_code_search_and_summarize() {
             ExpectedText::contains("searching"),
             ExpectedTool::new("fs_search").arg_contains("pattern", "auth"),
         ))
-        .expect_tool_call(
-            ExpectedTool::new("fs_search").arg_contains("pattern", "auth"),
-        )
+        .expect_tool_call(ExpectedTool::new("fs_search").arg_contains("pattern", "auth"))
         .mock_responds(MockLlm::text_then_tool(
             ExpectedText::contains("found"),
             ExpectedTool::new("read").arg_contains("path", "auth"),
         ))
-        .expect_tool_call(
-            ExpectedTool::new("read").arg_contains("path", "auth"),
-        )
+        .expect_tool_call(ExpectedTool::new("read").arg_contains("path", "auth"))
         .expect_text(ExpectedText::contains("authentication"));
 
     let (steps, mock) = scenario.into_mock_llm();

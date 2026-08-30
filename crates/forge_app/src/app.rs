@@ -168,7 +168,12 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ForgeAp
                     .and(CompactionHandler::new(agent.clone(), environment.clone())),
             )
             .on_toolcall_start(tracing_handler.clone())
-            .on_toolcall_end(tracing_handler.clone().and(AutoRepairHook::new()).and(SandboxHook::new()))
+            .on_toolcall_end(
+                tracing_handler
+                    .clone()
+                    .and(AutoRepairHook::new())
+                    .and(SandboxHook::new()),
+            )
             .on_end(on_end_hook);
 
         let orch = Orchestrator::new(
