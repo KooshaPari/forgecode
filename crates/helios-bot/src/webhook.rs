@@ -49,10 +49,7 @@ pub struct HeliosMention {
 
 /// Parse `@helios <request>` out of arbitrary text. Returns None if no mention.
 pub fn parse_helios_mention(text: &str, is_issue: bool, in_comment: bool) -> Option<HeliosMention> {
-    // Look for `@helios` (case-insensitive), followed by optional whitespace, then capture the rest.
-    let lower = text.to_ascii_lowercase();
-    let idx = lower.find("@helios")?;
-    let after = &text[idx + "@helios".len()..];
+    let after = mention_suffix(text)?;
     // Strip leading whitespace and a single optional ':' or ','.
     let trimmed = after
         .trim_start()
@@ -60,6 +57,13 @@ pub fn parse_helios_mention(text: &str, is_issue: bool, in_comment: bool) -> Opt
         .trim_start_matches(',')
         .trim_start();
     Some(HeliosMention { request: trimmed.to_string(), in_comment, is_issue })
+}
+
+fn mention_suffix(text: &str) -> Option<&str> {
+    // Look for `@helios` (case-insensitive), followed by optional whitespace, then capture the rest.
+    let lower = text.to_ascii_lowercase();
+    let idx = lower.find("@helios")?;
+    text.get(idx + "@helios".len()..)
 }
 
 /// Extracted webhook context for a mention.
@@ -196,6 +200,16 @@ mod tests {
     fn parse_mention_handles_colon() {
         let m = parse_helios_mention("@helios: refactor the foo module", true, true).unwrap();
         assert_eq!(m.request, "refactor the foo module");
+    }
+
+    #[test]
+    fn mention_suffix_preserves_utf8_text_before_mention() {
+        let fixture = "coffee: caf\u{00e9} @HeLiOs: inspect unicode";
+
+        let actual = mention_suffix(fixture);
+        let expected = Some(": inspect unicode");
+
+        assert_eq!(actual, expected);
     }
 
     #[test]

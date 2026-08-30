@@ -34,12 +34,17 @@ pub enum Command {
 
 pub fn parse_args() -> Result<Command> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.is_empty() {
-        anyhow::bail!("usage: helios-bot <serve|run> ...");
-    }
-    match args[0].as_str() {
+    parse_command(&args)
+}
+
+fn parse_command(args: &[String]) -> Result<Command> {
+    let (subcommand, rest) = args
+        .split_first()
+        .ok_or_else(|| anyhow::anyhow!("usage: helios-bot <serve|run> ..."))?;
+
+    match subcommand.as_str() {
         "serve" => {
-            let s = parse_serve(&args[1..])?;
+            let s = parse_serve(rest)?;
             Ok(Command::Serve {
                 bind: s.bind,
                 private_key: s.private_key,
@@ -49,7 +54,7 @@ pub fn parse_args() -> Result<Command> {
             })
         }
         "run" => {
-            let r = parse_run(&args[1..])?;
+            let r = parse_run(rest)?;
             Ok(Command::Run {
                 repo: r.repo,
                 request: r.request,
@@ -76,8 +81,8 @@ fn parse_serve(args: &[String]) -> Result<ServeArgs> {
     let mut webhook_secret = String::new();
 
     let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
+    while let Some(flag) = args.get(i) {
+        match flag.as_str() {
             "--bind" => {
                 bind = args
                     .get(i + 1)
@@ -114,7 +119,7 @@ fn parse_serve(args: &[String]) -> Result<ServeArgs> {
                     .ok_or_else(|| anyhow::anyhow!("--webhook-secret requires a value"))?;
                 i += 2;
             }
-            _ => anyhow::bail!("unknown flag: {}", args[i]),
+            _ => anyhow::bail!("unknown flag: {flag}"),
         }
     }
 
@@ -139,8 +144,8 @@ fn parse_run(args: &[String]) -> Result<RunArgs> {
     let mut checkout_dir: Option<PathBuf> = None;
 
     let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
+    while let Some(flag) = args.get(i) {
+        match flag.as_str() {
             "--repo" => {
                 repo = Some(
                     args.get(i + 1)
@@ -165,7 +170,7 @@ fn parse_run(args: &[String]) -> Result<RunArgs> {
                 checkout_dir = Some(PathBuf::from(v));
                 i += 2;
             }
-            _ => anyhow::bail!("unknown flag: {}", args[i]),
+            _ => anyhow::bail!("unknown flag: {flag}"),
         }
     }
 
@@ -224,6 +229,19 @@ mod tests {
     fn parse_run_missing_required_fails() {
         let result = parse_run(&["--repo".to_string(), "foo/bar".to_string()]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_command_rejects_unknown_subcommand_without_indexing() {
+        let fixture = ["unknown".to_string()];
+
+        let actual = match parse_command(&fixture) {
+            Ok(_) => panic!("unknown subcommand should fail"),
+            Err(err) => err.to_string(),
+        };
+        let expected = "unknown subcommand: unknown";
+
+        assert_eq!(actual, expected);
     }
 
     #[test]
