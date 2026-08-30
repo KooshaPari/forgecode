@@ -7,12 +7,14 @@
 members = [
   "crates/forge_api",
   "crates/forge_app",
-  "crates/forge_sdk",
   "crates/forge_ci",
   "crates/forge_config",
+  "crates/forge_daemon",
   "crates/forge_dbd",
   "crates/forge_display",
   "crates/forge_domain",
+  "crates/forge_drift",
+  "crates/forge_e2e",
   "crates/forge_embed",
   "crates/forge_eventsource",
   "crates/forge_eventsource_stream",
@@ -22,11 +24,16 @@ members = [
   "crates/forge_json_repair",
   "crates/forge_main",
   "crates/forge_markdown_stream",
+  "crates/forge_mux",
   "crates/forge_pheno_shell",
   "crates/forge_pheno_winterminal",
   "crates/forge_repo",
+  "crates/forge_repo_map",
+  "crates/forge_sandbox",
+  "crates/forge_sdk",
   "crates/forge_select",
   "crates/forge_services",
+  "crates/forge_similarity",
   "crates/forge_snaps",
   "crates/forge_spinner",
   "crates/forge_syntax",
@@ -35,14 +42,10 @@ members = [
   "crates/forge_test_kit",
   "crates/forge_tool_macros",
   "crates/forge_tracker",
-  "crates/forge_walker",
-  "crates/forge_repo_map",
-  "crates/forge3d",
-  "crates/forge_drift",
   "crates/forge_tui",
-  "crates/forge_similarity",
-  "crates/forge_mux",
-  "crates/forge_daemon",
+  "crates/forge_walker",
+  "crates/forge3d",
+  "crates/helios-bot",
   "benchmarks/forge_daemon_bench",
   "benchmarks/perf_harness",
   "benchmarks/dual_harness",
@@ -218,6 +221,7 @@ forge_fs = { path = "crates/forge_fs" }
 forge_infra = { path = "crates/forge_infra" }
 forge_repo = { path = "crates/forge_repo" }
 forge_main = { path = "crates/forge_main" }
+forge_sandbox = { path = "crates/forge_sandbox" }
 forge_services = { path = "crates/forge_services" }
 forge_snaps = { path = "crates/forge_snaps" }
 forge_spinner = { path = "crates/forge_spinner" }
