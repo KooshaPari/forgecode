@@ -455,8 +455,7 @@ pub async fn on_update(api: Arc<impl API>, update: Option<&Update>) {
     // exist). The informer reports the version; if it's `None` we stay
     // quiet. The actual download path (helper / PS1 scaffolder) does the
     // same: log a one-line reason and stay on the current binary.
-    let repo =
-        std::env::var("HELIOSLITE_REPO").unwrap_or_else(|_| DEFAULT_UPDATE_REPO.to_string());
+    let repo = std::env::var("HELIOSLITE_REPO").unwrap_or_else(|_| DEFAULT_UPDATE_REPO.to_string());
     let informer =
         update_informer::new(registry::GitHub, repo.as_str(), VERSION).interval(frequency.into());
 

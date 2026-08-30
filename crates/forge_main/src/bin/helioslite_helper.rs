@@ -66,15 +66,15 @@ use std::time::Duration;
 
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, ERROR_INVALID_PARAMETER, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    CloseHandle, ERROR_INVALID_PARAMETER, GetLastError, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 #[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
-    DeleteFileW, MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    DeleteFileW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
 };
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
-    CreateProcessW, OpenProcess, WaitForSingleObject, PROCESS_INFORMATION, STARTUPINFOW,
+    CreateProcessW, OpenProcess, PROCESS_INFORMATION, STARTUPINFOW, WaitForSingleObject,
 };
 
 // ---------- constants --------------------------------------------------------
@@ -114,7 +114,6 @@ fn validate_repo(repo: &str) -> Result<(), String> {
     }
     Ok(())
 }
-
 
 #[derive(Debug)]
 struct Args {
@@ -159,9 +158,9 @@ fn parse_args() -> Result<Args, String> {
     }
 
     let parent_pid_str = raw[4].as_str();
-    let parent_pid: u32 = parent_pid_str.parse().map_err(|_| {
-        format!("invalid parent pid {:?}", parent_pid_str)
-    })?;
+    let parent_pid: u32 = parent_pid_str
+        .parse()
+        .map_err(|_| format!("invalid parent pid {:?}", parent_pid_str))?;
 
     let source_path = wide(raw[6].as_str());
     let target_path = wide(raw[7].as_str());
@@ -187,11 +186,17 @@ fn parse_args() -> Result<Args, String> {
     })
 }
 fn wide(s: &str) -> Vec<u16> {
-    OsString::from(s).encode_wide().chain(std::iter::once(0)).collect()
+    OsString::from(s)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 fn wide_path(p: &std::path::Path) -> Vec<u16> {
-    p.as_os_str().encode_wide().chain(std::iter::once(0)).collect()
+    p.as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 // ---------- main -------------------------------------------------------------
@@ -253,9 +258,7 @@ fn run() -> Result<(), u8> {
             );
         }
         Err(e) => {
-            eprintln!(
-                "helioslite_helper: .sha256 fetch errored ({e}); proceeding unverified"
-            );
+            eprintln!("helioslite_helper: .sha256 fetch errored ({e}); proceeding unverified");
         }
     }
 
@@ -340,10 +343,7 @@ fn http_get(url: &str) -> Result<ureq::Response, String> {
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
         .build();
-    agent
-        .get(url)
-        .call()
-        .map_err(|e| format!("GET {url}: {e}"))
+    agent.get(url).call().map_err(|e| format!("GET {url}: {e}"))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -508,7 +508,13 @@ fn move_into_place(source: &[u16], target: &[u16]) -> Result<(), u32> {
     // MOVEFILE_WRITE_THROUGH      = 0x00000008
     // MOVEFILE_DELAY_UNTIL_REBOOT is intentionally NOT set: we want the swap
     // to land now, atomically, not at next boot.
-    let ok = unsafe { MoveFileExW(source.as_ptr(), target.as_ptr(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) };
+    let ok = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            target.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
     if ok == 0 {
         Err(unsafe { GetLastError() })
     } else {
