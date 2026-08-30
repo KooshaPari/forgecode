@@ -22,5 +22,10 @@ tempfile.workspace = true
 pretty_assertions.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
+[features]
+# landlock-runtime: enable real Landlock LSM plumbing on Linux.
+# When disabled (default), setup_landlock() is a no-op stub.
+landlock-runtime = []
+
 [lints.rust]
 unknown_lints = "allow"
