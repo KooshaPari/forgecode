@@ -195,6 +195,10 @@ fn wide(s: &str) -> Vec<u16> {
         .chain(std::iter::once(0))
         .collect()
 }
+#[cfg(not(windows))]
+fn wide(_s: &str) -> Vec<u16> {
+    unimplemented!("wide() is Windows-only")
+}
 
 #[cfg(windows)]
 fn wide_path(p: &std::path::Path) -> Vec<u16> {
@@ -202,6 +206,10 @@ fn wide_path(p: &std::path::Path) -> Vec<u16> {
         .encode_wide()
         .chain(std::iter::once(0))
         .collect()
+}
+#[cfg(not(windows))]
+fn wide_path(_p: &std::path::Path) -> Vec<u16> {
+    unimplemented!("wide_path() is Windows-only")
 }
 
 // ---------- main -------------------------------------------------------------
