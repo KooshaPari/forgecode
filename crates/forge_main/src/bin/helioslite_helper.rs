@@ -60,7 +60,10 @@
 #![cfg_attr(not(windows), allow(dead_code))]
 
 use std::ffi::OsString;
+#[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
+#[cfg(windows)]
+use std::os::windows::ffi::OsStringExt;
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -302,10 +305,11 @@ fn run() -> Result<(), u8> {
 
 fn download(url: &str) -> Result<Vec<u8>, String> {
     let resp = http_get(url)?;
-    let mut body = resp.into_reader();
+    let mut reader = resp.into_body().into_reader();
     let mut buf = Vec::with_capacity(64 * 1024);
     use std::io::Read;
-    buf.read_to_end(&mut body)
+    reader
+        .read_to_end(&mut buf)
         .map_err(|e| format!("read body: {e}"))?;
     Ok(buf)
 }
@@ -321,7 +325,8 @@ fn fetch_expected_sha256(url: &str) -> Result<Option<String>, String> {
         Ok(resp) => {
             use std::io::Read;
             let mut s = String::new();
-            resp.into_reader()
+            resp.into_body()
+                .into_reader()
                 .read_to_string(&mut s)
                 .map_err(|e| format!("read sha256 body: {e}"))?;
             // `<hex>  \n` — split on whitespace, take the first
@@ -339,11 +344,15 @@ fn fetch_expected_sha256(url: &str) -> Result<Option<String>, String> {
     }
 }
 
-fn http_get(url: &str) -> Result<ureq::Response, String> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
+fn http_get(url: &str) -> Result<ureq::http::Response<ureq::Body>, String> {
+    let config = ureq::config::Config::builder()
+        .timeout_global(Some(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS)))
         .build();
-    agent.get(url).call().map_err(|e| format!("GET {url}: {e}"))
+    let agent = ureq::Agent::new_with_config(config);
+    agent
+        .get(url)
+        .call()
+        .map_err(|e| format!("GET {url}: {e}"))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
