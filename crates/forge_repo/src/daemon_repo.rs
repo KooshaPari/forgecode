@@ -79,6 +79,10 @@ pub struct DaemonConversationRepository {
     /// [`forge_domain::Environment::dbd_bin_path`]). `None` means "look up
     /// `forge_dbd` on PATH" at spawn time.
     dbd_bin: Option<PathBuf>,
+    /// Test-only seam for exercising the post-spawn polling path without an
+    /// operating-system-specific executable.
+    #[cfg(test)]
+    test_spawn_succeeds: bool,
     /// The client's workspace id (hash of its cwd), stamped onto daemon-side
     /// upserts. The daemon derives its own id from ITS current directory,
     /// which diverges from the client's in `--directory` mode (Windows path
@@ -112,6 +116,8 @@ impl DaemonConversationRepository {
             client: tokio::sync::Mutex::new(None),
             lifecycle_lock: tokio::sync::Mutex::new(()),
             dbd_bin: default_dbd_bin(),
+            #[cfg(test)]
+            test_spawn_succeeds: false,
             workspace_id,
         }
     }
@@ -131,8 +137,21 @@ impl DaemonConversationRepository {
             client: tokio::sync::Mutex::new(None),
             lifecycle_lock: tokio::sync::Mutex::new(()),
             dbd_bin,
+            test_spawn_succeeds: false,
             workspace_id,
         }
+    }
+
+    /// Test-only constructor that simulates a successful daemon spawn.
+    #[cfg(test)]
+    fn new_with_spawn_success(
+        inner: Arc<ConversationRepositoryImpl>,
+        socket_path: PathBuf,
+        workspace_id: i64,
+    ) -> Self {
+        let mut repo = Self::new_with_bin(inner, socket_path, None, workspace_id);
+        repo.test_spawn_succeeds = true;
+        repo
     }
 
     /// Attempt one daemon round-trip for a write request.
@@ -283,6 +302,11 @@ impl DaemonConversationRepository {
     /// is reachable at the same place the client expects it (both sides honor
     /// the variable; the default `~/.forge/.forge.db.sock` is used when unset).
     fn spawn_daemon(&self) -> bool {
+        #[cfg(test)]
+        if self.test_spawn_succeeds {
+            return true;
+        }
+
         let bin = self
             .dbd_bin
             .clone()
@@ -695,10 +719,9 @@ mod tests {
         SPAWN_ATTEMPTED.store(false, Ordering::SeqCst);
 
         let inner = in_memory_inner();
-        let repo = DaemonConversationRepository::new_with_bin(
+        let repo = DaemonConversationRepository::new_with_spawn_success(
             inner,
             PathBuf::from("/nonexistent/forge-dbd-delayed.sock"),
-            Some(PathBuf::from("/usr/bin/true")),
             0,
         );
         let first = Conversation::new(ConversationId::generate())
