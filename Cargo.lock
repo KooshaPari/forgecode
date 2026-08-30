@@ -2342,6 +2342,7 @@ dependencies = [
  "forge_embed",
  "forge_eventsource",
  "forge_json_repair",
+ "forge_sandbox",
  "forge_stream",
  "forge_template",
  "forge_test_kit",
@@ -2515,6 +2516,20 @@ dependencies = [
  "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "forge_e2e"
+version = "2.13.21"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "forge_domain",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]
@@ -2869,6 +2884,23 @@ dependencies = [
  "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-typescript",
+]
+
+[[package]]
+name = "forge_sandbox"
+version = "2.13.21"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bstr",
+ "pretty_assertions",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -4547,6 +4579,25 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
+name = "helios-bot"
+version = "2.13.21"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bstr",
+ "hex",
+ "hmac 0.12.1",
+ "pretty_assertions",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "hermit-abi"
