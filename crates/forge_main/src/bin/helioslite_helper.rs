@@ -117,7 +117,6 @@ fn validate_repo(repo: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(windows)]
 #[derive(Debug)]
 struct Args {
     release_repo: String,
