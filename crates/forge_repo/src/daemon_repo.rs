@@ -594,6 +594,7 @@ mod tests {
     /// Serializes the decorator tests that touch the process-wide spawn guard
     /// ([`SPAWN_ATTEMPTED`]) so they cannot race each other.
     static SPAWN_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    #[cfg(unix)]
     const TEST_WORKSPACE_ID: i64 = 0;
 
     fn in_memory_inner() -> Arc<ConversationRepositoryImpl> {

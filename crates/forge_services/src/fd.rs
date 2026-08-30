@@ -156,10 +156,14 @@ impl<F: CommandInfra + WalkerInfra + 'static> FileDiscovery for FdDefault<F> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use std::fs::{self, File};
+    #[cfg(unix)]
     use std::io::Write;
 
+    #[cfg(unix)]
     use pretty_assertions::assert_eq;
+    #[cfg(unix)]
     use tempfile::tempdir;
 
     use super::*;
