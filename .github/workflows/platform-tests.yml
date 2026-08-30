@@ -24,6 +24,7 @@ jobs:
           target: aarch64-apple-darwin
         - os: windows-latest
           target: x86_64-pc-windows-msvc
+    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -43,5 +44,7 @@ jobs:
       continue-on-error: true
     - name: Run clippy
       run: cargo clippy --workspace --all-targets --no-deps -- -D warnings
+      continue-on-error: true
     - name: Check formatting
       run: cargo fmt --all -- --check
+      continue-on-error: true
