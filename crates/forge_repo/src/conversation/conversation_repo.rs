@@ -210,6 +210,12 @@ impl ConversationRepositoryImpl {
     /// query has an FTS5 syntax error. A full table scan over `title` and
     /// `context` with `LIKE '%term%'` is much slower than FTS5 but always
     /// returns something useful for the user rather than an empty result.
+    ///
+    /// When `persist_context` compresses a context via zstd the `context`
+    /// column is NULL and the payload lives in `context_zstd` (binary).
+    /// LIKE cannot match binary data, so after the plaintext scan we also
+    /// fetch rows where `context IS NULL AND context_zstd IS NOT NULL`,
+    /// decompress each one in Rust, and check for a substring match.
     async fn search_conversations_like(
         &self,
         query: String,
@@ -224,6 +230,8 @@ impl ConversationRepositoryImpl {
                 .replace('%', "\\%")
                 .replace('_', "\\_");
             let like_pattern = format!("%{escaped}%");
+
+            // --- Part 1: plaintext columns (title, context, cwd) ---
             let mut sql = String::from(
                 "SELECT * FROM conversations \
                  WHERE workspace_id = ? \
@@ -245,7 +253,49 @@ impl ConversationRepositoryImpl {
                 q = q.bind::<diesel::sql_types::BigInt, _>(l);
             }
 
-            let raw_rows: Vec<ConversationRecord> = q.load(connection)?;
+            let mut raw_rows: Vec<ConversationRecord> = q.load(connection)?;
+
+            // --- Part 2: compressed contexts (context IS NULL, context_zstd IS NOT NULL) ---
+            // These rows were skipped by the plaintext LIKE scan because
+            // `context` is NULL when zstd compression succeeded during
+            // upsert. We fetch them separately, decompress in Rust, and
+            // check for a substring match.
+            let compressed_sql = "\
+                SELECT * FROM conversations \
+                WHERE workspace_id = ? \
+                  AND context IS NULL \
+                  AND context_zstd IS NOT NULL \
+                ORDER BY updated_at DESC";
+            let compressed_rows: Vec<ConversationRecord> =
+                diesel::sql_query(compressed_sql)
+                    .bind::<diesel::sql_types::BigInt, _>(workspace_id)
+                    .load(connection)?;
+
+            let needle_lower = query.to_lowercase();
+            for row in compressed_rows {
+                // Skip rows already found by the plaintext scan.
+                if raw_rows.iter().any(|r| r.conversation_id == row.conversation_id) {
+                    continue;
+                }
+                if let Some(ref compressed) = row.context_zstd {
+                    match zstd::decode_all(&compressed[..]) {
+                        Ok(decompressed) => {
+                            let text = String::from_utf8_lossy(&decompressed);
+                            if text.to_lowercase().contains(&needle_lower) {
+                                raw_rows.push(row);
+                            }
+                        }
+                        Err(_) => continue,
+                    }
+                }
+                // Respect limit: stop after we've collected enough.
+                if let Some(limit) = limit_value {
+                    if raw_rows.len() as i64 >= limit {
+                        break;
+                    }
+                }
+            }
+
             let conversations: Result<Vec<Conversation>, _> =
                 raw_rows.into_iter().map(Conversation::try_from).collect();
             conversations
