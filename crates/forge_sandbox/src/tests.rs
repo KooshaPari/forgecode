@@ -16,7 +16,11 @@ mod tests {
         let backend = DisabledBackend::new();
         let config = SandboxConfig::builder()
             .command(if cfg!(windows) { "cmd" } else { "sh" })
-            .args(if cfg!(windows) { vec!["/C".to_string(), "echo hello".to_string()] } else { vec!["-c".to_string(), "echo hello".to_string()] })
+            .args(if cfg!(windows) {
+                vec!["/C".to_string(), "echo hello".to_string()]
+            } else {
+                vec!["-c".to_string(), "echo hello".to_string()]
+            })
             .build();
 
         let output = backend.run(&config).await.expect("run");
@@ -30,7 +34,11 @@ mod tests {
         let backend = DisabledBackend::new();
         let config = SandboxConfig::builder()
             .command(if cfg!(windows) { "cmd" } else { "sh" })
-            .args(if cfg!(windows) { vec!["/C".to_string(), "exit 7".to_string()] } else { vec!["-c".to_string(), "exit 7".to_string()] })
+            .args(if cfg!(windows) {
+                vec!["/C".to_string(), "exit 7".to_string()]
+            } else {
+                vec!["-c".to_string(), "exit 7".to_string()]
+            })
             .build();
 
         let output = backend.run(&config).await.expect("run");

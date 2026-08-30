@@ -14,7 +14,10 @@ pub enum ScriptedResponse {
     /// One or more tool calls, no accompanying text.
     Tools(Vec<ExpectedTool>),
     /// Both text and tool calls (e.g. "I'll read it" then a `read` call).
-    TextAndTools { text: ExpectedText, tools: Vec<ExpectedTool> },
+    TextAndTools {
+        text: ExpectedText,
+        tools: Vec<ExpectedTool>,
+    },
 }
 
 impl ScriptedResponse {

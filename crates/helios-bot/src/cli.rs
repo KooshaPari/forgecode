@@ -71,24 +71,39 @@ fn parse_serve(args: &[String]) -> Result<ServeArgs> {
     while i < args.len() {
         match args[i].as_str() {
             "--bind" => {
-                bind = args.get(i + 1).cloned().ok_or_else(|| anyhow::anyhow!("--bind requires a value"))?;
+                bind = args
+                    .get(i + 1)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("--bind requires a value"))?;
                 i += 2;
             }
             "--private-key" => {
-                let v = args.get(i + 1).cloned().ok_or_else(|| anyhow::anyhow!("--private-key requires a value"))?;
+                let v = args
+                    .get(i + 1)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("--private-key requires a value"))?;
                 private_key = Some(PathBuf::from(v));
                 i += 2;
             }
             "--app-id" => {
-                app_id = args.get(i + 1).and_then(|s| s.parse().ok()).ok_or_else(|| anyhow::anyhow!("--app-id requires a u64"))?;
+                app_id = args
+                    .get(i + 1)
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| anyhow::anyhow!("--app-id requires a u64"))?;
                 i += 2;
             }
             "--installation-id" => {
-                installation_id = args.get(i + 1).and_then(|s| s.parse().ok()).ok_or_else(|| anyhow::anyhow!("--installation-id requires a u64"))?;
+                installation_id = args
+                    .get(i + 1)
+                    .and_then(|s| s.parse().ok())
+                    .ok_or_else(|| anyhow::anyhow!("--installation-id requires a u64"))?;
                 i += 2;
             }
             "--webhook-secret" => {
-                webhook_secret = args.get(i + 1).cloned().ok_or_else(|| anyhow::anyhow!("--webhook-secret requires a value"))?;
+                webhook_secret = args
+                    .get(i + 1)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("--webhook-secret requires a value"))?;
                 i += 2;
             }
             _ => anyhow::bail!("unknown flag: {}", args[i]),
@@ -119,15 +134,26 @@ fn parse_run(args: &[String]) -> Result<RunArgs> {
     while i < args.len() {
         match args[i].as_str() {
             "--repo" => {
-                repo = Some(args.get(i + 1).cloned().ok_or_else(|| anyhow::anyhow!("--repo requires a value"))?);
+                repo = Some(
+                    args.get(i + 1)
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("--repo requires a value"))?,
+                );
                 i += 2;
             }
             "--request" => {
-                request = Some(args.get(i + 1).cloned().ok_or_else(|| anyhow::anyhow!("--request requires a value"))?);
+                request = Some(
+                    args.get(i + 1)
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("--request requires a value"))?,
+                );
                 i += 2;
             }
             "--checkout-dir" => {
-                let v = args.get(i + 1).cloned().ok_or_else(|| anyhow::anyhow!("--checkout-dir requires a value"))?;
+                let v = args
+                    .get(i + 1)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("--checkout-dir requires a value"))?;
                 checkout_dir = Some(PathBuf::from(v));
                 i += 2;
             }
@@ -155,9 +181,15 @@ pub async fn run() -> Result<()> {
             std::process::exit(0);
         }
         Command::Run { repo, request, checkout_dir } => {
-            let checkout = checkout_dir.unwrap_or_else(|| std::env::temp_dir().join(repo.replace('/', "_")));
-            eprintln!("helios-bot run: repo={repo} request={request} checkout={}", checkout.display());
-            eprintln!("(stub: in production this would clone {repo}, run forge, and post the result back)");
+            let checkout =
+                checkout_dir.unwrap_or_else(|| std::env::temp_dir().join(repo.replace('/', "_")));
+            eprintln!(
+                "helios-bot run: repo={repo} request={request} checkout={}",
+                checkout.display()
+            );
+            eprintln!(
+                "(stub: in production this would clone {repo}, run forge, and post the result back)"
+            );
             Ok(())
         }
     }
@@ -169,7 +201,13 @@ mod tests {
 
     #[test]
     fn parse_run_minimal() {
-        let cmd = parse_run(&["--repo".to_string(), "KooshaPari/forgecode".to_string(), "--request".to_string(), "fix typo".to_string()]).unwrap();
+        let cmd = parse_run(&[
+            "--repo".to_string(),
+            "KooshaPari/forgecode".to_string(),
+            "--request".to_string(),
+            "fix typo".to_string(),
+        ])
+        .unwrap();
         assert_eq!(cmd.repo, "KooshaPari/forgecode");
         assert_eq!(cmd.request, "fix typo");
     }
@@ -191,7 +229,8 @@ mod tests {
             "67890".to_string(),
             "--webhook-secret".to_string(),
             "secret".to_string(),
-        ]).unwrap();
+        ])
+        .unwrap();
         assert_eq!(cmd.bind, "0.0.0.0:8080");
         assert_eq!(cmd.app_id, 12345);
     }

@@ -53,7 +53,9 @@ pub enum FilesystemRule {
 impl FilesystemRule {
     pub fn path(&self) -> &PathBuf {
         match self {
-            FilesystemRule::ReadOnly(p) | FilesystemRule::ReadWrite(p) | FilesystemRule::Deny(p) => p,
+            FilesystemRule::ReadOnly(p)
+            | FilesystemRule::ReadWrite(p)
+            | FilesystemRule::Deny(p) => p,
         }
     }
 }
@@ -103,7 +105,10 @@ impl SandboxConfig {
             let p = rule.path();
             if !p.exists() && !matches!(rule, FilesystemRule::ReadWrite(_)) {
                 // Allow ReadWrite of non-existent paths (creating new dirs is fine).
-                return Err(format!("filesystem rule path does not exist: {}", p.display()));
+                return Err(format!(
+                    "filesystem rule path does not exist: {}",
+                    p.display()
+                ));
             }
         }
         if let Some(timeout) = self.timeout {
@@ -167,17 +172,23 @@ impl SandboxConfigBuilder {
     }
 
     pub fn allow_read(mut self, path: impl Into<PathBuf>) -> Self {
-        self.inner.filesystem.push(FilesystemRule::ReadOnly(path.into()));
+        self.inner
+            .filesystem
+            .push(FilesystemRule::ReadOnly(path.into()));
         self
     }
 
     pub fn allow_read_write(mut self, path: impl Into<PathBuf>) -> Self {
-        self.inner.filesystem.push(FilesystemRule::ReadWrite(path.into()));
+        self.inner
+            .filesystem
+            .push(FilesystemRule::ReadWrite(path.into()));
         self
     }
 
     pub fn deny(mut self, path: impl Into<PathBuf>) -> Self {
-        self.inner.filesystem.push(FilesystemRule::Deny(path.into()));
+        self.inner
+            .filesystem
+            .push(FilesystemRule::Deny(path.into()));
         self
     }
 

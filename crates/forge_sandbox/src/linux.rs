@@ -71,9 +71,8 @@ impl Backend for LinuxBackend {
             let fs_rules = config.filesystem.clone();
             let net_policy = config.network.clone();
             unsafe {
-                cmd.as_std_mut().pre_exec(move || {
-                    setup_landlock(&fs_rules, &net_policy)
-                });
+                cmd.as_std_mut()
+                    .pre_exec(move || setup_landlock(&fs_rules, &net_policy));
             }
         }
 
@@ -91,10 +90,7 @@ impl Backend for LinuxBackend {
 ///
 /// The default build (no `landlock-runtime` feature) is a no-op.  When the
 /// feature is enabled, the real `landlock::Ruleset` plumbing kicks in.
-fn setup_landlock(
-    fs_rules: &[FilesystemRule],
-    net_policy: &NetworkPolicy,
-) -> std::io::Result<()> {
+fn setup_landlock(fs_rules: &[FilesystemRule], net_policy: &NetworkPolicy) -> std::io::Result<()> {
     #[cfg(feature = "landlock-runtime")]
     {
         // Feature-gated real implementation.  Currently a stub because the

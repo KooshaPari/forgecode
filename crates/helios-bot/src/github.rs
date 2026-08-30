@@ -66,16 +66,9 @@ impl GitHubClient {
     }
 
     /// Post a comment on an issue/PR.
-    pub async fn post_comment(
-        &self,
-        repo: &str,
-        issue_number: u64,
-        body: &str,
-    ) -> Result<u64> {
+    pub async fn post_comment(&self, repo: &str, issue_number: u64, body: &str) -> Result<u64> {
         let token = self.token().await?;
-        let url = format!(
-            "https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
-        );
+        let url = format!("https://api.github.com/repos/{repo}/issues/{issue_number}/comments");
         let resp = self
             .http
             .post(&url)
