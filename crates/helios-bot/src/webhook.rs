@@ -46,12 +46,12 @@ pub fn parse_helios_mention(text: &str, is_issue: bool, in_comment: bool) -> Opt
     let idx = lower.find("@helios")?;
     let after = &text[idx + "@helios".len()..];
     // Strip leading whitespace and a single optional ':' or ','.
-    let trimmed = after.trim_start().trim_start_matches(':').trim_start_matches(',').trim_start();
-    Some(HeliosMention {
-        request: trimmed.to_string(),
-        in_comment,
-        is_issue,
-    })
+    let trimmed = after
+        .trim_start()
+        .trim_start_matches(':')
+        .trim_start_matches(',')
+        .trim_start();
+    Some(HeliosMention { request: trimmed.to_string(), in_comment, is_issue })
 }
 
 /// Extracted webhook context for a mention.
@@ -68,9 +68,15 @@ pub struct WebhookContext {
 /// Parse a webhook payload (the `issues.comment.created` or
 /// `issue_comment.created` event) and extract a WebhookContext if it
 /// contains a `@helios` mention.
-pub fn extract_webhook_context(event: &str, payload: &HashMap<String, serde_json::Value>) -> Option<WebhookContext> {
+pub fn extract_webhook_context(
+    event: &str,
+    payload: &HashMap<String, serde_json::Value>,
+) -> Option<WebhookContext> {
     // We only care about comment-created events on issues/PRs.
-    if !matches!(event, "issue_comment" | "issues" | "pull_request_review_comment") {
+    if !matches!(
+        event,
+        "issue_comment" | "issues" | "pull_request_review_comment"
+    ) {
         return None;
     }
 
@@ -81,16 +87,27 @@ pub fn extract_webhook_context(event: &str, payload: &HashMap<String, serde_json
 
     // Try issue_comment.created first.
     let body = if event == "issue_comment" {
-        payload.get("comment").and_then(|c| c.get("body")).and_then(|v| v.as_str())
+        payload
+            .get("comment")
+            .and_then(|c| c.get("body"))
+            .and_then(|v| v.as_str())
     } else {
-        payload.get("issue").and_then(|c| c.get("body")).and_then(|v| v.as_str())
+        payload
+            .get("issue")
+            .and_then(|c| c.get("body"))
+            .and_then(|v| v.as_str())
     }?;
 
     let repo_full = payload.get("repository")?.get("full_name")?.as_str()?;
-    let issue = payload.get("issue").or_else(|| payload.get("pull_request"))?;
+    let issue = payload
+        .get("issue")
+        .or_else(|| payload.get("pull_request"))?;
     let issue_number = issue.get("number")?.as_u64()?;
     let is_issue = payload.get("issue").is_some()
-        && !issue.get("pull_request").map(|v| v.is_object()).unwrap_or(false);
+        && !issue
+            .get("pull_request")
+            .map(|v| v.is_object())
+            .unwrap_or(false);
 
     let mention = parse_helios_mention(body, is_issue, event == "issue_comment")?;
     if mention.request.is_empty() {
@@ -98,18 +115,23 @@ pub fn extract_webhook_context(event: &str, payload: &HashMap<String, serde_json
     }
 
     let comment_id = if event == "issue_comment" {
-        payload.get("comment").and_then(|c| c.get("id")).and_then(|v| v.as_u64())
+        payload
+            .get("comment")
+            .and_then(|c| c.get("id"))
+            .and_then(|v| v.as_u64())
     } else {
         None
     };
 
     let author = if event == "issue_comment" {
-        payload.get("comment")
+        payload
+            .get("comment")
             .and_then(|c| c.get("user"))
             .and_then(|u| u.get("login"))
             .and_then(|v| v.as_str())
     } else {
-        payload.get("issue")
+        payload
+            .get("issue")
             .and_then(|c| c.get("user"))
             .and_then(|u| u.get("login"))
             .and_then(|v| v.as_str())

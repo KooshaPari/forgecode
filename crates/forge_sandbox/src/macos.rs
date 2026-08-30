@@ -45,10 +45,14 @@ impl MacOsBackend {
                     profile.push_str(&format!("(allow file-read* (subpath \"{path}\"))\n"));
                 }
                 FilesystemRule::ReadWrite(_) => {
-                    profile.push_str(&format!("(allow file-read* file-write* (subpath \"{path}\"))\n"));
+                    profile.push_str(&format!(
+                        "(allow file-read* file-write* (subpath \"{path}\"))\n"
+                    ));
                 }
                 FilesystemRule::Deny(_) => {
-                    profile.push_str(&format!("(deny file-read* file-write* (subpath \"{path}\"))\n"));
+                    profile.push_str(&format!(
+                        "(deny file-read* file-write* (subpath \"{path}\"))\n"
+                    ));
                 }
             }
         }

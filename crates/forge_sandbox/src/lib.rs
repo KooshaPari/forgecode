@@ -69,10 +69,10 @@
 
 mod backend;
 mod config;
+mod disabled;
 mod linux;
 mod macos;
 mod windows;
-mod disabled;
 
 #[cfg(test)]
 mod tests;

@@ -57,6 +57,6 @@ mod assertions;
 mod mock_llm;
 mod scenario;
 
-pub use assertions::{ExpectedTool, ExpectedText};
+pub use assertions::{ExpectedText, ExpectedTool};
 pub use mock_llm::{MockLlm, ScriptedResponse};
 pub use scenario::Scenario;

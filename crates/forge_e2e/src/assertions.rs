@@ -29,15 +29,24 @@ pub enum ExpectedArgValue {
 
 impl ExpectedArg {
     pub fn exact(key: impl Into<String>, value: impl Into<String>) -> Self {
-        Self { key: key.into(), value: ExpectedArgValue::Exact(value.into()) }
+        Self {
+            key: key.into(),
+            value: ExpectedArgValue::Exact(value.into()),
+        }
     }
 
     pub fn prefix(key: impl Into<String>, value: impl Into<String>) -> Self {
-        Self { key: key.into(), value: ExpectedArgValue::Prefix(value.into()) }
+        Self {
+            key: key.into(),
+            value: ExpectedArgValue::Prefix(value.into()),
+        }
     }
 
     pub fn contains(key: impl Into<String>, value: impl Into<String>) -> Self {
-        Self { key: key.into(), value: ExpectedArgValue::Contains(value.into()) }
+        Self {
+            key: key.into(),
+            value: ExpectedArgValue::Contains(value.into()),
+        }
     }
 
     pub fn any(key: impl Into<String>) -> Self {
