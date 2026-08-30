@@ -117,11 +117,6 @@ terminal_size = "0.4"
 rustls.workspace = true
 tempfile.workspace = true
 tiny_http.workspace = true
-# Used directly by the `helioslite_helper` binary to download the new release.
-# Pinned to the same major as the transitive dep via `update-informer` so only
-# one copy lands in the dep graph.
-ureq = { version = "3.4", default-features = false, features = ["_tls"] }
-
 # jemalloc on macOS ARM64 triggers bug #2532 (HPA probes every 4KB page → 14s cold
 # init vs 25ms baseline). Gate to Linux only; use mimalloc on macOS for similar
 # fragmentation wins without the ARM64 regression.
