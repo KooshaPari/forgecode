@@ -1,5 +1,13 @@
 //! GitHub webhook handling.
 
+// The webhook module is wired into the binary but the actual webhook
+// server lives in a Cloudflare Worker (see .github/apps/helios-bot).
+// This stub Rust binary doesn't call into these functions at runtime,
+// so they trigger dead-code under -D warnings. Mark the whole module
+// as allowed since these items are exercised by `cargo test -p helios-bot`
+// once `test = false` is reverted in Cargo.toml.
+#![allow(dead_code)]
+
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::collections::HashMap;
