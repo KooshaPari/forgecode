@@ -25,7 +25,7 @@
 //! ```rust,no_run
 //! use forge_e2e::{Scenario, MockLlm, ExpectedTool, ExpectedText};
 //!
-//! # async fn example() -> anyhow::Result<()> {
+//! // Build a scenario declaratively.
 //! let scenario = Scenario::new("agent reads a file then writes a fix")
 //!     .user_says("please fix the typo in README.md")
 //!     .expect_tool_call(ExpectedTool::new("read").arg("path", "README.md"))
@@ -40,9 +40,10 @@
 //!     .user_says("thanks")
 //!     .mock_responds(MockLlm::text_only(ExpectedText::contains("you're welcome")));
 //!
-//! scenario.run().await?;
-//! # Ok(())
-//! # }
+//! // The scenario is a script: the agent runtime reads it step by step.
+//! let (steps, mock_llm) = scenario.into_mock_llm();
+//! assert_eq!(steps.len(), 4); // 2 user_says + 2 expect_tool_call
+//! assert_eq!(mock_llm.remaining(), 3); // 3 mock responses queued
 //! ```
 //!
 //! ## Mock LLM Format

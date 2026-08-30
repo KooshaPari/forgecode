@@ -52,7 +52,9 @@ pub fn parse_helios_mention(text: &str, is_issue: bool, in_comment: bool) -> Opt
     // Look for `@helios` (case-insensitive), followed by optional whitespace, then capture the rest.
     let lower = text.to_ascii_lowercase();
     let idx = lower.find("@helios")?;
-    let after = &text[idx + "@helios".len()..];
+    let needle_len = "@helios".len();
+    let after_start = idx.checked_add(needle_len)?;
+    let after = text.get(after_start..)?;
     // Strip leading whitespace and a single optional ':' or ','.
     let trimmed = after
         .trim_start()

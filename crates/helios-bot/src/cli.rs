@@ -34,12 +34,12 @@ pub enum Command {
 
 pub fn parse_args() -> Result<Command> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.is_empty() {
-        anyhow::bail!("usage: helios-bot <serve|run> ...");
-    }
-    match args[0].as_str() {
+    let first = args
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("usage: helios-bot <serve|run> ..."))?;
+    match first.as_str() {
         "serve" => {
-            let s = parse_serve(&args[1..])?;
+            let s = parse_serve(args.get(1..).unwrap_or(&[]))?;
             Ok(Command::Serve {
                 bind: s.bind,
                 private_key: s.private_key,
@@ -49,7 +49,7 @@ pub fn parse_args() -> Result<Command> {
             })
         }
         "run" => {
-            let r = parse_run(&args[1..])?;
+            let r = parse_run(args.get(1..).unwrap_or(&[]))?;
             Ok(Command::Run {
                 repo: r.repo,
                 request: r.request,
@@ -77,7 +77,8 @@ fn parse_serve(args: &[String]) -> Result<ServeArgs> {
 
     let mut i = 0;
     while i < args.len() {
-        match args[i].as_str() {
+        let arg = args.get(i).map(String::as_str).unwrap_or("");
+        match arg {
             "--bind" => {
                 bind = args
                     .get(i + 1)
@@ -114,7 +115,7 @@ fn parse_serve(args: &[String]) -> Result<ServeArgs> {
                     .ok_or_else(|| anyhow::anyhow!("--webhook-secret requires a value"))?;
                 i += 2;
             }
-            _ => anyhow::bail!("unknown flag: {}", args[i]),
+            other => anyhow::bail!("unknown flag: {other}"),
         }
     }
 
@@ -140,7 +141,8 @@ fn parse_run(args: &[String]) -> Result<RunArgs> {
 
     let mut i = 0;
     while i < args.len() {
-        match args[i].as_str() {
+        let arg = args.get(i).map(String::as_str).unwrap_or("");
+        match arg {
             "--repo" => {
                 repo = Some(
                     args.get(i + 1)
@@ -165,7 +167,7 @@ fn parse_run(args: &[String]) -> Result<RunArgs> {
                 checkout_dir = Some(PathBuf::from(v));
                 i += 2;
             }
-            _ => anyhow::bail!("unknown flag: {}", args[i]),
+            other => anyhow::bail!("unknown flag: {other}"),
         }
     }
 
