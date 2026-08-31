@@ -8,6 +8,7 @@ members = [
   "crates/forge_api",
   "crates/forge_app",
   "crates/forge_ci",
+  "crates/forge_cloud",
   "crates/forge_config",
   "crates/forge_daemon",
   "crates/forge_dbd",
@@ -27,6 +28,7 @@ members = [
   "crates/forge_mux",
   "crates/forge_pheno_shell",
   "crates/forge_pheno_winterminal",
+  "crates/forge_plugin",
   "crates/forge_repo",
   "crates/forge_repo_map",
   "crates/forge_sandbox",
@@ -44,6 +46,7 @@ members = [
   "crates/forge_tracker",
   "crates/forge_tui",
   "crates/forge_walker",
+  "crates/forge_graph",
   "crates/forge3d",
   "crates/helios-bot",
   "benchmarks/forge_daemon_bench",
@@ -215,6 +218,7 @@ forge_api = { path = "crates/forge_api" }
 forge_app = { path = "crates/forge_app" }
 forge_sdk = { path = "crates/forge_sdk" }
 forge_ci = { path = "crates/forge_ci" }
+forge_cloud = { path = "crates/forge_cloud" }
 forge_display = { path = "crates/forge_display" }
 forge_domain = { path = "crates/forge_domain" }
 forge_fs = { path = "crates/forge_fs" }
@@ -232,6 +236,7 @@ forge_tool_macros = { path = "crates/forge_tool_macros" }
 forge_tracker = { path = "crates/forge_tracker" }
 forge_walker = { path = "crates/forge_walker" }
 forge_json_repair = { path = "crates/forge_json_repair" }
+forge_plugin = { path = "crates/forge_plugin" }
 forge_select = { path = "crates/forge_select" }
 forge_test_kit = { path = "crates/forge_test_kit" }
 
@@ -244,6 +249,7 @@ forge3d = { path = "crates/forge3d" }
 forge_drift = { path = "crates/forge_drift" }
 forge_similarity = { path = "crates/forge_similarity" }
 forge_mux = { path = "crates/forge_mux" }
+forge_graph = { path = "crates/forge_graph" }
 
 [workspace.dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
