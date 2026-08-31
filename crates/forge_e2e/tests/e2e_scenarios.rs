@@ -47,6 +47,9 @@ fn scenario_read_then_write_fix() {
 ///        mock(text+read file B) → expect(read B) →
 ///        mock(patch A) → expect(patch A) →
 ///        mock(patch B) → expect(patch B) → expect_text
+///
+/// Non-mock steps: one user request, four tool expectations, and one final
+/// text expectation (six total).
 #[test]
 fn scenario_multi_file_refactoring() {
     let scenario = Scenario::new("agent reads 2 files then patches both")
@@ -73,7 +76,7 @@ fn scenario_multi_file_refactoring() {
 
     let (steps, mock) = scenario.into_mock_llm();
 
-    assert_eq!(steps.len(), 7, "expected 7 non-mock steps");
+    assert_eq!(steps.len(), 6, "expected 6 non-mock steps");
     assert_eq!(mock.remaining(), 4, "expected 4 mock responses");
 }
 
