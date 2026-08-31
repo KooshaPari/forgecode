@@ -29,9 +29,7 @@ fn typescript_patterns() -> LanguagePatterns {
             Regex::new(r#"^const\s+\w+\s*=\s*require\s*\(\s*['"](.+?)['"]\s*\)"#).unwrap(),
         ],
         calls: vec![],
-        types: vec![
-            Regex::new(r#"^(?:export\s+)?(?:interface|type|enum)\s+(\w+)"#).unwrap(),
-        ],
+        types: vec![Regex::new(r#"^(?:export\s+)?(?:interface|type|enum)\s+(\w+)"#).unwrap()],
     }
 }
 
@@ -50,9 +48,7 @@ fn language_patterns() -> HashMap<&'static str, LanguagePatterns> {
                 Regex::new(r#"^extern\s+crate\s+(\w+)"#).unwrap(),
             ],
             calls: vec![Regex::new(r#"(\w+::\w+)\s*:"#).unwrap()],
-            types: vec![
-                Regex::new(r#"(?:struct|enum|trait|type)\s+(\w+)"#).unwrap(),
-            ],
+            types: vec![Regex::new(r#"(?:struct|enum|trait|type)\s+(\w+)"#).unwrap()],
         },
     );
 
@@ -81,9 +77,7 @@ fn language_patterns() -> HashMap<&'static str, LanguagePatterns> {
                 Regex::new(r#"^from\s+([\w.]+)\s+import"#).unwrap(),
             ],
             calls: vec![],
-            types: vec![
-                Regex::new(r#"^class\s+(\w+)"#).unwrap(),
-            ],
+            types: vec![Regex::new(r#"^class\s+(\w+)"#).unwrap()],
         },
     );
 
@@ -97,9 +91,7 @@ fn language_patterns() -> HashMap<&'static str, LanguagePatterns> {
                 Regex::new(r#"^\s+"(.+?)"$"#).unwrap(),
             ],
             calls: vec![],
-            types: vec![
-                Regex::new(r#"^type\s+(\w+)\s+(?:struct|interface)"#).unwrap(),
-            ],
+            types: vec![Regex::new(r#"^type\s+(\w+)\s+(?:struct|interface)"#).unwrap()],
         },
     );
 
@@ -127,7 +119,7 @@ fn detect_language(extension: &str) -> String {
 fn content_hash(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
-    format!("{}", hex::encode(hasher.finalize()))
+    hex::encode(hasher.finalize()).to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -180,10 +172,7 @@ impl GraphBuilder {
     pub async fn build(&mut self) -> Result<CodebaseGraph> {
         info!(root = %self.root.display(), "scanning codebase for dependency graph");
 
-        let mut graph = match self.existing.take() {
-            Some(g) => g,
-            None => CodebaseGraph::new(),
-        };
+        let mut graph = self.existing.take().unwrap_or_default();
 
         let patterns = language_patterns();
         let files = self.collect_source_files().await?;
@@ -283,12 +272,10 @@ impl GraphBuilder {
                     continue;
                 }
                 Box::pin(self.walk_dir(&path, files)).await?;
-            } else if path.is_file() {
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if is_source_file(ext) {
-                        files.push(path);
-                    }
-                }
+            } else if let Some(ext) = path.extension().and_then(|e| e.to_str())
+                && is_source_file(ext)
+            {
+                files.push(path);
             }
         }
 
@@ -310,10 +297,7 @@ impl GraphBuilder {
             .collect();
 
         for (path, text) in contents {
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
             let lang_patterns = match patterns.get(ext) {
                 Some(p) => p,
@@ -330,39 +314,37 @@ impl GraphBuilder {
 
                 // Check import patterns
                 for re in &lang_patterns.imports {
-                    if let Some(caps) = re.captures(line) {
-                        if let Some(target) = caps.get(1) {
-                            let target_str = target.as_str();
-                            if let Some(to_idx) =
-                                resolve_import(target_str, path, &path_to_index)
-                            {
-                                graph.add_edge(
-                                    from_idx,
-                                    to_idx,
-                                    Edge {
-                                        kind: DependencyKind::Import,
-                                        label: Some(target_str.to_string()),
-                                    },
-                                );
-                            }
+                    if let Some(caps) = re.captures(line)
+                        && let Some(target) = caps.get(1)
+                    {
+                        let target_str = target.as_str();
+                        if let Some(to_idx) = resolve_import(target_str, path, &path_to_index) {
+                            graph.add_edge(
+                                from_idx,
+                                to_idx,
+                                Edge {
+                                    kind: DependencyKind::Import,
+                                    label: Some(target_str.to_string()),
+                                },
+                            );
                         }
                     }
                 }
 
                 // Check type patterns
                 for re in &lang_patterns.types {
-                    if let Some(caps) = re.captures(line) {
-                        if let Some(target) = caps.get(1) {
-                            let target_str = target.as_str();
-                            // Type declarations — we record them but they don't
-                            // create edges on their own; cross-file type
-                            // references would need a more sophisticated resolver.
-                            debug!(
-                                path = %path.display(),
-                                symbol = target_str,
-                                "type declaration noted"
-                            );
-                        }
+                    if let Some(caps) = re.captures(line)
+                        && let Some(target) = caps.get(1)
+                    {
+                        let target_str = target.as_str();
+                        // Type declarations — we record them but they don't
+                        // create edges on their own; cross-file type
+                        // references would need a more sophisticated resolver.
+                        debug!(
+                            path = %path.display(),
+                            symbol = target_str,
+                            "type declaration noted"
+                        );
                     }
                 }
             }
@@ -376,8 +358,20 @@ impl GraphBuilder {
 fn is_source_file(ext: &str) -> bool {
     matches!(
         ext,
-        "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "go" | "java" | "rb" | "c" | "h"
-            | "cpp" | "cxx" | "cc" | "hpp"
+        "rs" | "ts"
+            | "tsx"
+            | "js"
+            | "jsx"
+            | "py"
+            | "go"
+            | "java"
+            | "rb"
+            | "c"
+            | "h"
+            | "cpp"
+            | "cxx"
+            | "cc"
+            | "hpp"
     )
 }
 

@@ -94,9 +94,7 @@ pub struct CloudflareWorkers {
 impl CloudflareWorkers {
     /// Create a new provider from explicit credentials.
     pub fn new(api_token: String, account_id: String) -> Self {
-        let api_base = format!(
-            "https://api.cloudflare.com/client/v4/accounts/{account_id}"
-        );
+        let api_base = format!("https://api.cloudflare.com/client/v4/accounts/{account_id}");
         Self {
             api_token,
             account_id,
@@ -133,10 +131,7 @@ impl CloudProvider for CloudflareWorkers {
         let url = match &self.worker_name {
             Some(name) => {
                 // Route through the specific worker's dispatch endpoint.
-                format!(
-                    "https://{name}.{}.workers.dev/dispatch",
-                    self.account_id
-                )
+                format!("https://{name}.{}.workers.dev/dispatch", self.account_id)
             }
             None => {
                 // Generic dispatch — account-level.
@@ -157,9 +152,7 @@ impl CloudProvider for CloudflareWorkers {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "Cloudflare Workers dispatch failed (HTTP {status}): {body}"
-            );
+            anyhow::bail!("Cloudflare Workers dispatch failed (HTTP {status}): {body}");
         }
 
         tracing::info!(%task_id, "dispatched to Cloudflare Workers");
@@ -272,11 +265,7 @@ impl CloudProvider for CloudflareWorkers {
 /// kept in a [`tokio::sync::RwLock`] so the runner can poll it.
 pub struct LocalProvider {
     /// In-memory task store keyed by task ID.
-    tasks: std::sync::Arc<
-        tokio::sync::RwLock<
-            std::collections::HashMap<Uuid, LocalTaskEntry>,
-        >,
-    >,
+    tasks: std::sync::Arc<tokio::sync::RwLock<std::collections::HashMap<Uuid, LocalTaskEntry>>>,
 }
 
 #[derive(Debug)]
@@ -295,9 +284,7 @@ impl Default for LocalProvider {
 impl LocalProvider {
     pub fn new() -> Self {
         Self {
-            tasks: std::sync::Arc::new(tokio::sync::RwLock::new(
-                std::collections::HashMap::new(),
-            )),
+            tasks: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         }
     }
 }
@@ -316,11 +303,7 @@ impl CloudProvider for LocalProvider {
             let mut map = self.tasks.write().await;
             map.insert(
                 task_id,
-                LocalTaskEntry {
-                    task,
-                    state: TaskState::Queued,
-                    result: None,
-                },
+                LocalTaskEntry { task, state: TaskState::Queued, result: None },
             );
         }
 
@@ -348,10 +331,7 @@ impl CloudProvider for LocalProvider {
                     entry.result = Some(CloudTaskResult {
                         task_id,
                         success: true,
-                        output: Some(format!(
-                            "local: task {} completed",
-                            entry.task.kind
-                        )),
+                        output: Some(format!("local: task {} completed", entry.task.kind)),
                         error: None,
                         duration_ms: Some(duration_ms),
                     });
@@ -369,11 +349,7 @@ impl CloudProvider for LocalProvider {
             .get(&task_id)
             .ok_or_else(|| anyhow::anyhow!("task {task_id} not found"))?;
 
-        Ok(TaskStatusResponse {
-            task_id,
-            state: entry.state,
-            message: None,
-        })
+        Ok(TaskStatusResponse { task_id, state: entry.state, message: None })
     }
 
     async fn cancel(&self, task_id: Uuid) -> Result<()> {
@@ -388,9 +364,7 @@ impl CloudProvider for LocalProvider {
                 tracing::info!(%task_id, "cancelled local task");
                 Ok(())
             }
-            other => Err(anyhow::anyhow!(
-                "cannot cancel task in state {other:?}"
-            )),
+            other => Err(anyhow::anyhow!("cannot cancel task in state {other:?}")),
         }
     }
 
@@ -421,11 +395,8 @@ mod tests {
     use crate::task::{CloudTask, TaskPriority};
 
     fn sample_task() -> CloudTask {
-        CloudTask::new(
-            "agent_run".into(),
-            "summarize the codebase".into(),
-        )
-        .with_priority(TaskPriority::Normal)
+        CloudTask::new("agent_run".into(), "summarize the codebase".into())
+            .with_priority(TaskPriority::Normal)
     }
 
     #[tokio::test]

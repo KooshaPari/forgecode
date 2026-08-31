@@ -283,7 +283,7 @@ impl<'a> GraphQuery<'a> {
             })
             .collect();
 
-        fan_in.sort_by(|a, b| b.1.cmp(&a.1));
+        fan_in.sort_by_key(|x| std::cmp::Reverse(x.1));
         fan_in.truncate(n);
         fan_in
     }
@@ -310,8 +310,7 @@ fn reconstruct_path(
 
     // We return NodeIndex for now — caller should resolve to paths.
     // For API ergonomics we convert here.
-    path
-        .into_iter()
+    path.into_iter()
         .map(|idx| PathBuf::from(format!("node_{}", idx.index())))
         .collect()
 }
@@ -323,7 +322,7 @@ fn reconstruct_path(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CodebaseGraph, Edge, Node, DependencyKind};
+    use crate::{CodebaseGraph, DependencyKind, Edge, Node};
     use chrono::Utc;
     use std::path::PathBuf;
 
@@ -338,10 +337,7 @@ mod tests {
     }
 
     fn make_edge(kind: DependencyKind) -> Edge {
-        Edge {
-            kind,
-            label: None,
-        }
+        Edge { kind, label: None }
     }
 
     fn build_test_graph() -> CodebaseGraph {
@@ -416,10 +412,7 @@ mod tests {
         let graph = build_test_graph();
         let query = GraphQuery::new(&graph);
 
-        let path = query.shortest_path(
-            &PathBuf::from("src/a.rs"),
-            &PathBuf::from("src/c.rs"),
-        );
+        let path = query.shortest_path(&PathBuf::from("src/a.rs"), &PathBuf::from("src/c.rs"));
         assert!(path.is_some());
         let path = path.unwrap();
         assert!(path.len() >= 2);
@@ -430,10 +423,7 @@ mod tests {
         let graph = build_test_graph();
         let query = GraphQuery::new(&graph);
 
-        let path = query.shortest_path(
-            &PathBuf::from("src/d.rs"),
-            &PathBuf::from("src/a.rs"),
-        );
+        let path = query.shortest_path(&PathBuf::from("src/d.rs"), &PathBuf::from("src/a.rs"));
         assert!(path.is_none());
     }
 

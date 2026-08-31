@@ -99,10 +99,7 @@ pub struct CodebaseGraph {
 impl CodebaseGraph {
     /// Create an empty graph.
     pub fn new() -> Self {
-        Self {
-            graph: InnerGraph::new(),
-            path_index: HashMap::new(),
-        }
+        Self { graph: InnerGraph::new(), path_index: HashMap::new() }
     }
 
     /// Number of nodes (files) in the graph.

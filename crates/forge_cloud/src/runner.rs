@@ -55,10 +55,7 @@ impl CloudRunner {
     pub async fn dispatch(&self, task: CloudTask) -> Result<TaskHandle> {
         let id = self.provider.dispatch(task).await?;
 
-        let handle = TaskHandle {
-            task_id: id,
-            status: TaskStatus::Queued,
-        };
+        let handle = TaskHandle { task_id: id, status: TaskStatus::Queued };
 
         self.handles.write().await.insert(id, handle.clone());
         tracing::info!(%id, "task dispatched");
@@ -69,21 +66,13 @@ impl CloudRunner {
     /// Dispatch a task and block until it reaches a terminal state or the
     /// timeout expires.
     pub async fn dispatch_and_wait(&self, task: CloudTask) -> Result<TaskResult> {
-        let timeout = task
-            .timeout
-            .unwrap_or(self.default_timeout);
+        let timeout = task.timeout.unwrap_or(self.default_timeout);
 
         let handle = self.dispatch(task).await?;
 
         tokio::time::timeout(timeout, self.wait_for_terminal(handle.task_id))
             .await
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "task {} timed out after {:?}",
-                    handle.task_id,
-                    timeout
-                )
-            })?
+            .map_err(|_| anyhow::anyhow!("task {} timed out after {:?}", handle.task_id, timeout))?
     }
 
     /// Poll until the task reaches a terminal state.
@@ -218,8 +207,8 @@ mod tests {
     #[tokio::test]
     async fn dispatch_and_status() {
         let runner = local_runner();
-        let task = CloudTask::new("echo".into(), "hello".into())
-            .with_priority(TaskPriority::Normal);
+        let task =
+            CloudTask::new("echo".into(), "hello".into()).with_priority(TaskPriority::Normal);
 
         let handle = runner.dispatch(task).await.unwrap();
         assert_eq!(handle.status, TaskStatus::Queued);
