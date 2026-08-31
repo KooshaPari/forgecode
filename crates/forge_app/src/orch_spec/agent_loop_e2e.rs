@@ -32,8 +32,7 @@ use crate::orch_spec::orch_runner::TestContext;
 async fn full_agent_loop_user_message_tool_call_tool_result_final_answer() {
     let tool_call =
         ToolCallFull::new("fs_read").arguments(ToolCallArguments::from(json!({"path": "a.txt"})));
-    let tool_result =
-        ToolResult::new("fs_read").output(Ok(ToolOutput::text("contents of a.txt")));
+    let tool_result = ToolResult::new("fs_read").output(Ok(ToolOutput::text("contents of a.txt")));
 
     let mut ctx = TestContext::default()
         .mock_tool_call_responses(vec![(tool_call.clone(), tool_result.clone())])
@@ -64,7 +63,10 @@ async fn full_agent_loop_user_message_tool_call_tool_result_final_answer() {
         "Mismatched assistant messages across the agent loop"
     );
     assert!(
-        assistant_contents.last().unwrap().contains("contents of a.txt"),
+        assistant_contents
+            .last()
+            .unwrap()
+            .contains("contents of a.txt"),
         "Final assistant answer should reference the tool result"
     );
 
@@ -99,8 +101,9 @@ async fn full_agent_loop_user_message_tool_call_tool_result_final_answer() {
     let start_idx = chat_responses
         .iter()
         .position(|r| matches!(r, ChatResponse::ToolCallStart { .. }));
-    let end_idx =
-        chat_responses.iter().position(|r| matches!(r, ChatResponse::ToolCallEnd(_)));
+    let end_idx = chat_responses
+        .iter()
+        .position(|r| matches!(r, ChatResponse::ToolCallEnd(_)));
     assert!(
         start_idx.is_some() && end_idx.is_some() && start_idx < end_idx,
         "ToolCallStart must precede ToolCallEnd"
@@ -110,7 +113,10 @@ async fn full_agent_loop_user_message_tool_call_tool_result_final_answer() {
     let has_task_complete = chat_responses
         .iter()
         .any(|r| matches!(r, ChatResponse::TaskComplete));
-    assert!(has_task_complete, "Expected TaskComplete at end of agent loop");
+    assert!(
+        has_task_complete,
+        "Expected TaskComplete at end of agent loop"
+    );
 
     // ---- Conversation records persist across the write→read boundary -------
     let conversation = ctx
