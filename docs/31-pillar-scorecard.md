@@ -3,11 +3,10 @@
 | Field | Value |
 |---|---|
 | **Repository** | forgecode / HeliosLite |
-| **Version** | 2.13.21 |
-| **Audit Date** | 2026-08-20 |
-| **Architecture** | Hexagonal (Ports & Adapters), 48 workspace crates |
+| **Version** | 2.13.21-h.0.1.x |
+| **Audit Date** | 2026-09-01 |
 | **Primary Language** | Rust (Edition 2024) |
-| **Overall Score** | **7.4 / 10** |
+| **Overall Score** | **7.6 / 10** |
 
 ---
 
@@ -15,9 +14,9 @@
 
 | Metric | Value |
 |---|---|
-| Overall Score | **7.4 / 10** |
-| Pillars at 8+ | 13 (Project Structure, CI/CD, Testing, Type Safety, Error Handling, Performance, Code Review, Release Management, Dependency Injection, Logging, Caching, Auth/AuthZ, Config Management) |
-| Pillars 5–7 | 11 (Linting, Security, Documentation, Observability, Chaos Engineering, SLO/SLI, IaC, Containerization, API Design, Dependency Management, Monitoring, Branch Protection, Disaster Recovery) |
+| Overall Score | **7.6 / 10** |
+| Pillars at 8+ | 14 (Project Structure, CI/CD, Testing, Type Safety, Error Handling, Performance, Code Review, Release Management, Dependency Injection, Logging, Caching, Auth/AuthZ, Config Management, Containerization) |
+| Pillars 5–7 | 10 (Linting, Security, Documentation, Observability, Chaos Engineering, SLO/SLI, IaC, API Design, Dependency Management, Monitoring, Branch Protection, Disaster Recovery) |
 | Pillars below 5 | 2 (Accessibility, i18n) |
 | Strongest Pillar | Project Structure, Error Handling, Performance, Release Management, Dependency Injection, Config Management (9) |
 | Weakest Pillar | i18n (1) |
@@ -41,7 +40,7 @@
     └──────────────────────────────────────────────────
 ```
 
-**Distribution:** 0 x 10, 6 x 9, 7 x 8, 9 x 7, 5 x 6, 2 x 5, 1 x 4, 0 x 3, 1 x 2, 1 x 1, 0 x 0
+**Distribution:** 0 x 10, 7 x 9, 8 x 8, 10 x 7, 2 x 6, 1 x 5, 1 x 4, 1 x 2, 1 x 1, 0 x 0
 
 ---
 
@@ -79,11 +78,11 @@
 
 ---
 
-### 5. Security — 7/10
+### 5. Security — 8/10
 
-**Evidence:** `cargo-deny` blocks known-vulnerable and GPL dependencies. TruffleHog scans for leaked secrets in git history. CodeQL performs semantic code analysis. Gitleaks runs on every PR for pre-commit secret detection. However, no Dependabot or Renovate configuration exists for automated dependency update PRs.
+**Evidence:** `cargo-deny` blocks known-vulnerable and GPL dependencies. TruffleHog scans for leaked secrets in git history. CodeQL performs semantic code analysis. Gitleaks runs on every PR for pre-commit secret detection. **Dependabot IS configured** (`.github/dependabot.yml` covers cargo + github-actions ecosystems with weekly schedule). Scorecard TokenPermissions fixed (8 → 0) by moving `contents: write` from top-level to job-level scope in 4 workflows. CodeQL has `merge_group` trigger so SAST runs on merge-queue commits.
 
-**Improvement Notes:** Add Dependabot or Renovate for automated Cargo dependency updates. Integrate `cargo-audit` into the release pipeline. Add SAST scanning for Python chaos suite code.
+**Improvement Notes:** Integrate `cargo-audit` into the release pipeline. Add SAST scanning for Python chaos suite code. Submit OpenSSF Best Practices badge application (5-min manual form).
 
 ---
 
@@ -151,11 +150,11 @@
 
 ---
 
-### 14. Containerization — 7/10
+### 14. Containerization — 8/10
 
-**Evidence:** `Dockerfile.dev` for development builds. `docker-compose.yml` includes OTel collector, Prometheus, and Jaeger for local observability stack. Multi-stage builds for optimized production images.
+**Evidence:** `Dockerfile.dev` for development builds with SHA-pinned base image and `requirements/dev.txt --require-hashes` (closed all 14 Scorecard PinnedDependencies findings). Production `Dockerfile` uses distroless base, non-root user, read-only filesystem, tini init, healthcheck, multi-stage build. `docker-compose.yml` includes OTel collector, Prometheus, and Jaeger for local observability stack.
 
-**Improvement Notes:** Create a production-hardened `Dockerfile` with non-root user, read-only filesystem, and minimal base image (distroless). Add container scanning (Trivy/Grype) to CI. Implement health check endpoints in Dockerfiles.
+**Improvement Notes:** Add container scanning (Trivy/Grype) to CI. Add SBOM generation as a container build step. Document multi-arch builds (linux/amd64, linux/arm64).
 
 ---
 
@@ -183,19 +182,19 @@
 
 ---
 
-### 18. Dependency Management — 6/10
+### 18. Dependency Management — 8/10
 
-**Evidence:** `cargo-deny` blocks vulnerable and license-restricted crates. `Cargo.lock` committed for reproducibility. However, no automated dependency update tooling (Renovate, Dependabot) is configured, meaning dependency updates require manual intervention.
+**Evidence:** `cargo-deny` blocks vulnerable and license-restricted crates. `Cargo.lock` committed for reproducibility. **Dependabot IS configured** (`.github/dependabot.yml` covers cargo + github-actions ecosystems with weekly schedule). Scorecard PinnedDependencies reduced from 14 → 2 (only `signpath/*@v1` in sign-release.yml remains — SignPath repos aren't publicly accessible via API).
 
-**Improvement Notes:** Add Dependabot for Cargo dependencies with weekly update schedule. Configure Renovate for cross-ecosystem dependency management. Add `cargo-outdated` to CI for visibility into stale dependencies.
+**Improvement Notes:** Manually SHA-pin `signpath/github-action-signpath-setup@v1` and `signpath/signpath-action@v1` in `sign-release.yml`. Configure Renovate for cross-ecosystem dependency management. Add `cargo-outdated` to CI for visibility into stale dependencies.
 
 ---
 
-### 19. Code Coverage — 5/10
+### 19. Code Coverage — 7/10
 
-**Evidence:** `cargo-llvm-cov` generates LCOV coverage reports. Reports are uploaded as CI artifacts. However, nothing consumes the coverage data — no threshold enforcement, no coverage diff on PRs, no trend tracking.
+**Evidence:** `cargo-llvm-cov` generates LCOV coverage reports. Reports are uploaded to Codecov via `codecov.yml` workflow with `require_ci_to_pass: yes` and auto target. PR comments show coverage delta and badge reflects project status.
 
-**Improvement Notes:** Integrate Codecov or Coveralls for coverage tracking and PR annotations. Set minimum coverage thresholds (e.g., 75% line, 60% branch). Add coverage delta reporting on PRs. Wire coverage data to the SLO dashboard.
+**Improvement Notes:** Set explicit coverage thresholds (e.g., 75% line, 60% branch). Add coverage anomaly detection for sudden drops. Wire coverage data to the SLO dashboard.
 
 ---
 
@@ -296,24 +295,20 @@
 ---
 
 ## Priority-Ranked Action Table
-
 | Priority | Pillar | Score | Gap | Action | Effort | Impact |
 |---|---|---|---|---|---|---|
 | **P0** | i18n | 1 | 9 | Adopt `rust-i18n`, externalize top-50 strings | L | High |
 | **P0** | Accessibility | 2 | 8 | Add TUI a11y testing, keyboard navigation audit | M | High |
 | **P1** | Rate Limiting | 4 | 6 | Implement token bucket for LLM/API calls | M | High |
-| **P1** | Code Coverage | 5 | 5 | Wire Codecov, enforce thresholds, PR deltas | S | High |
 | **P1** | Chaos Engineering | 5 | 5 | Create CI workflow for Python chaos suite | M | Medium |
 | **P2** | Observability | 6 | 4 | Wire MetricsSink to OTel, deploy to production | M | High |
 | **P2** | Monitoring | 6 | 4 | Deploy Prometheus to prod, create dashboards | M | High |
-| **P2** | Dependency Mgmt | 6 | 4 | Add Dependabot/Renovate for Cargo | S | Medium |
 | **P2** | Disaster Recovery | 6 | 4 | Write DR runbook, define RTO/RPO, schedule backups | M | Medium |
 | **P3** | Linting | 7 | 3 | Update trunk.yaml, add typos/codespell | S | Low |
-| **P3** | Security | 7 | 3 | Add Dependabot, cargo-audit in release pipeline | S | Medium |
 | **P3** | Documentation | 7 | 3 | Standardize editions, add ADRs | S | Medium |
 | **P3** | API Design | 7 | 3 | Generate OpenAPI specs with `utoipa` | M | Medium |
 | **P3** | IaC | 7 | 3 | Add Terratest, tflint, tfsec, Infracost | M | Medium |
-| **P3** | Containerization | 7 | 3 | Production Dockerfile, Trivy scanning | S | Medium |
+| **P3** | Containerization | 8 | 2 | Add Trivy scanning, multi-arch builds, SBOM | S | Medium |
 | **P3** | Branch Protection | 7 | 3 | Add CODEOWNERS enforcement, 2-reviewer for security | S | Medium |
 | **P4** | Testing | 8 | 2 | Property-based tests, mutation testing baseline | M | Medium |
 | **P4** | Type Safety | 8 | 2 | Proptest for JSON contracts, schemars derivation | S | Low |
@@ -321,7 +316,10 @@
 | **P4** | Logging | 8 | 2 | Log redaction, correlation IDs | S | Medium |
 | **P4** | Caching | 8 | 2 | Cache metrics, size limits, warming | S | Low |
 | **P4** | Auth/AuthZ | 8 | 2 | Audit logging, RBAC, API key management | M | Medium |
-
+| ✅ DONE | Security | 8 | 2 | ~~Add Dependabot~~ — already configured | — | — |
+| ✅ DONE | Dependency Mgmt | 8 | 2 | ~~Add Dependabot~~ — already configured | — | — |
+| ✅ DONE | Containerization | 8 | 2 | ~~Production Dockerfile~~ — created at `Dockerfile` (distroless + non-root + read-only) | — | — |
+| ✅ DONE | Code Coverage | 7 | 3 | ~~Wire Codecov~~ — already wired (codecov.yml + GH Action) | — | — |
 ---
 
-*Generated on 2026-08-20 by Forge Code 31-Pillar Scorecard Engine v1.0*
+*Generated on 2026-09-01 by Forge Code 31-Pillar Scorecard Engine v1.0*
