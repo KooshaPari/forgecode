@@ -1,3 +1,4 @@
+pub mod helios_agent;
 pub mod hook;
 pub mod manager;
 
@@ -6,7 +7,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 pub use hook::{Hook, HookContext, HookResult};
-pub use manager::{PluginManager, PluginRegistry};
+pub use manager::{HeliosAgentPlugin, PluginManager, PluginRegistry};
 
 /// Configuration for a plugin, typically loaded from a JSON file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
