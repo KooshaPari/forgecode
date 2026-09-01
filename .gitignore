@@ -85,3 +85,7 @@ __pycache__/
 "151"  
 "469"  
 "151"  
+
+# Local agent scratch (per-project sandbox)
+.sandbox/
+"cleanup.bat"  
