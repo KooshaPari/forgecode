@@ -12,18 +12,12 @@ pub struct HookContext {
 }
 
 /// Result of a hook execution.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HookResult {
     pub modified: bool,
     pub output: Option<serde_json::Value>,
     pub abort: bool,
     pub reason: Option<String>,
-}
-
-impl Default for HookResult {
-    fn default() -> Self {
-        Self { modified: false, output: None, abort: false, reason: None }
-    }
 }
 
 /// The Hook trait for intercepting tool calls.

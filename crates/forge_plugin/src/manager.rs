@@ -30,7 +30,7 @@ impl PluginManager {
         let mut entries = fs::read_dir(&self.config_dir).await?;
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "json") {
+            if path.extension().is_some_and(|ext| ext == "json") {
                 match self.load_plugin_from_file(&path).await {
                     Ok(config) => {
                         if config.enabled {
