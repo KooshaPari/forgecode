@@ -93,8 +93,8 @@ impl Hook for HeliosAgentHook {
         .await?;
 
         // Try to parse as JSON; fall back to a string value.
-        let parsed: serde_json::Value = serde_json::from_str(&raw_output)
-            .unwrap_or(serde_json::Value::String(raw_output));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&raw_output).unwrap_or(serde_json::Value::String(raw_output));
 
         Ok(HookResult {
             modified: true,
