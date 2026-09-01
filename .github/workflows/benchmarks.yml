@@ -7,8 +7,6 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
-env:
-  RUSTFLAGS: "-C target-feature=+crt-static"
 jobs:
   benchmark:
     name: benchmark (${{ matrix.os }})
@@ -18,6 +16,10 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Setup Protobuf Compiler
+        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
