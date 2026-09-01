@@ -208,17 +208,21 @@ impl SandboxConfigBuilder {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[test]
     fn builder_produces_valid_config() {
+        let working_dir = tempfile::tempdir_in(std::env::current_dir().unwrap()).unwrap();
         let cfg = SandboxConfig::builder()
             .command("echo")
             .args(["hello"])
-            .working_dir("/tmp")
+            .working_dir(working_dir.path())
             .build();
         assert_eq!(cfg.command, "echo");
         assert_eq!(cfg.args, vec!["hello"]);
+        assert_eq!(cfg.working_dir, working_dir.path());
         assert!(cfg.validate().is_ok());
     }
 
