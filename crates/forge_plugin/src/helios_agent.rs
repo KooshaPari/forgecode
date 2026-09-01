@@ -67,8 +67,7 @@ impl Hook for HeliosAgentHook {
         }
 
         // Build the prompt from the tool name and input payload.
-        let input_json =
-            serde_json::to_string_pretty(&ctx.input).unwrap_or_else(|_| "{}".into());
+        let input_json = serde_json::to_string_pretty(&ctx.input).unwrap_or_else(|_| "{}".into());
         let prompt = format!("Tool call: {}\nInput: {}", ctx.tool_name, input_json);
 
         // Derive a per-session ID so helios can maintain conversation state.
@@ -132,13 +131,10 @@ async fn run_helios(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(timeout_secs),
-        cmd.output(),
-    )
-    .await
-    .with_context(|| format!("Helios subprocess timed out after {timeout_secs}s"))?
-    .with_context(|| "Failed to spawn helios subprocess")?;
+    let result = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), cmd.output())
+        .await
+        .with_context(|| format!("Helios subprocess timed out after {timeout_secs}s"))?
+        .with_context(|| "Failed to spawn helios subprocess")?;
 
     if !result.status.success() {
         let stderr = String::from_utf8_lossy(&result.stderr);
