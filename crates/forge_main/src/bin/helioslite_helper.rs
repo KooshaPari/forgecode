@@ -311,12 +311,11 @@ fn run() -> Result<(), u8> {
     }
 
     // 3. Wait for parent PID
-    wait_for_parent(args.parent_pid).map_err(|code| {
+    wait_for_parent(args.parent_pid).inspect_err(|&code| {
         eprintln!(
             "helioslite_helper: parent pid {} not observed alive (code={code})",
             args.parent_pid
         );
-        code
     })?;
 
     // 4. Atomic swap
