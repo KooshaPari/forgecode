@@ -93,8 +93,8 @@ impl Hook for HeliosAgentHook {
         .await?;
 
         // Try to parse as JSON; fall back to a string value.
-        let parsed: serde_json::Value = serde_json::from_str(&raw_output)
-            .unwrap_or_else(|_| serde_json::Value::String(raw_output));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&raw_output).unwrap_or(serde_json::Value::String(raw_output));
 
         Ok(HookResult {
             modified: true,
@@ -137,7 +137,7 @@ async fn run_helios(
         .with_context(|| "Failed to spawn helios subprocess")?;
 
     if !result.status.success() {
-        let stderr = String::from_utf8_lossy(&result.stderr);
+        let stderr = bstr::ByteSlice::to_str_lossy(&result.stderr[..]);
         anyhow::bail!("Helios exited with {}: {}", result.status, stderr);
     }
 
