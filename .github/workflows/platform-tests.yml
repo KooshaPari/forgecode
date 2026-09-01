@@ -8,8 +8,11 @@ on:
     - opened
     - synchronize
     - reopened
-    branches:
-    - main
+
+concurrency:
+  group: platform-tests-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 jobs:
