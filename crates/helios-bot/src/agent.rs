@@ -130,14 +130,14 @@ async fn run_agent_via_binary(
 
     let output = child.wait_with_output().await?;
     if !output.status.success() {
-        let stderr = bstr::ByteSlice::to_str_lossy(&output.stderr)
+        let stderr = bstr::ByteSlice::to_str_lossy(&output.stderr[..])
             .replace('\0', "");
         anyhow::bail!("forge exited {}: {}", output.status, stderr);
     }
 
     // Parse the JSON response.  We accept either the canonical schema
     // (`{"response": "...", "pr_number": ...}`) or just plain text on stdout.
-    let stdout = bstr::ByteSlice::to_str_lossy(&output.stdout)
+    let stdout = bstr::ByteSlice::to_str_lossy(&output.stdout[..])
         .replace('\0', "");
     if let Ok(parsed) = serde_json::from_str::<ForgeJsonOutput>(&stdout) {
         Ok(AgentResult {
