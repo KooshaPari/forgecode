@@ -23,7 +23,7 @@ jobs:
         with:
           components: rustfmt
       - name: Cache cargo registry
-        uses: actions/cache@88522ab9f39a2ea568f7027eddc7d8d8bc9d59c8
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: |
             ~/.cargo/registry
