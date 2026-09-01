@@ -7,8 +7,6 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
-env:
-  RUSTFLAGS: "-C target-feature=+crt-static"
 jobs:
   benchmark:
     name: benchmark (${{ matrix.os }})
