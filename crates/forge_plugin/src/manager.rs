@@ -2,17 +2,23 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
+use crate::hook::HookRegistry;
 use crate::{PluginConfig, PluginMetadata};
 
-/// Manages the lifecycle of plugins.
+/// Manages the lifecycle of plugins and their hooks.
 pub struct PluginManager {
     config_dir: PathBuf,
     registry: PluginRegistry,
+    hook_registry: HookRegistry,
 }
 
 impl PluginManager {
     pub fn new(config_dir: PathBuf) -> Self {
-        Self { config_dir, registry: PluginRegistry::new() }
+        Self {
+            config_dir,
+            registry: PluginRegistry::new(),
+            hook_registry: HookRegistry::new(),
+        }
     }
 
     /// Load plugins from the configuration directory.
@@ -86,6 +92,15 @@ impl PluginManager {
     pub fn registry(&self) -> &PluginRegistry {
         &self.registry
     }
+
+    /// Access the hook registry for registering plugin hooks.
+    pub fn hook_registry_mut(&mut self) -> &mut HookRegistry {
+        &mut self.hook_registry
+    }
+
+    pub fn hook_registry(&self) -> &HookRegistry {
+        &self.hook_registry
+    }
 }
 
 /// Registry for managing plugin metadata and instances.
@@ -131,5 +146,53 @@ impl PluginRegistry {
 impl Default for PluginRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// HeliosAgentPlugin — registers the helios-agent hook into a PluginManager
+// ---------------------------------------------------------------------------
+
+use crate::helios_agent::{HeliosAgentConfig, HeliosAgentHook};
+
+/// A built-in plugin that wires the helios CLI agent into the hook pipeline.
+///
+/// # Usage
+///
+/// ```rust,no_run
+/// use std::path::PathBuf;
+/// use forge_plugin::manager::{PluginManager, HeliosAgentPlugin};
+///
+/// # async fn example() -> anyhow::Result<()> {
+/// let mut mgr = PluginManager::new(PathBuf::from("/tmp/plugins"));
+/// HeliosAgentPlugin::register_with_manager(&mut mgr, HeliosAgentConfig::default())?;
+/// // The helios-agent hook is now active for every tool execution.
+/// # Ok(())
+/// # }
+/// ```
+pub struct HeliosAgentPlugin {
+    config: HeliosAgentConfig,
+}
+
+impl HeliosAgentPlugin {
+    /// Create a new instance with the given configuration.
+    pub fn new(config: HeliosAgentConfig) -> Self {
+        Self { config }
+    }
+
+    /// Return a reference to the plugin's configuration.
+    pub fn config(&self) -> &HeliosAgentConfig {
+        &self.config
+    }
+
+    /// Register the helios-agent hook into a [`PluginManager`]'s hook registry.
+    pub fn register_with_manager(
+        mgr: &mut PluginManager,
+        config: HeliosAgentConfig,
+    ) -> Result<()> {
+        let hook = HeliosAgentHook::new(config);
+        mgr.hook_registry_mut().register(Box::new(hook));
+        tracing::info!("HeliosAgentPlugin: registered helios-agent hook");
+        Ok(())
     }
 }

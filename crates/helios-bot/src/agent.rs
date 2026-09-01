@@ -1,11 +1,18 @@
-//! Bridge to the HeliosLite agent — runs the `forge` CLI binary.
+//! Bridge to the HeliosLite agent.
 //!
-//! Spawns `forge --request "..." --output-format json` and captures its
-//! output.  The `forge` binary handles model resolution, provider auth,
-//! context compression, and the full agent loop.
+//! Two execution paths:
+//!
+//! 1. **SDK path** (`run_agent_via_sdk`) — constructs a `ForgeAPI` in-process
+//!    and calls `api.chat()` directly. No subprocess, no JSON parsing,
+//!    no dependency on the `forge` binary being on PATH.
+//!
+//! 2. **Binary path** (`run_agent_via_binary`) — spawns
+//!    `forge --request "..." --output-format json` and captures its output.
+//!    Used as a fallback when the SDK path is unavailable (e.g. missing
+//!    provider config, or `forge_api` features not compiled in).
 
-use anyhow::Result;
-use bstr::ByteSlice;
+use anyhow::{Context, Result};
+use futures::stream::StreamExt;
 use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
@@ -23,10 +30,91 @@ pub struct AgentResult {
 
 /// Run the HeliosLite agent on a request.
 ///
-/// `repo_dir` is the path to a checked-out working copy of the target repo.
-/// `request` is the natural-language ask from the issue/PR comment.
+/// Tries the in-process SDK path first; falls back to the binary path if
+/// SDK initialization fails (missing config, missing provider key, etc.).
 #[allow(dead_code)]
 pub async fn run_agent(repo_dir: &Path, request: &str, llm_api_key: &str) -> Result<AgentResult> {
+    // Try SDK path first — faster, no subprocess overhead.
+    match run_agent_via_sdk(repo_dir, request).await {
+        Ok(result) => {
+            tracing::info!("agent handled via SDK path");
+            Ok(result)
+        }
+        Err(sdk_err) => {
+            tracing::warn!("SDK path failed ({sdk_err}), falling back to binary");
+            run_agent_via_binary(repo_dir, request, llm_api_key).await
+        }
+    }
+}
+
+/// In-process agent execution via forge_api.
+///
+/// Loads `ForgeConfig` from the repo directory, initialises `ForgeAPI`,
+/// creates a new conversation, and streams the agent's response.
+///
+/// This path avoids subprocess overhead and JSON parsing — the entire
+/// agent loop runs in the same process as the bot.
+#[allow(dead_code)]
+async fn run_agent_via_sdk(repo_dir: &Path, request: &str) -> Result<AgentResult> {
+    use forge_api::{API as _, ForgeAPI};
+    use forge_config::ForgeConfig;
+    use forge_domain::{ChatRequest, ConversationId};
+
+    let cwd = repo_dir
+        .to_path_buf()
+        .into_os_string()
+        .into_string()
+        .map_err(|_| anyhow::anyhow!("repo path contains non-UTF-8 characters"))?;
+
+    let config = ForgeConfig::read().context("failed to read ForgeConfig")?;
+    let cwd_path = std::path::PathBuf::from(&cwd);
+
+    let api = ForgeAPI::init(cwd_path, config);
+
+    // Create a new conversation for this interaction.
+    let conversation_id = ConversationId::generate();
+    let event = forge_domain::Event::new(request);
+
+    let chat_req = ChatRequest::new(event, conversation_id);
+    let mut stream = api.chat(chat_req).await.context("chat dispatch failed")?;
+
+    // Collect the full response from the stream.
+    let mut response_text = String::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("stream chunk error")?;
+        match &chunk {
+            forge_domain::ChatResponse::TaskMessage { content } => match content {
+                forge_domain::ChatResponseContent::Markdown { text, .. } => {
+                    response_text.push_str(text);
+                }
+                forge_domain::ChatResponseContent::ToolOutput(text) => {
+                    response_text.push_str(text);
+                }
+                _ => {}
+            },
+            forge_domain::ChatResponse::TaskComplete => break,
+            _ => {}
+        }
+    }
+
+    if response_text.is_empty() {
+        anyhow::bail!("agent returned empty response");
+    }
+
+    Ok(AgentResult { response: response_text, created_pr: false, pr_number: None })
+}
+
+/// Binary-path agent execution — spawns the `forge` CLI.
+///
+/// This is the reliable fallback: spawns `forge --request "..."` and
+/// captures its JSON output. Works without any SDK dependencies.
+#[allow(dead_code)]
+async fn run_agent_via_binary(
+    repo_dir: &Path,
+    request: &str,
+    llm_api_key: &str,
+) -> Result<AgentResult> {
     let child = Command::new("forge")
         .arg("--request")
         .arg(request)
@@ -37,17 +125,20 @@ pub async fn run_agent(repo_dir: &Path, request: &str, llm_api_key: &str) -> Res
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()?;
+        .spawn()
+        .context("failed to spawn forge binary")?;
 
     let output = child.wait_with_output().await?;
     if !output.status.success() {
-        let stderr = output.stderr.to_str_lossy();
+        let stderr = bstr::ByteSlice::to_str_lossy(&output.stderr[..])
+            .replace('\0', "");
         anyhow::bail!("forge exited {}: {}", output.status, stderr);
     }
 
     // Parse the JSON response.  We accept either the canonical schema
     // (`{"response": "...", "pr_number": ...}`) or just plain text on stdout.
-    let stdout = output.stdout.to_str_lossy();
+    let stdout = bstr::ByteSlice::to_str_lossy(&output.stdout[..])
+        .replace('\0', "");
     if let Ok(parsed) = serde_json::from_str::<ForgeJsonOutput>(&stdout) {
         Ok(AgentResult {
             response: parsed.response,
@@ -56,11 +147,7 @@ pub async fn run_agent(repo_dir: &Path, request: &str, llm_api_key: &str) -> Res
         })
     } else {
         // Plain text fallback.
-        Ok(AgentResult {
-            response: stdout.into_owned(),
-            created_pr: false,
-            pr_number: None,
-        })
+        Ok(AgentResult { response: stdout, created_pr: false, pr_number: None })
     }
 }
 
@@ -76,7 +163,7 @@ struct ForgeJsonOutput {
 mod tests {
     use super::*;
 
-    /// Stub that bypasses the binary and returns a canned response.
+    /// Stub that bypasses both SDK and binary paths.
     /// Useful when the test environment doesn't have `forge` on PATH.
     pub async fn run_agent_stub(repo_dir: &Path, request: &str) -> Result<AgentResult> {
         let _ = repo_dir;
