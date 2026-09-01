@@ -187,10 +187,7 @@ impl HeliosAgentPlugin {
     }
 
     /// Register the helios-agent hook into a [`PluginManager`]'s hook registry.
-    pub fn register_with_manager(
-        mgr: &mut PluginManager,
-        config: HeliosAgentConfig,
-    ) -> Result<()> {
+    pub fn register_with_manager(mgr: &mut PluginManager, config: HeliosAgentConfig) -> Result<()> {
         let hook = HeliosAgentHook::new(config);
         mgr.hook_registry_mut().register(Box::new(hook));
         tracing::info!("HeliosAgentPlugin: registered helios-agent hook");
