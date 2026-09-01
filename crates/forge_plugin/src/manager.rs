@@ -161,6 +161,7 @@ use crate::helios_agent::{HeliosAgentConfig, HeliosAgentHook};
 ///
 /// ```rust,no_run
 /// use std::path::PathBuf;
+/// use forge_plugin::helios_agent::HeliosAgentConfig;
 /// use forge_plugin::manager::{PluginManager, HeliosAgentPlugin};
 ///
 /// # async fn example() -> anyhow::Result<()> {
