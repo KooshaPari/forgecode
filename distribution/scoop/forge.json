@@ -1,17 +1,17 @@
 {
-    "version": "2.13.21-h.0.1.4",
+    "version": "2.13.21-h.0.1.5",
     "description": "Fastest AI coding agent — 40+ models, local-first, zero data exfiltration",
     "homepage": "https://github.com/KooshaPari/forgecode",
     "license": "MIT",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/KooshaPari/forgecode/releases/download/v2.13.21-h.0.1.4/forge-x86_64-pc-windows-msvc.exe",
-            "hash": "56d0f8d577da8a0162e10f6aa306e7be087982f178af92c8654974425ec6d7fc",
+            "url": "https://github.com/KooshaPari/forgecode/releases/download/v2.13.21-h.0.1.5/forge-x86_64-pc-windows-msvc.exe",
+            "hash": "MISSING",
             "bin": "forge-x86_64-pc-windows-msvc.exe"
         },
         "arm64": {
-            "url": "https://github.com/KooshaPari/forgecode/releases/download/v2.13.21-h.0.1.4/forge-aarch64-pc-windows-msvc.exe",
-            "hash": "7f46631be1188c545db9923050141a99e144d02007b70f5e82adb8d68419561d",
+            "url": "https://github.com/KooshaPari/forgecode/releases/download/v2.13.21-h.0.1.5/forge-aarch64-pc-windows-msvc.exe",
+            "hash": "MISSING",
             "bin": "forge-aarch64-pc-windows-msvc.exe"
         }
     },
