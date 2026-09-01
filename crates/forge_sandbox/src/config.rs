@@ -215,10 +215,11 @@ mod tests {
         let cfg = SandboxConfig::builder()
             .command("echo")
             .args(["hello"])
-            .working_dir("/tmp")
+            .working_dir(std::env::temp_dir())
             .build();
         assert_eq!(cfg.command, "echo");
         assert_eq!(cfg.args, vec!["hello"]);
+        assert_eq!(cfg.working_dir, std::env::temp_dir());
         assert!(cfg.validate().is_ok());
     }
 
