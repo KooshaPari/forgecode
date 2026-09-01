@@ -12,17 +12,17 @@ pub struct PluginManager {
 
 impl PluginManager {
     pub fn new(config_dir: PathBuf) -> Self {
-        Self {
-            config_dir,
-            registry: PluginRegistry::new(),
-        }
+        Self { config_dir, registry: PluginRegistry::new() }
     }
 
     /// Load plugins from the configuration directory.
     /// Expects JSON files in the directory.
     pub async fn load_plugins(&mut self) -> Result<()> {
         if !self.config_dir.exists() {
-            tracing::info!("Plugin config directory does not exist, creating: {:?}", self.config_dir);
+            tracing::info!(
+                "Plugin config directory does not exist, creating: {:?}",
+                self.config_dir
+            );
             fs::create_dir_all(&self.config_dir).await?;
             return Ok(());
         }
@@ -34,7 +34,11 @@ impl PluginManager {
                 match self.load_plugin_from_file(&path).await {
                     Ok(config) => {
                         if config.enabled {
-                            tracing::info!("Loaded plugin config: {} v{}", config.name, config.version);
+                            tracing::info!(
+                                "Loaded plugin config: {} v{}",
+                                config.name,
+                                config.version
+                            );
                             self.registry.add_config(config);
                         }
                     }
@@ -48,12 +52,13 @@ impl PluginManager {
     }
 
     async fn load_plugin_from_file(&self, path: &Path) -> Result<PluginConfig> {
-        let content = fs::read_to_string(path).await
+        let content = fs::read_to_string(path)
+            .await
             .with_context(|| format!("Failed to read plugin config: {:?}", path))?;
-        
+
         let config: PluginConfig = serde_json::from_str(&content)
             .with_context(|| format!("Failed to parse plugin config: {:?}", path))?;
-        
+
         Ok(config)
     }
 
@@ -92,9 +97,7 @@ pub struct PluginRegistry {
 
 impl PluginRegistry {
     pub fn new() -> Self {
-        Self {
-            configs: Vec::new(),
-        }
+        Self { configs: Vec::new() }
     }
 
     pub fn add_config(&mut self, config: PluginConfig) {
@@ -119,7 +122,7 @@ impl PluginRegistry {
             })
             .collect()
     }
-    
+
     pub fn get_config(&self, name: &str) -> Option<&PluginConfig> {
         self.configs.iter().find(|c| c.name == name)
     }

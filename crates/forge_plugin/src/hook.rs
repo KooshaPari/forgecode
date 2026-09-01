@@ -22,12 +22,7 @@ pub struct HookResult {
 
 impl Default for HookResult {
     fn default() -> Self {
-        Self {
-            modified: false,
-            output: None,
-            abort: false,
-            reason: None,
-        }
+        Self { modified: false, output: None, abort: false, reason: None }
     }
 }
 
@@ -43,7 +38,11 @@ pub trait Hook: Send + Sync {
 
     /// Called after a tool is executed.
     /// Can modify the output or log execution details.
-    async fn after_tool(&self, ctx: &HookContext, output: &serde_json::Value) -> Result<serde_json::Value>;
+    async fn after_tool(
+        &self,
+        ctx: &HookContext,
+        output: &serde_json::Value,
+    ) -> Result<serde_json::Value>;
 }
 
 /// A registry for managing hooks.
@@ -65,14 +64,22 @@ impl HookRegistry {
         for hook in &self.hooks {
             let result = hook.before_tool(ctx).await?;
             if result.abort {
-                tracing::warn!("Hook {} aborted tool execution: {}", hook.name(), result.reason.as_deref().unwrap_or_default());
+                tracing::warn!(
+                    "Hook {} aborted tool execution: {}",
+                    hook.name(),
+                    result.reason.as_deref().unwrap_or_default()
+                );
                 return Ok(result);
             }
         }
         Ok(HookResult::default())
     }
 
-    pub async fn run_after_hooks(&self, ctx: &HookContext, mut output: serde_json::Value) -> Result<serde_json::Value> {
+    pub async fn run_after_hooks(
+        &self,
+        ctx: &HookContext,
+        mut output: serde_json::Value,
+    ) -> Result<serde_json::Value> {
         for hook in &self.hooks {
             output = hook.after_tool(ctx, &output).await?;
         }
