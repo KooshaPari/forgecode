@@ -1,0 +1,74 @@
+name: Performance Benchmarks
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+env:
+  RUSTFLAGS: "-C target-feature=+crt-static"
+jobs:
+  benchmark:
+    name: benchmark (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Cache cargo registry
+        uses: actions/cache@88522ab9f39a2ea568f7027eddc7d8d8bc9d59c8
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: bench-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: bench-${{ runner.os }}-cargo-
+
+      - name: Build release binary
+        run: cargo build --release
+      - name: Build forge_dbd
+        run: cargo build --release -p forge_dbd
+
+      - name: Run startup benchmark
+        shell: bash
+        run: |
+          BINARY="target/release/forge"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            BINARY="target/release/forge.exe"
+          fi
+          echo "=== Startup Time Benchmark ==="
+          echo "Binary: $BINARY"
+          echo "Platform: $(uname -a)"
+          echo ""
+
+          echo "Cold starts (5 iterations):"
+          for i in 1 2 3 4 5; do
+            START=$(date +%s%N)
+            "$BINARY" --version > /dev/null 2>&1 || true
+            END=$(date +%s%N)
+            ELAPSED=$(( (END - START) / 1000000 ))
+            echo "  Run $i: ${ELAPSED}ms"
+          done
+          echo ""
+
+          # Binary size
+          echo "Binary sizes:"
+          ls -lh "$BINARY" target/release/forge_dbd* 2>/dev/null || true
+
+      - name: Upload benchmark results
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: benchmark-${{ runner.os }}
+          path: |
+            target/release/forge
+            target/release/forge_dbd
+          retention-days: 7
