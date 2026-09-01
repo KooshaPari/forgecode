@@ -120,19 +120,19 @@ impl MockProvider {
         let current_call = *count;
         drop(count);
 
-        if let Some(fail_at) = *self.error_on_call.lock().await {
-            if current_call == fail_at {
-                return Err(anyhow::anyhow!(
-                    "Mock provider '{}' failed on call #{}",
-                    self.name,
-                    current_call
-                ));
-            }
+        if let Some(fail_at) = *self.error_on_call.lock().await
+            && current_call == fail_at
+        {
+            return Err(anyhow::anyhow!(
+                "Mock provider '{}' failed on call #{}",
+                self.name,
+                current_call
+            ));
         }
 
         let should_drop = {
             let drop_at = self.drop_on_call.lock().await;
-            drop_at.map_or(false, |n| current_call == n)
+            *drop_at == Some(current_call)
         };
 
         let response = {
@@ -152,7 +152,7 @@ impl MockProvider {
         }
 
         let msg = ChatCompletionMessage {
-            content: response.content.map(|c| Content::full(c)),
+            content: response.content.map(Content::full),
             thought_signature: None,
             reasoning: None,
             reasoning_details: None,
