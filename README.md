@@ -6,6 +6,8 @@
 <p align="center"><em>AI-enhanced terminal development environment — agentic coding CLI/TUI with ZSH plugin support.</em></p>
 <p align="center"><sub>Terminal-Forge palette · <a href="assets/brand/README.md">brand assets &amp; tokens</a> · <a href="docs/VISUAL_SPEC.md">visual spec</a> · theme.rs wired (PR #86) · <a href="docs/assets/identity/">visual identity demo</a> — <em>Phenotype-org addition on top of upstream <a href="https://github.com/tailcallhq/forgecode">tailcallhq/forgecode</a></em></sub></p>
 
+[![AI slop inside](https://sladge.net/badge.svg)](https://sladge.net) [![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/KooshaPari/forgecode/total)](https://github.com/KooshaPari/forgecode/releases)
+
 ---
 
 An AI-enhanced terminal development environment — an agentic coding CLI/TUI with ZSH plugin support, built in Rust.
