@@ -132,15 +132,20 @@ impl MockProvider {
 
         let should_drop = {
             let drop_at = self.drop_on_call.lock().await;
-            drop_at == Some(current_call)
+            *drop_at == Some(current_call)
         };
 
         let response = {
             let mut queue = self.responses.write().await;
-            if !queue.is_empty() { Some(queue.remove(0)) } else { None }
+            if !queue.is_empty() {
+                Some(queue.remove(0))
+            } else {
+                None
+            }
         };
 
-        let response = response.unwrap_or_else(|| MockResponse::text("No mock response configured"));
+        let response =
+            response.unwrap_or_else(|| MockResponse::text("No mock response configured"));
 
         if !response.latency.is_zero() {
             tokio::time::sleep(response.latency).await;
@@ -151,7 +156,11 @@ impl MockProvider {
             thought_signature: None,
             reasoning: None,
             reasoning_details: None,
-            tool_calls: response.tool_calls.into_iter().map(ToolCall::Full).collect(),
+            tool_calls: response
+                .tool_calls
+                .into_iter()
+                .map(ToolCall::Full)
+                .collect(),
             finish_reason: Some(response.finish_reason),
             usage: Some(response.usage),
             phase: None,
@@ -216,16 +225,28 @@ impl AgentLoop {
                 }
             };
 
-            let tool_calls: Vec<ToolCallFull> =
-                msg.tool_calls.iter().filter_map(|tc| tc.as_full().cloned()).collect();
-            let content_text =
-                msg.content.as_ref().map(|c| c.as_str().to_string()).unwrap_or_default();
+            let tool_calls: Vec<ToolCallFull> = msg
+                .tool_calls
+                .iter()
+                .filter_map(|tc| tc.as_full().cloned())
+                .collect();
+            let content_text = msg
+                .content
+                .as_ref()
+                .map(|c| c.as_str().to_string())
+                .unwrap_or_default();
             let usage = msg.usage.unwrap_or_default();
 
             if tool_calls.is_empty() {
                 let return_text = content_text.clone();
                 context = context.append_message(
-                    content_text, msg.thought_signature, None, None, usage, vec![], msg.phase,
+                    content_text,
+                    msg.thought_signature,
+                    None,
+                    None,
+                    usage,
+                    vec![],
+                    msg.phase,
                 );
                 return (return_text, iterations, context);
             }
@@ -234,14 +255,21 @@ impl AgentLoop {
                 .iter()
                 .map(|tc| {
                     let output = (self.tool_executor)(tc);
-                    let result =
-                        ToolResult::new(tc.name.clone()).call_id(tc.call_id.clone()).success(output);
+                    let result = ToolResult::new(tc.name.clone())
+                        .call_id(tc.call_id.clone())
+                        .success(output);
                     (tc.clone(), result)
                 })
                 .collect();
 
             context = context.append_message(
-                content_text, msg.thought_signature, None, None, usage, tool_records, msg.phase,
+                content_text,
+                msg.thought_signature,
+                None,
+                None,
+                usage,
+                tool_records,
+                msg.phase,
             );
         }
 
@@ -255,10 +283,7 @@ impl AgentLoop {
         (last_content, iterations, context)
     }
 
-    async fn call_provider(
-        &self,
-        context: &Context,
-    ) -> anyhow::Result<ChatCompletionMessage> {
+    async fn call_provider(&self, context: &Context) -> anyhow::Result<ChatCompletionMessage> {
         let mut last_error: Option<anyhow::Error> = None;
 
         for provider in &self.providers {
@@ -273,8 +298,10 @@ impl AgentLoop {
                             }
                         }
                     } else {
-                        last_error =
-                            Some(anyhow::anyhow!("Provider '{}' returned empty stream", provider.name));
+                        last_error = Some(anyhow::anyhow!(
+                            "Provider '{}' returned empty stream",
+                            provider.name
+                        ));
                         continue;
                     }
                 }
@@ -293,17 +320,26 @@ fn mock_tool_executor(call: &ToolCallFull) -> String {
     match call.name.as_str() {
         "shell" => {
             let args = call.arguments.parse().unwrap_or_default();
-            let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("echo 'no command'");
+            let cmd = args
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("echo 'no command'");
             format!("Mock shell output for: {cmd}")
         }
         "read" => {
             let args = call.arguments.parse().unwrap_or_default();
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
             format!("Mock file content of: {path}")
         }
         "write" => {
             let args = call.arguments.parse().unwrap_or_default();
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let path = args
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
             format!("Successfully wrote to: {path}")
         }
         "fs_search" => "Mock search results: found 3 matches".to_string(),
@@ -319,15 +355,23 @@ fn mock_tool_executor(call: &ToolCallFull) -> String {
 #[tokio::test]
 async fn test_full_agent_loop_with_tool_call() {
     let provider = MockProvider::new("primary");
-    provider.push_response(MockResponse::tool_call("shell", r#"{"command": "ls -la"}"#)).await;
-    provider.push_response(MockResponse::text("The directory listing shows 5 files and 2 directories.")).await;
+    provider
+        .push_response(MockResponse::tool_call("shell", r#"{"command": "ls -la"}"#))
+        .await;
+    provider
+        .push_response(MockResponse::text(
+            "The directory listing shows 5 files and 2 directories.",
+        ))
+        .await;
 
-    let agent = AgentLoop::new(Box::new(mock_tool_executor))
-        .with_providers(vec![provider.clone()]);
+    let agent = AgentLoop::new(Box::new(mock_tool_executor)).with_providers(vec![provider.clone()]);
 
     let (answer, iterations, context) = agent.run("What's in the current directory?").await;
 
-    assert_eq!(answer, "The directory listing shows 5 files and 2 directories.");
+    assert_eq!(
+        answer,
+        "The directory listing shows 5 files and 2 directories."
+    );
     assert_eq!(iterations, 2);
     assert!(context.tool_call_count() >= 1);
     assert!(context.messages.len() >= 4);
@@ -341,13 +385,31 @@ async fn test_full_agent_loop_with_tool_call() {
 #[tokio::test]
 async fn test_agent_loop_multi_turn_tool_calls() {
     let provider = MockProvider::new("primary");
-    provider.push_response(MockResponse::tool_call("read", r#"{"path": "src/main.rs"}"#)).await;
-    provider.push_response(MockResponse::tool_call("fs_search", r#"{"pattern": "fn main"}"#)).await;
-    provider.push_response(MockResponse::tool_call("patch", r#"{"path": "src/main.rs", "search": "old", "content": "new"}"#)).await;
-    provider.push_response(MockResponse::text("I read the file, searched for the pattern, and applied the patch.")).await;
+    provider
+        .push_response(MockResponse::tool_call(
+            "read",
+            r#"{"path": "src/main.rs"}"#,
+        ))
+        .await;
+    provider
+        .push_response(MockResponse::tool_call(
+            "fs_search",
+            r#"{"pattern": "fn main"}"#,
+        ))
+        .await;
+    provider
+        .push_response(MockResponse::tool_call(
+            "patch",
+            r#"{"path": "src/main.rs", "search": "old", "content": "new"}"#,
+        ))
+        .await;
+    provider
+        .push_response(MockResponse::text(
+            "I read the file, searched for the pattern, and applied the patch.",
+        ))
+        .await;
 
-    let agent = AgentLoop::new(Box::new(mock_tool_executor))
-        .with_providers(vec![provider.clone()]);
+    let agent = AgentLoop::new(Box::new(mock_tool_executor)).with_providers(vec![provider.clone()]);
 
     let (answer, iterations, _context) = agent.run("Fix the main.rs file").await;
     assert_eq!(iterations, 4);
@@ -364,7 +426,9 @@ async fn test_error_recovery_fallback_to_next_provider() {
     let primary = MockProvider::new("primary");
     let fallback = MockProvider::new("fallback");
     primary.fail_on_call(1).await;
-    fallback.push_response(MockResponse::text("Response from fallback provider")).await;
+    fallback
+        .push_response(MockResponse::text("Response from fallback provider"))
+        .await;
 
     let agent = AgentLoop::new(Box::new(mock_tool_executor))
         .with_providers(vec![primary.clone(), fallback.clone()]);
@@ -383,12 +447,15 @@ async fn test_error_recovery_all_providers_fail() {
     fallback.fail_on_call(1).await;
 
     let result = std::panic::AssertUnwindSafe(async {
-        let agent = AgentLoop::new(Box::new(mock_tool_executor))
-            .with_providers(vec![primary, fallback]);
+        let agent =
+            AgentLoop::new(Box::new(mock_tool_executor)).with_providers(vec![primary, fallback]);
         agent.run("This will fail").await
     });
     let caught = tokio::task::spawn(result).await;
-    assert!(caught.is_err(), "Task should have panicked when all providers failed");
+    assert!(
+        caught.is_err(),
+        "Task should have panicked when all providers failed"
+    );
 }
 
 // ===========================================================================
@@ -400,7 +467,9 @@ async fn test_mid_stream_drop_recovery() {
     let primary = MockProvider::new("primary");
     let fallback = MockProvider::new("fallback");
     primary.drop_on_call(1).await;
-    fallback.push_response(MockResponse::text("Recovered after stream drop")).await;
+    fallback
+        .push_response(MockResponse::text("Recovered after stream drop"))
+        .await;
 
     let agent = AgentLoop::new(Box::new(mock_tool_executor))
         .with_providers(vec![primary.clone(), fallback.clone()]);
@@ -421,12 +490,16 @@ async fn test_context_window_limit_triggers_compaction() {
 
     let provider = MockProvider::new("primary");
     for i in 0..5 {
-        let text = format!("Response {i}: This is a very long response designed to rapidly fill the context window and trigger the compaction threshold.");
-        provider.push_response(MockResponse::text_with_usage(&text, 50)).await;
+        let text = format!(
+            "Response {i}: This is a very long response designed to rapidly fill the context window and trigger the compaction threshold."
+        );
+        provider
+            .push_response(MockResponse::text_with_usage(&text, 50))
+            .await;
     }
 
-    let _agent = AgentLoop::new(Box::new(mock_tool_executor))
-        .with_providers(vec![provider.clone()]);
+    let _agent =
+        AgentLoop::new(Box::new(mock_tool_executor)).with_providers(vec![provider.clone()]);
 
     let model = ModelId::new("mock-model");
     let mut context = Context::default()
@@ -438,19 +511,38 @@ async fn test_context_window_limit_triggers_compaction() {
     for _i in 0..5 {
         let mut stream = provider.chat(&context).await.unwrap();
         let msg = stream.next().await.unwrap().unwrap();
-        let content_text = msg.content.as_ref().map(|c| c.as_str().to_string()).unwrap_or_default();
+        let content_text = msg
+            .content
+            .as_ref()
+            .map(|c| c.as_str().to_string())
+            .unwrap_or_default();
         let usage = msg.usage.unwrap_or_default();
         context = context.append_message(content_text, None, None, None, usage, vec![], None);
 
         let approx_tokens = context.token_count_approx();
         if approx_tokens > CONTEXT_WINDOW_LIMIT && !compaction_triggered {
-            let system_messages: Vec<_> = context.messages.iter().filter(|m| m.has_role(Role::System)).cloned().collect();
+            let system_messages: Vec<_> = context
+                .messages
+                .iter()
+                .filter(|m| m.has_role(Role::System))
+                .cloned()
+                .collect();
             let recent_count = 2.min(context.messages.len());
-            let recent: Vec<_> = context.messages.iter().rev().take(recent_count).cloned().collect();
+            let recent: Vec<_> = context
+                .messages
+                .iter()
+                .rev()
+                .take(recent_count)
+                .cloned()
+                .collect();
             let mut compacted = Context::default().tools(context.tools.clone());
             compacted.conversation_id = context.conversation_id;
-            for msg in system_messages { compacted = compacted.add_entry(msg); }
-            for msg in recent.into_iter().rev() { compacted = compacted.add_entry(msg); }
+            for msg in system_messages {
+                compacted = compacted.add_entry(msg);
+            }
+            for msg in recent.into_iter().rev() {
+                compacted = compacted.add_entry(msg);
+            }
             context = compacted;
             compaction_triggered = true;
         }
@@ -468,11 +560,14 @@ async fn test_context_window_limit_triggers_compaction() {
 #[tokio::test]
 async fn test_context_token_count_tracking() {
     let provider = MockProvider::new("primary");
-    provider.push_response(MockResponse::text_with_usage("First response", 150)).await;
-    provider.push_response(MockResponse::text_with_usage("Second response", 300)).await;
+    provider
+        .push_response(MockResponse::text_with_usage("First response", 150))
+        .await;
+    provider
+        .push_response(MockResponse::text_with_usage("Second response", 300))
+        .await;
 
-    let agent = AgentLoop::new(Box::new(mock_tool_executor))
-        .with_providers(vec![provider]);
+    let agent = AgentLoop::new(Box::new(mock_tool_executor)).with_providers(vec![provider]);
 
     let (_answer, _iterations, context) = agent.run("Start a conversation").await;
     let accumulated = context.accumulate_usage();
@@ -487,7 +582,9 @@ async fn test_context_token_count_tracking() {
 async fn test_concurrent_requests() {
     let provider = MockProvider::new("concurrent");
     for i in 0..5 {
-        provider.push_response(MockResponse::text(format!("Response for conversation {i}"))).await;
+        provider
+            .push_response(MockResponse::text(format!("Response for conversation {i}")))
+            .await;
     }
 
     let provider = Arc::new(provider);
@@ -497,14 +594,17 @@ async fn test_concurrent_requests() {
         let p = provider.clone();
         let prompt = format!("Question {i}");
         handles.push(task::spawn(async move {
-            let agent = AgentLoop::new(Box::new(mock_tool_executor)).with_providers(vec![p.as_ref().clone()]);
+            let agent = AgentLoop::new(Box::new(mock_tool_executor))
+                .with_providers(vec![p.as_ref().clone()]);
             let (answer, iterations, _context) = agent.run(&prompt).await;
             (i, answer, iterations)
         }));
     }
 
     let mut results = Vec::new();
-    for handle in handles { results.push(handle.await.unwrap()); }
+    for handle in handles {
+        results.push(handle.await.unwrap());
+    }
     results.sort_by_key(|r| r.0);
 
     for (i, answer, iterations) in results {
@@ -521,10 +621,13 @@ async fn test_concurrent_requests_with_mixed_tool_and_text() {
     let p0 = MockProvider::new("mix-conv0");
     p0.push_response(MockResponse::text("Simple answer")).await;
     let p1 = MockProvider::new("mix-conv1");
-    p1.push_response(MockResponse::tool_call("shell", r#"{"command": "pwd"}"#)).await;
-    p1.push_response(MockResponse::text("Working directory is /home")).await;
+    p1.push_response(MockResponse::tool_call("shell", r#"{"command": "pwd"}"#))
+        .await;
+    p1.push_response(MockResponse::text("Working directory is /home"))
+        .await;
     let p2 = MockProvider::new("mix-conv2");
-    p2.push_response(MockResponse::text("Another simple answer")).await;
+    p2.push_response(MockResponse::text("Another simple answer"))
+        .await;
 
     let mut handles = Vec::new();
 
@@ -547,7 +650,9 @@ async fn test_concurrent_requests_with_mixed_tool_and_text() {
         assert_eq!(iterations, 1);
     }));
 
-    for handle in handles { handle.await.unwrap(); }
+    for handle in handles {
+        handle.await.unwrap();
+    }
 }
 
 // ===========================================================================
@@ -557,7 +662,12 @@ async fn test_concurrent_requests_with_mixed_tool_and_text() {
 #[tokio::test]
 async fn test_mock_provider_response_latency() {
     let provider = MockProvider::new("latency");
-    provider.push_response(MockResponse::text_with_latency("Delayed response", Duration::from_millis(50))).await;
+    provider
+        .push_response(MockResponse::text_with_latency(
+            "Delayed response",
+            Duration::from_millis(50),
+        ))
+        .await;
 
     let start = Instant::now();
     let agent = AgentLoop::new(Box::new(mock_tool_executor)).with_providers(vec![provider]);
@@ -565,7 +675,10 @@ async fn test_mock_provider_response_latency() {
     let elapsed = start.elapsed();
 
     assert_eq!(answer, "Delayed response");
-    assert!(elapsed >= Duration::from_millis(45), "Response should respect latency (elapsed: {elapsed:?})");
+    assert!(
+        elapsed >= Duration::from_millis(45),
+        "Response should respect latency (elapsed: {elapsed:?})"
+    );
 }
 
 // ===========================================================================
@@ -630,9 +743,15 @@ async fn test_conversation_creation_and_context_building() {
 #[tokio::test]
 async fn test_usage_accumulation_across_turns() {
     let provider = MockProvider::new("usage-accum");
-    provider.push_response(MockResponse::text_with_usage("Turn 1", 100)).await;
-    provider.push_response(MockResponse::text_with_usage("Turn 2", 200)).await;
-    provider.push_response(MockResponse::text_with_usage("Turn 3", 150)).await;
+    provider
+        .push_response(MockResponse::text_with_usage("Turn 1", 100))
+        .await;
+    provider
+        .push_response(MockResponse::text_with_usage("Turn 2", 200))
+        .await;
+    provider
+        .push_response(MockResponse::text_with_usage("Turn 3", 150))
+        .await;
 
     let agent = AgentLoop::new(Box::new(mock_tool_executor)).with_providers(vec![provider]);
     let (_answer, _iterations, context) = agent.run("Multi-turn usage test").await;
@@ -648,19 +767,34 @@ async fn test_usage_accumulation_across_turns() {
 #[tokio::test]
 async fn test_context_message_ordering_preserved() {
     let provider = MockProvider::new("ordering");
-    provider.push_response(MockResponse::tool_call("shell", r#"{"command": "pwd"}"#)).await;
+    provider
+        .push_response(MockResponse::tool_call("shell", r#"{"command": "pwd"}"#))
+        .await;
     provider.push_response(MockResponse::text("Done")).await;
 
     let agent = AgentLoop::new(Box::new(mock_tool_executor)).with_providers(vec![provider]);
     let (_answer, _, context) = agent.run("Run and finish").await;
 
-    let roles: Vec<String> = context.messages.iter().map(|m| {
-        if m.has_role(Role::System) { "system" }
-        else if m.has_role(Role::User) { "user" }
-        else if m.has_role(Role::Assistant) { "assistant" }
-        else if m.has_tool_result() { "tool" }
-        else { "other" }
-    }.to_string()).collect();
+    let roles: Vec<String> = context
+        .messages
+        .iter()
+        .map(|m| {
+            {
+                if m.has_role(Role::System) {
+                    "system"
+                } else if m.has_role(Role::User) {
+                    "user"
+                } else if m.has_role(Role::Assistant) {
+                    "assistant"
+                } else if m.has_tool_result() {
+                    "tool"
+                } else {
+                    "other"
+                }
+            }
+            .to_string()
+        })
+        .collect();
 
     assert_eq!(roles[0], "system");
     assert_eq!(roles[1], "user");
@@ -677,7 +811,12 @@ async fn test_context_message_ordering_preserved() {
 async fn test_max_iterations_prevents_infinite_loop() {
     let provider = MockProvider::new("infinite-loop");
     for _ in 0..20 {
-        provider.push_response(MockResponse::tool_call("shell", r#"{"command": "echo loop"}"#)).await;
+        provider
+            .push_response(MockResponse::tool_call(
+                "shell",
+                r#"{"command": "echo loop"}"#,
+            ))
+            .await;
     }
 
     let agent = AgentLoop::new(Box::new(mock_tool_executor))
@@ -685,7 +824,10 @@ async fn test_max_iterations_prevents_infinite_loop() {
         .with_max_iterations(3);
 
     let (_answer, iterations, _context) = agent.run("Loop forever").await;
-    assert!(iterations <= 3, "Should be bounded by max_iterations (got {iterations})");
+    assert!(
+        iterations <= 3,
+        "Should be bounded by max_iterations (got {iterations})"
+    );
 }
 
 // ===========================================================================
