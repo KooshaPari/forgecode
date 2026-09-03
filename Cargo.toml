@@ -7,6 +7,7 @@
 members = [
   "crates/forge_api",
   "crates/forge_app",
+  "crates/forge_audit",
   "crates/forge_ci",
   "crates/forge_cloud",
   "crates/forge_config",
@@ -26,9 +27,11 @@ members = [
   "crates/forge_main",
   "crates/forge_markdown_stream",
   "crates/forge_mux",
+  "crates/forge_paste",
   "crates/forge_pheno_shell",
   "crates/forge_pheno_winterminal",
   "crates/forge_plugin",
+  "crates/forge_render",
   "crates/forge_repo",
   "crates/forge_repo_map",
   "crates/forge_sandbox",
@@ -83,6 +86,7 @@ strip = true
 
 [workspace.dependencies]
 anyhow = "1.0.102"
+arboard = "3.5.1"
 async-recursion = "1.1.1"
 async-stream = "0.3"
 async-trait = "0.1.89"
@@ -102,6 +106,7 @@ clap_complete = "4.6.0"
 colored = "3.1.1"
 console = "0.16.3"
 convert_case = "0.11.0"
+crossterm = "0.29.0"
 derive_more = { version = "2.1.1", features = ["from", "display", "debug", "deref", "as_ref", "try_into"] }
 enable-ansi-support = "0.3.1"
 derive_setters = "0.1.9"
@@ -118,6 +123,7 @@ http = "1.2.0"
 ignore = "0.4.23"
 is_ci = "1.2.0"
 indexmap = { version = "2.13.0", features = ["serde"] }
+image = "0.25.8"
 infer = "0.22.0"
 insta = { version = "1.47.2", features = ["json", "yaml"] }
 lazy_static = "1.4.0"
@@ -127,6 +133,7 @@ nom = "8.0.0"
 nu-ansi-term = "0.50.1"
 posthog-rs = "0.22.0"
 pretty_assertions = "1.4.1"
+proptest = "1.7.0"
 proc-macro2 = "1.0"
 quote = "1.0"
 rustyline = "18.0.0"
@@ -216,6 +223,7 @@ mimalloc = { version = "0.1", default-features = false }
 forge_embed = { path = "crates/forge_embed" }
 forge_api = { path = "crates/forge_api" }
 forge_app = { path = "crates/forge_app" }
+forge_audit = { path = "crates/forge_audit" }
 forge_sdk = { path = "crates/forge_sdk" }
 forge_ci = { path = "crates/forge_ci" }
 forge_cloud = { path = "crates/forge_cloud" }
@@ -250,6 +258,8 @@ forge_drift = { path = "crates/forge_drift" }
 forge_similarity = { path = "crates/forge_similarity" }
 forge_mux = { path = "crates/forge_mux" }
 forge_graph = { path = "crates/forge_graph" }
+forge_paste = { path = "crates/forge_paste" }
+forge_render = { path = "crates/forge_render" }
 
 [workspace.dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
