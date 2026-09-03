@@ -16,6 +16,12 @@
 //! See `plans/2026-09-02-helioslite-p0.3-p0.4-plan-spec-adr.md` §5 for design rationale.
 
 #![allow(clippy::result_large_err)]
+// Parser crate: we operate on byte indices that are derived from
+// `char_indices()`/`chars()`, so the panicking index/slice lints are
+// inappropriate at crate scope. Individual benchmark-lines still use
+// `.get()` where the index is not provably safe.
+#![allow(clippy::indexing_slicing)]
+#![allow(clippy::string_slice)]
 
 pub mod classifier;
 pub mod collapse;
