@@ -123,6 +123,7 @@ http = "1.2.0"
 ignore = "0.4.23"
 is_ci = "1.2.0"
 indexmap = { version = "2.13.0", features = ["serde"] }
+image = "0.25.8"
 infer = "0.22.0"
 insta = { version = "1.47.2", features = ["json", "yaml"] }
 lazy_static = "1.4.0"

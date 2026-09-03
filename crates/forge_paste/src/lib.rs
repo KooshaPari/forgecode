@@ -23,6 +23,11 @@ pub mod mention;
 pub mod paste_event;
 pub mod shell;
 
+#[cfg(feature = "clipboard")]
+pub mod clipboard;
+#[cfg(feature = "image")]
+pub mod image_protocol;
+
 /// Re-export the most-used types at the crate root for ergonomics.
 pub use classifier::{classify, ClassifierResult, ClassifierSignal, PasteKind};
 pub use collapse::{collapse_paste, CollapseConfig, CollapseOutcome};
