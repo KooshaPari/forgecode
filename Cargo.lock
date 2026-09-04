@@ -2848,6 +2848,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge_guardian"
+version = "2.13.21"
+dependencies = [
+ "forge_audit",
+ "forge_domain",
+ "serde",
+]
+
+[[package]]
 name = "forge_infra"
 version = "0.1.1"
 dependencies = [

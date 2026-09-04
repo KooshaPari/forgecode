@@ -22,6 +22,7 @@ members = [
   "crates/forge_eventsource_stream",
   "crates/forge_fs",
   "crates/forge_gpu",
+  "crates/forge_guardian",
   "crates/forge_infra",
   "crates/forge_json_repair",
   "crates/forge_main",
@@ -229,6 +230,7 @@ forge_ci = { path = "crates/forge_ci" }
 forge_cloud = { path = "crates/forge_cloud" }
 forge_display = { path = "crates/forge_display" }
 forge_domain = { path = "crates/forge_domain" }
+forge_guardian = { path = "crates/forge_guardian" }
 forge_fs = { path = "crates/forge_fs" }
 forge_infra = { path = "crates/forge_infra" }
 forge_repo = { path = "crates/forge_repo" }
