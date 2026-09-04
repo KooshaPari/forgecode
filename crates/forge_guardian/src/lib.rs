@@ -23,7 +23,9 @@
 pub mod adjudicator;
 pub mod foreign;
 pub mod judge;
+pub mod learn;
 pub mod risk;
+pub mod sandbox;
 pub mod session;
 
 pub use adjudicator::{GuardianAdjudicator, RuleVerdict};
@@ -32,5 +34,7 @@ pub use foreign::{
     build_prompt, parse_judgement,
 };
 pub use judge::{HeuristicRiskJudge, NoopRiskJudge, RiskJudge};
+pub use learn::{LearnError, LearnedDecision, LearnedPermission, LearningStore};
 pub use risk::{Risk, RiskFactor, RiskLabel, RiskLevel};
+pub use sandbox::{SandboxPolicy, TieBreak, break_tie, can_contain, gap_label, tie_break_reason};
 pub use session::SessionMode;
