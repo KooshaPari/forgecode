@@ -555,7 +555,15 @@ impl<'de> Deserialize<'de> for ContextMessageRecord {
             Direct(ContextMessageValueRecord),
         }
 
-        match ContextMessageParser::deserialize(deserializer)? {
+        // Deserialize through `serde_json::Value` first so we can defensively
+        // drop stray variant keys that would otherwise brick the entire
+        // conversation. Past corruption has injected empty objects like
+        // `,"text":{}` alongside a real `tool` variant, which made the
+        // externally-tagged enum unable to choose a variant.
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let cleaned = strip_stray_variant_keys(value);
+
+        match ContextMessageParser::deserialize(cleaned).map_err(serde::de::Error::custom)? {
             ContextMessageParser::Wrapper { message, usage } => {
                 Ok(ContextMessageRecord { message, usage })
             }
@@ -564,6 +572,81 @@ impl<'de> Deserialize<'de> for ContextMessageRecord {
             }
         }
     }
+}
+
+/// Variant tags recognised by `ContextMessageValueRecord`. When more than one
+/// of these appears in the same object we keep the non-empty one (preferring
+/// the first non-empty in declaration order) and drop the rest. This recovers
+/// from corruption that historically injected `,"text":{}` next to a real
+/// `tool` variant.
+const MESSAGE_VARIANT_KEYS: &[&str] = &["text", "tool", "image"];
+
+fn strip_stray_variant_keys(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(mut map) => {
+            // Wrapper format: { message: { text|tool|image: ... }, usage: ... }
+            if let Some(serde_json::Value::Object(msg)) = map.get_mut("message") {
+                if drop_stray_keys_in_place(msg) {
+                    tracing::warn!(
+                        target: "forge_repo.conversation",
+                        "dropped stray variant key(s) from corrupted message wrapper"
+                    );
+                }
+            }
+            // Direct format: root object is the variant itself.
+            if drop_stray_keys_in_place(&mut map) {
+                tracing::warn!(
+                    target: "forge_repo.conversation",
+                    "dropped stray variant key(s) from corrupted message"
+                );
+            }
+            serde_json::Value::Object(map)
+        }
+        other => other,
+    }
+}
+
+/// Returns true if any keys were removed.
+///
+/// If one of the recognised variant keys (`text` / `tool` / `image`) is present,
+/// every *other* key in the object is dropped — the variant payload is the only
+/// valid content of a `ContextMessage`. This defends against historical
+/// corruption that injected extra fields such as `"role": "system"` at the same
+/// nesting level as a real `"text"` variant; serde's externally-tagged enum
+/// rejects any sibling key and previously bricked the whole conversation.
+fn drop_stray_keys_in_place(map: &mut serde_json::Map<String, serde_json::Value>) -> bool {
+    let present_variants: Vec<&str> = MESSAGE_VARIANT_KEYS
+        .iter()
+        .copied()
+        .filter(|k| map.contains_key(*k))
+        .collect();
+    if present_variants.is_empty() {
+        return false;
+    }
+    // Pick the first variant whose value is a non-empty object; otherwise
+    // fall back to the last variant in declaration order.
+    let keep = present_variants
+        .iter()
+        .find(|k| !is_empty_object(map.get(**k)))
+        .copied()
+        .unwrap_or(present_variants[present_variants.len() - 1]);
+
+    // When a variant key is recognised, the variant payload is the *only*
+    // valid content — strip every other sibling key (role, usage, etc.) before
+    // handing the object to the externally-tagged deserializer.
+    let original_keys: Vec<String> = map.keys().cloned().collect();
+    let mut removed = false;
+    for k in original_keys {
+        if k != keep {
+            map.remove(&k);
+            removed = true;
+        }
+    }
+    removed
+}
+
+fn is_empty_object(value: Option<&serde_json::Value>) -> bool {
+    matches!(value, Some(serde_json::Value::Object(o)) if o.is_empty())
 }
 
 impl From<&forge_domain::MessageEntry> for ContextMessageRecord {
@@ -1190,5 +1273,266 @@ impl TryFrom<ConversationRecord> for forge_domain::Conversation {
                 forge_domain::MetaData::new(record.created_at.and_utc())
                     .updated_at(record.updated_at.map(|updated_at| updated_at.and_utc())),
             ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_drops_stray_empty_text_alongside_tool() {
+        // Reproduces the corruption that caused
+        // `data did not match any variant of untagged enum ContextMessageParser`:
+        // a real tool message wrapper with an injected `,"text":{}` field.
+        let corrupted = r#"{
+            "message": {
+                "tool": {
+                    "name": "shell",
+                    "call_id": "call_abc",
+                    "output": { "is_error": false, "values": [{"text": "ok"}] }
+                },
+                "text": {}
+            }
+        }"#;
+        let record: ContextMessageRecord = serde_json::from_str(corrupted)
+            .expect("deserializer should drop stray text key and recover");
+        match record.message {
+            ContextMessageValueRecord::Tool(_) => {}
+            other => panic!("expected Tool variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deserialize_drops_stray_empty_tool_alongside_text() {
+        // Mirror of the above: real text variant with stray empty tool key.
+        let corrupted = r#"{
+            "message": {
+                "text": { "role": "Assistant", "content": "hi" },
+                "tool": {}
+            }
+        }"#;
+        let record: ContextMessageRecord = serde_json::from_str(corrupted)
+            .expect("deserializer should drop stray tool key and recover");
+        match record.message {
+            ContextMessageValueRecord::Text(_) => {}
+            other => panic!("expected Text variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deserialize_keeps_non_empty_variant() {
+        // When both variant objects are non-empty, prefer the first one
+        // declared in `MESSAGE_VARIANT_KEYS`.
+        let corrupted = r#"{
+            "message": {
+                "text": { "role": "Assistant", "content": "real" },
+                "tool": {
+                    "name": "shell",
+                    "call_id": "call_abc",
+                    "output": { "is_error": false, "values": [{"text": "should-be-dropped"}] }
+                }
+            }
+        }"#;
+        let record: ContextMessageRecord = serde_json::from_str(corrupted)
+            .expect("deserializer should keep text variant");
+        match record.message {
+            ContextMessageValueRecord::Text(_) => {}
+            other => panic!("expected Text variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deserialize_clean_message_still_works() {
+        let clean = r#"{
+            "message": {
+                "tool": {
+                    "name": "shell",
+                    "call_id": "call_abc",
+                    "output": { "is_error": false, "values": [{"text": "ok"}] }
+                }
+            }
+        }"#;
+        let record: ContextMessageRecord =
+            serde_json::from_str(clean).expect("clean message must still deserialize");
+        match record.message {
+            ContextMessageValueRecord::Tool(_) => {}
+            other => panic!("expected Tool variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deserialize_drops_stray_role_alongside_text() {
+        // Reproduces the corruption seen on 48 system messages where the
+        // outer `message` wrapper contains both `"role": "system"` and a real
+        // `"text"` variant. Serde's externally-tagged enum rejects any sibling
+        // key inside the variant payload, so without recovery the entire
+        // conversation fails to deserialize.
+        let corrupted = r#"{
+            "message": {
+                "role": "system",
+                "text": {
+                    "role": "System",
+                    "content": "you are a helpful assistant"
+                }
+            }
+        }"#;
+        let record: ContextMessageRecord = serde_json::from_str(corrupted)
+            .expect("deserializer should drop stray role key and recover text message");
+        match record.message {
+            ContextMessageValueRecord::Text(msg) => {
+                assert_eq!(msg.role, RoleRecord::System);
+                assert!(msg.content.contains("helpful"));
+            }
+            other => panic!("expected Text variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deserialize_drops_stray_role_alongside_tool() {
+        // Same class of corruption but on a tool message wrapper.
+        let corrupted = r#"{
+            "message": {
+                "role": "system",
+                "tool": {
+                    "name": "shell",
+                    "call_id": "call_abc",
+                    "output": { "is_error": false, "values": [{"text": "ok"}] }
+                }
+            }
+        }"#;
+        let record: ContextMessageRecord = serde_json::from_str(corrupted)
+            .expect("deserializer should drop stray role key on tool messages");
+        match record.message {
+            ContextMessageValueRecord::Tool(_) => {}
+            other => panic!("expected Tool variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deserialize_drops_multiple_stray_keys_alongside_variant() {
+        // Real corruption had several extra fields next to the variant;
+        // ensure the hardener drops them all and keeps only the variant.
+        let corrupted = r#"{
+            "message": {
+                "role": "system",
+                "model": "openrouter/free",
+                "text": {
+                    "role": "System",
+                    "content": "summary",
+                    "model": "openrouter/free"
+                }
+            }
+        }"#;
+        let record: ContextMessageRecord = serde_json::from_str(corrupted)
+            .expect("deserializer should drop role+model siblings of the text variant");
+        match record.message {
+            ContextMessageValueRecord::Text(msg) => {
+                assert_eq!(msg.role, RoleRecord::System);
+            }
+            other => panic!("expected Text variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn deserialize_full_corrupted_context_recovers() {
+        // Verifies the deserializer recovers the original on-disk corruption
+        // that produced
+        //     `data did not match any variant of untagged enum
+        //      ContextMessageParser at line 1 column 30753`
+        // for conversation 2edac8f2-359e-4157-946c-df4c98bbe534. The fixture
+        // is a snippet with multiple tool messages each carrying an injected
+        // `,"text":{}` field.
+        let fixture = r#"{
+            "messages": [
+                {"message": {"text": {"role": "User", "content": "hi"}}},
+                {"message": {"tool": {
+                    "name": "shell",
+                    "call_id": "call_1",
+                    "output": {"is_error": false, "values": [{"text": "first"}]}
+                }, "text": {}}},
+                {"message": {"tool": {
+                    "name": "shell",
+                    "call_id": "call_2",
+                    "output": {"is_error": false, "values": [{"text": "second"}]}
+                }, "text": {}}},
+                {"message": {"text": {"role": "Assistant", "content": "done"}}}
+            ],
+            "tools": []
+        }"#;
+        let record: ContextRecord = serde_json::from_str(fixture)
+            .expect("full context with multiple stray text keys must recover");
+        assert_eq!(record.messages.len(), 4);
+        // Spot-check: tool messages round-tripped as Tool variants, not Text.
+        assert!(matches!(
+            record.messages[1].message,
+            ContextMessageValueRecord::Tool(_)
+        ));
+        assert!(matches!(
+            record.messages[2].message,
+            ContextMessageValueRecord::Tool(_)
+        ));
+    }
+
+    #[test]
+    fn deserialize_real_on_disk_corruption_recovers() {
+        // End-to-end check against the actual corrupted conversation snapshot
+        // salvaged from `~/.forge/.forge.db.bak-pre-ctxparserfix-20260903-180015`.
+        // The fixture path is configurable via the `FORGE_CORRUPTION_FIXTURE`
+        // env var; the test is skipped when the file isn't present so CI
+        // environments without the artifact don't fail.
+        let path = std::env::var("FORGE_CORRUPTION_FIXTURE")
+            .unwrap_or_else(|_| "/tmp/orig_corrupted_ctx.txt".to_string());
+        if !std::path::Path::new(&path).exists() {
+            eprintln!("skipping: fixture not found at {path}");
+            return;
+        }
+
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
+
+        // Sanity: the on-disk corruption is still present.
+        assert!(
+            raw.contains("\"tool\": {"),
+            "fixture should contain tool messages"
+        );
+        let stray = raw.matches("\"text\": {}").count();
+        assert!(
+            stray >= 1,
+            "fixture should still contain at least one stray `\"text\": {{}}` \
+             (got {stray}); re-create it from the .bak-pre-ctxparserfix-* DB"
+        );
+
+        // This is the call that used to fail with
+        //   `data did not match any variant of untagged enum ContextMessageParser
+        //    at line 1 column 30753`.
+        let record: ContextRecord = serde_json::from_str(&raw).unwrap_or_else(|e| {
+            panic!("hardened deserializer must recover real on-disk corruption, got: {e}");
+        });
+
+        // Conversation 2edac8f2-... had 20 messages: 11 text + 9 tool.
+        assert_eq!(
+            record.messages.len(),
+            20,
+            "expected 20 messages after recovery, got {}",
+            record.messages.len()
+        );
+
+        let mut n_text = 0usize;
+        let mut n_tool = 0usize;
+        for m in &record.messages {
+            match m.message {
+                ContextMessageValueRecord::Text(_) => n_text += 1,
+                ContextMessageValueRecord::Tool(_) => n_tool += 1,
+                ContextMessageValueRecord::Image(_) => {}
+            }
+        }
+        assert_eq!(n_text + n_tool, 20);
+        assert!(n_tool >= 1, "at least one tool message must round-trip");
+
+        eprintln!(
+            "recovered {n_text} text + {n_tool} tool messages from {path} ({} bytes)",
+            raw.len()
+        );
     }
 }
