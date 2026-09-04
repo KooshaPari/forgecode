@@ -19,7 +19,7 @@
 //! without changing the backwards-compatible `Permission` type.
 
 use crate::judge::RiskJudge;
-use crate::risk::{Risk, RiskLevel};
+use crate::risk::Risk;
 use crate::session::SessionMode;
 use forge_domain::Permission;
 use forge_domain::PermissionOperation;

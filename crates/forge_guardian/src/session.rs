@@ -11,7 +11,7 @@ use std::fmt::Display;
 use serde::{Deserialize, Serialize};
 
 /// The outer operational envelope for the current session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SessionMode {
     /// Read-only exploration. Every Write / Execute / Fetch is forced to
@@ -19,6 +19,7 @@ pub enum SessionMode {
     Plan,
     /// Standard mode: the rule engine decides, then the guardian reviews
     /// only `Confirm`-worthy operations.
+    #[default]
     Build,
     /// Diff-review only: local edits (no new file) are auto-allowed; new
     /// files and anything else go through `Confirm`.
@@ -50,12 +51,6 @@ impl SessionMode {
     /// `accept-edits` auto-allows local writes.
     pub fn is_accept_edits(&self) -> bool {
         matches!(self, SessionMode::AcceptEdits)
-    }
-}
-
-impl Default for SessionMode {
-    fn default() -> Self {
-        SessionMode::Build
     }
 }
 
