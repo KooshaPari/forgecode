@@ -210,7 +210,7 @@ fn append_line(path: &Path, decision: &LearnedDecision) -> std::io::Result<()> {
     use std::fs::OpenOptions as FsOpenOptions;
     let mut file = FsOpenOptions::new().create(true).append(true).open(path)?;
     writeln!(file, "{}", serde_json::to_string(decision).unwrap())
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "serialization failed"))
+        .map_err(|_| std::io::Error::other("serialization failed"))
 }
 
 #[cfg(test)]
