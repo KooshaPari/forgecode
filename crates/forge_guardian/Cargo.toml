@@ -1,0 +1,13 @@
+[package]
+name = "forge_guardian"
+description = "LLM-driven / heuristic risk adjudication for the forge policy engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+forge_domain = { workspace = true }
+forge_audit = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
