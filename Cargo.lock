@@ -2851,9 +2851,13 @@ dependencies = [
 name = "forge_guardian"
 version = "2.13.21"
 dependencies = [
+ "anyhow",
  "forge_audit",
  "forge_domain",
  "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
