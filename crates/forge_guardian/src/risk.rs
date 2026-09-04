@@ -51,7 +51,7 @@ impl RiskLevel {
 }
 
 /// A single contributing reason (label + weight) used to compose scores.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RiskFactor {
     pub label: RiskLabel,
     /// 0..=1 contribution.
