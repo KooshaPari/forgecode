@@ -8,6 +8,8 @@ license.workspace = true
 [dependencies]
 forge_domain = { workspace = true }
 forge_audit = { workspace = true }
+anyhow = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -20,8 +20,13 @@
 //! it produces a [`Risk`] score, the rule engine decides the outcome, and
 //! the audit log (`forge_audit`) records the trail.
 
+pub mod foreign;
 pub mod judge;
 pub mod risk;
 
+pub use foreign::{
+    AdjudicationDriver, FixedAdjudicationDriver, Judgement, KeywordDriver, LlmRiskJudge,
+    build_prompt, parse_judgement,
+};
 pub use judge::{HeuristicRiskJudge, NoopRiskJudge, RiskJudge};
 pub use risk::{Risk, RiskFactor, RiskLabel, RiskLevel};
