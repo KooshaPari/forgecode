@@ -923,6 +923,11 @@
         "null"
       ]
     },
+    "guardian": {
+      "default": false,
+      "description": "Whether the LLM guardian / risk-adjudication layer is active. When\nenabled, a `GuardianAdjudicator` runs before the rule engine makes its\nallow/deny/confirm decision, scoring risk and applying session-mode\ngates (Plan/Build/AcceptEdits/Yolo). Defaults to off (backwards\ncompatible — current behavior unchanged when absent).",
+      "type": "boolean"
+    },
     "http": {
       "anyOf": [
         {

@@ -279,6 +279,14 @@ pub struct ForgeConfig {
     #[serde(default)]
     pub restricted: bool,
 
+    /// Whether the LLM guardian / risk-adjudication layer is active. When
+    /// enabled, a `GuardianAdjudicator` runs before the rule engine makes its
+    /// allow/deny/confirm decision, scoring risk and applying session-mode
+    /// gates (Plan/Build/AcceptEdits/Yolo). Defaults to off (backwards
+    /// compatible — current behavior unchanged when absent).
+    #[serde(default)]
+    pub guardian: bool,
+
     /// Whether tool use is supported in the current environment; when false,
     /// all tool calls are disabled.
     #[serde(default)]
