@@ -629,7 +629,12 @@ fn drop_stray_keys_in_place(map: &mut serde_json::Map<String, serde_json::Value>
         .iter()
         .find(|k| !is_empty_object(map.get(**k)))
         .copied()
-        .unwrap_or(present_variants[present_variants.len() - 1]);
+        .unwrap_or_else(|| {
+            present_variants
+                .last()
+                .copied()
+                .expect("present_variants is non-empty")
+        });
 
     // When a variant key is recognised, the variant payload is the *only*
     // valid content — strip every other sibling key (role, usage, etc.) before
