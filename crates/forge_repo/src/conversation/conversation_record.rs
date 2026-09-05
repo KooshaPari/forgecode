@@ -575,10 +575,10 @@ impl<'de> Deserialize<'de> for ContextMessageRecord {
 }
 
 /// Variant tags recognised by `ContextMessageValueRecord`. When more than one
-/// of these appears in the same object we keep the non-empty one (preferring
-/// the first non-empty in declaration order) and drop the rest. This recovers
-/// from corruption that historically injected `,"text":{}` next to a real
-/// `tool` variant.
+/// of these appears in the same object we keep the first variant that is a
+/// non-empty object and successfully deserializes, and drop the rest. This
+/// recovers from corruption that historically injected `,"text":{}` next to
+/// a real `tool` variant without allowing malformed data to displace it.
 const MESSAGE_VARIANT_KEYS: &[&str] = &["text", "tool", "image"];
 
 fn strip_stray_variant_keys(value: serde_json::Value) -> serde_json::Value {
@@ -615,26 +615,19 @@ fn strip_stray_variant_keys(value: serde_json::Value) -> serde_json::Value {
 /// nesting level as a real `"text"` variant; serde's externally-tagged enum
 /// rejects any sibling key and previously bricked the whole conversation.
 fn drop_stray_keys_in_place(map: &mut serde_json::Map<String, serde_json::Value>) -> bool {
-    let present_variants: Vec<&str> = MESSAGE_VARIANT_KEYS
+    let valid_variants: Vec<&str> = MESSAGE_VARIANT_KEYS
         .iter()
         .copied()
-        .filter(|k| map.contains_key(*k))
+        .filter(|k| is_valid_variant(map.get(*k), k))
         .collect();
-    if present_variants.is_empty() {
+    if valid_variants.is_empty() {
         return false;
     }
-    // Pick the first variant whose value is a non-empty object; otherwise
-    // fall back to the last variant in declaration order.
-    let keep = present_variants
-        .iter()
-        .find(|k| !is_empty_object(map.get(**k)))
+    // Pick the first valid variant in declaration order.
+    let keep = valid_variants
+        .first()
         .copied()
-        .unwrap_or_else(|| {
-            present_variants
-                .last()
-                .copied()
-                .expect("present_variants is non-empty")
-        });
+        .expect("valid_variants is non-empty");
 
     // When a variant key is recognised, the variant payload is the *only*
     // valid content — strip every other sibling key (role, usage, etc.) before
@@ -650,8 +643,18 @@ fn drop_stray_keys_in_place(map: &mut serde_json::Map<String, serde_json::Value>
     removed
 }
 
-fn is_empty_object(value: Option<&serde_json::Value>) -> bool {
-    matches!(value, Some(serde_json::Value::Object(o)) if o.is_empty())
+fn is_valid_variant(value: Option<&serde_json::Value>, key: &str) -> bool {
+    let Some(serde_json::Value::Object(payload)) = value else {
+        return false;
+    };
+    if payload.is_empty() {
+        return false;
+    }
+
+    let mut candidate = serde_json::Map::new();
+    candidate.insert(key.to_owned(), serde_json::Value::Object(payload.clone()));
+    serde_json::from_value::<ContextMessageValueRecord>(serde_json::Value::Object(candidate))
+        .is_ok()
 }
 
 impl From<&forge_domain::MessageEntry> for ContextMessageRecord {
@@ -1283,6 +1286,8 @@ impl TryFrom<ConversationRecord> for forge_domain::Conversation {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[test]
@@ -1364,6 +1369,54 @@ mod tests {
             ContextMessageValueRecord::Tool(_) => {}
             other => panic!("expected Tool variant, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn deserialize_ignores_null_variant_when_tool_is_valid() {
+        let corrupted = r#"{
+            "message": {
+                "text": null,
+                "tool": {
+                    "name": "shell",
+                    "call_id": "call_abc",
+                    "output": { "is_error": false, "values": [{"text": "ok"}] }
+                }
+            }
+        }"#;
+        let actual: ContextMessageRecord = serde_json::from_str(corrupted).unwrap();
+        assert!(matches!(actual.message, ContextMessageValueRecord::Tool(_)));
+    }
+
+    #[test]
+    fn deserialize_ignores_scalar_variant_when_tool_is_valid() {
+        let corrupted = r#"{
+            "message": {
+                "text": "invalid",
+                "tool": {
+                    "name": "shell",
+                    "call_id": "call_abc",
+                    "output": { "is_error": false, "values": [{"text": "ok"}] }
+                }
+            }
+        }"#;
+        let actual: ContextMessageRecord = serde_json::from_str(corrupted).unwrap();
+        assert!(matches!(actual.message, ContextMessageValueRecord::Tool(_)));
+    }
+
+    #[test]
+    fn deserialize_ignores_malformed_non_empty_variant_when_tool_is_valid() {
+        let corrupted = r#"{
+            "message": {
+                "text": { "role": "not-a-role", "content": 42 },
+                "tool": {
+                    "name": "shell",
+                    "call_id": "call_abc",
+                    "output": { "is_error": false, "values": [{"text": "ok"}] }
+                }
+            }
+        }"#;
+        let actual: ContextMessageRecord = serde_json::from_str(corrupted).unwrap();
+        assert!(matches!(actual.message, ContextMessageValueRecord::Tool(_)));
     }
 
     #[test]
@@ -1497,11 +1550,12 @@ mod tests {
             std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
 
         // Sanity: the on-disk corruption is still present.
+        let compact = raw.split_whitespace().collect::<String>();
         assert!(
-            raw.contains("\"tool\": {"),
+            compact.contains("\"tool\":{"),
             "fixture should contain tool messages"
         );
-        let stray = raw.matches("\"text\": {}").count();
+        let stray = compact.matches("\"text\":{}").count();
         assert!(
             stray >= 1,
             "fixture should still contain at least one stray `\"text\": {{}}` \
