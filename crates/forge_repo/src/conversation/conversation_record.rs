@@ -585,13 +585,13 @@ fn strip_stray_variant_keys(value: serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(mut map) => {
             // Wrapper format: { message: { text|tool|image: ... }, usage: ... }
-            if let Some(serde_json::Value::Object(msg)) = map.get_mut("message") {
-                if drop_stray_keys_in_place(msg) {
-                    tracing::warn!(
-                        target: "forge_repo.conversation",
-                        "dropped stray variant key(s) from corrupted message wrapper"
-                    );
-                }
+            if let Some(serde_json::Value::Object(msg)) = map.get_mut("message")
+                && drop_stray_keys_in_place(msg)
+            {
+                tracing::warn!(
+                    target: "forge_repo.conversation",
+                    "dropped stray variant key(s) from corrupted message wrapper"
+                );
             }
             // Direct format: root object is the variant itself.
             if drop_stray_keys_in_place(&mut map) {
@@ -1334,8 +1334,8 @@ mod tests {
                 }
             }
         }"#;
-        let record: ContextMessageRecord = serde_json::from_str(corrupted)
-            .expect("deserializer should keep text variant");
+        let record: ContextMessageRecord =
+            serde_json::from_str(corrupted).expect("deserializer should keep text variant");
         match record.message {
             ContextMessageValueRecord::Text(_) => {}
             other => panic!("expected Text variant, got {other:?}"),
@@ -1488,8 +1488,8 @@ mod tests {
             return;
         }
 
-        let raw = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
+        let raw =
+            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
 
         // Sanity: the on-disk corruption is still present.
         assert!(
