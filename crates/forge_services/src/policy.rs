@@ -152,7 +152,7 @@ where
     I: FileReaderInfra
         + FileWriterInfra
         + FileInfoInfra
-        + EnvironmentInfra
+        + EnvironmentInfra<Config = forge_config::ForgeConfig>
         + DirectoryReaderInfra
         + UserInfra,
 {
@@ -165,7 +165,22 @@ where
         let (policies, path) = self.get_or_create_policies().await?;
 
         let engine = PolicyEngine::new(&policies);
-        let permission = engine.can_perform(operation);
+
+        // When the guardian is enabled (opt-in), pass the rule-engine decision
+        // through the risk adjudicator. In the neutral Build mode the rules
+        // still decide (allow/deny stay absolute); the guardian attaches a
+        // risk snapshot + rationale and may conservatively escalate Confirm
+        // for side-effecting ops.
+        let permission = if self.infra.get_config().map(|c| c.guardian).unwrap_or(false) {
+            let engine_decision = engine.can_perform(operation);
+            let adjudicator: forge_guardian::GuardianAdjudicator =
+                forge_guardian::GuardianAdjudicator::new(forge_guardian::SessionMode::Build);
+            adjudicator
+                .adjudicate(operation, |_| engine_decision)
+                .verdict
+        } else {
+            engine.can_perform(operation)
+        };
 
         match permission {
             Permission::Deny => Ok(PolicyDecision { allowed: false, path }),
