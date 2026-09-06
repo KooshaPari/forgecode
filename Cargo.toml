@@ -37,6 +37,7 @@ members = [
   "crates/forge_repo_map",
   "crates/forge_sandbox",
   "crates/forge_sdk",
+  "crates/forge_semantic",
   "crates/forge_select",
   "crates/forge_services",
   "crates/forge_similarity",

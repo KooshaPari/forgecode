@@ -3228,6 +3228,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge_semantic"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "forge_domain",
+ "futures",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "forge_services"
 version = "0.1.1"
 dependencies = [
