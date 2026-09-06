@@ -1140,6 +1140,11 @@
       ],
       "description": "Retry settings applied at the system level to all IO operations."
     },
+    "sandbox": {
+      "default": false,
+      "description": "Whether the OS-level sandbox should be applied to risky tool calls\n(currently `Shell` and `Fetch`). When enabled, those tool calls are\nrouted through `forge_sandbox::Sandbox` instead of the bare shell —\nproviding Landlock/Seatbelt/Job Object containment per `SandboxPolicy`.\nDefaults to off (backwards compatible — current behavior unchanged\nwhen absent).",
+      "type": "boolean"
+    },
     "sem_search_top_k": {
       "default": 0,
       "description": "Number of top results retained after re-ranking in semantic search.",

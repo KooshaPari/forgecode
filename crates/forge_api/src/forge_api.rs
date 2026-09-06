@@ -43,7 +43,7 @@ impl<A, F> ForgeAPI<A, F> {
         A: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>,
         F: EnvironmentInfra<Config = forge_config::ForgeConfig>,
     {
-        Ok(ForgeApp::new(self.services.clone())?)
+        ForgeApp::new(self.services.clone())
     }
 }
 
