@@ -23,6 +23,7 @@ mod orch;
 #[cfg(test)]
 mod orch_spec;
 mod prune;
+pub mod resilience;
 pub mod retry;
 mod search_dedup;
 mod services;
