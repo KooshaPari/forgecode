@@ -206,12 +206,13 @@ mod tests {
     }
 }
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{ConversationId, MemoryScope, WorkspaceId};
 
 /// The only memory scope implemented by the first semantic-memory slice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SemanticMemoryScope {
     /// Conversation history recalled on demand.
     Episodic,
@@ -229,7 +230,7 @@ impl TryFrom<MemoryScope> for SemanticMemoryScope {
 }
 
 /// The tenant boundary that isolates semantic memory to one workspace.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SemanticMemoryNamespace {
     workspace_id: WorkspaceId,
 }
@@ -247,7 +248,7 @@ impl SemanticMemoryNamespace {
 }
 
 /// A provider-stable identity for a semantic-memory record.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SemanticMemoryIdentity {
     scope: SemanticMemoryScope,
     namespace: SemanticMemoryNamespace,
@@ -288,7 +289,7 @@ impl SemanticMemoryIdentity {
 }
 
 /// The provenance retained with every recalled memory record.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SemanticMemoryProvenance {
     conversation_id: ConversationId,
     namespace: SemanticMemoryNamespace,
