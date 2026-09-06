@@ -287,6 +287,15 @@ pub struct ForgeConfig {
     #[serde(default)]
     pub guardian: bool,
 
+    /// Whether the OS-level sandbox should be applied to risky tool calls
+    /// (currently `Shell` and `Fetch`). When enabled, those tool calls are
+    /// routed through `forge_sandbox::Sandbox` instead of the bare shell —
+    /// providing Landlock/Seatbelt/Job Object containment per `SandboxPolicy`.
+    /// Defaults to off (backwards compatible — current behavior unchanged
+    /// when absent).
+    #[serde(default)]
+    pub sandbox: bool,
+
     /// Whether tool use is supported in the current environment; when false,
     /// all tool calls are disabled.
     #[serde(default)]

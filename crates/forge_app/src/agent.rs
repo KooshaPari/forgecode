@@ -64,8 +64,14 @@ impl<T: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> AgentSe
         context: &ToolCallContext,
         call: ToolCallFull,
     ) -> ToolResult {
-        let registry = ToolRegistry::new(Arc::new(self.clone()));
-        registry.call(agent, context, call).await
+        match ToolRegistry::new(Arc::new(self.clone())) {
+            Ok(registry) => registry.call(agent, context, call).await,
+            Err(err) => {
+                let name = call.name.clone();
+                let stub = ToolResult::new(name);
+                stub.failure(err)
+            }
+        }
     }
 
     async fn update(&self, conversation: Conversation) -> anyhow::Result<()> {
