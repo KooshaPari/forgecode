@@ -59,3 +59,4 @@ insta.workspace = true
 tokio-stream.workspace = true
 fake = { version = "5.1.0", features = ["derive"] }
 forge_domain = { path = "../forge_domain" }
+forge_sandbox = { path = "../forge_sandbox" }

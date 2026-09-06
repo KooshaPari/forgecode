@@ -84,7 +84,7 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> AgentEx
             conversation
         };
         // Execute the request through the ForgeApp
-        let app = crate::ForgeApp::new(self.services.clone());
+        let app = crate::ForgeApp::new(self.services.clone())?;
         let mut response_stream = app
             .chat(
                 agent_id.clone(),

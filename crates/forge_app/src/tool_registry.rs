@@ -33,13 +33,28 @@ pub struct ToolRegistry<S> {
 }
 
 impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ToolRegistry<S> {
-    pub fn new(services: Arc<S>) -> Self {
-        Self {
+    pub fn new(services: Arc<S>) -> anyhow::Result<Self> {
+        // P1.1: route shell/fetch through forge_sandbox when config.sandbox is on
+        let config = services.get_config()?;
+        let tool_executor = if config.sandbox {
+            let cwd = services.get_environment().cwd.clone();
+            let cfg = forge_sandbox::SandboxConfig {
+                command: "sh".to_string(),
+                args: vec!["-c".to_string()],
+                working_dir: cwd,
+                env: Vec::new(),
+                ..forge_sandbox::SandboxConfig::default()
+            };
+            ToolExecutor::with_sandbox(services.clone(), cfg)
+        } else {
+            ToolExecutor::new(services.clone())
+        };
+        Ok(Self {
             services: services.clone(),
-            tool_executor: ToolExecutor::new(services.clone()),
+            tool_executor,
             agent_executor: AgentExecutor::new(services.clone()),
             mcp_executor: McpExecutor::new(services.clone()),
-        }
+        })
     }
 
     async fn call_with_timeout<F, Fut>(

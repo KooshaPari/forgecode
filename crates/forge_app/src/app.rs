@@ -51,8 +51,11 @@ pub struct ForgeApp<S> {
 
 impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ForgeApp<S> {
     /// Creates a new ForgeApp instance with the provided services.
-    pub fn new(services: Arc<S>) -> Self {
-        Self { tool_registry: ToolRegistry::new(services.clone()), services }
+    pub fn new(services: Arc<S>) -> anyhow::Result<Self> {
+        Ok(Self {
+            tool_registry: ToolRegistry::new(services.clone())?,
+            services,
+        })
     }
 
     /// Executes a chat request and returns a stream of responses.
