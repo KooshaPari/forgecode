@@ -2953,6 +2953,7 @@ dependencies = [
  "forge_embed",
  "forge_fs",
  "forge_markdown_stream",
+ "forge_paste",
  "forge_repo",
  "forge_select",
  "forge_spinner",

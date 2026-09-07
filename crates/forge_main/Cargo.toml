@@ -112,6 +112,7 @@ async-recursion.workspace = true
 ureq = { version = "3.4", default-features = false, features = ["_tls"] }
 
 forge_markdown_stream.workspace = true
+forge_paste.workspace = true
 strip-ansi-escapes.workspace = true
 terminal_size = "0.4"
 rustls.workspace = true
