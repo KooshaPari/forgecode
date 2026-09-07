@@ -11,8 +11,13 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use forge_domain::{AgentId, ConversationId, Effort, ModelId, ProviderId};
 
+const CLI_VERSION: &str = match option_env!("APP_VERSION") {
+    Some(v) => v,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 #[derive(Parser)]
-#[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(version = CLI_VERSION)]
 pub struct Cli {
     /// Direct prompt to process without entering interactive mode.
     ///

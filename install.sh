@@ -13,7 +13,8 @@
 #   # Override automatic Linux GNU/musl detection (useful in CI):
 #   HELIOSLITE_TARGET=x86_64-unknown-linux-musl ./install.sh
 #
-# Installs the HeliosLite CLI as a single-binary `helioslite` on PATH.
+# Installs the HeliosLite CLI as a single-binary `helioslite` on PATH,
+# along with legacy `forge` and `forge-dev` (with dev-binary feature) aliases.
 # On Linux/macOS we download the matching raw `forge-*` release binary from
 # GitHub Releases and install it as `helioslite`.
 
@@ -121,8 +122,11 @@ if [ "$LOCAL" = "1" ]; then
     fi
     echo -e "  → \033[36mLocal install — building from source...\033[0m"
     pushd "$(cd "$(dirname "$0")" && pwd)" >/dev/null
-    cargo build --release --bin helioslite
+    cargo build --release --bin helioslite --bin forge --features dev-binary --bin forge-dev
     cp "target/release/helioslite" "$INSTALL_DIR/helioslite"
+    cp "target/release/forge" "$INSTALL_DIR/forge"
+    cp "target/release/forge-dev" "$INSTALL_DIR/forge-dev"
+    chmod +x "$INSTALL_DIR/helioslite" "$INSTALL_DIR/forge" "$INSTALL_DIR/forge-dev"
     popd >/dev/null
 else
     TARGET="$(detect_target)"
@@ -195,16 +199,14 @@ add_to_path() {
 }
 add_to_path "$INSTALL_DIR"
 
-# 5) Optional: legacy forge / forge-dev alias
+# 5) Optional: legacy forge alias
 if [ "$SKIP_FORGE" = "0" ]; then
-    for old in forge forge-dev; do
-        old_path="$INSTALL_DIR/$old"
-        if [ ! -e "$old_path" ]; then
-            cp "$INSTALL_DIR/helioslite" "$old_path"
-            chmod +x "$old_path"
-            echo -e "  ✓ \033[32mCreated legacy alias $old_path\033[0m"
-        fi
-    done
+    forge_path="$INSTALL_DIR/forge"
+    if [ ! -e "$forge_path" ]; then
+        cp "$INSTALL_DIR/helioslite" "$forge_path"
+        chmod +x "$forge_path"
+        echo -e "  ✓ \033[32mCreated legacy alias $forge_path\033[0m"
+    fi
 fi
 
 # 6) Verify
