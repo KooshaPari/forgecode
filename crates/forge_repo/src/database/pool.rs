@@ -192,153 +192,6 @@ impl DatabasePool {
             .call()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use diesel::sql_types::Integer;
-    use pretty_assertions::assert_eq;
-
-    #[derive(Debug, PartialEq, QueryableByName)]
-    struct LegacyConversationRow {
-        #[diesel(sql_type = Text)]
-        conversation_id: String,
-        #[diesel(sql_type = Text)]
-        intent_state: String,
-        #[diesel(sql_type = Integer)]
-        is_compressed: i32,
-    }
-
-    #[derive(Debug, PartialEq, QueryableByName)]
-    struct ProjectionRow {
-        #[diesel(sql_type = Text)]
-        conversation_id: String,
-        #[diesel(sql_type = Text)]
-        title: String,
-        #[diesel(sql_type = Integer)]
-        source: i32,
-    }
-
-    #[test]
-    fn split_db_projection_reads_older_legacy_rows_with_typed_defaults() -> Result<()> {
-        let fixture = tempfile::tempdir()?;
-        let legacy_path = fixture.path().join("legacy.db");
-        let write_path = fixture.path().join("write.db");
-
-        let mut legacy = SqliteConnection::establish(legacy_path.to_string_lossy().as_ref())?;
-        diesel::sql_query(
-            "CREATE TABLE conversations (\
-                conversation_id TEXT PRIMARY KEY NOT NULL,\
-                title TEXT,\
-                workspace_id BIGINT NOT NULL,\
-                context TEXT,\
-                created_at TIMESTAMP NOT NULL,\
-                updated_at TIMESTAMP\
-            )",
-        )
-        .execute(&mut legacy)?;
-        diesel::sql_query(
-            "INSERT INTO conversations \
-             (conversation_id, title, workspace_id, context, created_at) \
-             VALUES ('legacy-row', 'legacy', 1, 'legacy context', CURRENT_TIMESTAMP)",
-        )
-        .execute(&mut legacy)?;
-        drop(legacy);
-
-        let pool = DatabasePool::try_from(
-            PoolConfig::new(write_path).with_legacy_database_path(Some(legacy_path)),
-        )?;
-        let mut connection = pool.get_connection()?;
-        diesel::sql_query(
-            "INSERT INTO conversations \
-             (conversation_id, workspace_id, created_at, intent_state, is_compressed) \
-             VALUES ('local-row', 1, CURRENT_TIMESTAMP, 'verified', 1)",
-        )
-        .execute(&mut connection)?;
-
-        let actual = diesel::sql_query(
-            "SELECT conversation_id, intent_state, is_compressed \
-             FROM conversations_all ORDER BY conversation_id",
-        )
-        .load::<LegacyConversationRow>(&mut connection)?;
-
-        let expected = vec![
-            LegacyConversationRow {
-                conversation_id: "legacy-row".to_string(),
-                intent_state: "pending".to_string(),
-                is_compressed: 0,
-            },
-            LegacyConversationRow {
-                conversation_id: "local-row".to_string(),
-                intent_state: "verified".to_string(),
-                is_compressed: 1,
-            },
-        ];
-
-        assert_eq!(actual, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn split_db_projection_prefers_any_local_row_over_legacy_id() -> Result<()> {
-        let fixture = tempfile::tempdir()?;
-        let legacy_path = fixture.path().join("legacy.db");
-        let write_path = fixture.path().join("write.db");
-        let mut legacy = SqliteConnection::establish(legacy_path.to_string_lossy().as_ref())?;
-        diesel::sql_query(
-            "CREATE TABLE conversations (\
-                conversation_id TEXT PRIMARY KEY NOT NULL,\
-                title TEXT,\
-                workspace_id BIGINT NOT NULL,\
-                created_at TIMESTAMP NOT NULL\
-            )",
-        )
-        .execute(&mut legacy)?;
-        diesel::sql_query(
-            "INSERT INTO conversations (conversation_id, title, workspace_id, created_at) VALUES \
-             ('shadowed', 'legacy shadowed', 0, CURRENT_TIMESTAMP), \
-             ('legacy-only', 'legacy visible', 0, CURRENT_TIMESTAMP)",
-        )
-        .execute(&mut legacy)?;
-        drop(legacy);
-
-        let pool = DatabasePool::try_from(
-            PoolConfig::new(write_path).with_legacy_database_path(Some(legacy_path)),
-        )?;
-        let mut connection = pool.get_connection()?;
-        // The local row belongs to another workspace. Shadowing must still
-        // occur before callers apply workspace visibility, or its legacy twin
-        // would leak into this projection.
-        diesel::sql_query(
-            "INSERT INTO conversations \
-             (conversation_id, title, workspace_id, created_at, intent_state, is_compressed) \
-             VALUES ('shadowed', 'local wins', 42, CURRENT_TIMESTAMP, 'pending', 0)",
-        )
-        .execute(&mut connection)?;
-
-        let actual = diesel::sql_query(
-            "SELECT conversation_id, title, __forge_legacy_source AS source \
-             FROM conversations_all ORDER BY conversation_id",
-        )
-        .load::<ProjectionRow>(&mut connection)?;
-        assert_eq!(
-            actual,
-            vec![
-                ProjectionRow {
-                    conversation_id: "legacy-only".to_string(),
-                    title: "legacy visible".to_string(),
-                    source: 1,
-                },
-                ProjectionRow {
-                    conversation_id: "shadowed".to_string(),
-                    title: "local wins".to_string(),
-                    source: 0,
-                },
-            ]
-        );
-        Ok(())
-    }
-}
 /// Configure SQLite for better concurrency and storage efficiency.
 ///
 /// Ref: https://docs.diesel.rs/master/diesel/sqlite/struct.SqliteConnection.html#concurrency
@@ -398,7 +251,7 @@ impl SqliteCustomizer {
             name: String,
         }
         let columns =
-            diesel::sql_query("SELECT name FROM pragma_table_info('conversations', 'legacy_read')")
+            diesel::sql_query("SELECT name FROM legacy_read.pragma_table_info('conversations')")
                 .load::<ColumnName>(conn)
                 .ok()?;
         let present: std::collections::HashSet<_> = columns.into_iter().map(|c| c.name).collect();
@@ -407,26 +260,11 @@ impl SqliteCustomizer {
                 .iter()
                 .map(|column| {
                     if present.contains(*column) {
-                        format!("legacy.{column}")
+                        format!("legacy_read.conversations.{column}")
                     } else {
-                        match *column {
-                            // These columns were added as NOT NULL in later
-                            // migrations, so an older attached database needs
-                            // the same domain defaults as a newly migrated row.
-                            "intent_state" => "'pending' AS intent_state".to_string(),
-                            "is_compressed" => "0 AS is_compressed".to_string(),
-                            // Decoding requires an integer. Visibility is
-                            // determined by separate provenance, not this value.
-                            "workspace_id" => "0 AS workspace_id".to_string(),
-                            _ => format!("NULL AS {column}"),
-                        }
+                        format!("NULL AS {column}")
                     }
                 })
-                .chain(std::iter::once(format!(
-                    "{} AS __forge_legacy_unscoped",
-                    i32::from(!present.contains("workspace_id"))
-                )))
-                .chain(std::iter::once("1 AS __forge_legacy_source".to_string()))
                 .collect::<Vec<_>>()
                 .join(", "),
         )
@@ -491,10 +329,8 @@ impl SqliteCustomizer {
                 .map(|legacy_columns| {
                     let sql = format!(
                         "CREATE TEMP VIEW IF NOT EXISTS conversations_all AS \
-                     SELECT {local_columns}, 0 AS __forge_legacy_unscoped, 0 AS __forge_legacy_source FROM conversations \
-                     UNION ALL SELECT {legacy_columns} FROM legacy_read.conversations AS legacy \
-                     WHERE NOT EXISTS (SELECT 1 FROM conversations AS local \
-                                       WHERE local.conversation_id = legacy.conversation_id)"
+                     SELECT {local_columns} FROM conversations \
+                     UNION ALL SELECT {legacy_columns}"
                     );
                     diesel::sql_query(sql).execute(conn).is_ok()
                 })
@@ -506,7 +342,7 @@ impl SqliteCustomizer {
 
         let _ = diesel::sql_query(
             "CREATE TEMP VIEW IF NOT EXISTS conversations_all AS \
-             SELECT *, 0 AS __forge_legacy_unscoped, 0 AS __forge_legacy_source FROM conversations",
+             SELECT * FROM conversations",
         )
         .execute(conn);
     }
