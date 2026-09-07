@@ -260,7 +260,7 @@ impl SqliteCustomizer {
                 .iter()
                 .map(|column| {
                     if present.contains(*column) {
-                        format!("legacy_read.conversations.{column}")
+                        format!("legacy.{column}")
                     } else {
                         format!("NULL AS {column}")
                     }
@@ -330,7 +330,7 @@ impl SqliteCustomizer {
                     let sql = format!(
                         "CREATE TEMP VIEW IF NOT EXISTS conversations_all AS \
                      SELECT {local_columns} FROM conversations \
-                     UNION ALL SELECT {legacy_columns}"
+                     UNION ALL SELECT {legacy_columns} FROM legacy_read.conversations AS legacy"
                     );
                     diesel::sql_query(sql).execute(conn).is_ok()
                 })
