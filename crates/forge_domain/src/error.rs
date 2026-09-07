@@ -81,6 +81,13 @@ pub enum Error {
     )]
     Refusal,
 
+    #[error(
+        "Provider returned finish_reason=length: the model hit its output token budget \
+         before producing a final answer. Increase `max_tokens`, compact the conversation, \
+         or switch model, then retry."
+    )]
+    MaxTokensReached,
+
     #[error(transparent)]
     Retryable(anyhow::Error),
 

@@ -266,6 +266,14 @@ impl ResultStreamExt<anyhow::Error> for crate::BoxStream<ChatCompletionMessage, 
             return Err(crate::Error::Refusal.into());
         }
 
+        // finish_reason=Length means the model hit its output token budget
+        // (provider-side bounded window). Retrying with the same max_tokens
+        // produces the same truncation, so surface a terminal error instead
+        // of letting the orchestrator loop on empty/partial output.
+        if finish_reason == Some(FinishReason::Length) && tool_calls.is_empty() {
+            return Err(crate::Error::MaxTokensReached.into());
+        }
+
         // Check for empty completion - map to retryable error for retry
         if content.trim().is_empty()
             && tool_calls.is_empty()
@@ -1263,6 +1271,46 @@ mod tests {
 
         let domain_error = actual.downcast_ref::<crate::Error>().unwrap();
         assert!(matches!(domain_error, crate::Error::Refusal));
+    }
+
+    #[tokio::test]
+    async fn test_into_full_length_is_terminal_error() {
+        // finish_reason=Length indicates the model hit its provider-side
+        // output token budget. This must surface as a terminal error so the
+        // orchestrator does not loop on the same truncated response.
+        let messages = vec![Ok(ChatCompletionMessage::assistant(Content::part(""))
+            .finish_reason(FinishReason::Length))];
+        let fixture: BoxStream<ChatCompletionMessage, anyhow::Error> =
+            Box::pin(tokio_stream::iter(messages));
+
+        let actual = fixture.into_full(false).await.unwrap_err();
+
+        let domain_error = actual.downcast_ref::<crate::Error>().unwrap();
+        assert!(
+            matches!(domain_error, crate::Error::MaxTokensReached),
+            "expected MaxTokensReached, got {domain_error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_into_full_length_with_tool_calls_passes() {
+        // If the model emitted tool calls before running out of budget, the
+        // Length finish should not abort the turn - the tool calls still need
+        // to be executed and the model can finish on the next round-trip.
+        let messages = vec![Ok(ChatCompletionMessage::assistant(Content::part(""))
+            .finish_reason(FinishReason::Length)
+            .tool_calls(vec![ToolCall::Full(ToolCallFull {
+                name: ToolName::new("read").into(),
+                call_id: Some(ToolCallId::new("c1")),
+                arguments: ToolCallArguments::from_json("{}"),
+                thought_signature: None,
+            })]))];
+        let fixture: BoxStream<ChatCompletionMessage, anyhow::Error> =
+            Box::pin(tokio_stream::iter(messages));
+
+        let actual = fixture.into_full(false).await.unwrap();
+        assert_eq!(actual.finish_reason, Some(FinishReason::Length));
+        assert_eq!(actual.tool_calls.len(), 1);
     }
 
     #[tokio::test]
