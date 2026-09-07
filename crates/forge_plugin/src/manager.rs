@@ -157,23 +157,8 @@ use crate::helios_agent::{HeliosAgentConfig, HeliosAgentHook};
 
 /// A built-in plugin that wires the helios CLI agent into the hook pipeline.
 ///
-/// Register the helios CLI agent hook with a [`PluginManager`].
-///
-/// # Usage
-///
-/// ```rust,no_run
-/// use std::path::PathBuf;
-/// use forge_plugin::helios_agent::HeliosAgentConfig;
-/// use forge_plugin::manager::{PluginManager, HeliosAgentPlugin};
-/// use forge_plugin::helios_agent::HeliosAgentConfig;
-///
-/// # async fn example() -> anyhow::Result<()> {
-/// let mut mgr = PluginManager::new(PathBuf::from("/tmp/plugins"));
-/// HeliosAgentPlugin::register_with_manager(&mut mgr, HeliosAgentConfig::default())?;
-/// // The helios-agent hook is now active for every tool execution.
-/// # Ok(())
-/// # }
-/// ```
+/// Register with [`Self::register_with_manager`] using a [`HeliosAgentConfig`]
+/// to activate the Helios agent hook for tool execution through the manager.
 pub struct HeliosAgentPlugin {
     config: HeliosAgentConfig,
 }
