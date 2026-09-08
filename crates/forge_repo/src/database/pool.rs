@@ -192,6 +192,75 @@ impl DatabasePool {
             .call()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use diesel::sql_types::Integer;
+
+    #[derive(QueryableByName)]
+    struct LegacyConversationRow {
+        #[diesel(sql_type = Text)]
+        conversation_id: String,
+        #[diesel(sql_type = Text)]
+        intent_state: String,
+        #[diesel(sql_type = Integer)]
+        is_compressed: i32,
+    }
+
+    #[test]
+    fn split_db_projection_reads_older_legacy_rows_with_typed_defaults() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let legacy_path = temp.path().join("legacy.db");
+        let write_path = temp.path().join("write.db");
+
+        let mut legacy = SqliteConnection::establish(legacy_path.to_string_lossy().as_ref())?;
+        diesel::sql_query(
+            "CREATE TABLE conversations (\
+                conversation_id TEXT PRIMARY KEY NOT NULL,\
+                title TEXT,\
+                workspace_id BIGINT NOT NULL,\
+                context TEXT,\
+                created_at TIMESTAMP NOT NULL,\
+                updated_at TIMESTAMP\
+            )",
+        )
+        .execute(&mut legacy)?;
+        diesel::sql_query(
+            "INSERT INTO conversations \
+             (conversation_id, title, workspace_id, context, created_at) \
+             VALUES ('legacy-row', 'legacy', 1, 'legacy context', CURRENT_TIMESTAMP)",
+        )
+        .execute(&mut legacy)?;
+        drop(legacy);
+
+        let pool = DatabasePool::try_from(
+            PoolConfig::new(write_path).with_legacy_database_path(Some(legacy_path)),
+        )?;
+        let mut connection = pool.get_connection()?;
+        diesel::sql_query(
+            "INSERT INTO conversations \
+             (conversation_id, workspace_id, created_at, intent_state, is_compressed) \
+             VALUES ('local-row', 1, CURRENT_TIMESTAMP, 'verified', 1)",
+        )
+        .execute(&mut connection)?;
+
+        let rows = diesel::sql_query(
+            "SELECT conversation_id, intent_state, is_compressed \
+             FROM conversations_all ORDER BY conversation_id",
+        )
+        .load::<LegacyConversationRow>(&mut connection)?;
+
+        assert_eq!(rows.len(), 2, "the view retains local and legacy rows");
+        assert_eq!(rows[0].conversation_id, "legacy-row");
+        assert_eq!(rows[0].intent_state, "pending");
+        assert_eq!(rows[0].is_compressed, 0);
+        assert_eq!(rows[1].conversation_id, "local-row");
+        assert_eq!(rows[1].intent_state, "verified");
+        assert_eq!(rows[1].is_compressed, 1);
+        Ok(())
+    }
+}
 /// Configure SQLite for better concurrency and storage efficiency.
 ///
 /// Ref: https://docs.diesel.rs/master/diesel/sqlite/struct.SqliteConnection.html#concurrency
@@ -251,7 +320,7 @@ impl SqliteCustomizer {
             name: String,
         }
         let columns =
-            diesel::sql_query("SELECT name FROM legacy_read.pragma_table_info('conversations')")
+            diesel::sql_query("SELECT name FROM pragma_table_info('conversations', 'legacy_read')")
                 .load::<ColumnName>(conn)
                 .ok()?;
         let present: std::collections::HashSet<_> = columns.into_iter().map(|c| c.name).collect();
@@ -262,7 +331,14 @@ impl SqliteCustomizer {
                     if present.contains(*column) {
                         format!("legacy.{column}")
                     } else {
-                        format!("NULL AS {column}")
+                        match *column {
+                            // These columns were added as NOT NULL in later
+                            // migrations, so an older attached database needs
+                            // the same domain defaults as a newly migrated row.
+                            "intent_state" => "'pending' AS intent_state".to_string(),
+                            "is_compressed" => "0 AS is_compressed".to_string(),
+                            _ => format!("NULL AS {column}"),
+                        }
                     }
                 })
                 .collect::<Vec<_>>()
