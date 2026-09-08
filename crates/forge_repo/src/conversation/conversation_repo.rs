@@ -383,7 +383,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // message history. We must not filter them out at the SQL layer
             // or the picker will hide them.
             let mut query = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id).or(conversations_all::workspace_id.eq(crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID)))
+                .filter(
+                    conversations_all::workspace_id
+                        .eq(&workspace_id)
+                        .or(conversations_all::workspace_id
+                            .eq(crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID)),
+                )
                 .order(conversations_all::updated_at.desc())
                 .into_boxed();
 
@@ -417,7 +422,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // message history. We must not filter them out at the SQL layer
             // or the picker will hide them.
             let record: Option<ConversationRecord> = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id).or(conversations_all::workspace_id.eq(crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID)))
+                .filter(
+                    conversations_all::workspace_id
+                        .eq(&workspace_id)
+                        .or(conversations_all::workspace_id
+                            .eq(crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID)),
+                )
                 .order(conversations_all::updated_at.desc())
                 .select(conversations_all::all_columns)
                 .first(connection)
@@ -438,7 +448,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             // Security: Ensure users can only delete conversations within their workspace
             diesel::delete(conversations::table)
-                .filter(conversations::workspace_id.eq(&workspace_id).or(conversations::workspace_id.eq(crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID)))
+                .filter(
+                    conversations::workspace_id
+                        .eq(&workspace_id)
+                        .or(conversations::workspace_id
+                            .eq(crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID)),
+                )
                 .filter(conversations::conversation_id.eq(conversation_id.into_string()))
                 .execute(connection)?;
 
@@ -458,7 +473,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
             let workspace_id = wid.id() as i64;
             // Read from `conversations_all` so legacy rows are visible.
             let records: Vec<ConversationRecord> = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id).or(conversations_all::workspace_id.eq(crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID)))
+                .filter(
+                    conversations_all::workspace_id
+                        .eq(&workspace_id)
+                        .or(conversations_all::workspace_id
+                            .eq(crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID)),
+                )
                 .filter(conversations_all::parent_id.eq(&parent_id))
                 .order(conversations_all::updated_at.desc())
                 .select(conversations_all::all_columns)
@@ -491,7 +511,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // dominated by ephemeral subagent runs that truncate older
             // user conversations.
             let mut query = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id).or(conversations_all::workspace_id.eq(crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID)))
+                .filter(
+                    conversations_all::workspace_id
+                        .eq(&workspace_id)
+                        .or(conversations_all::workspace_id
+                            .eq(crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID)),
+                )
                 .filter(conversations_all::parent_id.is_null())
                 .filter(sql::<diesel::sql_types::Bool>(
                     "COALESCE(json_extract(context, '$.initiator'), 'user') <> 'agent'",
@@ -547,7 +572,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             if !all_workspaces {
                 let workspace_id = wid.id() as i64;
-                query = query.filter(conversations_all::workspace_id.eq(workspace_id).or(conversations_all::workspace_id.eq(crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID)));
+                query = query.filter(
+                    conversations_all::workspace_id
+                        .eq(workspace_id)
+                        .or(conversations_all::workspace_id
+                            .eq(crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID)),
+                );
             }
 
             if let Some(limit_value) = limit {
@@ -579,7 +609,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
             let workspace_id = wid.id() as i64;
             // Read from `conversations_all` so legacy rows are visible.
             let mut query = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id).or(conversations_all::workspace_id.eq(crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID)))
+                .filter(
+                    conversations_all::workspace_id
+                        .eq(&workspace_id)
+                        .or(conversations_all::workspace_id
+                            .eq(crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID)),
+                )
                 .filter(conversations_all::source.eq(&source))
                 .order(conversations_all::updated_at.desc())
                 .into_boxed();
@@ -893,7 +928,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
             let workspace_id = wid.id() as i64;
             // Read from `conversations_all` so legacy rows are visible.
             let mut query = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id).or(conversations_all::workspace_id.eq(crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID)))
+                .filter(
+                    conversations_all::workspace_id
+                        .eq(&workspace_id)
+                        .or(conversations_all::workspace_id
+                            .eq(crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID)),
+                )
                 .filter(conversations_all::cwd.eq(&cwd))
                 .order(conversations_all::updated_at.desc())
                 .into_boxed();

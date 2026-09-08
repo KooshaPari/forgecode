@@ -60,8 +60,7 @@ pub fn workspace_visibility_clause() -> &'static str {
 #[macro_export]
 macro_rules! workspace_visibility_filter {
     ($wid:expr, $ws:expr) => {
-        $wid
-            .eq($ws)
+        $wid.eq($ws)
             .or($wid.eq($crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID))
     };
 }
