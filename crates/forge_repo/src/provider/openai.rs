@@ -132,12 +132,20 @@ impl<H: HttpInfra> OpenAIProvider<H> {
     /// and GitHub Copilot optimization headers (x-initiator, Openai-Intent,
     /// Copilot-Vision-Request, anthropic-beta)
     fn get_headers_with_request(&self, request: &Request) -> Vec<(String, String)> {
+        self.get_headers_with_session_id(request, request.session_id.as_deref())
+    }
+
+    fn get_headers_with_session_id(
+        &self,
+        request: &Request,
+        session_id: Option<&str>,
+    ) -> Vec<(String, String)> {
         let mut headers = self.get_headers();
         // Add Session-Id header for zai and zai_coding providers
-        if let Some(session_id) = &request.session_id
+        if let Some(session_id) = session_id
             && (self.provider.id == ProviderId::ZAI || self.provider.id == ProviderId::ZAI_CODING)
         {
-            headers.push(("Session-Id".to_string(), session_id.clone()));
+            headers.push(("Session-Id".to_string(), session_id.to_string()));
             debug!(
                 provider = %self.provider.url,
                 session_id = %session_id,
@@ -145,10 +153,10 @@ impl<H: HttpInfra> OpenAIProvider<H> {
             );
         }
 
-        if let Some(session_id) = &request.session_id
+        if let Some(session_id) = session_id
             && self.provider.id == ProviderId::OPENCODE_GO
         {
-            headers.push(("x-opencode-session".to_string(), session_id.clone()));
+            headers.push(("x-opencode-session".to_string(), session_id.to_string()));
             debug!(
                 provider = %self.provider.url,
                 session_id = %session_id,
@@ -220,23 +228,40 @@ impl<H: HttpInfra> OpenAIProvider<H> {
         headers
     }
 
+    fn transform_request_and_headers(
+        &self,
+        mut request: Request,
+        merge_system_messages: bool,
+    ) -> (Request, Vec<(String, String)>) {
+        let session_id = request.session_id.clone();
+        let mut pipeline = ProviderPipeline::new(&self.provider, merge_system_messages);
+        request = pipeline.transform(request);
+
+        if self.provider.id == ProviderId::GITHUB_COPILOT
+            && request
+                .model
+                .as_ref()
+                .is_some_and(|model| model.as_str() == COPILOT_AUTO_MODEL_ID)
+        {
+            request = prepare_copilot_auto_request(request);
+        }
+
+        let headers = self.get_headers_with_session_id(&request, session_id.as_deref());
+        (request, headers)
+    }
+
     async fn inner_chat(
         &self,
         model: &ModelId,
         context: ChatContext,
         merge_system_messages: bool,
     ) -> ResultStream<ChatCompletionMessage, anyhow::Error> {
-        let mut request = Request::from(context).model(model.clone());
-        let mut pipeline = ProviderPipeline::new(&self.provider, merge_system_messages);
-        request = pipeline.transform(request);
-
-        if self.provider.id == ProviderId::GITHUB_COPILOT && model.as_str() == COPILOT_AUTO_MODEL_ID
-        {
-            request = prepare_copilot_auto_request(request);
-        }
+        let request = Request::from(context).model(model.clone());
+        let (request, header_values) =
+            self.transform_request_and_headers(request, merge_system_messages);
 
         let url = self.provider.url.clone();
-        let headers = create_headers(self.get_headers_with_request(&request));
+        let headers = create_headers(header_values);
 
         info!(
             url = %url,
@@ -830,6 +855,27 @@ mod tests {
         assert!(actual_first.contains(&expected));
         assert!(actual_second.contains(&expected));
         Ok(())
+    }
+
+    #[test]
+    fn test_transform_request_and_headers_keeps_opencode_go_session_out_of_body() {
+        let provider = opencode_go("test-key");
+        let http_client = Arc::new(MockHttpClient::new());
+        let openai_provider = OpenAIProvider::new(provider, http_client);
+        let fixture = Request {
+            session_id: Some("stable-conversation-id".to_string()),
+            ..Default::default()
+        };
+
+        let (actual_request, actual_headers) =
+            openai_provider.transform_request_and_headers(fixture, false);
+        let expected_header = (
+            "x-opencode-session".to_string(),
+            "stable-conversation-id".to_string(),
+        );
+
+        assert_eq!(actual_request.session_id, None);
+        assert!(actual_headers.contains(&expected_header));
     }
 
     #[tokio::test]
