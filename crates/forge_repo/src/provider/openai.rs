@@ -131,6 +131,7 @@ impl<H: HttpInfra> OpenAIProvider<H> {
     /// for zai, zai_coding, and OpenCode Go providers
     /// and GitHub Copilot optimization headers (x-initiator, Openai-Intent,
     /// Copilot-Vision-Request, anthropic-beta)
+    #[cfg(test)]
     fn get_headers_with_request(&self, request: &Request) -> Vec<(String, String)> {
         self.get_headers_with_session_id(request, request.session_id.as_deref())
     }
