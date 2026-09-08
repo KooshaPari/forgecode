@@ -123,9 +123,9 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> AgentEx
                     // Format the interruption reason so the calling agent sees
                     // an actionable message rather than `{:?}` debug formatting.
                     let detail = match &reason {
-                        InterruptionReason::MaxRequestPerTurnLimitReached { limit } => format!(
-                            "maximum request per turn limit ({limit}) reached"
-                        ),
+                        InterruptionReason::MaxRequestPerTurnLimitReached { limit } => {
+                            format!("maximum request per turn limit ({limit}) reached")
+                        }
                         InterruptionReason::MaxToolFailurePerTurnLimitReached { limit, errors } => {
                             let failing = errors
                                 .keys()
