@@ -15,6 +15,7 @@ use forge_domain::{
     ChatCompletionMessage, ChatResponse, Content, FinishReason, InterruptionReason, Role,
     ToolCallArguments, ToolCallFull, ToolOutput, ToolResult,
 };
+use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use crate::orch_spec::orch_runner::TestContext;
