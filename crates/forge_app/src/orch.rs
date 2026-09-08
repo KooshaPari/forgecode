@@ -380,6 +380,27 @@ impl<S: AgentService + EnvironmentInfra<Config = forge_config::ForgeConfig>> Orc
                     .iter()
                     .any(|call| ToolCatalog::should_yield(&call.name));
 
+            // Defense in depth: `result_stream_ext::into_full` already maps
+            // `Length` with no tool calls to `Error::MaxTokensReached`, so the
+            // error propagates out of `execute_chat_turn` before we ever reach
+            // this point. If a future code path bypasses `into_full` (e.g. a
+            // new provider that surfaces Length directly), surface it as a
+            // warn + metric + yield rather than silently looping.
+            if message.finish_reason == Some(FinishReason::Length) && message.tool_calls.is_empty()
+            {
+                warn!(
+                    agent_id = %self.agent.id,
+                    model_id = %model_id,
+                    request_count,
+                    "Provider returned finish_reason=length with no tool calls; \
+                     yielding (defense in depth — into_full should have caught this \
+                     upstream as Error::MaxTokensReached)"
+                );
+                self.metrics_sink
+                    .increment(metric_names::LENGTH_TRUNCATION, 1);
+                should_yield = true;
+            }
+
             // Process tool calls and update context
             let mut tool_call_records = self
                 .execute_tool_calls(&message.tool_calls, &tool_context)

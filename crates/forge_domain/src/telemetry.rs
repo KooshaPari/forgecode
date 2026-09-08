@@ -53,4 +53,9 @@ pub mod metric_names {
     pub const TOOL_CALL: &str = "forge.tool_call";
     /// A tool call produced an error.
     pub const TOOL_ERROR: &str = "forge.tool_call.error";
+    /// A response finished with `finish_reason=length` (provider output-token
+    /// budget exhausted before the model produced a final answer). Normally
+    /// surfaced upstream of the orchestrator as `Error::MaxTokensReached`;
+    /// this counter captures any leakage that bypasses `into_full`.
+    pub const LENGTH_TRUNCATION: &str = "forge.length_truncation";
 }
