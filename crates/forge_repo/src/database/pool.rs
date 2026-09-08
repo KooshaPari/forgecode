@@ -6,6 +6,7 @@ use anyhow::Result;
 use backon::{BlockingRetryable, ExponentialBuilder};
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, CustomizeConnection, Pool, PooledConnection};
+use diesel::sql_types::Text;
 use diesel::sqlite::SqliteConnection;
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use forge_config::RetryConfig;
@@ -191,6 +192,83 @@ impl DatabasePool {
             .call()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use diesel::sql_types::Integer;
+    use pretty_assertions::assert_eq;
+
+    #[derive(Debug, PartialEq, QueryableByName)]
+    struct LegacyConversationRow {
+        #[diesel(sql_type = Text)]
+        conversation_id: String,
+        #[diesel(sql_type = Text)]
+        intent_state: String,
+        #[diesel(sql_type = Integer)]
+        is_compressed: i32,
+    }
+
+    #[test]
+    fn split_db_projection_reads_older_legacy_rows_with_typed_defaults() -> Result<()> {
+        let fixture = tempfile::tempdir()?;
+        let legacy_path = fixture.path().join("legacy.db");
+        let write_path = fixture.path().join("write.db");
+
+        let mut legacy = SqliteConnection::establish(legacy_path.to_string_lossy().as_ref())?;
+        diesel::sql_query(
+            "CREATE TABLE conversations (\
+                conversation_id TEXT PRIMARY KEY NOT NULL,\
+                title TEXT,\
+                workspace_id BIGINT NOT NULL,\
+                context TEXT,\
+                created_at TIMESTAMP NOT NULL,\
+                updated_at TIMESTAMP\
+            )",
+        )
+        .execute(&mut legacy)?;
+        diesel::sql_query(
+            "INSERT INTO conversations \
+             (conversation_id, title, workspace_id, context, created_at) \
+             VALUES ('legacy-row', 'legacy', 1, 'legacy context', CURRENT_TIMESTAMP)",
+        )
+        .execute(&mut legacy)?;
+        drop(legacy);
+
+        let pool = DatabasePool::try_from(
+            PoolConfig::new(write_path).with_legacy_database_path(Some(legacy_path)),
+        )?;
+        let mut connection = pool.get_connection()?;
+        diesel::sql_query(
+            "INSERT INTO conversations \
+             (conversation_id, workspace_id, created_at, intent_state, is_compressed) \
+             VALUES ('local-row', 1, CURRENT_TIMESTAMP, 'verified', 1)",
+        )
+        .execute(&mut connection)?;
+
+        let actual = diesel::sql_query(
+            "SELECT conversation_id, intent_state, is_compressed \
+             FROM conversations_all ORDER BY conversation_id",
+        )
+        .load::<LegacyConversationRow>(&mut connection)?;
+
+        let expected = vec![
+            LegacyConversationRow {
+                conversation_id: "legacy-row".to_string(),
+                intent_state: "pending".to_string(),
+                is_compressed: 0,
+            },
+            LegacyConversationRow {
+                conversation_id: "local-row".to_string(),
+                intent_state: "verified".to_string(),
+                is_compressed: 1,
+            },
+        ];
+
+        assert_eq!(actual, expected);
+        Ok(())
+    }
+}
 /// Configure SQLite for better concurrency and storage efficiency.
 ///
 /// Ref: https://docs.diesel.rs/master/diesel/sqlite/struct.SqliteConnection.html#concurrency
@@ -223,6 +301,59 @@ struct SqliteCustomizer {
 }
 
 impl SqliteCustomizer {
+    const CONVERSATION_COLUMNS: [&'static str; 17] = [
+        "conversation_id",
+        "title",
+        "workspace_id",
+        "context",
+        "created_at",
+        "updated_at",
+        "metrics",
+        "parent_id",
+        "source",
+        "cwd",
+        "message_count",
+        "intent_state",
+        "extracted_at",
+        "memory_id",
+        "intent_hash",
+        "context_zstd",
+        "is_compressed",
+    ];
+
+    fn legacy_projection(conn: &mut SqliteConnection) -> Option<String> {
+        #[derive(QueryableByName)]
+        struct ColumnName {
+            #[diesel(sql_type = Text)]
+            name: String,
+        }
+        let columns =
+            diesel::sql_query("SELECT name FROM pragma_table_info('conversations', 'legacy_read')")
+                .load::<ColumnName>(conn)
+                .ok()?;
+        let present: std::collections::HashSet<_> = columns.into_iter().map(|c| c.name).collect();
+        Some(
+            Self::CONVERSATION_COLUMNS
+                .iter()
+                .map(|column| {
+                    if present.contains(*column) {
+                        format!("legacy.{column}")
+                    } else {
+                        match *column {
+                            // These columns were added as NOT NULL in later
+                            // migrations, so an older attached database needs
+                            // the same domain defaults as a newly migrated row.
+                            "intent_state" => "'pending' AS intent_state".to_string(),
+                            "is_compressed" => "0 AS is_compressed".to_string(),
+                            _ => format!("NULL AS {column}"),
+                        }
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+    }
+
     /// ATTACHes the legacy DB (when present and distinct from the primary)
     /// and creates the `conversations_all` TEMP VIEW that the read layer
     /// queries. The view is **always** created — a plain
@@ -277,15 +408,18 @@ impl SqliteCustomizer {
             // once migrations have created the table. If the union cannot be
             // created (e.g. `legacy_read` was not attached), fall through to
             // the plain view.
-            if diesel::sql_query(
-                "CREATE TEMP VIEW IF NOT EXISTS conversations_all AS \
-                 SELECT * FROM conversations \
-                 UNION ALL \
-                 SELECT * FROM legacy_read.conversations",
-            )
-            .execute(conn)
-            .is_ok()
-            {
+            let local_columns = Self::CONVERSATION_COLUMNS.join(", ");
+            let union_ok = Self::legacy_projection(conn)
+                .map(|legacy_columns| {
+                    let sql = format!(
+                        "CREATE TEMP VIEW IF NOT EXISTS conversations_all AS \
+                     SELECT {local_columns} FROM conversations \
+                     UNION ALL SELECT {legacy_columns} FROM legacy_read.conversations AS legacy"
+                    );
+                    diesel::sql_query(sql).execute(conn).is_ok()
+                })
+                .unwrap_or(false);
+            if union_ok {
                 return;
             }
         }

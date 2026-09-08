@@ -13,7 +13,8 @@
 #   # Override automatic Linux GNU/musl detection (useful in CI):
 #   HELIOSLITE_TARGET=x86_64-unknown-linux-musl ./install.sh
 #
-# Installs the HeliosLite CLI as a single-binary `helioslite` on PATH.
+# Installs the HeliosLite CLI as a single-binary `helioslite` on PATH,
+# Existing `forge` and `forge-dev` commands are preserved.
 # On Linux/macOS we download the matching raw `forge-*` release binary from
 # GitHub Releases and install it as `helioslite`.
 
@@ -21,7 +22,6 @@ set -euo pipefail
 
 VERSION=""
 LOCAL=0
-SKIP_FORGE=0
 SKIP_UPDATE_CHECK=0
 REPO="${HELIOSLITE_RELEASE_REPO:-KooshaPari/forgecode}"
 TARGET_OVERRIDE="${HELIOSLITE_TARGET:-}"
@@ -38,7 +38,7 @@ validate_repo "$REPO"
 for arg in "$@"; do
     case "$arg" in
         --local)             LOCAL=1 ;;
-        --skip-forge)        SKIP_FORGE=1 ;;
+        --skip-forge)        : ;; # Deprecated compatibility no-op; only helioslite is installed.
         --skip-update-check) SKIP_UPDATE_CHECK=1 ;;
         --help|-h)
             sed -n '2,12p' "$0"
@@ -123,6 +123,7 @@ if [ "$LOCAL" = "1" ]; then
     pushd "$(cd "$(dirname "$0")" && pwd)" >/dev/null
     cargo build --release --bin helioslite
     cp "target/release/helioslite" "$INSTALL_DIR/helioslite"
+    chmod +x "$INSTALL_DIR/helioslite"
     popd >/dev/null
 else
     TARGET="$(detect_target)"
@@ -195,19 +196,7 @@ add_to_path() {
 }
 add_to_path "$INSTALL_DIR"
 
-# 5) Optional: legacy forge / forge-dev alias
-if [ "$SKIP_FORGE" = "0" ]; then
-    for old in forge forge-dev; do
-        old_path="$INSTALL_DIR/$old"
-        if [ ! -e "$old_path" ]; then
-            cp "$INSTALL_DIR/helioslite" "$old_path"
-            chmod +x "$old_path"
-            echo -e "  ✓ \033[32mCreated legacy alias $old_path\033[0m"
-        fi
-    done
-fi
-
-# 6) Verify
+# 5) Verify
 VER_OUTPUT="$("$INSTALL_DIR/helioslite" --version 2>&1 | head -n 1 || true)"
 if [ -z "$VER_OUTPUT" ]; then
     echo -e "  ✖ \033[31mhelioslite --version returned no output; refusing an unverified install\033[0m" >&2
@@ -227,4 +216,4 @@ echo ""
 echo -e "  🎉 \033[32mHeliosLite installed.\033[0m"
 echo -e "     Try:  helioslite --help"
 echo -e "     Docs: https://helioslite.phenotype.space"
-echo -e "     Old:  forge / forge-dev   \033[90m(deprecated)\033[0m"
+echo "     Existing forge / forge-dev commands are unchanged."

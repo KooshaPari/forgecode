@@ -1095,39 +1095,10 @@ mod tests {
         assert_eq!(config.url.as_str(), "https://api.meta.ai/v1/responses");
 
         match config.models.as_ref().expect("models should be present") {
-            Models::Hardcoded(models) => {
-                let model = models
-                    .iter()
-                    .find(|m| m.id.as_str() == "muse-spark-1.1")
-                    .expect("muse-spark-1.1 should be present in hardcoded models");
-                assert_eq!(
-                    model.context_length,
-                    Some(1048576),
-                    "muse-spark-1.1 should have 1048576 context length"
-                );
-                assert_eq!(
-                    model.tools_supported,
-                    Some(true),
-                    "muse-spark-1.1 should support tools"
-                );
-                assert_eq!(
-                    model.supports_parallel_tool_calls,
-                    Some(true),
-                    "muse-spark-1.1 should support parallel tool calls"
-                );
-                assert_eq!(
-                    model.supports_reasoning,
-                    Some(true),
-                    "muse-spark-1.1 should support reasoning"
-                );
-                assert!(
-                    model
-                        .input_modalities
-                        .contains(&forge_app::domain::InputModality::Image),
-                    "muse-spark-1.1 should support image input"
-                );
+            Models::Url(model_url) => {
+                assert_eq!(model_url, "https://api.meta.ai/v1/models");
             }
-            other => panic!("expected hardcoded models, got {other:?}"),
+            other => panic!("expected URL-driven models, got {other:?}"),
         }
     }
 
@@ -1178,16 +1149,11 @@ mod tests {
             config.url.as_str(),
             "https://api.moonshot.ai/v1/chat/completions"
         );
-        // Moonshot's /models endpoint omits capability metadata (modalities,
-        // reasoning, tool support), so models are hardcoded in provider.json.
         match config.models.as_ref().expect("models should be present") {
-            Models::Hardcoded(models) => {
-                assert!(
-                    models.iter().any(|m| m.id.as_str() == "kimi-k3"),
-                    "expected kimi-k3 to be present in hardcoded models"
-                );
+            Models::Url(model_url) => {
+                assert_eq!(model_url, "https://api.moonshot.ai/v1/models");
             }
-            other => panic!("expected hardcoded models, got {other:?}"),
+            other => panic!("expected URL-driven models, got {other:?}"),
         }
     }
 
