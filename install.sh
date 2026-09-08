@@ -129,9 +129,21 @@ if [ "$LOCAL" = "1" ]; then
     cargo "${cargo_args[@]}"
     cp "target/release/helioslite" "$INSTALL_DIR/helioslite"
     if [ "$SKIP_FORGE" = "0" ]; then
-        cp "target/release/forge" "$INSTALL_DIR/forge"
-        cp "target/release/forge-dev" "$INSTALL_DIR/forge-dev"
-        chmod +x "$INSTALL_DIR/forge" "$INSTALL_DIR/forge-dev"
+        for alias in forge forge-dev; do
+            alias_path="$INSTALL_DIR/$alias"
+            if [ -L "$alias_path" ]; then
+                echo -e "  ! \033[33mSkipped legacy alias symlink $alias_path\033[0m" >&2
+                continue
+            fi
+            if [ -e "$alias_path" ] && [ ! -f "$alias_path" ]; then
+                echo -e "  ! \033[33mSkipped non-regular legacy alias $alias_path\033[0m" >&2
+                continue
+            fi
+            staged_alias="$INSTALL_DIR/.${alias}.tmp.$$"
+            cp "target/release/$alias" "$staged_alias"
+            chmod +x "$staged_alias"
+            mv -f "$staged_alias" "$alias_path"
+        done
     fi
     chmod +x "$INSTALL_DIR/helioslite"
     popd >/dev/null
@@ -210,13 +222,23 @@ add_to_path "$INSTALL_DIR"
 if [ "$SKIP_FORGE" = "0" ]; then
     for alias in forge forge-dev; do
         alias_path="$INSTALL_DIR/$alias"
+        if [ -L "$alias_path" ]; then
+            echo -e "  ! \033[33mSkipped legacy alias symlink $alias_path\033[0m" >&2
+            continue
+        fi
+        if [ -e "$alias_path" ] && [ ! -f "$alias_path" ]; then
+            echo -e "  ! \033[33mSkipped non-regular legacy alias $alias_path\033[0m" >&2
+            continue
+        fi
         if [ -e "$alias_path" ]; then
             echo -e "  ✓ \033[32mUpdated legacy alias $alias_path\033[0m"
         else
             echo -e "  ✓ \033[32mCreated legacy alias $alias_path\033[0m"
         fi
-        cp "$INSTALL_DIR/helioslite" "$alias_path"
-        chmod +x "$alias_path"
+        staged_alias="$INSTALL_DIR/.${alias}.tmp.$$"
+        cp "$INSTALL_DIR/helioslite" "$staged_alias"
+        chmod +x "$staged_alias"
+        mv -f "$staged_alias" "$alias_path"
     done
 fi
 
