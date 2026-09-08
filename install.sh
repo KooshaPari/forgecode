@@ -14,7 +14,7 @@
 #   HELIOSLITE_TARGET=x86_64-unknown-linux-musl ./install.sh
 #
 # Installs the HeliosLite CLI as a single-binary `helioslite` on PATH,
-# along with legacy `forge` and `forge-dev` aliases unless `--skip-forge` is used.
+# Existing `forge` and `forge-dev` commands are preserved.
 # On Linux/macOS we download the matching raw `forge-*` release binary from
 # GitHub Releases and install it as `helioslite`.
 
@@ -22,7 +22,6 @@ set -euo pipefail
 
 VERSION=""
 LOCAL=0
-SKIP_FORGE=0
 SKIP_UPDATE_CHECK=0
 REPO="${HELIOSLITE_RELEASE_REPO:-KooshaPari/forgecode}"
 TARGET_OVERRIDE="${HELIOSLITE_TARGET:-}"
@@ -39,7 +38,7 @@ validate_repo "$REPO"
 for arg in "$@"; do
     case "$arg" in
         --local)             LOCAL=1 ;;
-        --skip-forge)        SKIP_FORGE=1 ;;
+        --skip-forge)        : ;; # Deprecated compatibility no-op; only helioslite is installed.
         --skip-update-check) SKIP_UPDATE_CHECK=1 ;;
         --help|-h)
             sed -n '2,12p' "$0"
@@ -122,29 +121,8 @@ if [ "$LOCAL" = "1" ]; then
     fi
     echo -e "  → \033[36mLocal install — building from source...\033[0m"
     pushd "$(cd "$(dirname "$0")" && pwd)" >/dev/null
-    cargo_args=(build --release --bin helioslite)
-    if [ "$SKIP_FORGE" = "0" ]; then
-        cargo_args+=(--bin forge --features dev-binary --bin forge-dev)
-    fi
-    cargo "${cargo_args[@]}"
+    cargo build --release --bin helioslite
     cp "target/release/helioslite" "$INSTALL_DIR/helioslite"
-    if [ "$SKIP_FORGE" = "0" ]; then
-        for alias in forge forge-dev; do
-            alias_path="$INSTALL_DIR/$alias"
-            if [ -L "$alias_path" ]; then
-                echo -e "  ! \033[33mSkipped legacy alias symlink $alias_path\033[0m" >&2
-                continue
-            fi
-            if [ -e "$alias_path" ] && [ ! -f "$alias_path" ]; then
-                echo -e "  ! \033[33mSkipped non-regular legacy alias $alias_path\033[0m" >&2
-                continue
-            fi
-            staged_alias="$INSTALL_DIR/.${alias}.tmp.$$"
-            cp "target/release/$alias" "$staged_alias"
-            chmod +x "$staged_alias"
-            mv -f "$staged_alias" "$alias_path"
-        done
-    fi
     chmod +x "$INSTALL_DIR/helioslite"
     popd >/dev/null
 else
@@ -218,31 +196,7 @@ add_to_path() {
 }
 add_to_path "$INSTALL_DIR"
 
-# 5) Optional: legacy command aliases
-if [ "$SKIP_FORGE" = "0" ]; then
-    for alias in forge forge-dev; do
-        alias_path="$INSTALL_DIR/$alias"
-        if [ -L "$alias_path" ]; then
-            echo -e "  ! \033[33mSkipped legacy alias symlink $alias_path\033[0m" >&2
-            continue
-        fi
-        if [ -e "$alias_path" ] && [ ! -f "$alias_path" ]; then
-            echo -e "  ! \033[33mSkipped non-regular legacy alias $alias_path\033[0m" >&2
-            continue
-        fi
-        if [ -e "$alias_path" ]; then
-            echo -e "  ✓ \033[32mUpdated legacy alias $alias_path\033[0m"
-        else
-            echo -e "  ✓ \033[32mCreated legacy alias $alias_path\033[0m"
-        fi
-        staged_alias="$INSTALL_DIR/.${alias}.tmp.$$"
-        cp "$INSTALL_DIR/helioslite" "$staged_alias"
-        chmod +x "$staged_alias"
-        mv -f "$staged_alias" "$alias_path"
-    done
-fi
-
-# 6) Verify
+# 5) Verify
 VER_OUTPUT="$("$INSTALL_DIR/helioslite" --version 2>&1 | head -n 1 || true)"
 if [ -z "$VER_OUTPUT" ]; then
     echo -e "  ✖ \033[31mhelioslite --version returned no output; refusing an unverified install\033[0m" >&2
@@ -262,4 +216,4 @@ echo ""
 echo -e "  🎉 \033[32mHeliosLite installed.\033[0m"
 echo -e "     Try:  helioslite --help"
 echo -e "     Docs: https://helioslite.phenotype.space"
-echo -e "     Old:  forge / forge-dev   \033[90m(deprecated)\033[0m"
+echo "     Existing forge / forge-dev commands are unchanged."

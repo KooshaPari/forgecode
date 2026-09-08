@@ -23,7 +23,7 @@ An AI-enhanced terminal development environment — an agentic coding CLI/TUI wi
 >
 > |  | old (deprecated) | new (canonical) |
 > |--|------------------|-----------------|
-> | binary | `helioslite` (canonical) | `forge-dev`, `forge` (deprecated aliases) |
+> | binary | `forge-dev`, `forge` (legacy fork names) | `helioslite` (installed alongside stable `forge`) |
 > | crates | `forgecode` workspace | `helioslite` workspace |
 > | env vars | `FORGE_*`, `FORGE_DEV_*` | `HELIOSLITE_*` (legacy aliased) |
 > | repo | `KooshaPari/forgecode` | `KooshaPari/heliosLite` |
