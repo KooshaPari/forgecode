@@ -5392,6 +5392,23 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                             )))?;
                         }
                     }
+                    InterruptionReason::MaxTokensReached { model, finish_reason } => {
+                        self.writeln_title(TitleFormat::error(format!(
+                            "Provider returned finish_reason={finish_reason} on model `{model}`: \
+                             the model hit its output token budget before producing a final \
+                             answer."
+                        )))?;
+                        self.writeln_title(TitleFormat::action(
+                            "Try again with a higher `max_tokens`, an explicit \
+                             `reasoning_effort`, a compact conversation, or a different model."
+                                .to_string(),
+                        ))?;
+                        // Do NOT auto-continue: the model already burned its output budget once
+                        // on this turn; immediate retry will burn it again. Force the user (or
+                        // caller) to make a config decision before resubmitting.
+                        self.spinner.stop(None)?;
+                        return Ok(());
+                    }
                 }
 
                 if self.config.auto_continue_on_interrupt || Self::is_non_interactive() {

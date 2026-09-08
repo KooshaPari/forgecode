@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use chrono::{DateTime, Local};
 use derive_setters::Setters;
@@ -11,6 +12,7 @@ use forge_domain::{
 };
 
 use crate::ShellOutput;
+use crate::orch_spec::counting_metrics_sink::CountingMetricsSink;
 use crate::orch_spec::orch_runner::Runner;
 
 // User prompt
@@ -43,6 +45,11 @@ pub struct TestContext {
     /// ForgeConfig used to populate TemplateConfig for
     /// system prompt rendering in tests.
     pub config: ForgeConfig,
+
+    /// Optional counting metrics sink. When set, the runner attaches it to
+    /// the orchestrator via `with_metrics_sink`, so tests can assert the
+    /// bounded-window counter (`forge.length_truncation`) fires.
+    pub metrics_sink: Option<Arc<CountingMetricsSink>>,
 }
 
 impl Default for TestContext {
@@ -69,6 +76,7 @@ impl Default for TestContext {
                 .tool_supported(true)
                 .max_extensions(15),
             title: Some("test-conversation".into()),
+            metrics_sink: None,
             agent: Agent::new(
                 AgentId::new("forge"),
                 ProviderId::ANTHROPIC,
@@ -92,6 +100,14 @@ impl TestContext {
 
     pub async fn run_event(&mut self, event: impl Into<Event>) -> anyhow::Result<()> {
         Runner::run(self, event.into()).await
+    }
+
+    /// Attach a fresh `CountingMetricsSink` and return a cloneable handle so
+    /// the caller can read counter values after `run` completes.
+    pub fn with_counting_metrics_sink() -> (Arc<CountingMetricsSink>, Self) {
+        let sink = Arc::new(CountingMetricsSink::new());
+        let ctx = Self { metrics_sink: Some(sink.clone()), ..Self::default() };
+        (sink, ctx)
     }
 }
 

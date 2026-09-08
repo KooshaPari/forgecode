@@ -12,9 +12,10 @@
 //! serialization round-trip (the persistence boundary used by the real repo).
 
 use forge_domain::{
-    ChatCompletionMessage, ChatResponse, Content, FinishReason, Role, ToolCallArguments,
-    ToolCallFull, ToolOutput, ToolResult,
+    ChatCompletionMessage, ChatResponse, Content, FinishReason, InterruptionReason, Role,
+    ToolCallArguments, ToolCallFull, ToolOutput, ToolResult,
 };
+use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use crate::orch_spec::orch_runner::TestContext;
@@ -244,5 +245,150 @@ async fn tool_call_then_final_answer_does_not_terminate_early() {
     assert!(
         final_answers.last().is_some_and(|c| *c == "done"),
         "final answer after tool result should be 'done'"
+    );
+}
+
+/// Bounded-window truncation must surface as a structured
+/// `ChatResponse::Interrupt { reason: InterruptionReason::MaxTokensReached { .. } }`,
+/// not as a silently-looping orchestrator and not as an opaque anyhow error.
+///
+/// Repro target: `forge --model Main` against an upstream MiniMax-M3 / combo
+/// provider that returns `finish_reason=length` because internal reasoning
+/// burned the entire `max_tokens` budget before producing any final answer.
+/// Without the fix, the orchestrator loop re-calls the model with the empty
+/// truncated residue until `max_requests_per_turn` is exhausted, presenting
+/// to the user as "no final text returned". With the fix, the orchestrator
+/// emits one Interrupt carrying `model` + `finish_reason="length"` and exits
+/// cleanly.
+#[tokio::test]
+async fn bounded_window_truncation_emits_max_tokens_reached_interrupt() {
+    // Attach a counting metrics sink so we can assert the operator-visible
+    // counter `forge.length_truncation` fires exactly once per truncation.
+    let (sink, mut ctx) = TestContext::with_counting_metrics_sink();
+    ctx = ctx.mock_assistant_responses(vec![
+        ChatCompletionMessage::assistant(Content::full("The user is asking…"))
+            .finish_reason(FinishReason::Length),
+    ]);
+
+    // The orchestrator must terminate cleanly — no panic, no error returned
+    // to the caller.
+    ctx.run("Write a 500-word essay on the history of the roman empire.")
+        .await
+        .expect("orchestrator must surface MaxTokensReached as Interrupt, not as Err");
+
+    // The chat-response stream must contain exactly one Interrupt carrying
+    // the MaxTokensReached reason.
+    let interrupts: Vec<&InterruptionReason> = ctx
+        .output
+        .chat_responses
+        .iter()
+        .filter_map(|r| r.as_ref().ok())
+        .filter_map(|r| match r {
+            ChatResponse::Interrupt { reason } => Some(reason),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        interrupts.len(),
+        1,
+        "expected exactly one Interrupt for length truncation, got {} (chat_responses={:#?})",
+        interrupts.len(),
+        ctx.output.chat_responses
+    );
+    match interrupts[0] {
+        InterruptionReason::MaxTokensReached { model, finish_reason } => {
+            assert!(
+                !model.is_empty(),
+                "MaxTokensReached interrupt must carry the model id"
+            );
+            assert_eq!(
+                finish_reason, "length",
+                "MaxTokensReached interrupt must record finish_reason=length"
+            );
+        }
+        other => panic!("Interrupt reason must be MaxTokensReached, got {:?}", other),
+    }
+
+    // The bounded-window metric must fire exactly once. This locks in the
+    // primary-path metric increment (orch.rs's error downcast) so a future
+    // refactor that swallows the metric silently cannot regress.
+    assert_eq!(
+        sink.length_truncations(),
+        1,
+        "forge.length_truncation must fire exactly once per MaxTokensReached interrupt"
+    );
+
+    // The orchestrator must NOT have looped and re-called the model. With the
+    // pre-fix behavior, the loop ran until `max_requests_per_turn` (100
+    // default, 4000 user override) was exhausted; the test harness panics if
+    // it runs out of mock completions. Reaching this assertion is itself the
+    // proof that the orchestrator exited after the first truncated response.
+}
+
+/// When `finish_reason=Length` arrives WITH tool calls, the orchestrator must
+/// NOT treat it as terminal — the tool calls still need to be executed and
+/// their results fed back to the model. Only the no-tool-calls path is
+/// considered terminal (the model couldn't produce a final answer at all).
+#[tokio::test]
+async fn length_with_tool_calls_is_not_terminal() {
+    let tool_call =
+        ToolCallFull::new("fs_read").arguments(ToolCallArguments::from(json!({"path": "doc.md"})));
+    let tool_result = ToolResult::new("fs_read").output(Ok(ToolOutput::text("# Heading\n\nbody")));
+
+    let (sink, mut ctx) = TestContext::with_counting_metrics_sink();
+    ctx = ctx
+        .mock_tool_call_responses(vec![(tool_call.clone(), tool_result.clone())])
+        .mock_assistant_responses(vec![
+            // Length + tool_call: still must execute the tool.
+            ChatCompletionMessage::assistant("reading…")
+                .tool_calls(vec![tool_call.clone().into()])
+                .finish_reason(FinishReason::Length),
+            // Final answer with proper Stop.
+            ChatCompletionMessage::assistant(Content::full(
+                "The file contains a heading and body.",
+            ))
+            .finish_reason(FinishReason::Stop),
+        ]);
+
+    ctx.run("Read doc.md").await.expect("must complete");
+
+    // Length with tool_calls must NOT have produced an Interrupt.
+    let has_interrupt = ctx
+        .output
+        .chat_responses
+        .iter()
+        .filter_map(|r| r.as_ref().ok())
+        .any(|r| matches!(r, ChatResponse::Interrupt { .. }));
+    assert!(
+        !has_interrupt,
+        "Length WITH tool_calls must not be treated as terminal"
+    );
+
+    // Length WITH tool_calls must NOT have fired the bounded-window metric —
+    // the model did not exhaust its budget before producing useful work.
+    assert_eq!(
+        sink.length_truncations(),
+        0,
+        "forge.length_truncation must NOT fire when Length arrives with tool calls"
+    );
+
+    // The tool call should have been executed.
+    let messages = ctx.output.context_messages();
+    assert!(
+        messages.iter().any(|m| m.has_tool_result()),
+        "tool call must have been executed before termination"
+    );
+
+    // The final assistant answer must be present.
+    let final_answer = messages
+        .iter()
+        .filter(|m| m.has_role(Role::Assistant) && !m.has_tool_call())
+        .filter_map(|m| m.content())
+        .next_back();
+    assert_eq!(
+        final_answer,
+        Some("The file contains a heading and body."),
+        "final assistant answer must be reached after tool result"
     );
 }

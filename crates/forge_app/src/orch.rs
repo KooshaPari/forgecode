@@ -323,7 +323,7 @@ impl<S: AgentService + EnvironmentInfra<Config = forge_config::ForgeConfig>> Orc
             // Telemetry: count each outgoing request
             self.metrics_sink.increment(metric_names::REQUEST, 1);
 
-            let message = crate::retry::retry_with_config(
+            let message = match crate::retry::retry_with_config(
                 &self.config.clone().retry.unwrap_or_default(),
                 || {
                     self.execute_chat_turn(
@@ -353,7 +353,33 @@ impl<S: AgentService + EnvironmentInfra<Config = forge_config::ForgeConfig>> Orc
                     }
                 }),
             )
-            .await?;
+            .await
+            {
+                Ok(message) => message,
+                Err(error) => {
+                    // If the provider hit its output budget, surface a clean
+                    // `ChatResponse::Interrupt` so the UI/agent_executor can
+                    // render an actionable message instead of the raw error.
+                    // `into_full` already converts this; we just translate the
+                    // error into the structured interrupt before propagating.
+                    if let Some(forge_domain::Error::MaxTokensReached) =
+                        error.downcast_ref::<forge_domain::Error>()
+                    {
+                        self.metrics_sink
+                            .increment(metric_names::LENGTH_TRUNCATION, 1);
+                        self.send(ChatResponse::Interrupt {
+                            reason: InterruptionReason::MaxTokensReached {
+                                model: model_id.to_string(),
+                                finish_reason: "length".to_string(),
+                            },
+                        })
+                        .await?;
+                        self.flush_if_dirty().await?;
+                        return Ok(());
+                    }
+                    return Err(error);
+                }
+            };
 
             // Telemetry: model execution completed
             self.metrics_sink.increment(metric_names::MODEL_EXEC, 1);
@@ -379,6 +405,35 @@ impl<S: AgentService + EnvironmentInfra<Config = forge_config::ForgeConfig>> Orc
                     .tool_calls
                     .iter()
                     .any(|call| ToolCatalog::should_yield(&call.name));
+
+            // Defense in depth: `result_stream_ext::into_full` already maps
+            // `Length` with no tool calls to `Error::MaxTokensReached`, so the
+            // error propagates out of `execute_chat_turn` before we ever reach
+            // this point. If a future code path bypasses `into_full` (e.g. a
+            // new provider that surfaces Length directly), surface it as a
+            // structured Interrupt so the UI/agent_executor can render an
+            // actionable message instead of silently looping.
+            if message.finish_reason == Some(FinishReason::Length) && message.tool_calls.is_empty()
+            {
+                warn!(
+                    agent_id = %self.agent.id,
+                    model_id = %model_id,
+                    request_count,
+                    "Provider returned finish_reason=length with no tool calls; \
+                     yielding (defense in depth — into_full should have caught this \
+                     upstream as Error::MaxTokensReached)"
+                );
+                self.metrics_sink
+                    .increment(metric_names::LENGTH_TRUNCATION, 1);
+                self.send(ChatResponse::Interrupt {
+                    reason: InterruptionReason::MaxTokensReached {
+                        model: model_id.to_string(),
+                        finish_reason: "length".to_string(),
+                    },
+                })
+                .await?;
+                should_yield = true;
+            }
 
             // Process tool calls and update context
             let mut tool_call_records = self

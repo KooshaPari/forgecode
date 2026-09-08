@@ -6,6 +6,7 @@ use anyhow::Result;
 use backon::{BlockingRetryable, ExponentialBuilder};
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, CustomizeConnection, Pool, PooledConnection};
+use diesel::sql_types::Text;
 use diesel::sqlite::SqliteConnection;
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use forge_config::RetryConfig;
@@ -223,6 +224,52 @@ struct SqliteCustomizer {
 }
 
 impl SqliteCustomizer {
+    const CONVERSATION_COLUMNS: [&'static str; 17] = [
+        "conversation_id",
+        "title",
+        "workspace_id",
+        "context",
+        "created_at",
+        "updated_at",
+        "metrics",
+        "parent_id",
+        "source",
+        "cwd",
+        "message_count",
+        "intent_state",
+        "extracted_at",
+        "memory_id",
+        "intent_hash",
+        "context_zstd",
+        "is_compressed",
+    ];
+
+    fn legacy_projection(conn: &mut SqliteConnection) -> Option<String> {
+        #[derive(QueryableByName)]
+        struct ColumnName {
+            #[diesel(sql_type = Text)]
+            name: String,
+        }
+        let columns =
+            diesel::sql_query("SELECT name FROM legacy_read.pragma_table_info('conversations')")
+                .load::<ColumnName>(conn)
+                .ok()?;
+        let present: std::collections::HashSet<_> = columns.into_iter().map(|c| c.name).collect();
+        Some(
+            Self::CONVERSATION_COLUMNS
+                .iter()
+                .map(|column| {
+                    if present.contains(*column) {
+                        format!("legacy.{column}")
+                    } else {
+                        format!("NULL AS {column}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+    }
+
     /// ATTACHes the legacy DB (when present and distinct from the primary)
     /// and creates the `conversations_all` TEMP VIEW that the read layer
     /// queries. The view is **always** created — a plain
@@ -277,15 +324,18 @@ impl SqliteCustomizer {
             // once migrations have created the table. If the union cannot be
             // created (e.g. `legacy_read` was not attached), fall through to
             // the plain view.
-            if diesel::sql_query(
-                "CREATE TEMP VIEW IF NOT EXISTS conversations_all AS \
-                 SELECT * FROM conversations \
-                 UNION ALL \
-                 SELECT * FROM legacy_read.conversations",
-            )
-            .execute(conn)
-            .is_ok()
-            {
+            let local_columns = Self::CONVERSATION_COLUMNS.join(", ");
+            let union_ok = Self::legacy_projection(conn)
+                .map(|legacy_columns| {
+                    let sql = format!(
+                        "CREATE TEMP VIEW IF NOT EXISTS conversations_all AS \
+                     SELECT {local_columns} FROM conversations \
+                     UNION ALL SELECT {legacy_columns} FROM legacy_read.conversations AS legacy"
+                    );
+                    diesel::sql_query(sql).execute(conn).is_ok()
+                })
+                .unwrap_or(false);
+            if union_ok {
                 return;
             }
         }
