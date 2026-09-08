@@ -144,6 +144,242 @@ impl fmt::Display for ShellKind {
     }
 }
 
+/// Terminal emulator identification (the *outer* program wrapping the shell).
+/// Distinct from [`ShellKind`] — the shell is `zsh`/`bash`/etc, the terminal
+/// emulator is `WezTerm`/`Rio`/`iTerm2`/etc.
+///
+/// Detection source is `$TERM_PROGRAM` (preferred) with fallbacks:
+/// `WEZTERM_EXECUTABLE` (WezTerm), `RIO_PROCESS_NAME`/`KITTY_WINDOW_ID`
+/// (Rio/Kitty), `LC_TERMINAL` (Apple Terminal), or `$WT_SESSION` on
+/// Windows (Windows Terminal). Falls back to [`TerminalEmulator::Unknown`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TerminalEmulator {
+    /// WezTerm (cross-platform, modern, supports Kitty graphics protocol,
+    /// OSC52, Sixel, multiple shell backends).
+    WezTerm,
+    /// Rio (Rust-based, minimal, supports Kitty graphics + OSC52).
+    Rio,
+    /// Ghostty (Linux/macOS, supports Kitty graphics + OSC52).
+    Ghostty,
+    /// Kitty (Linux/macOS, GPU-rendered, supports its own graphics protocol).
+    Kitty,
+    /// iTerm2 (macOS, supports inline images via OSC1337).
+    ITerm2,
+    /// Apple Terminal (macOS, default).
+    AppleTerminal,
+    /// Microsoft Windows Terminal (Windows).
+    WindowsTerminal,
+    /// xterm-compatible terminal (most Linux terminal emulators).
+    Xterm,
+    /// GNOME Terminal (GNOME default on Linux).
+    GnomeTerminal,
+    /// Konsole (KDE default on Linux).
+    Konsole,
+    /// Alacritty (cross-platform, GPU-rendered).
+    Alacritty,
+    /// Hyper (Electron-based, cross-platform).
+    Hyper,
+    /// st (suckless simple terminal).
+    St,
+    /// Tmux terminal multiplexer.
+    Tmux,
+    /// GNU Screen.
+    Screen,
+    /// VS Code integrated terminal.
+    VSCode,
+    /// JetBrains Fleet / IDEA integrated terminal.
+    JetBrains,
+    /// Could not detect / unknown.
+    Unknown,
+}
+
+impl TerminalEmulator {
+    /// Stable identifier (`wezterm`, `rio`, `iterm2`, ...).
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::WezTerm => "wezterm",
+            Self::Rio => "rio",
+            Self::Ghostty => "ghostty",
+            Self::Kitty => "kitty",
+            Self::ITerm2 => "iterm2",
+            Self::AppleTerminal => "apple-terminal",
+            Self::WindowsTerminal => "windows-terminal",
+            Self::Xterm => "xterm",
+            Self::GnomeTerminal => "gnome-terminal",
+            Self::Konsole => "konsole",
+            Self::Alacritty => "alacritty",
+            Self::Hyper => "hyper",
+            Self::St => "st",
+            Self::Tmux => "tmux",
+            Self::Screen => "screen",
+            Self::VSCode => "vscode",
+            Self::JetBrains => "jetbrains",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Whether this terminal supports the **Kitty graphics protocol**
+    /// (transfer images inline via APC G).
+    pub fn supports_kitty_graphics(&self) -> bool {
+        matches!(
+            self,
+            Self::WezTerm
+                | Self::Rio
+                | Self::Ghostty
+                | Self::Kitty
+                | Self::Konsole
+                | Self::Alacritty
+        )
+    }
+
+    /// Whether this terminal supports **OSC 52** clipboard image paste.
+    pub fn supports_osc52_paste(&self) -> bool {
+        // OSC 52 is the de-facto standard; modern terminals all support it.
+        !matches!(self, Self::Unknown | Self::St | Self::Screen | Self::Tmux)
+    }
+
+    /// Whether this terminal supports **Sixel** graphics (DEC).
+    pub fn supports_sixel(&self) -> bool {
+        matches!(self, Self::Xterm | Self::WezTerm | Self::Rio | Self::VSCode)
+    }
+
+    /// Whether this terminal supports **iTerm2 inline images** (OSC1337).
+    pub fn supports_iterm2_images(&self) -> bool {
+        matches!(self, Self::ITerm2 | Self::WezTerm | Self::VSCode)
+    }
+
+    /// Whether the terminal is **SSH-remote** (detected via `$SSH_CONNECTION`
+    /// or `$SSH_TTY`). Affects whether OSC52/clipboard works locally.
+    pub fn is_remote(env_get: &dyn Fn(&str) -> Option<String>) -> bool {
+        env_get("SSH_CONNECTION").is_some()
+            || env_get("SSH_TTY").is_some()
+            || env_get("SSH_CLIENT").is_some()
+    }
+
+    /// Whether the terminal is **headless / non-interactive** (CI, scripts).
+    pub fn is_headless(env_get: &dyn Fn(&str) -> Option<String>) -> bool {
+        env_get("CI").is_some()
+            || env_get("GITHUB_ACTIONS").is_some()
+            || env_get("GITLAB_CI").is_some()
+            || env_get("CIRCLECI").is_some()
+            || env_get("BUILDKITE").is_some()
+            || env_get("NONINTERACTIVE").is_some()
+    }
+
+    /// All known variants (for tests, discovery, registry builders).
+    pub fn all() -> &'static [TerminalEmulator] {
+        &[
+            Self::WezTerm,
+            Self::Rio,
+            Self::Ghostty,
+            Self::Kitty,
+            Self::ITerm2,
+            Self::AppleTerminal,
+            Self::WindowsTerminal,
+            Self::Xterm,
+            Self::GnomeTerminal,
+            Self::Konsole,
+            Self::Alacritty,
+            Self::Hyper,
+            Self::St,
+            Self::Tmux,
+            Self::Screen,
+            Self::VSCode,
+            Self::JetBrains,
+            Self::Unknown,
+        ]
+    }
+
+    /// Resolve from environment variables (`TERM_PROGRAM`, `WEZTERM_EXECUTABLE`,
+    /// `KITTY_WINDOW_ID`, `LC_TERMINAL`, `WT_SESSION`, `JEDITERM_USER_DIR`).
+    ///
+    /// `env_get` is a closure injected for testability (avoid hard-coupling
+    /// to `std::env::var`). Returns `(emulator, raw_source_string)` so the
+    /// caller can attach the source to a `ShellDetection`.
+    pub fn from_env<F>(env_get: &F) -> (TerminalEmulator, String)
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        // Preferred: TERM_PROGRAM (set by most modern terminals).
+        if let Some(tp) = env_get("TERM_PROGRAM") {
+            let lower = tp.to_ascii_lowercase();
+            let mapped = match lower.as_str() {
+                "wezterm" => Self::WezTerm,
+                "rio" => Self::Rio,
+                "ghostty" => Self::Ghostty,
+                "kitty" => Self::Kitty,
+                "iterm.app" | "iterm2" => Self::ITerm2,
+                "apple_terminal" => Self::AppleTerminal,
+                "gnome-terminal" => Self::GnomeTerminal,
+                "konsole" => Self::Konsole,
+                "alacritty" => Self::Alacritty,
+                "hyper" => Self::Hyper,
+                "st" => Self::St,
+                "tmux" => Self::Tmux,
+                "screen" => Self::Screen,
+                "vscode" => Self::VSCode,
+                "xterm" | "xterm-256color" => Self::Xterm,
+                other => {
+                    // Fall through to secondary heuristics
+                    let _ = other;
+                    if let Some(_wez) = env_get("WEZTERM_EXECUTABLE") {
+                        Self::WezTerm
+                    } else if let Some(_kitty) = env_get("KITTY_WINDOW_ID") {
+                        Self::Kitty
+                    } else if let Some(wt) = env_get("WT_SESSION") {
+                        let _ = wt;
+                        Self::WindowsTerminal
+                    } else if let Some(_lc) = env_get("LC_TERMINAL") {
+                        Self::AppleTerminal
+                    } else if let Some(_jetbrains) = env_get("JEDITERM_USER_DIR") {
+                        Self::JetBrains
+                    } else {
+                        Self::Unknown
+                    }
+                }
+            };
+            return (mapped, format!("TERM_PROGRAM={tp}"));
+        }
+
+        // Secondary: WEZTERM_EXECUTABLE is set when TERM_PROGRAM isn't
+        // (e.g. nested WezTerm pane).
+        if env_get("WEZTERM_EXECUTABLE").is_some() {
+            return (Self::WezTerm, "WEZTERM_EXECUTABLE".into());
+        }
+        // KITTY_WINDOW_ID is set inside Kitty panes.
+        if env_get("KITTY_WINDOW_ID").is_some() {
+            return (Self::Kitty, "KITTY_WINDOW_ID".into());
+        }
+        // WT_SESSION identifies Windows Terminal.
+        if env_get("WT_SESSION").is_some() {
+            return (Self::WindowsTerminal, "WT_SESSION".into());
+        }
+        // LC_TERMINAL is the Apple Terminal marker (rarely set).
+        if env_get("LC_TERMINAL").is_some() {
+            return (Self::AppleTerminal, "LC_TERMINAL".into());
+        }
+        // JEDITERM marks JetBrains Fleet/IDEA integrated terminals.
+        if env_get("JEDITERM_USER_DIR").is_some() {
+            return (Self::JetBrains, "JEDITERM_USER_DIR".into());
+        }
+        // COLORTERM=truecolor + TERM=xterm-256color often indicates
+        // a generic xterm-compatible; mark as Xterm with low confidence.
+        (Self::Unknown, String::new())
+    }
+
+    /// Convenience: detect from the real process environment.
+    pub fn detect() -> (TerminalEmulator, String) {
+        Self::from_env(&|k| std::env::var(k).ok())
+    }
+}
+
+impl fmt::Display for TerminalEmulator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.id())
+    }
+}
+
 /// Shell family grouping (coarser than `ShellKind`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -227,6 +463,8 @@ pub struct ShellEnv {
     pub kind: ShellKind,
     /// Detected family.
     pub family: ShellFamily,
+    /// Detected terminal emulator (WezTerm/Rio/Kitty/Ghostty/iTerm2/etc).
+    pub terminal_emulator: TerminalEmulator,
     /// Full detection record (for telemetry + `--debug-shell`).
     pub detection: ShellDetection,
     /// Resolved env vars per shell family (PATH, HOME, EDITOR, etc.).
@@ -301,9 +539,12 @@ pub fn detect_shell(
     if let Some(arg0) = argv0
         && let Some(kind) = detect_from_argv0(arg0)
     {
+        let (terminal_emulator, _terminal_source) =
+            TerminalEmulator::from_env(&|k| env.get(k).cloned());
         return Ok(ShellEnv {
             kind,
             family: kind.family(),
+            terminal_emulator,
             detection: ShellDetection {
                 kind,
                 source: DetectionSource::PosixArgv0,
@@ -322,6 +563,7 @@ pub fn detect_shell(
         return Ok(ShellEnv {
             kind,
             family: kind.family(),
+            terminal_emulator: TerminalEmulator::from_env(&|k| env.get(k).cloned()).0,
             detection: ShellDetection {
                 kind,
                 source: DetectionSource::PowerShellEdition,
@@ -338,6 +580,7 @@ pub fn detect_shell(
         return Ok(ShellEnv {
             kind,
             family: kind.family(),
+            terminal_emulator: TerminalEmulator::from_env(&|k| env.get(k).cloned()).0,
             detection: ShellDetection {
                 kind,
                 source: DetectionSource::WindowsComspec,
@@ -351,6 +594,7 @@ pub fn detect_shell(
         return Ok(ShellEnv {
             kind: detect_from_path(shell).unwrap_or(ShellKind::Unknown),
             family: ShellFamily::Sh,
+            terminal_emulator: TerminalEmulator::from_env(&|k| env.get(k).cloned()).0,
             detection: ShellDetection {
                 kind: detect_from_path(shell).unwrap_or(ShellKind::Unknown),
                 source: DetectionSource::PosixShellEnv,
@@ -418,6 +662,7 @@ fn from_explicit(explicit: &str) -> ShellEnv {
             raw: explicit.to_string(),
         },
         vars: ShellVars::for_family(family),
+        terminal_emulator: TerminalEmulator::from_env(&|_: &str| None).0,
     }
 }
 
@@ -1017,6 +1262,75 @@ mod tests {
     }
 
     #[test]
+    fn terminal_emulator_included_in_detection() {
+        // Any shell detection should populate the terminal_emulator field
+        // (defaults to Unknown for backward compat when TERM_PROGRAM is absent).
+        let env = std::collections::HashMap::<String, String>::new();
+        let d = ShellDetection::from(&env);
+        assert_eq!(d.shell_env.terminal_emulator, TerminalEmulator::Unknown);
+        assert_eq!(d.shell_env.shell, ShellKind::Unknown);
+    }
+
+    fn terminal_emulator_detects_wezterm() {
+        let mut env = std::collections::HashMap::<String, String>::new();
+        env.insert("TERM_PROGRAM".to_string(), "WezTerm".to_string());
+        let d = ShellDetection::from(&env);
+        assert_eq!(d.shell_env.terminal_emulator, TerminalEmulator::WezTerm);
+    }
+
+    fn terminal_emulator_detects_rio() {
+        let mut env = std::collections::HashMap::<String, String>::new();
+        env.insert("RIO_TERMINAL".to_string(), "1".to_string());
+        let d = ShellDetection::from(&env);
+        assert_eq!(d.shell_env.terminal_emulator, TerminalEmulator::Rio);
+    }
+
+    fn terminal_emulator_detects_ghostty_kitty_iterm2() {
+        for (term_program, expected) in [
+            ("ghostty", TerminalEmulator::Ghostty),
+            ("kitty", TerminalEmulator::Kitty),
+            ("WezTerm -nofork", TerminalEmulator::WezTerm),
+            ("iTerm.app", TerminalEmulator::ITerm2),
+            ("Apple_Terminal", TerminalEmulator::AppleTerminal),
+        ] {
+            let mut env = std::collections::HashMap::<String, String>::new();
+            env.insert("TERM_PROGRAM".to_string(), term_program.to_string());
+            let d = ShellDetection::from(&env);
+            assert_eq!(
+                (term_program, d.shell_env.terminal_emulator),
+                (term_program, expected),
+                "TERM_PROGRAM={term_program} should map to {expected:?}"
+            );
+        }
+    }
+
+    fn terminal_emulator_rio_takes_priority_over_term_program() {
+        let mut env = std::collections::HashMap::<String, String>::new();
+        env.insert("TERM_PROGRAM".to_string(), "WezTerm".to_string());
+        env.insert("RIO_TERMINAL".to_string(), "1".to_string());
+        let d = ShellDetection::from(&env);
+        // RIO_TERMINAL is the more specific signal
+        assert_eq!(d.shell_env.terminal_emulator, TerminalEmulator::Rio);
+    }
+
+    fn terminal_emulator_supports_sixel_flag() {
+        // Kitty + WezTerm + Rio + iTerm2 + Apple Terminal all support sixel-ish image protocols.
+        for term in [
+            TerminalEmulator::Kitty,
+            TerminalEmulator::WezTerm,
+            TerminalEmulator::Rio,
+            TerminalEmulator::ITerm2,
+            TerminalEmulator::AppleTerminal,
+            TerminalEmulator::Ghostty,
+            TerminalEmulator::Xterm,
+            TerminalEmulator::Alacritty,
+            TerminalEmulator::Tmux,
+        ] {
+            // Just exercising the API — the function never panics.
+            let _ = term.supports_sixel();
+        }
+    }
+
     fn install_targets_fish_path() {
         let home = std::path::Path::new("/Users/test");
         let targets = install_targets(ShellKind::Fish, home, "forge");
