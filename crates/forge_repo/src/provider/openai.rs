@@ -149,7 +149,6 @@ impl<H: HttpInfra> OpenAIProvider<H> {
             headers.push(("Session-Id".to_string(), session_id.to_string()));
             debug!(
                 provider = %self.provider.url,
-                session_id = %session_id,
                 "Added Session-Id header for zai provider"
             );
         }
@@ -160,7 +159,6 @@ impl<H: HttpInfra> OpenAIProvider<H> {
             headers.push(("x-opencode-session".to_string(), session_id.to_string()));
             debug!(
                 provider = %self.provider.url,
-                session_id = %session_id,
                 "Added x-opencode-session header for OpenCode Go provider"
             );
         }
