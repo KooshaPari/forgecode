@@ -197,8 +197,9 @@ impl DatabasePool {
 mod tests {
     use super::*;
     use diesel::sql_types::Integer;
+    use pretty_assertions::assert_eq;
 
-    #[derive(QueryableByName)]
+    #[derive(Debug, PartialEq, QueryableByName)]
     struct LegacyConversationRow {
         #[diesel(sql_type = Text)]
         conversation_id: String,
@@ -210,9 +211,9 @@ mod tests {
 
     #[test]
     fn split_db_projection_reads_older_legacy_rows_with_typed_defaults() -> Result<()> {
-        let temp = tempfile::tempdir()?;
-        let legacy_path = temp.path().join("legacy.db");
-        let write_path = temp.path().join("write.db");
+        let fixture = tempfile::tempdir()?;
+        let legacy_path = fixture.path().join("legacy.db");
+        let write_path = fixture.path().join("write.db");
 
         let mut legacy = SqliteConnection::establish(legacy_path.to_string_lossy().as_ref())?;
         diesel::sql_query(
@@ -245,19 +246,26 @@ mod tests {
         )
         .execute(&mut connection)?;
 
-        let rows = diesel::sql_query(
+        let actual = diesel::sql_query(
             "SELECT conversation_id, intent_state, is_compressed \
              FROM conversations_all ORDER BY conversation_id",
         )
         .load::<LegacyConversationRow>(&mut connection)?;
 
-        assert_eq!(rows.len(), 2, "the view retains local and legacy rows");
-        assert_eq!(rows[0].conversation_id, "legacy-row");
-        assert_eq!(rows[0].intent_state, "pending");
-        assert_eq!(rows[0].is_compressed, 0);
-        assert_eq!(rows[1].conversation_id, "local-row");
-        assert_eq!(rows[1].intent_state, "verified");
-        assert_eq!(rows[1].is_compressed, 1);
+        let expected = vec![
+            LegacyConversationRow {
+                conversation_id: "legacy-row".to_string(),
+                intent_state: "pending".to_string(),
+                is_compressed: 0,
+            },
+            LegacyConversationRow {
+                conversation_id: "local-row".to_string(),
+                intent_state: "verified".to_string(),
+                is_compressed: 1,
+            },
+        ];
+
+        assert_eq!(actual, expected);
         Ok(())
     }
 }
