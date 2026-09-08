@@ -9,7 +9,7 @@ pub fn release_publish() {
     let release_build_job = ReleaseBuilderJob::new("${{ github.event.release.tag_name }}")
         .release_id("${{ github.event.release.id }}");
     let sbom_job = Job::new("Generate release SBOM")
-        .needs("build_release")
+        .needs("sign_release")
         .permissions(Permissions::default().contents(Level::Write))
         .add_step(
             Step::new("Download release assets")
@@ -86,6 +86,19 @@ pub fn release_publish() {
         .on(Event::default().release(["published"]))
         .permissions(Permissions::default().contents(Level::Read))
         .add_job("build_release", release_build_job.into_job())
+        .add_job(
+            "sign_release",
+            Job::reusable(
+                "Sign release and regenerate checksums",
+                "./.github/workflows/sign-release.yml",
+            )
+            .needs("build_release")
+            .permissions(
+                Permissions::default()
+                    .contents(Level::Write)
+                    .actions(Level::Read),
+            ),
+        )
         .add_job("sbom_release_assets", sbom_job)
         .add_job("attest_release_assets", attest_job);
 

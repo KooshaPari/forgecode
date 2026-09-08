@@ -175,6 +175,11 @@ impl Push {
 pub(crate) struct Permissions(IndexMap<String, Level>);
 
 impl Permissions {
+    pub(crate) fn actions(mut self, level: Level) -> Self {
+        self.0.insert("actions".to_string(), level);
+        self
+    }
+
     pub(crate) fn contents(mut self, level: Level) -> Self {
         self.0.insert("contents".to_string(), level);
         self
@@ -217,8 +222,12 @@ pub(crate) struct Job {
     #[serde(rename = "if", skip_serializing_if = "Option::is_none")]
     condition: Option<String>,
     name: String,
-    #[serde(rename = "runs-on")]
+    #[serde(rename = "runs-on", skip_serializing_if = "String::is_empty")]
     runs_on: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    uses: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    secrets: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     needs: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -232,6 +241,15 @@ pub(crate) struct Job {
 }
 
 impl Job {
+    pub(crate) fn reusable(name: &str, workflow: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            uses: Some(workflow.to_string()),
+            secrets: Some("inherit".to_string()),
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),

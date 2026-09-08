@@ -1,7 +1,6 @@
 name: Sign Release Binaries
 on:
-  release:
-    types: [published]
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -10,6 +9,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
+      actions: read
+    defaults:
+      run:
+        shell: bash
     strategy:
       matrix:
         include:
@@ -26,9 +29,27 @@ jobs:
       MACOS_NOTARIZATION_APPLE_ID: ${{ secrets.MACOS_NOTARIZATION_APPLE_ID }}
       MACOS_NOTARIZATION_PWD: ${{ secrets.MACOS_NOTARIZATION_PWD }}
       MACOS_NOTARIZATION_TEAM_ID: ${{ secrets.MACOS_NOTARIZATION_TEAM_ID }}
-      WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-      WINDOWS_CERTIFICATE_PWD: ${{ secrets.WINDOWS_CERTIFICATE_PWD }}
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      SIGNPATH_ORGANIZATION_ID: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+      SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+      SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
     steps:
+      - name: Require configured signing identity
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          if [ "$PLATFORM" = windows ]; then
+            required="SIGNPATH_API_TOKEN SIGNPATH_ORGANIZATION_ID SIGNPATH_PROJECT_SLUG SIGNPATH_SIGNING_POLICY_SLUG"
+          else
+            required="MACOS_CERTIFICATE MACOS_CERTIFICATE_PWD MACOS_SIGNING_IDENTITY MACOS_NOTARIZATION_APPLE_ID MACOS_NOTARIZATION_PWD MACOS_NOTARIZATION_TEAM_ID"
+          fi
+          for name in $required; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing signing configuration: $name"
+              exit 1
+            fi
+          done
       - name: Download release binaries
         run: |
           set -euo pipefail
@@ -63,7 +84,7 @@ jobs:
       - if: matrix.platform == 'macos'
         name: Codesign macOS binaries
         run: |
-          for bin in binaries/forge-*-apple-darwin binaries/helioslite-*-apple-darwin; do
+          for bin in binaries/forge-*-apple-darwin binaries/helioslite-*-apple-darwin binaries/forge_dbd-*-apple-darwin; do
             [ -f "$bin" ] || continue
             echo "Signing $bin..."
             codesign --force --options runtime --timestamp \
@@ -77,7 +98,7 @@ jobs:
         name: Notarize macOS binaries
         run: |
           mkdir -p notarize
-          for bin in binaries/forge-*-apple-darwin binaries/helioslite-*-apple-darwin; do
+          for bin in binaries/forge-*-apple-darwin binaries/helioslite-*-apple-darwin binaries/forge_dbd-*-apple-darwin; do
             [ -f "$bin" ] || continue
             cp "$bin" notarize/
           done
@@ -88,34 +109,60 @@ jobs:
             --apple-id "$MACOS_NOTARIZATION_APPLE_ID" \
             --password "$MACOS_NOTARIZATION_PWD" \
             --team-id "$MACOS_NOTARIZATION_TEAM_ID" \
-            --wait
+            --wait --output-format json > result.json
+          jq -e '.status == "Accepted"' result.json >/dev/null
           cd ..
-          for bin in binaries/forge-*-apple-darwin binaries/helioslite-*-apple-darwin; do
-            [ -f "$bin" ] || continue
-            xcrun stapler staple "$bin"
-          done
+          # Raw Mach-O command-line binaries cannot be stapled; the submitted
+          # ZIP receives notarization. Keep the signed raw assets unchanged.
 
-      # ── Windows Authenticode ──
       - if: matrix.platform == 'windows'
-        name: Setup SignPath
-        uses: signpath/github-action-signpath-setup@v1
+        name: Upload unsigned Windows artifacts
+        id: unsigned
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-application-id: ${{ secrets.AZURE_APPLICATION_ID }}
-          azure-service-connection-id: ${{ secrets.SIGNPATH_SERVICE_CONNECTION_ID }}
-          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: forgecode
-          artifact-configuration-slug: default
+          name: unsigned-windows
+          path: binaries/*.exe
+          if-no-files-found: error
 
       - if: matrix.platform == 'windows'
         name: Sign Windows binaries via SignPath
-        uses: signpath/signpath-action@v1
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: forgecode
-          artifact-configuration-slug: default
-          artifact-to-sign: binaries/*.exe
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - if: matrix.platform == 'windows'
+        name: Verify and replace signed Windows artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($file in Get-ChildItem binaries/*.exe) {
+            $signed = Join-Path signed $file.Name
+            if ((Get-AuthenticodeSignature $signed).Status -ne 'Valid') {
+              throw "Invalid Authenticode signature: $($file.Name)"
+            }
+            Copy-Item $signed $file.FullName -Force
+          }
+
+      - name: Regenerate checksums for signed assets
+        run: |
+          set -euo pipefail
+          for bin in binaries/*; do
+            case "$bin" in *.sha256) continue ;; esac
+            [ -f "$bin" ] || continue
+            (cd binaries
+             name=$(basename "$bin")
+             if command -v sha256sum >/dev/null 2>&1; then
+               sha256sum "$name" > "$name.sha256"
+             else
+               shasum -a 256 "$name" > "$name.sha256"
+             fi)
+          done
 
       # ── Re-upload signed binaries ──
       - name: Re-upload signed binaries

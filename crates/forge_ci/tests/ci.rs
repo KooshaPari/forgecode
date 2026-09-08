@@ -10,6 +10,39 @@ const GENERATED_WORKFLOWS: [&str; 7] = [
     "stale.yml",
 ];
 
+#[test]
+fn signing_is_serialized_before_release_provenance() {
+    let fixture = std::fs::read_to_string(generated_workflow_path("release.yml")).unwrap();
+    let actual: serde_yaml_ng::Value = serde_yaml_ng::from_str(&fixture).unwrap();
+    let jobs = &actual["jobs"];
+    assert_eq!(
+        jobs["sign_release"]["needs"].as_str(),
+        Some("build_release")
+    );
+    assert_eq!(
+        jobs["sbom_release_assets"]["needs"].as_str(),
+        Some("sign_release")
+    );
+    assert_eq!(
+        jobs["attest_release_assets"]["needs"].as_str(),
+        Some("sbom_release_assets")
+    );
+    assert_eq!(
+        jobs["sign_release"]["uses"].as_str(),
+        Some("./.github/workflows/sign-release.yml")
+    );
+    assert!(jobs["sign_release"]["runs-on"].is_null());
+    let signing = std::fs::read_to_string(generated_workflow_path("sign-release.yml")).unwrap();
+    let signing: serde_yaml_ng::Value = serde_yaml_ng::from_str(&signing).unwrap();
+    assert!(
+        signing["on"]
+            .as_mapping()
+            .unwrap()
+            .contains_key("workflow_call")
+    );
+    assert!(!signing["on"].as_mapping().unwrap().contains_key("release"));
+}
+
 fn generated_workflow_path(name: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
