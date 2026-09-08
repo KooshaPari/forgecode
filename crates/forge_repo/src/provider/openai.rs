@@ -127,7 +127,8 @@ impl<H: HttpInfra> OpenAIProvider<H> {
         headers
     }
 
-    /// Creates headers including Session-Id for zai and zai_coding providers
+    /// Creates headers including provider-specific conversation session headers
+    /// for zai, zai_coding, and OpenCode Go providers
     /// and GitHub Copilot optimization headers (x-initiator, Openai-Intent,
     /// Copilot-Vision-Request, anthropic-beta)
     fn get_headers_with_request(&self, request: &Request) -> Vec<(String, String)> {
@@ -141,6 +142,17 @@ impl<H: HttpInfra> OpenAIProvider<H> {
                 provider = %self.provider.url,
                 session_id = %session_id,
                 "Added Session-Id header for zai provider"
+            );
+        }
+
+        if let Some(session_id) = &request.session_id
+            && self.provider.id == ProviderId::OPENCODE_GO
+        {
+            headers.push(("x-opencode-session".to_string(), session_id.clone()));
+            debug!(
+                provider = %self.provider.url,
+                session_id = %session_id,
+                "Added x-opencode-session header for OpenCode Go provider"
             );
         }
 
@@ -497,6 +509,22 @@ mod tests {
         }
     }
 
+    fn opencode_go(key: &str) -> Provider<Url> {
+        Provider {
+            id: ProviderId::OPENCODE_GO,
+            provider_type: forge_domain::ProviderType::Llm,
+            response: Some(ProviderResponse::OpenAI),
+            url: Url::parse("https://api.opencode.com/v1/chat/completions").unwrap(),
+            credential: make_credential(ProviderId::OPENCODE_GO, key),
+            custom_headers: None,
+            auth_methods: vec![forge_domain::AuthMethod::ApiKey],
+            url_params: vec![],
+            models: Some(forge_domain::ModelSource::Url(
+                Url::parse("https://api.opencode.com/v1/models").unwrap(),
+            )),
+        }
+    }
+
     fn anthropic(key: &str) -> Provider<Url> {
         Provider {
             id: ProviderId::ANTHROPIC,
@@ -782,6 +810,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_headers_with_request_opencode_go_reuses_conversation_session_id()
+    -> anyhow::Result<()> {
+        let provider = opencode_go("test-key");
+        let http_client = Arc::new(MockHttpClient::new());
+        let openai_provider = OpenAIProvider::new(provider, http_client);
+        let request = Request {
+            session_id: Some("stable-conversation-id".to_string()),
+            ..Default::default()
+        };
+
+        let actual_first = openai_provider.get_headers_with_request(&request);
+        let actual_second = openai_provider.get_headers_with_request(&request);
+        let expected = (
+            "x-opencode-session".to_string(),
+            "stable-conversation-id".to_string(),
+        );
+
+        assert!(actual_first.contains(&expected));
+        assert!(actual_second.contains(&expected));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_get_headers_with_request_openai_provider() -> anyhow::Result<()> {
         let provider = openai("test-key");
         let http_client = Arc::new(MockHttpClient::new());
@@ -803,6 +854,7 @@ mod tests {
                 .any(|(k, v)| k == "authorization" && v == "Bearer test-key")
         );
         assert!(!headers.iter().any(|(k, _)| k == "Session-Id"));
+        assert!(!headers.iter().any(|(k, _)| k == "x-opencode-session"));
         Ok(())
     }
 
