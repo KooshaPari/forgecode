@@ -5403,6 +5403,11 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                              `reasoning_effort`, a compact conversation, or a different model."
                                 .to_string(),
                         ))?;
+                        // Do NOT auto-continue: the model already burned its output budget once
+                        // on this turn; immediate retry will burn it again. Force the user (or
+                        // caller) to make a config decision before resubmitting.
+                        self.spinner.stop(None)?;
+                        return Ok(());
                     }
                 }
 
