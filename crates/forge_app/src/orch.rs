@@ -365,6 +365,8 @@ impl<S: AgentService + EnvironmentInfra<Config = forge_config::ForgeConfig>> Orc
                     if let Some(forge_domain::Error::MaxTokensReached) =
                         error.downcast_ref::<forge_domain::Error>()
                     {
+                        self.metrics_sink
+                            .increment(metric_names::LENGTH_TRUNCATION, 1);
                         self.send(ChatResponse::Interrupt {
                             reason: InterruptionReason::MaxTokensReached {
                                 model: model_id.to_string(),

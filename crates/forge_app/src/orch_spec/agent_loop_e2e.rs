@@ -261,11 +261,10 @@ async fn tool_call_then_final_answer_does_not_terminate_early() {
 /// cleanly.
 #[tokio::test]
 async fn bounded_window_truncation_emits_max_tokens_reached_interrupt() {
-    // The model returns ONLY internal reasoning — `finish_reason=Length` and
-    // no tool calls — exactly what MiniMax-M3 emits at 32/32 tokens of budget
-    // consumed by reasoning_tokens (see live repro at 62.5s with 0 final
-    // answer).
-    let mut ctx = TestContext::default().mock_assistant_responses(vec![
+    // Attach a counting metrics sink so we can assert the operator-visible
+    // counter `forge.length_truncation` fires exactly once per truncation.
+    let (sink, mut ctx) = TestContext::with_counting_metrics_sink();
+    ctx = ctx.mock_assistant_responses(vec![
         ChatCompletionMessage::assistant(Content::full("The user is asking…"))
             .finish_reason(FinishReason::Length),
     ]);
@@ -310,6 +309,15 @@ async fn bounded_window_truncation_emits_max_tokens_reached_interrupt() {
         other => panic!("Interrupt reason must be MaxTokensReached, got {:?}", other),
     }
 
+    // The bounded-window metric must fire exactly once. This locks in the
+    // primary-path metric increment (orch.rs's error downcast) so a future
+    // refactor that swallows the metric silently cannot regress.
+    assert_eq!(
+        sink.length_truncations(),
+        1,
+        "forge.length_truncation must fire exactly once per MaxTokensReached interrupt"
+    );
+
     // The orchestrator must NOT have looped and re-called the model. With the
     // pre-fix behavior, the loop ran until `max_requests_per_turn` (100
     // default, 4000 user override) was exhausted; the test harness panics if
@@ -327,7 +335,8 @@ async fn length_with_tool_calls_is_not_terminal() {
         ToolCallFull::new("fs_read").arguments(ToolCallArguments::from(json!({"path": "doc.md"})));
     let tool_result = ToolResult::new("fs_read").output(Ok(ToolOutput::text("# Heading\n\nbody")));
 
-    let mut ctx = TestContext::default()
+    let (sink, mut ctx) = TestContext::with_counting_metrics_sink();
+    ctx = ctx
         .mock_tool_call_responses(vec![(tool_call.clone(), tool_result.clone())])
         .mock_assistant_responses(vec![
             // Length + tool_call: still must execute the tool.
@@ -353,6 +362,14 @@ async fn length_with_tool_calls_is_not_terminal() {
     assert!(
         !has_interrupt,
         "Length WITH tool_calls must not be treated as terminal"
+    );
+
+    // Length WITH tool_calls must NOT have fired the bounded-window metric —
+    // the model did not exhaust its budget before producing useful work.
+    assert_eq!(
+        sink.length_truncations(),
+        0,
+        "forge.length_truncation must NOT fire when Length arrives with tool calls"
     );
 
     // The tool call should have been executed.

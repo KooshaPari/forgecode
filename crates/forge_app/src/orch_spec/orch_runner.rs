@@ -129,17 +129,24 @@ impl Runner {
             ApplyTunableParameters::new(agent.clone(), system_tools.clone()).apply(conversation);
         let conversation = SetConversationId.apply(conversation);
 
-        let orch = Orchestrator::new(services.clone(), conversation, agent, setup.config.clone())
-            .error_tracker(ToolErrorTracker::new(3))
-            .tool_definitions(system_tools)
-            .hook(Arc::new(
-                Hook::default()
-                    .on_request(DoomLoopDetector::default())
-                    .on_end(PendingTodosHandler::new()),
-            ))
-            .sender(tx);
+        let mut orch =
+            Orchestrator::new(services.clone(), conversation, agent, setup.config.clone())
+                .error_tracker(ToolErrorTracker::new(3))
+                .tool_definitions(system_tools)
+                .hook(Arc::new(
+                    Hook::default()
+                        .on_request(DoomLoopDetector::default())
+                        .on_end(PendingTodosHandler::new()),
+                ))
+                .sender(tx);
 
-        let (mut orch, runner) = (orch, services);
+        // Attach the test-supplied counting metrics sink if present so specs
+        // can assert telemetry counters (e.g. forge.length_truncation) fire.
+        if let Some(ref sink) = setup.metrics_sink {
+            orch = orch.with_metrics_sink(sink.clone());
+        }
+
+        let runner = services;
 
         let result = orch.run().await;
         drop(orch);
