@@ -14,7 +14,7 @@
 #   HELIOSLITE_TARGET=x86_64-unknown-linux-musl ./install.sh
 #
 # Installs the HeliosLite CLI as a single-binary `helioslite` on PATH,
-# along with legacy `forge` and `forge-dev` (with dev-binary feature) aliases.
+# along with legacy `forge` and `forge-dev` aliases unless `--skip-forge` is used.
 # On Linux/macOS we download the matching raw `forge-*` release binary from
 # GitHub Releases and install it as `helioslite`.
 
@@ -122,11 +122,30 @@ if [ "$LOCAL" = "1" ]; then
     fi
     echo -e "  → \033[36mLocal install — building from source...\033[0m"
     pushd "$(cd "$(dirname "$0")" && pwd)" >/dev/null
-    cargo build --release --bin helioslite --bin forge --features dev-binary --bin forge-dev
+    cargo_args=(build --release --bin helioslite)
+    if [ "$SKIP_FORGE" = "0" ]; then
+        cargo_args+=(--bin forge --features dev-binary --bin forge-dev)
+    fi
+    cargo "${cargo_args[@]}"
     cp "target/release/helioslite" "$INSTALL_DIR/helioslite"
-    cp "target/release/forge" "$INSTALL_DIR/forge"
-    cp "target/release/forge-dev" "$INSTALL_DIR/forge-dev"
-    chmod +x "$INSTALL_DIR/helioslite" "$INSTALL_DIR/forge" "$INSTALL_DIR/forge-dev"
+    if [ "$SKIP_FORGE" = "0" ]; then
+        for alias in forge forge-dev; do
+            alias_path="$INSTALL_DIR/$alias"
+            if [ -L "$alias_path" ]; then
+                echo -e "  ! \033[33mSkipped legacy alias symlink $alias_path\033[0m" >&2
+                continue
+            fi
+            if [ -e "$alias_path" ] && [ ! -f "$alias_path" ]; then
+                echo -e "  ! \033[33mSkipped non-regular legacy alias $alias_path\033[0m" >&2
+                continue
+            fi
+            staged_alias="$INSTALL_DIR/.${alias}.tmp.$$"
+            cp "target/release/$alias" "$staged_alias"
+            chmod +x "$staged_alias"
+            mv -f "$staged_alias" "$alias_path"
+        done
+    fi
+    chmod +x "$INSTALL_DIR/helioslite"
     popd >/dev/null
 else
     TARGET="$(detect_target)"
@@ -199,14 +218,28 @@ add_to_path() {
 }
 add_to_path "$INSTALL_DIR"
 
-# 5) Optional: legacy forge alias
+# 5) Optional: legacy command aliases
 if [ "$SKIP_FORGE" = "0" ]; then
-    forge_path="$INSTALL_DIR/forge"
-    if [ ! -e "$forge_path" ]; then
-        cp "$INSTALL_DIR/helioslite" "$forge_path"
-        chmod +x "$forge_path"
-        echo -e "  ✓ \033[32mCreated legacy alias $forge_path\033[0m"
-    fi
+    for alias in forge forge-dev; do
+        alias_path="$INSTALL_DIR/$alias"
+        if [ -L "$alias_path" ]; then
+            echo -e "  ! \033[33mSkipped legacy alias symlink $alias_path\033[0m" >&2
+            continue
+        fi
+        if [ -e "$alias_path" ] && [ ! -f "$alias_path" ]; then
+            echo -e "  ! \033[33mSkipped non-regular legacy alias $alias_path\033[0m" >&2
+            continue
+        fi
+        if [ -e "$alias_path" ]; then
+            echo -e "  ✓ \033[32mUpdated legacy alias $alias_path\033[0m"
+        else
+            echo -e "  ✓ \033[32mCreated legacy alias $alias_path\033[0m"
+        fi
+        staged_alias="$INSTALL_DIR/.${alias}.tmp.$$"
+        cp "$INSTALL_DIR/helioslite" "$staged_alias"
+        chmod +x "$staged_alias"
+        mv -f "$staged_alias" "$alias_path"
+    done
 fi
 
 # 6) Verify

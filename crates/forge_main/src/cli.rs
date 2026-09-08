@@ -16,8 +16,12 @@ const CLI_VERSION: &str = match option_env!("APP_VERSION") {
     None => env!("CARGO_PKG_VERSION"),
 };
 
+fn cli_version(version: &str) -> &str {
+    version.strip_prefix('v').unwrap_or(version)
+}
+
 #[derive(Parser)]
-#[command(version = CLI_VERSION)]
+#[command(version = cli_version(CLI_VERSION))]
 pub struct Cli {
     /// Direct prompt to process without entering interactive mode.
     ///
@@ -2439,5 +2443,13 @@ mod tests {
     #[test]
     fn release_version_matches_published_release_line() {
         assert_eq!(env!("CARGO_PKG_VERSION"), "2.13.21");
+    }
+
+    #[test]
+    fn cli_version_omits_a_release_tag_prefix() {
+        let fixture = "v2.13.21-h.0.1.7";
+        let actual = cli_version(fixture);
+        let expected = "2.13.21-h.0.1.7";
+        assert_eq!(actual, expected);
     }
 }
