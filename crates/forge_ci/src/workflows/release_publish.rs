@@ -6,6 +6,15 @@ use crate::workflow_model::{Event, Job, Level, Permissions, Step, Workflow};
 /// Third-party npm and Homebrew publication jobs are intentionally omitted
 /// until fork-owned destinations and credentials are configured.
 pub fn release_publish() {
+    super::generate_private_workflow(release_workflow(), "release.yml");
+}
+
+/// Render the release workflow without modifying the checked-in fixture.
+pub fn release_publish_yaml() -> Result<String, serde_yaml_ng::Error> {
+    release_workflow().to_yaml()
+}
+
+fn release_workflow() -> Workflow {
     let release_build_job = ReleaseBuilderJob::new("${{ github.event.release.tag_name }}")
         .release_id("${{ github.event.release.id }}");
     let sbom_job = Job::new("Generate release SBOM")
@@ -82,7 +91,7 @@ pub fn release_publish() {
                 )
                 .input("subject-path", "release-assets/*"),
         );
-    let release_workflow = Workflow::new("Multi Channel Release")
+    Workflow::new("Multi Channel Release")
         .on(Event::default().release(["published"]))
         .permissions(Permissions::default().contents(Level::Read))
         .add_job("build_release", release_build_job.into_job())
@@ -100,7 +109,5 @@ pub fn release_publish() {
             ),
         )
         .add_job("sbom_release_assets", sbom_job)
-        .add_job("attest_release_assets", attest_job);
-
-    super::generate_private_workflow(release_workflow, "release.yml");
+        .add_job("attest_release_assets", attest_job)
 }

@@ -1,4 +1,5 @@
 use forge_ci::workflows as workflow;
+use pretty_assertions::assert_eq;
 
 const GENERATED_WORKFLOWS: [&str; 7] = [
     "autofix.yml",
@@ -12,7 +13,7 @@ const GENERATED_WORKFLOWS: [&str; 7] = [
 
 #[test]
 fn signing_is_serialized_before_release_provenance() {
-    let fixture = std::fs::read_to_string(generated_workflow_path("release.yml")).unwrap();
+    let fixture = workflow::release_publish_yaml().unwrap();
     let actual: serde_yaml_ng::Value = serde_yaml_ng::from_str(&fixture).unwrap();
     let jobs = &actual["jobs"];
     assert_eq!(
@@ -57,7 +58,6 @@ fn generated_workflows_are_parseable_and_identify_forge_ci_generator() {
     workflow::generate_ci_workflow();
     workflow::generate_labels_workflow();
     workflow::generate_release_drafter_workflow();
-    workflow::release_publish();
     workflow::generate_stale_workflow();
 
     for name in GENERATED_WORKFLOWS {
@@ -130,15 +130,8 @@ fn test_release_drafter() {
 
 #[test]
 fn test_release_workflow() {
-    let expected = std::fs::read_to_string(generated_workflow_path("release.yml"))
-        .expect("release workflow baseline");
-    workflow::release_publish();
-
-    let generated = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.github/workflows/release.yml"),
-    )
-    .expect("generated release workflow");
+    let expected = include_str!("../../../.github/workflows/release.yml");
+    let generated = workflow::release_publish_yaml().unwrap();
     assert!(!generated.contains("npm_release"));
     assert!(!generated.contains("homebrew_release"));
     assert!(generated.contains("Generate SHA-256 checksum"));
@@ -174,7 +167,7 @@ fn test_release_workflow() {
     assert!(generated.contains("upload-release-assets: 'true'"));
     assert!(generated.contains("path: release-assets"));
 
-    let expected = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&expected).unwrap();
+    let expected = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(expected).unwrap();
     let actual = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&generated).unwrap();
     assert_eq!(actual, expected);
 }
