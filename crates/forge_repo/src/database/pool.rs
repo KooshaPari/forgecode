@@ -22,6 +22,49 @@ const DEFAULT_POOL_MAX_RETRIES: usize = 5;
 /// Fallback minimum delay between pool-connection retries.
 const DEFAULT_POOL_MIN_DELAY: Duration = Duration::from_secs(1);
 
+/// Sentinel value emitted by [`crate::Pool::legacy_projection`] for the
+/// `workspace_id` column on legacy rows that predate the workspace split.
+///
+/// `conversations_all` is a `UNION ALL` of local + legacy. Read queries that
+/// filter on `workspace_id = ?` would otherwise reject every legacy row
+/// (because they'd have `NULL AS workspace_id`). By projecting legacy
+/// `workspace_id` as `LEGACY_VISIBLE_WORKSPACE_ID` (a fixed non-NULL integer)
+/// AND having read queries broaden the filter to
+/// `(workspace_id = ? OR workspace_id = LEGACY_VISIBLE_WORKSPACE_ID)`,
+///
+/// legacy rows remain visible while keeping a single source of truth for the
+/// magic number.
+///
+/// The value `0` is intentionally outside the production workspace-id
+/// allocator (which assigns positive i64s) so no real workspace can collide.
+pub const LEGACY_VISIBLE_WORKSPACE_ID: i64 = 0;
+
+/// SQL fragment used by raw SQL read sites that filter conversations by
+/// `workspace_id`. Wraps the parameterized marker `?` so callers can keep
+/// binding the requested workspace as the first parameter.
+///
+/// Emits: `"(workspace_id = ? OR workspace_id = 0)"` — the `0` matches
+/// `LEGACY_VISIBLE_WORKSPACE_ID` so legacy rows remain visible.
+pub fn workspace_visibility_clause() -> &'static str {
+    "(workspace_id = ? OR workspace_id = 0)"
+}
+
+/// Diesel-side companion to [`workspace_visibility_clause`].
+///
+/// Build a `BoxedExpression` of the form
+/// `(wid.eq(workspace).or(wid.eq(LEGACY_VISIBLE_WORKSPACE_ID)))`
+/// so Diesel queries stay in lockstep with the raw SQL fragment above.
+///
+/// The `sql_function`/`Eq`/`ExpressionMethods`/`BoolExpression` traits must be
+/// in scope at the call site.
+#[macro_export]
+macro_rules! workspace_visibility_filter {
+    ($wid:expr, $ws:expr) => {
+        $wid.eq($ws)
+            .or($wid.eq($crate::database::pool::LEGACY_VISIBLE_WORKSPACE_ID))
+    };
+}
+
 #[derive(Debug, Clone)]
 pub struct PoolConfig {
     pub max_size: u32,
@@ -244,6 +287,24 @@ impl SqliteCustomizer {
         "is_compressed",
     ];
 
+    /// Project the legacy `conversations` table into the 17-column shape
+    /// expected by the read layer.
+    ///
+    /// Three categories of columns:
+    /// 1. **Present in legacy schema** → pass through (`legacy.<col>`).
+    /// 2. **Missing + has a safe default** → emit a SQL literal default so
+    ///    that read queries (which filter on workspace_id, treat
+    ///    is_compressed as 0/1, etc.) keep working on legacy rows.
+    /// 3. **Missing + unsafe to default** → emit `NULL AS <col>`. Read
+    ///    queries must be defensive against NULL for these.
+    ///
+    /// `workspace_id` is the most important case. When the legacy DB
+    /// predates the workspace split it has no `workspace_id` column; if we
+    /// emitted raw `NULL` here the read queries (`WHERE workspace_id = ?`)
+    /// would silently filter every legacy row out and the legacy DB would
+    /// appear empty. The fix here projects a sentinel (`0`) and the read
+    /// queries are widened to `workspace_id = ? OR workspace_id = 0` via
+    /// the `LEGACY_VISIBLE_WORKSPACE_ID` constant below.
     fn legacy_projection(conn: &mut SqliteConnection) -> Option<String> {
         #[derive(QueryableByName)]
         struct ColumnName {
@@ -262,7 +323,19 @@ impl SqliteCustomizer {
                     if present.contains(*column) {
                         format!("legacy.{column}")
                     } else {
-                        format!("NULL AS {column}")
+                        // Sentinel default for legacy rows whose schema predates the
+                        // workspace split. The read queries match this sentinel to
+                        // make legacy rows visible; tighten the matcher on the read
+                        // side if you need stricter ownership semantics.
+                        let default = match *column {
+                            "workspace_id" => LEGACY_VISIBLE_WORKSPACE_ID.to_string(),
+                            "is_compressed" => "0".to_string(),
+                            "message_count" => "0".to_string(),
+                            // Text/bytes/timestamp columns — NULL is the right
+                            // semantic default ("unknown" / "not yet extracted").
+                            _ => format!("NULL AS {column}"),
+                        };
+                        format!("{default} AS {column}")
                     }
                 })
                 .collect::<Vec<_>>()
