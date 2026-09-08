@@ -1278,8 +1278,9 @@ mod tests {
         // finish_reason=Length indicates the model hit its provider-side
         // output token budget. This must surface as a terminal error so the
         // orchestrator does not loop on the same truncated response.
-        let messages = vec![Ok(ChatCompletionMessage::assistant(Content::part(""))
-            .finish_reason(FinishReason::Length))];
+        let messages =
+            vec![Ok(ChatCompletionMessage::assistant(Content::part(""))
+                .finish_reason(FinishReason::Length))];
         let fixture: BoxStream<ChatCompletionMessage, anyhow::Error> =
             Box::pin(tokio_stream::iter(messages));
 
@@ -1300,7 +1301,7 @@ mod tests {
         let messages = vec![Ok(ChatCompletionMessage::assistant(Content::part(""))
             .finish_reason(FinishReason::Length)
             .tool_calls(vec![ToolCall::Full(ToolCallFull {
-                name: ToolName::new("read").into(),
+                name: ToolName::new("read"),
                 call_id: Some(ToolCallId::new("c1")),
                 arguments: ToolCallArguments::from_json("{}"),
                 thought_signature: None,

@@ -307,10 +307,7 @@ async fn bounded_window_truncation_emits_max_tokens_reached_interrupt() {
                 "MaxTokensReached interrupt must record finish_reason=length"
             );
         }
-        other => panic!(
-            "Interrupt reason must be MaxTokensReached, got {:?}",
-            other
-        ),
+        other => panic!("Interrupt reason must be MaxTokensReached, got {:?}", other),
     }
 
     // The orchestrator must NOT have looped and re-called the model. With the
@@ -326,8 +323,8 @@ async fn bounded_window_truncation_emits_max_tokens_reached_interrupt() {
 /// considered terminal (the model couldn't produce a final answer at all).
 #[tokio::test]
 async fn length_with_tool_calls_is_not_terminal() {
-    let tool_call = ToolCallFull::new("fs_read")
-        .arguments(ToolCallArguments::from(json!({"path": "doc.md"})));
+    let tool_call =
+        ToolCallFull::new("fs_read").arguments(ToolCallArguments::from(json!({"path": "doc.md"})));
     let tool_result = ToolResult::new("fs_read").output(Ok(ToolOutput::text("# Heading\n\nbody")));
 
     let mut ctx = TestContext::default()
@@ -370,7 +367,7 @@ async fn length_with_tool_calls_is_not_terminal() {
         .iter()
         .filter(|m| m.has_role(Role::Assistant) && !m.has_tool_call())
         .filter_map(|m| m.content())
-        .last();
+        .next_back();
     assert_eq!(
         final_answer,
         Some("The file contains a heading and body."),
