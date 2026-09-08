@@ -4,7 +4,7 @@ use anyhow::Context;
 use convert_case::{Case, Casing};
 use forge_domain::{
     AgentId, ChatRequest, ChatResponse, ChatResponseContent, Conversation, ConversationId, Event,
-    TitleFormat, ToolCallContext, ToolDefinition, ToolName, ToolOutput,
+    InterruptionReason, TitleFormat, ToolCallContext, ToolDefinition, ToolName, ToolOutput,
 };
 use forge_template::Element;
 use futures::StreamExt;
@@ -120,14 +120,34 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> AgentEx
                 ChatResponse::ToolCallEnd(_) => ctx.send(message).await?,
                 ChatResponse::RetryAttempt { .. } => ctx.send(message).await?,
                 ChatResponse::Interrupt { reason } => {
-                    return Err(Error::AgentToolInterrupted(reason))
-                        .context(format!(
-                            "Tool call to '{}' failed.\n\
-                             Note: This is an AGENTIC tool (powered by an LLM), not a traditional function.\n\
-                             The failure occurred because the underlying LLM did not behave as expected.\n\
-                             This is typically caused by model limitations, prompt issues, or reaching safety limits.",
-                            agent_id.as_str()
-                        ));
+                    // Format the interruption reason so the calling agent sees
+                    // an actionable message rather than `{:?}` debug formatting.
+                    let detail = match &reason {
+                        InterruptionReason::MaxRequestPerTurnLimitReached { limit } => format!(
+                            "maximum request per turn limit ({limit}) reached"
+                        ),
+                        InterruptionReason::MaxToolFailurePerTurnLimitReached { limit, errors } => {
+                            let failing = errors
+                                .keys()
+                                .map(|n| n.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            format!(
+                                "maximum tool failure limit ({limit}) reached (failing tools: {failing})"
+                            )
+                        }
+                        InterruptionReason::MaxTokensReached { model, finish_reason } => format!(
+                            "provider returned finish_reason={finish_reason} on model `{model}` \
+                             (output token budget exhausted before producing a final answer)"
+                        ),
+                    };
+                    return Err(Error::AgentToolInterrupted(reason)).context(format!(
+                        "Tool call to '{}' failed: {detail}.\n\
+                         Note: This is an AGENTIC tool (powered by an LLM), not a traditional function.\n\
+                         The failure occurred because the underlying LLM did not behave as expected.\n\
+                         This is typically caused by model limitations, prompt issues, or reaching safety limits.",
+                        agent_id.as_str()
+                    ));
                 }
             }
         }

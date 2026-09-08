@@ -102,6 +102,15 @@ pub enum InterruptionReason {
     MaxRequestPerTurnLimitReached {
         limit: u64,
     },
+    /// Provider truncated output at its `max_tokens` budget (`finish_reason=length`).
+    /// Carries the model id and the raw finish_reason for observability +
+    /// diagnostics. The agent's response was lost mid-stream, so the user must
+    /// retry with a higher `max_tokens`, an explicit `reasoning_effort`, or a
+    /// different model.
+    MaxTokensReached {
+        model: String,
+        finish_reason: String,
+    },
 }
 
 #[derive(Clone)]
