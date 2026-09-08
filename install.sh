@@ -210,11 +210,13 @@ add_to_path "$INSTALL_DIR"
 if [ "$SKIP_FORGE" = "0" ]; then
     for alias in forge forge-dev; do
         alias_path="$INSTALL_DIR/$alias"
-        if [ ! -e "$alias_path" ]; then
-            cp "$INSTALL_DIR/helioslite" "$alias_path"
-            chmod +x "$alias_path"
+        if [ -e "$alias_path" ]; then
+            echo -e "  ✓ \033[32mUpdated legacy alias $alias_path\033[0m"
+        else
             echo -e "  ✓ \033[32mCreated legacy alias $alias_path\033[0m"
         fi
+        cp "$INSTALL_DIR/helioslite" "$alias_path"
+        chmod +x "$alias_path"
     done
 fi
 
