@@ -102,7 +102,9 @@ fn reject_legacy_only_mutation(
         ))
         .get_result::<bool>(connection)?;
         if legacy {
-            anyhow::bail!("Conversation is not writable in the local database; import legacy history before modifying it");
+            anyhow::bail!(
+                "Conversation is not writable in the local database; import legacy history before modifying it"
+            );
         }
     }
     Ok(())
