@@ -863,11 +863,14 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 // a tool call (i.e. last compaction point heuristic) and truncate
                 // the context JSON to that prefix. If no tool call is found,
                 // fall back to clearing context to the most recent user message.
-                let record: Option<ConversationRecord> = conversations_all::table
-                    .filter(conversations_all::conversation_id.eq(&conversation_id_str))
+                let record: Option<ConversationRecord> = conversations::table
+                    .filter(conversations::conversation_id.eq(&conversation_id_str))
                     .first(connection)
                     .optional()?;
 
+                if record.is_none() {
+                    anyhow::bail!("Conversation is not writable in the local database; import legacy history before rewinding");
+                }
                 let new_context: Option<String> = match record {
                     Some(r) if r.context.is_some() => {
                         let ctx = r.context.as_ref().unwrap();
@@ -888,8 +891,8 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 .execute(connection)?;
 
                 // Re-read the updated record so we can return it.
-                let updated: Option<ConversationRecord> = conversations_all::table
-                    .filter(conversations_all::conversation_id.eq(&conversation_id_str))
+                let updated: Option<ConversationRecord> = conversations::table
+                    .filter(conversations::conversation_id.eq(&conversation_id_str))
                     .first(connection)
                     .optional()?;
                 Ok(updated.and_then(|r| Conversation::try_from(r).ok()))
@@ -950,8 +953,8 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
         self.run_with_connection(move |connection, _wid| {
             // Read current state to validate transition
-            let current_record: Option<ConversationRecord> = conversations_all::table
-                .filter(conversations_all::conversation_id.eq(&conversation_id))
+            let current_record: Option<ConversationRecord> = conversations::table
+                .filter(conversations::conversation_id.eq(&conversation_id))
                 .first(connection)
                 .optional()?;
 
@@ -1030,9 +1033,9 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
         self.run_with_connection(move |connection, _wid| {
             // Read current state to enforce invariant: only prune from 'verified'.
-            // Reads from `conversations_all` so legacy rows are also covered.
-            let current_record: Option<ConversationRecord> = conversations_all::table
-                .filter(conversations_all::conversation_id.eq(&conversation_id))
+            // Mutation validation reads only local, writable records.
+            let current_record: Option<ConversationRecord> = conversations::table
+                .filter(conversations::conversation_id.eq(&conversation_id))
                 .first(connection)
                 .optional()?;
 
@@ -3910,46 +3913,63 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_split_db_unscoped_legacy_discovery_preserves_workspace_writes()
-    -> anyhow::Result<()> {
+    async fn test_split_db_unscoped_legacy_discovery_preserves_workspace_writes() {
         use diesel::Connection;
-        let fixture = tempfile::tempdir()?;
+        let fixture = tempfile::tempdir().unwrap();
         let legacy_path = fixture.path().join("legacy.db");
         let legacy_id = ConversationId::generate();
-        let mut legacy = diesel::SqliteConnection::establish(legacy_path.to_str().unwrap())?;
+        let mut legacy =
+            diesel::SqliteConnection::establish(legacy_path.to_str().unwrap()).unwrap();
         diesel::sql_query("CREATE TABLE conversations (conversation_id TEXT PRIMARY KEY NOT NULL, title TEXT, context TEXT, created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP)")
-            .execute(&mut legacy)?;
+            .execute(&mut legacy).unwrap();
         diesel::sql_query("INSERT INTO conversations (conversation_id, title, created_at) VALUES (?, 'unscoped legacy', CURRENT_TIMESTAMP)")
             .bind::<diesel::sql_types::Text, _>(legacy_id.to_string())
-            .execute(&mut legacy)?;
+            .execute(&mut legacy).unwrap();
         drop(legacy);
-        let pool = Arc::new(DatabasePool::try_from(
-            PoolConfig::new(fixture.path().join("write.db"))
-                .with_legacy_database_path(Some(legacy_path.clone())),
-        )?);
+        let pool = Arc::new(
+            DatabasePool::try_from(
+                PoolConfig::new(fixture.path().join("write.db"))
+                    .with_legacy_database_path(Some(legacy_path.clone())),
+            )
+            .unwrap(),
+        );
         let zero_repo = ConversationRepositoryImpl::new(pool.clone(), WorkspaceHash::new(0));
         let local = Conversation::new(ConversationId::generate())
             .title(Some("local workspace zero".to_string()));
-        zero_repo.upsert_conversation(local.clone()).await?;
+        zero_repo.upsert_conversation(local.clone()).await.unwrap();
         let repo = ConversationRepositoryImpl::new(pool, WorkspaceHash::new(42));
 
-        let actual = repo.get_all_conversations(None).await?.unwrap_or_default();
+        let actual = repo
+            .get_all_conversations(None)
+            .await
+            .unwrap()
+            .unwrap_or_default();
         let expected = vec![legacy_id];
         assert_eq!(actual.iter().map(|c| c.id).collect::<Vec<_>>(), expected);
-        repo.delete_conversation(&local.id).await?;
+        assert!(
+            repo.mark_intent_state(&legacy_id, "extracting")
+                .await
+                .is_err()
+        );
+        assert!(repo.rewind_conversation(&legacy_id).await.is_err());
+        assert!(repo.prune_conversation(&legacy_id).await.is_err());
+        repo.delete_conversation(&local.id).await.unwrap();
         let remaining = zero_repo
             .get_all_conversations(None)
-            .await?
+            .await
+            .unwrap()
             .unwrap_or_default();
         assert!(remaining.iter().any(|c| c.id == local.id));
-        let mut legacy = diesel::SqliteConnection::establish(legacy_path.to_str().unwrap())?;
+        let mut legacy =
+            diesel::SqliteConnection::establish(legacy_path.to_str().unwrap()).unwrap();
         #[derive(diesel::QueryableByName)]
         struct Count {
             #[diesel(sql_type = diesel::sql_types::BigInt)]
             count: i64,
         }
         let actual = diesel::sql_query("SELECT count(*) AS count FROM conversations")
-            .get_result::<Count>(&mut legacy)?
+            .get_result::<Count>(&mut legacy)
+            .unwrap()
             .count;
         assert_eq!(actual, 1);
         // A real workspace-zero legacy row must not be confused with a
@@ -3957,19 +3977,23 @@ mod tests {
         diesel::sql_query(
             "ALTER TABLE conversations ADD COLUMN workspace_id BIGINT NOT NULL DEFAULT 0",
         )
-        .execute(&mut legacy)?;
+        .execute(&mut legacy)
+        .unwrap();
         drop(legacy);
-        let scoped_pool = Arc::new(DatabasePool::try_from(
-            PoolConfig::new(fixture.path().join("scoped-write.db"))
-                .with_legacy_database_path(Some(legacy_path)),
-        )?);
+        let scoped_pool = Arc::new(
+            DatabasePool::try_from(
+                PoolConfig::new(fixture.path().join("scoped-write.db"))
+                    .with_legacy_database_path(Some(legacy_path)),
+            )
+            .unwrap(),
+        );
         let scoped_repo = ConversationRepositoryImpl::new(scoped_pool, WorkspaceHash::new(42));
         let actual = scoped_repo
             .get_all_conversations(None)
-            .await?
+            .await
+            .unwrap()
             .unwrap_or_default();
         assert!(actual.is_empty());
-        Ok(())
     }
 
     #[tokio::test]
