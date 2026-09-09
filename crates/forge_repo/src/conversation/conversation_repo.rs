@@ -87,6 +87,27 @@ pub struct ConversationRepositoryImpl {
     wid: WorkspaceHash,
 }
 
+/// Reject attached-only history without changing missing-ID no-op semantics.
+fn reject_legacy_only_mutation(
+    connection: &mut diesel::SqliteConnection,
+    conversation_id: &str,
+) -> anyhow::Result<()> {
+    let local = diesel::select(diesel::dsl::exists(
+        conversations::table.filter(conversations::conversation_id.eq(conversation_id)),
+    ))
+    .get_result::<bool>(connection)?;
+    if !local {
+        let legacy = diesel::select(diesel::dsl::exists(
+            conversations_all::table.filter(conversations_all::conversation_id.eq(conversation_id)),
+        ))
+        .get_result::<bool>(connection)?;
+        if legacy {
+            anyhow::bail!("Conversation is not writable in the local database; import legacy history before modifying it");
+        }
+    }
+    Ok(())
+}
+
 impl ConversationRepositoryImpl {
     pub fn new(pool: Arc<DatabasePool>, workspace_id: WorkspaceHash) -> Self {
         Self { pool, wid: workspace_id }
@@ -441,6 +462,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let conversation_id = *conversation_id;
         self.run_with_connection(move |connection, wid| {
             let workspace_id = wid.id() as i64;
+            reject_legacy_only_mutation(connection, &conversation_id.into_string())?;
 
             // Security: Ensure users can only delete conversations within their workspace
             diesel::delete(conversations::table)
@@ -837,6 +859,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let conversation_id_str = conversation_id.into_string();
         let now: chrono::NaiveDateTime = chrono::Utc::now().naive_utc();
         self.run_with_connection(move |connection, _wid| {
+            reject_legacy_only_mutation(connection, &conversation_id_str)?;
             diesel::update(
                 conversations::table
                     .filter(conversations::conversation_id.eq(&conversation_id_str)),
@@ -3953,6 +3976,25 @@ mod tests {
         );
         assert!(repo.rewind_conversation(&legacy_id).await.is_err());
         assert!(repo.prune_conversation(&legacy_id).await.is_err());
+        assert!(repo.delete_conversation(&legacy_id).await.is_err());
+        assert!(repo.update_parent_id(&legacy_id, None).await.is_err());
+        // Missing IDs retain the existing idempotent no-op contract.
+        let missing_id = ConversationId::generate();
+        repo.delete_conversation(&missing_id).await.unwrap();
+        repo.update_parent_id(&missing_id, None).await.unwrap();
+        zero_repo
+            .update_parent_id(&local.id, Some(&missing_id))
+            .await
+            .unwrap();
+        assert_eq!(
+            zero_repo
+                .get_conversation(&local.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .parent_id,
+            Some(missing_id)
+        );
         repo.delete_conversation(&local.id).await.unwrap();
         let remaining = zero_repo
             .get_all_conversations(None)
@@ -3960,6 +4002,9 @@ mod tests {
             .unwrap()
             .unwrap_or_default();
         assert!(remaining.iter().any(|c| c.id == local.id));
+        // Release all pooled attachments before changing the legacy schema.
+        drop(repo);
+        drop(zero_repo);
         let mut legacy =
             diesel::SqliteConnection::establish(legacy_path.to_str().unwrap()).unwrap();
         #[derive(diesel::QueryableByName)]
