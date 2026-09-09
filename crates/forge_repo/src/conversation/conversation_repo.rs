@@ -382,10 +382,13 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // are both NULL — those rows have titles + timestamps but no
             // message history. We must not filter them out at the SQL layer
             // or the picker will hide them.
-            let mut query = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id))
-                .order(conversations_all::updated_at.desc())
-                .into_boxed();
+            let mut query =
+                conversations_all::table
+                    .filter(conversations_all::workspace_id.eq(&workspace_id).or(
+                        diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                    ))
+                    .order(conversations_all::updated_at.desc())
+                    .into_boxed();
 
             if let Some(limit_value) = limit {
                 query = query.limit(limit_value as i64);
@@ -416,12 +419,15 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // are both NULL — those rows have titles + timestamps but no
             // message history. We must not filter them out at the SQL layer
             // or the picker will hide them.
-            let record: Option<ConversationRecord> = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id))
-                .order(conversations_all::updated_at.desc())
-                .select(conversations_all::all_columns)
-                .first(connection)
-                .optional()?;
+            let record: Option<ConversationRecord> =
+                conversations_all::table
+                    .filter(conversations_all::workspace_id.eq(&workspace_id).or(
+                        diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                    ))
+                    .order(conversations_all::updated_at.desc())
+                    .select(conversations_all::all_columns)
+                    .first(connection)
+                    .optional()?;
             let conversation = match record {
                 Some(record) => Some(Conversation::try_from(record)?),
                 None => None,
@@ -457,12 +463,15 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             let workspace_id = wid.id() as i64;
             // Read from `conversations_all` so legacy rows are visible.
-            let records: Vec<ConversationRecord> = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id))
-                .filter(conversations_all::parent_id.eq(&parent_id))
-                .order(conversations_all::updated_at.desc())
-                .select(conversations_all::all_columns)
-                .load(connection)?;
+            let records: Vec<ConversationRecord> =
+                conversations_all::table
+                    .filter(conversations_all::workspace_id.eq(&workspace_id).or(
+                        diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                    ))
+                    .filter(conversations_all::parent_id.eq(&parent_id))
+                    .order(conversations_all::updated_at.desc())
+                    .select(conversations_all::all_columns)
+                    .load(connection)?;
 
             if records.is_empty() {
                 return Ok(None);
@@ -490,14 +499,17 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // must run BEFORE the LIMIT so the most-recent rows are not
             // dominated by ephemeral subagent runs that truncate older
             // user conversations.
-            let mut query = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id))
-                .filter(conversations_all::parent_id.is_null())
-                .filter(sql::<diesel::sql_types::Bool>(
-                    "COALESCE(json_extract(context, '$.initiator'), 'user') <> 'agent'",
-                ))
-                .order(conversations_all::updated_at.desc())
-                .into_boxed();
+            let mut query =
+                conversations_all::table
+                    .filter(conversations_all::workspace_id.eq(&workspace_id).or(
+                        diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                    ))
+                    .filter(conversations_all::parent_id.is_null())
+                    .filter(sql::<diesel::sql_types::Bool>(
+                        "COALESCE(json_extract(context, '$.initiator'), 'user') <> 'agent'",
+                    ))
+                    .order(conversations_all::updated_at.desc())
+                    .into_boxed();
 
             if let Some(limit_value) = limit {
                 query = query.limit(limit_value as i64);
@@ -547,7 +559,9 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             if !all_workspaces {
                 let workspace_id = wid.id() as i64;
-                query = query.filter(conversations_all::workspace_id.eq(workspace_id));
+                query = query.filter(conversations_all::workspace_id.eq(workspace_id).or(
+                    diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                ));
             }
 
             if let Some(limit_value) = limit {
@@ -578,11 +592,14 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             let workspace_id = wid.id() as i64;
             // Read from `conversations_all` so legacy rows are visible.
-            let mut query = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id))
-                .filter(conversations_all::source.eq(&source))
-                .order(conversations_all::updated_at.desc())
-                .into_boxed();
+            let mut query =
+                conversations_all::table
+                    .filter(conversations_all::workspace_id.eq(&workspace_id).or(
+                        diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                    ))
+                    .filter(conversations_all::source.eq(&source))
+                    .order(conversations_all::updated_at.desc())
+                    .into_boxed();
 
             if let Some(limit_value) = limit {
                 query = query.limit(limit_value as i64);
@@ -892,11 +909,14 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             let workspace_id = wid.id() as i64;
             // Read from `conversations_all` so legacy rows are visible.
-            let mut query = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id))
-                .filter(conversations_all::cwd.eq(&cwd))
-                .order(conversations_all::updated_at.desc())
-                .into_boxed();
+            let mut query =
+                conversations_all::table
+                    .filter(conversations_all::workspace_id.eq(&workspace_id).or(
+                        diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                    ))
+                    .filter(conversations_all::cwd.eq(&cwd))
+                    .order(conversations_all::updated_at.desc())
+                    .into_boxed();
 
             if let Some(limit_value) = limit {
                 query = query.limit(limit_value as i64);
@@ -3886,6 +3906,69 @@ mod tests {
             stats.integrity_check, "ok",
             "PRAGMA integrity_check should report ok"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_split_db_unscoped_legacy_discovery_preserves_workspace_writes()
+    -> anyhow::Result<()> {
+        use diesel::Connection;
+        let fixture = tempfile::tempdir()?;
+        let legacy_path = fixture.path().join("legacy.db");
+        let legacy_id = ConversationId::generate();
+        let mut legacy = diesel::SqliteConnection::establish(legacy_path.to_str().unwrap())?;
+        diesel::sql_query("CREATE TABLE conversations (conversation_id TEXT PRIMARY KEY NOT NULL, title TEXT, context TEXT, created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP)")
+            .execute(&mut legacy)?;
+        diesel::sql_query("INSERT INTO conversations (conversation_id, title, created_at) VALUES (?, 'unscoped legacy', CURRENT_TIMESTAMP)")
+            .bind::<diesel::sql_types::Text, _>(legacy_id.to_string())
+            .execute(&mut legacy)?;
+        drop(legacy);
+        let pool = Arc::new(DatabasePool::try_from(
+            PoolConfig::new(fixture.path().join("write.db"))
+                .with_legacy_database_path(Some(legacy_path.clone())),
+        )?);
+        let zero_repo = ConversationRepositoryImpl::new(pool.clone(), WorkspaceHash::new(0));
+        let local = Conversation::new(ConversationId::generate())
+            .title(Some("local workspace zero".to_string()));
+        zero_repo.upsert_conversation(local.clone()).await?;
+        let repo = ConversationRepositoryImpl::new(pool, WorkspaceHash::new(42));
+
+        let actual = repo.get_all_conversations(None).await?.unwrap_or_default();
+        let expected = vec![legacy_id];
+        assert_eq!(actual.iter().map(|c| c.id).collect::<Vec<_>>(), expected);
+        repo.delete_conversation(&local.id).await?;
+        let remaining = zero_repo
+            .get_all_conversations(None)
+            .await?
+            .unwrap_or_default();
+        assert!(remaining.iter().any(|c| c.id == local.id));
+        let mut legacy = diesel::SqliteConnection::establish(legacy_path.to_str().unwrap())?;
+        #[derive(diesel::QueryableByName)]
+        struct Count {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            count: i64,
+        }
+        let actual = diesel::sql_query("SELECT count(*) AS count FROM conversations")
+            .get_result::<Count>(&mut legacy)?
+            .count;
+        assert_eq!(actual, 1);
+        // A real workspace-zero legacy row must not be confused with a
+        // projected placeholder for a schema that lacked workspace ownership.
+        diesel::sql_query(
+            "ALTER TABLE conversations ADD COLUMN workspace_id BIGINT NOT NULL DEFAULT 0",
+        )
+        .execute(&mut legacy)?;
+        drop(legacy);
+        let scoped_pool = Arc::new(DatabasePool::try_from(
+            PoolConfig::new(fixture.path().join("scoped-write.db"))
+                .with_legacy_database_path(Some(legacy_path)),
+        )?);
+        let scoped_repo = ConversationRepositoryImpl::new(scoped_pool, WorkspaceHash::new(42));
+        let actual = scoped_repo
+            .get_all_conversations(None)
+            .await?
+            .unwrap_or_default();
+        assert!(actual.is_empty());
         Ok(())
     }
 
