@@ -109,9 +109,7 @@ fn validate_local_mutation(
         ))
         .get_result::<bool>(connection)?;
         if legacy {
-            anyhow::bail!(
-                "Conversation is not writable in the local database; import legacy history before modifying it"
-            );
+            anyhow::bail!("Conversation exists only in attached legacy history and is read-only");
         }
     }
     Ok(())
@@ -151,29 +149,48 @@ impl ConversationRepositoryImpl {
         .await
     }
 
-    /// Upsert the borrowed-conversation write representation. The context
+    /// Validate ordinary writes before entering the shared persistence primitive.
+    /// Explicit import uses its separate insert-only, skip-existing path.
+    fn upsert_local_conversation_record(
+        connection: &mut PooledSqliteConnection,
+        record: &ConversationRecord,
+    ) -> anyhow::Result<()> {
+        validate_local_mutation(connection, &record.conversation_id, record.workspace_id)?;
+        Self::upsert_conversation_ref_record(connection, record)
+    }
+
+    /// Persist a prevalidated local conversation representation. The context
     /// columns form one storage value and must therefore be updated together.
+    /// The conflict predicate also protects against a foreign insert racing the
+    /// caller's ownership check; zero affected rows must not report success.
     fn upsert_conversation_ref_record(
         connection: &mut PooledSqliteConnection,
         record: &ConversationRecord,
     ) -> anyhow::Result<()> {
-        diesel::insert_into(conversations::table)
-            .values(record)
-            .on_conflict(conversations::conversation_id)
-            .do_update()
-            .set((
-                conversations::title.eq(&record.title),
-                conversations::context.eq(&record.context),
-                conversations::context_zstd.eq(&record.context_zstd),
-                conversations::is_compressed.eq(record.is_compressed),
-                conversations::updated_at.eq(record.updated_at),
-                conversations::metrics.eq(&record.metrics),
-                conversations::parent_id.eq(&record.parent_id),
-                conversations::source.eq(&record.source),
-                conversations::cwd.eq(&record.cwd),
-                conversations::message_count.eq(record.message_count),
-            ))
-            .execute(connection)?;
+        let affected = diesel::query_dsl::methods::FilterDsl::filter(
+            diesel::insert_into(conversations::table)
+                .values(record)
+                .on_conflict(conversations::conversation_id)
+                .do_update()
+                .set((
+                    conversations::title.eq(&record.title),
+                    conversations::context.eq(&record.context),
+                    conversations::context_zstd.eq(&record.context_zstd),
+                    conversations::is_compressed.eq(record.is_compressed),
+                    conversations::updated_at.eq(record.updated_at),
+                    conversations::metrics.eq(&record.metrics),
+                    conversations::parent_id.eq(&record.parent_id),
+                    conversations::source.eq(&record.source),
+                    conversations::cwd.eq(&record.cwd),
+                    conversations::message_count.eq(record.message_count),
+                )),
+            conversations::workspace_id.eq(record.workspace_id),
+        )
+        .execute(connection)?;
+        anyhow::ensure!(
+            affected == 1,
+            "Conversation upsert did not affect a writable local row"
+        );
         Ok(())
     }
 }
@@ -343,7 +360,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let conversation = conversation.clone();
         self.run_with_connection(move |connection, wid| {
             let record = ConversationRecord::new_ref(&conversation, wid);
-            Self::upsert_conversation_ref_record(connection, &record)
+            Self::upsert_local_conversation_record(connection, &record)
         })
         .await
     }
@@ -351,24 +368,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
     async fn upsert_conversation(&self, conversation: Conversation) -> anyhow::Result<()> {
         self.run_with_connection(move |connection, wid| {
             let record = ConversationRecord::new(conversation, wid);
-            diesel::insert_into(conversations::table)
-                .values(&record)
-                .on_conflict(conversations::conversation_id)
-                .do_update()
-                .set((
-                    conversations::title.eq(&record.title),
-                    conversations::context.eq(&record.context),
-                    conversations::context_zstd.eq(&record.context_zstd),
-                    conversations::is_compressed.eq(record.is_compressed),
-                    conversations::updated_at.eq(record.updated_at),
-                    conversations::metrics.eq(&record.metrics),
-                    conversations::parent_id.eq(&record.parent_id),
-                    conversations::source.eq(&record.source),
-                    conversations::cwd.eq(&record.cwd),
-                    conversations::message_count.eq(record.message_count),
-                ))
-                .execute(connection)?;
-            Ok(())
+            Self::upsert_local_conversation_record(connection, &record)
         })
         .await
     }
@@ -906,7 +906,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
                     .optional()?;
 
                 if record.is_none() {
-                    anyhow::bail!("Conversation is not writable in the local database; import legacy history before rewinding");
+                    anyhow::bail!("Conversation was not found in the writable local database");
                 }
                 let new_context: Option<String> = match record {
                     Some(r) if r.context.is_some() => {
@@ -2201,6 +2201,48 @@ mod tests {
         assert!(actual.is_some());
         assert_eq!(actual.unwrap().title, Some("Updated Title".to_string()));
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn ordinary_upserts_allow_new_and_owned_local_records() {
+        for borrowed in [false, true] {
+            let repo = repository().unwrap();
+            let mut fixture = Conversation::new(ConversationId::generate());
+            for title in ["new", "updated"] {
+                fixture = fixture.title(Some(title.to_string()));
+                if borrowed {
+                    repo.upsert_conversation_ref(&fixture).await.unwrap();
+                } else {
+                    repo.upsert_conversation(fixture.clone()).await.unwrap();
+                }
+                let actual = repo.get_conversation(&fixture.id).await.unwrap().unwrap();
+                assert_eq!(actual.title, Some(title.to_string()));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn upsert_conflict_primitive_rejects_foreign_owner_without_changing_row() {
+        let repo = repository().unwrap();
+        let fixture =
+            Conversation::new(ConversationId::generate()).title(Some("original".to_string()));
+        repo.upsert_conversation(fixture.clone()).await.unwrap();
+        let incoming = fixture.clone().title(Some("foreign overwrite".to_string()));
+        let record = ConversationRecord::new_ref(&incoming, WorkspaceHash::new(42));
+        // Bypass the ordinary precheck to model a foreign insert winning the
+        // race before the ON CONFLICT statement executes.
+        let error = repo
+            .run_with_connection(move |connection, _wid| {
+                ConversationRepositoryImpl::upsert_conversation_ref_record(connection, &record)
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Conversation upsert did not affect a writable local row"
+        );
+        let actual = repo.get_conversation(&fixture.id).await.unwrap().unwrap();
+        assert_eq!(actual.title, fixture.title);
     }
 
     #[tokio::test]
@@ -3969,7 +4011,7 @@ mod tests {
         let legacy_id = ConversationId::generate();
         let mut legacy =
             diesel::SqliteConnection::establish(legacy_path.to_str().unwrap()).unwrap();
-        diesel::sql_query("CREATE TABLE conversations (conversation_id TEXT PRIMARY KEY NOT NULL, title TEXT, context TEXT, created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP)")
+        diesel::sql_query("CREATE TABLE conversations (conversation_id TEXT PRIMARY KEY NOT NULL, title TEXT, context TEXT, created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP, metrics TEXT)")
             .execute(&mut legacy).unwrap();
         diesel::sql_query("INSERT INTO conversations (conversation_id, title, created_at) VALUES (?, 'unscoped legacy', CURRENT_TIMESTAMP)")
             .bind::<diesel::sql_types::Text, _>(legacy_id.to_string())
@@ -4004,6 +4046,26 @@ mod tests {
         assert!(repo.prune_conversation(&legacy_id).await.is_err());
         assert!(repo.delete_conversation(&legacy_id).await.is_err());
         assert!(repo.update_parent_id(&legacy_id, None).await.is_err());
+        let legacy_copy = Conversation::new(legacy_id).title(Some("shadow".to_string()));
+        assert!(repo.upsert_conversation(legacy_copy.clone()).await.is_err());
+        assert!(repo.upsert_conversation_ref(&legacy_copy).await.is_err());
+        let visible = repo.get_all_conversations(None).await.unwrap().unwrap();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].title.as_deref(), Some("unscoped legacy"));
+        // Explicit import retains its existing skip-existing contract; it does
+        // not promote an attached legacy row into the writable database.
+        let report = repo.import_forge_db(legacy_path.clone()).await.unwrap();
+        assert_eq!((report.imported, report.skipped_existing), (0, 1));
+        let local_legacy_count = repo
+            .run_with_connection(move |connection, _wid| {
+                Ok(conversations::table
+                    .filter(conversations::conversation_id.eq(legacy_id.into_string()))
+                    .count()
+                    .get_result::<i64>(connection)?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(local_legacy_count, 0);
         // Missing IDs retain the existing idempotent no-op contract.
         let missing_id = ConversationId::generate();
         repo.delete_conversation(&missing_id).await.unwrap();
@@ -4027,6 +4089,8 @@ mod tests {
             .unwrap()
             .unwrap();
         let errors = [
+            repo.upsert_conversation(local.clone()).await.unwrap_err(),
+            repo.upsert_conversation_ref(&local).await.unwrap_err(),
             repo.delete_conversation(&local.id).await.unwrap_err(),
             repo.update_parent_id(&local.id, None).await.unwrap_err(),
             repo.rewind_conversation(&local.id).await.unwrap_err(),
