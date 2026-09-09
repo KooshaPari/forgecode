@@ -51,7 +51,7 @@ Read-only comparisons against main `999b5c5046c047b7041fdfe0104e1e0135d3adb2`; n
 
 No source port or synthetic PR is justified for these groups. Accounting delta is five covered and five fewer pending, without changing the denominator or authorizing ref retirement. Retained branch aliases are local/fork `fix/release-sbom-20260826`, `feat/forge-f3-semantic-memory-20260830`, and `fix/forge-sandbox-windows-config-20260901`.
 
-Reconciled aggregate for this independently deduplicated five-tip increment: **556 represented / 537 pending / 1093 fixed Mac tips** (prior baseline 551 / 542). The three SDK dispositions remain separately recorded and are not added to this aggregate until their accounting is independently reconciled. Runtime readiness and the PARTIAL legacy source are not promoted by these source-only closures.
+Reconciled aggregate for this independently deduplicated five-tip increment: **556 represented / 537 pending / 1093 fixed Mac tips** (prior baseline 551 / 542). Independent SDK reconciliation adds **zero**: its three exact Windows tips are absent from both frozen Mac candidate partitions and are not ancestors of either baseline source; see `SDK-SOURCE-DISPOSITION-20260909.md` for evidence and direct-snapshot limitations. Three other Windows dispositions are also distinctly recorded without changing Mac counts. Runtime readiness and the PARTIAL legacy source are not promoted by these source-only closures.
 
 ## Earlier audit baseline and limits
 
