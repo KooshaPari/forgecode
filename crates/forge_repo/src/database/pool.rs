@@ -345,10 +345,17 @@ impl SqliteCustomizer {
                             // the same domain defaults as a newly migrated row.
                             "intent_state" => "'pending' AS intent_state".to_string(),
                             "is_compressed" => "0 AS is_compressed".to_string(),
+                            // Decoding requires an integer. Visibility is
+                            // determined by separate provenance, not this value.
+                            "workspace_id" => "0 AS workspace_id".to_string(),
                             _ => format!("NULL AS {column}"),
                         }
                     }
                 })
+                .chain(std::iter::once(format!(
+                    "{} AS __forge_legacy_unscoped",
+                    i32::from(!present.contains("workspace_id"))
+                )))
                 .collect::<Vec<_>>()
                 .join(", "),
         )
@@ -413,7 +420,7 @@ impl SqliteCustomizer {
                 .map(|legacy_columns| {
                     let sql = format!(
                         "CREATE TEMP VIEW IF NOT EXISTS conversations_all AS \
-                     SELECT {local_columns} FROM conversations \
+                     SELECT {local_columns}, 0 AS __forge_legacy_unscoped FROM conversations \
                      UNION ALL SELECT {legacy_columns} FROM legacy_read.conversations AS legacy"
                     );
                     diesel::sql_query(sql).execute(conn).is_ok()
@@ -426,7 +433,7 @@ impl SqliteCustomizer {
 
         let _ = diesel::sql_query(
             "CREATE TEMP VIEW IF NOT EXISTS conversations_all AS \
-             SELECT * FROM conversations",
+             SELECT *, 0 AS __forge_legacy_unscoped FROM conversations",
         )
         .execute(conn);
     }
