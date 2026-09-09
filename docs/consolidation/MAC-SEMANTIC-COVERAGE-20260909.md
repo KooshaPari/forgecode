@@ -51,7 +51,24 @@ Read-only comparisons against main `999b5c5046c047b7041fdfe0104e1e0135d3adb2`; n
 
 No source port or synthetic PR is justified for these groups. Accounting delta is five covered and five fewer pending, without changing the denominator or authorizing ref retirement. Retained branch aliases are local/fork `fix/release-sbom-20260826`, `feat/forge-f3-semantic-memory-20260830`, and `fix/forge-sandbox-windows-config-20260901`.
 
-Reconciled aggregate for this independently deduplicated five-tip increment: **556 represented / 537 pending / 1093 fixed Mac tips** (prior baseline 551 / 542). Independent SDK reconciliation adds **zero**: its three exact Windows tips are absent from both frozen Mac candidate partitions and are not ancestors of either baseline source; see `SDK-SOURCE-DISPOSITION-20260909.md` for evidence and direct-snapshot limitations. Three other Windows dispositions are also distinctly recorded without changing Mac counts. Runtime readiness and the PARTIAL legacy source are not promoted by these source-only closures.
+## Publication-lineage source dispositions
+
+Read-only static comparison against the same audited main closes eight further **exact frozen pending tip** keys. Each SHA is a direct `.refs[][1]` key in `/tmp/forgecode-542-unmatched-baseline-20260909.json`; the captured ref is recorded here to avoid treating a reachable ancestor as a tip. This is source-only representation evidence, not a build, runtime, release, or readiness claim.
+
+| Exact source tip | Captured frozen ref | Disposition and static evidence |
+|---|---|---|
+| `8ff6fcbe1d2e5490664ddc0a7d4fe126c1c1c56e` | `fork/wip/20260803T0034-18c82463a0b25670` | Represented: current `install.sh` retains repo/version validation, target allowlisting, mandatory checksum, and staged atomic install. |
+| `f6aa83f97fa67ec70db3a7b76c83d39be461e69f` | `fork/preserve/helioslite-snapshot-contract-20260807-f6aa83f97` | Represented: current snapshot contract retains schema, row, and provenance validation. |
+| `e4ac8ff09f9a6d51e6f328cc00e4e5897f93d5ae` | `fork/preserve/helioslite-wal-sidecar-20260807-e4ac8ff09` | Represented: current snapshot export rejects live SQLite WAL/SHM sidecars before reading. |
+| `5343fefbb8485ae2fa324706ca748bdc32410530` | `fork/fork/preserve/helioslite-publication-20260808` | Represented: current snapshot publication retains verified idempotent atomic bundle handling. |
+| `12029daf67f62555c92e29798bb608631a74a474` | `fork/fork/preserve/helioslite-publication-20260808-v2` | Represented: its two `content_sha256` explanatory lines remain in the current manifest contract. |
+| `b3aad92590d851ef8d10fe217a8ac973e202652f` | `fork/fork/preserve/helioslite-root-guard-20260808` | Represented: current UI validates canonical session roots and rejects symlink and `~/.forge` overlap. |
+| `ea43377a8792018310fdae9f6d053af6b18534ad` | `fork/preserve/helioslite-cli-parser-20260807` | Represented: current CLI preserves `sessions import-forge` explicit source/destination shape and UI dispatch. |
+| `f39ae6a1f46666630c0d72e0148dcec5e24431c1` | `fork/preserve/runtime-fallback-fix-20260806` | Superseded: the lifetime-only updater correction was removed by the later binary-aware updater redesign, which owns the replacement path. |
+
+Metadata and preservation wrapper tips are excluded from this source accounting, without independently closing their frozen-tip keys: `0af562c0`, `467eee76`, `a35bc3c7`, `64c9a337`, `6d7ca126`, `a0da285f`, `ab49d702`, `beef43f9`, `dccf42de`, and `dd03d085`. Source-bearing WIP tips `4fe8aaf0`, `5a75bf32`, `771a2bcd`, `aa25f50e`, and `ab34dbfb` remain pending review; no broad publication lineage is treated as covered.
+
+Reconciled aggregate for the independently deduplicated five-tip and publication eight-tip increments: **564 represented / 529 pending / 1093 fixed Mac tips** (prior baseline 551 / 542). Independent SDK reconciliation adds **zero**: its three exact Windows tips are absent from both frozen Mac candidate partitions and are not ancestors of either baseline source; see `SDK-SOURCE-DISPOSITION-20260909.md` for evidence and direct-snapshot limitations. Three other Windows dispositions are also distinctly recorded without changing Mac counts. Runtime readiness and the PARTIAL legacy source are not promoted by these source-only closures.
 
 ## Earlier audit baseline and limits
 
