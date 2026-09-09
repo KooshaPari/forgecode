@@ -251,7 +251,7 @@ jobs:
       run: |-
         set -euo pipefail
         mkdir -p release-assets
-        gh release download "${{ github.event.release.tag_name }}" \
+        gh release download "$RELEASE_TAG" \
           --repo "${{ github.repository }}" \
           --dir release-assets \
           --pattern "forge-*" \
@@ -260,6 +260,7 @@ jobs:
           --pattern "forge_dbd-*"
       env:
         GH_TOKEN: ${{ github.token }}
+        RELEASE_TAG: ${{ github.event.release.tag_name }}
     - name: Generate CycloneDX SBOM
       uses: anchore/sbom-action@6b92ff5b2cce1787a99198f282dd8a26d1991449
       with:
@@ -288,7 +289,7 @@ jobs:
       run: |-
         set -euo pipefail
         mkdir -p release-assets
-        gh release download "${{ github.event.release.tag_name }}" \
+        gh release download "$RELEASE_TAG" \
           --repo "${{ github.repository }}" \
           --dir release-assets \
           --pattern "forge-*" \
@@ -298,6 +299,7 @@ jobs:
           --pattern "*.cdx.json"
       env:
         GH_TOKEN: ${{ github.token }}
+        RELEASE_TAG: ${{ github.event.release.tag_name }}
     - name: Attest release assets
       uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
       with:

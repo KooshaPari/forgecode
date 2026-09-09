@@ -110,12 +110,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p binaries
-          gh release download "${{ inputs.tag }}" \
+          gh release download "$RELEASE_TAG" \
             --repo "${{ github.repository }}" \
             --dir binaries \
             --pattern "${{ matrix.pattern }}"
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
 
       # ── macOS Signing + Notarization ──
       - if: matrix.platform == 'macos'
@@ -248,9 +249,10 @@ jobs:
             [ -f "$f" ] || continue
             fname=$(basename "$f")
             echo "Uploading $fname..."
-            gh release upload "${{ inputs.tag }}" "$f" \
+            gh release upload "$RELEASE_TAG" "$f" \
               --repo "${{ github.repository }}" \
               --clobber
           done
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}

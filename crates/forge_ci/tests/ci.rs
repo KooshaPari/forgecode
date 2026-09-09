@@ -89,6 +89,54 @@ fn generated_workflow_path(name: &str) -> std::path::PathBuf {
 }
 
 #[test]
+fn release_tags_reach_gh_as_literal_arguments() {
+    let release: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&workflow::release_publish_yaml().unwrap()).unwrap();
+    let signing: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(include_str!("../../../.github/workflows/sign-release.yml"))
+            .unwrap();
+    let tag = "v$(printf INJECTED)-`printf EXECUTED`-\"quoted\"";
+    let mut downloads = 0;
+    for document in [&release, &signing] {
+        for job in document["jobs"].as_mapping().unwrap().values() {
+            let Some(steps) = job["steps"].as_sequence() else {
+                continue;
+            };
+            for step in steps {
+                let Some(script) = step["run"].as_str() else {
+                    continue;
+                };
+                assert!(!script.contains("${{ inputs.tag }}"));
+                assert!(!script.contains("${{ github.event.release.tag_name }}"));
+                if !script.contains("gh release download") && !script.contains("gh release upload")
+                {
+                    continue;
+                }
+                assert!(script.contains("\"$RELEASE_TAG\""));
+                assert!(step["env"]["RELEASE_TAG"].is_string());
+                if !script.contains("gh release download") {
+                    continue;
+                }
+                let script = script
+                    .replace("${{ github.repository }}", "owner/repo")
+                    .replace("${{ matrix.pattern }}", "*apple-darwin*");
+                // Exercise the actual rendered shell without network or filesystem writes.
+                let script = format!("mkdir() {{ :; }}\ngh() {{ printf '%s' \"$3\"; }}\n{script}");
+                let actual = std::process::Command::new("bash")
+                    .args(["-c", &script])
+                    .env("RELEASE_TAG", tag)
+                    .output()
+                    .unwrap();
+                assert!(actual.status.success());
+                assert_eq!(String::from_utf8(actual.stdout).unwrap(), tag);
+                downloads += 1;
+            }
+        }
+    }
+    assert_eq!(downloads, 3);
+}
+
+#[test]
 fn generated_workflows_are_parseable_and_identify_forge_ci_generator() {
     workflow::generate_autofix_workflow();
     workflow::generate_bounty_workflow();

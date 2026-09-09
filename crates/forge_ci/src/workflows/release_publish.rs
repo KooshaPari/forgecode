@@ -23,8 +23,9 @@ fn release_workflow() -> Workflow {
         .add_step(
             Step::new("Download release assets")
                 .env("GH_TOKEN", "${{ github.token }}")
+                .env("RELEASE_TAG", "${{ github.event.release.tag_name }}")
                 .run(
-                    "set -euo pipefail\nmkdir -p release-assets\ngh release download \"${{ github.event.release.tag_name }}\" \\\n  --repo \"${{ github.repository }}\" \\\n  --dir release-assets \\\n  --pattern \"forge-*\" \\\n  --pattern \"helioslite-*\" \\\n  --pattern \"helioslite_helper-*\" \\\n  --pattern \"forge_dbd-*\"",
+                    "set -euo pipefail\nmkdir -p release-assets\ngh release download \"$RELEASE_TAG\" \\\n  --repo \"${{ github.repository }}\" \\\n  --dir release-assets \\\n  --pattern \"forge-*\" \\\n  --pattern \"helioslite-*\" \\\n  --pattern \"helioslite_helper-*\" \\\n  --pattern \"forge_dbd-*\"",
                 ),
         )
         .add_step(
@@ -78,8 +79,9 @@ fn release_workflow() -> Workflow {
         .add_step(
             Step::new("Download release assets")
                 .env("GH_TOKEN", "${{ github.token }}")
+                .env("RELEASE_TAG", "${{ github.event.release.tag_name }}")
                 .run(
-                    "set -euo pipefail\nmkdir -p release-assets\ngh release download \"${{ github.event.release.tag_name }}\" \\\n  --repo \"${{ github.repository }}\" \\\n  --dir release-assets \\\n  --pattern \"forge-*\" \\\n  --pattern \"helioslite-*\" \\\n  --pattern \"helioslite_helper-*\" \\\n  --pattern \"forge_dbd-*\" \\\n  --pattern \"*.cdx.json\"",
+                    "set -euo pipefail\nmkdir -p release-assets\ngh release download \"$RELEASE_TAG\" \\\n  --repo \"${{ github.repository }}\" \\\n  --dir release-assets \\\n  --pattern \"forge-*\" \\\n  --pattern \"helioslite-*\" \\\n  --pattern \"helioslite_helper-*\" \\\n  --pattern \"forge_dbd-*\" \\\n  --pattern \"*.cdx.json\"",
                 ),
         )
         .add_step(
