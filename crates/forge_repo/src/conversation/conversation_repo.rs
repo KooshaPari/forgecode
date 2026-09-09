@@ -87,16 +87,23 @@ pub struct ConversationRepositoryImpl {
     wid: WorkspaceHash,
 }
 
-/// Reject attached-only history without changing missing-ID no-op semantics.
-fn reject_legacy_only_mutation(
+/// Reject foreign-workspace and attached-only rows, preserving missing-ID semantics.
+fn validate_local_mutation(
     connection: &mut diesel::SqliteConnection,
     conversation_id: &str,
+    workspace_id: i64,
 ) -> anyhow::Result<()> {
-    let local = diesel::select(diesel::dsl::exists(
-        conversations::table.filter(conversations::conversation_id.eq(conversation_id)),
-    ))
-    .get_result::<bool>(connection)?;
-    if !local {
+    let local_workspace = conversations::table
+        .filter(conversations::conversation_id.eq(conversation_id))
+        .select(conversations::workspace_id)
+        .first::<i64>(connection)
+        .optional()?;
+    if let Some(owner) = local_workspace {
+        anyhow::ensure!(
+            owner == workspace_id,
+            "Conversation belongs to another workspace"
+        );
+    } else {
         let legacy = diesel::select(diesel::dsl::exists(
             conversations_all::table.filter(conversations_all::conversation_id.eq(conversation_id)),
         ))
@@ -464,7 +471,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let conversation_id = *conversation_id;
         self.run_with_connection(move |connection, wid| {
             let workspace_id = wid.id() as i64;
-            reject_legacy_only_mutation(connection, &conversation_id.into_string())?;
+            validate_local_mutation(connection, &conversation_id.into_string(), workspace_id)?;
 
             // Security: Ensure users can only delete conversations within their workspace
             diesel::delete(conversations::table)
@@ -860,10 +867,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let new_parent_id_str: Option<String> = new_parent_id.map(|id| id.into_string());
         let conversation_id_str = conversation_id.into_string();
         let now: chrono::NaiveDateTime = chrono::Utc::now().naive_utc();
-        self.run_with_connection(move |connection, _wid| {
-            reject_legacy_only_mutation(connection, &conversation_id_str)?;
+        self.run_with_connection(move |connection, wid| {
+            let workspace_id = wid.id() as i64;
+            validate_local_mutation(connection, &conversation_id_str, workspace_id)?;
             diesel::update(
                 conversations::table
+                    .filter(conversations::workspace_id.eq(workspace_id))
                     .filter(conversations::conversation_id.eq(&conversation_id_str)),
             )
             .set((
@@ -883,12 +892,15 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let conversation_id_str = conversation_id.into_string();
         let now: chrono::NaiveDateTime = chrono::Utc::now().naive_utc();
         let result = self
-            .run_with_connection(move |connection, _wid| {
+            .run_with_connection(move |connection, wid| {
+                let workspace_id = wid.id() as i64;
+                validate_local_mutation(connection, &conversation_id_str, workspace_id)?;
                 // MVP rewind semantics: find the most recent user message followed by
                 // a tool call (i.e. last compaction point heuristic) and truncate
                 // the context JSON to that prefix. If no tool call is found,
                 // fall back to clearing context to the most recent user message.
                 let record: Option<ConversationRecord> = conversations::table
+                    .filter(conversations::workspace_id.eq(workspace_id))
                     .filter(conversations::conversation_id.eq(&conversation_id_str))
                     .first(connection)
                     .optional()?;
@@ -907,6 +919,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
                 diesel::update(
                     conversations::table
+                        .filter(conversations::workspace_id.eq(workspace_id))
                         .filter(conversations::conversation_id.eq(&conversation_id_str)),
                 )
                 .set((
@@ -917,6 +930,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
                 // Re-read the updated record so we can return it.
                 let updated: Option<ConversationRecord> = conversations::table
+                    .filter(conversations::workspace_id.eq(workspace_id))
                     .filter(conversations::conversation_id.eq(&conversation_id_str))
                     .first(connection)
                     .optional()?;
@@ -976,9 +990,12 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let new_state_str = new_state.to_string();
         let new_state = IntentState::from_str(new_state)?;
 
-        self.run_with_connection(move |connection, _wid| {
+        self.run_with_connection(move |connection, wid| {
+            let workspace_id = wid.id() as i64;
+            validate_local_mutation(connection, &conversation_id, workspace_id)?;
             // Read current state to validate transition
             let current_record: Option<ConversationRecord> = conversations::table
+                .filter(conversations::workspace_id.eq(workspace_id))
                 .filter(conversations::conversation_id.eq(&conversation_id))
                 .first(connection)
                 .optional()?;
@@ -1001,7 +1018,9 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // Update the state
             let now = chrono::Utc::now().naive_utc();
             diesel::update(
-                conversations::table.filter(conversations::conversation_id.eq(&conversation_id)),
+                conversations::table
+                    .filter(conversations::workspace_id.eq(workspace_id))
+                    .filter(conversations::conversation_id.eq(&conversation_id)),
             )
             .set((
                 conversations::intent_state.eq(&new_state_str),
@@ -1056,10 +1075,13 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
         let conversation_id = conversation_id.into_string();
 
-        self.run_with_connection(move |connection, _wid| {
+        self.run_with_connection(move |connection, wid| {
+            let workspace_id = wid.id() as i64;
+            validate_local_mutation(connection, &conversation_id, workspace_id)?;
             // Read current state to enforce invariant: only prune from 'verified'.
             // Mutation validation reads only local, writable records.
             let current_record: Option<ConversationRecord> = conversations::table
+                .filter(conversations::workspace_id.eq(workspace_id))
                 .filter(conversations::conversation_id.eq(&conversation_id))
                 .first(connection)
                 .optional()?;
@@ -1089,7 +1111,9 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             let now = chrono::Utc::now().naive_utc();
             diesel::update(
-                conversations::table.filter(conversations::conversation_id.eq(&conversation_id)),
+                conversations::table
+                    .filter(conversations::workspace_id.eq(workspace_id))
+                    .filter(conversations::conversation_id.eq(&conversation_id)),
             )
             .set((
                 conversations::context.eq(compressed_context),
@@ -3997,7 +4021,35 @@ mod tests {
                 .parent_id,
             Some(missing_id)
         );
-        repo.delete_conversation(&local.id).await.unwrap();
+        let before = zero_repo
+            .get_conversation(&local.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let errors = [
+            repo.delete_conversation(&local.id).await.unwrap_err(),
+            repo.update_parent_id(&local.id, None).await.unwrap_err(),
+            repo.rewind_conversation(&local.id).await.unwrap_err(),
+            repo.mark_intent_state(&local.id, "extracting")
+                .await
+                .unwrap_err(),
+            repo.prune_conversation(&local.id).await.unwrap_err(),
+        ];
+        for error in errors {
+            assert_eq!(
+                error.to_string(),
+                "Conversation belongs to another workspace"
+            );
+        }
+        let after = zero_repo
+            .get_conversation(&local.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(after).unwrap(),
+            serde_json::to_value(before).unwrap()
+        );
         let remaining = zero_repo
             .get_all_conversations(None)
             .await
