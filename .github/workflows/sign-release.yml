@@ -19,6 +19,12 @@ on:
         required: false
       MACOS_NOTARIZATION_TEAM_ID:
         required: false
+      MACOS_NOTARIZATION_API_KEY:
+        required: false
+      MACOS_NOTARIZATION_KEY_ID:
+        required: false
+      MACOS_NOTARIZATION_ISSUER_ID:
+        required: false
       SIGNPATH_API_TOKEN:
         required: false
       SIGNPATH_ORGANIZATION_ID:
@@ -60,12 +66,15 @@ jobs:
       - name: Require configured signing identity
         env:
           PLATFORM: ${{ matrix.platform }}
+          MACOS_NOTARIZATION_API_KEY: ${{ secrets.MACOS_NOTARIZATION_API_KEY }}
+          MACOS_NOTARIZATION_KEY_ID: ${{ secrets.MACOS_NOTARIZATION_KEY_ID }}
+          MACOS_NOTARIZATION_ISSUER_ID: ${{ secrets.MACOS_NOTARIZATION_ISSUER_ID }}
         run: |
           set -euo pipefail
           if [ "$PLATFORM" = windows ]; then
             required="SIGNPATH_API_TOKEN SIGNPATH_ORGANIZATION_ID SIGNPATH_PROJECT_SLUG SIGNPATH_SIGNING_POLICY_SLUG"
           else
-            required="MACOS_CERTIFICATE MACOS_CERTIFICATE_PWD MACOS_SIGNING_IDENTITY MACOS_NOTARIZATION_APPLE_ID MACOS_NOTARIZATION_PWD MACOS_NOTARIZATION_TEAM_ID"
+            required="MACOS_CERTIFICATE MACOS_CERTIFICATE_PWD MACOS_SIGNING_IDENTITY"
           fi
           for name in $required; do
             if [ -z "${!name:-}" ]; then
@@ -73,6 +82,30 @@ jobs:
               exit 1
             fi
           done
+          if [ "$PLATFORM" = macos ]; then
+            api_present=0
+            apple_present=0
+            for name in MACOS_NOTARIZATION_API_KEY MACOS_NOTARIZATION_KEY_ID MACOS_NOTARIZATION_ISSUER_ID; do
+              [ -n "${!name:-}" ] && api_present=$((api_present + 1))
+            done
+            for name in MACOS_NOTARIZATION_APPLE_ID MACOS_NOTARIZATION_PWD MACOS_NOTARIZATION_TEAM_ID; do
+              [ -n "${!name:-}" ] && apple_present=$((apple_present + 1))
+            done
+            if [ "$api_present" -eq 3 ]; then
+              echo "NOTARY_AUTH_MODE=api-key" >> "$GITHUB_ENV"
+            elif [ "$api_present" -ne 0 ]; then
+              echo "::error::Incomplete API-key notarization configuration; require MACOS_NOTARIZATION_API_KEY, MACOS_NOTARIZATION_KEY_ID, and MACOS_NOTARIZATION_ISSUER_ID"
+              exit 1
+            elif [ "$apple_present" -eq 3 ]; then
+              echo "NOTARY_AUTH_MODE=apple-id" >> "$GITHUB_ENV"
+            elif [ "$apple_present" -ne 0 ]; then
+              echo "::error::Incomplete Apple-ID notarization configuration; require MACOS_NOTARIZATION_APPLE_ID, MACOS_NOTARIZATION_PWD, and MACOS_NOTARIZATION_TEAM_ID"
+              exit 1
+            else
+              echo "::error::Missing notarization configuration; configure the complete API-key set or complete Apple-ID set"
+              exit 1
+            fi
+          fi
       - name: Download release binaries
         run: |
           set -euo pipefail
@@ -119,7 +152,12 @@ jobs:
 
       - if: matrix.platform == 'macos'
         name: Notarize macOS binaries
+        env:
+          MACOS_NOTARIZATION_API_KEY: ${{ secrets.MACOS_NOTARIZATION_API_KEY }}
+          MACOS_NOTARIZATION_KEY_ID: ${{ secrets.MACOS_NOTARIZATION_KEY_ID }}
+          MACOS_NOTARIZATION_ISSUER_ID: ${{ secrets.MACOS_NOTARIZATION_ISSUER_ID }}
         run: |
+          set -euo pipefail
           mkdir -p notarize
           for bin in binaries/forge-*-apple-darwin binaries/helioslite-*-apple-darwin binaries/forge_dbd-*-apple-darwin; do
             [ -f "$bin" ] || continue
@@ -128,11 +166,26 @@ jobs:
           cd notarize
           ZIPFILE="notarize-bundle.zip"
           zip -r "$ZIPFILE" .
-          xcrun notarytool submit "$ZIPFILE" \
-            --apple-id "$MACOS_NOTARIZATION_APPLE_ID" \
-            --password "$MACOS_NOTARIZATION_PWD" \
-            --team-id "$MACOS_NOTARIZATION_TEAM_ID" \
-            --wait --output-format json > result.json
+          if [ "$NOTARY_AUTH_MODE" = api-key ]; then
+            umask 077
+            NOTARY_KEY_PATH="${RUNNER_TEMP}/notary-authkey.p8"
+            trap 'rm -f "$NOTARY_KEY_PATH"' EXIT
+            printf '%s' "$MACOS_NOTARIZATION_API_KEY" > "$NOTARY_KEY_PATH"
+            xcrun notarytool submit "$ZIPFILE" \
+              --key "$NOTARY_KEY_PATH" \
+              --key-id "$MACOS_NOTARIZATION_KEY_ID" \
+              --issuer "$MACOS_NOTARIZATION_ISSUER_ID" \
+              --wait --output-format json > result.json
+          elif [ "$NOTARY_AUTH_MODE" = apple-id ]; then
+            xcrun notarytool submit "$ZIPFILE" \
+              --apple-id "$MACOS_NOTARIZATION_APPLE_ID" \
+              --password "$MACOS_NOTARIZATION_PWD" \
+              --team-id "$MACOS_NOTARIZATION_TEAM_ID" \
+              --wait --output-format json > result.json
+          else
+            echo "::error::Unsupported notarization authentication mode"
+            exit 1
+          fi
           jq -e '.status == "Accepted"' result.json >/dev/null
           cd ..
           # Raw Mach-O command-line binaries cannot be stapled; the submitted

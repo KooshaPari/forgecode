@@ -33,8 +33,16 @@ fn signing_is_serialized_before_release_provenance() {
         Some("./.github/workflows/sign-release.yml")
     );
     assert!(jobs["sign_release"]["runs-on"].is_null());
-    let signing = std::fs::read_to_string(generated_workflow_path("sign-release.yml")).unwrap();
-    let signing: serde_yaml_ng::Value = serde_yaml_ng::from_str(&signing).unwrap();
+    let signing_source =
+        std::fs::read_to_string(generated_workflow_path("sign-release.yml")).unwrap();
+    assert!(signing_source.contains("api_present=0"));
+    assert!(signing_source.contains("apple_present=0"));
+    assert!(signing_source.contains("Incomplete API-key notarization configuration"));
+    assert!(signing_source.contains("Incomplete Apple-ID notarization configuration"));
+    assert!(signing_source.contains("NOTARY_AUTH_MODE=api-key"));
+    assert!(signing_source.contains("notary-authkey.p8"));
+    assert!(signing_source.contains("trap 'rm -f \"$NOTARY_KEY_PATH\"' EXIT"));
+    let signing: serde_yaml_ng::Value = serde_yaml_ng::from_str(&signing_source).unwrap();
     assert!(
         signing["on"]
             .as_mapping()
@@ -55,7 +63,7 @@ fn signing_is_serialized_before_release_provenance() {
     let expected = signing["on"]["workflow_call"]["secrets"]
         .as_mapping()
         .unwrap();
-    assert_eq!(actual.len(), 8);
+    assert_eq!(actual.len(), 11);
     assert_eq!(
         actual.keys().collect::<Vec<_>>(),
         expected.keys().collect::<Vec<_>>()
@@ -63,6 +71,13 @@ fn signing_is_serialized_before_release_provenance() {
     for (name, value) in actual {
         let expected = format!("${{{{ secrets.{} }}}}", name.as_str().unwrap());
         assert_eq!(value.as_str().unwrap(), expected);
+    }
+    for name in [
+        "MACOS_NOTARIZATION_API_KEY",
+        "MACOS_NOTARIZATION_KEY_ID",
+        "MACOS_NOTARIZATION_ISSUER_ID",
+    ] {
+        assert!(expected.contains_key(name));
     }
 }
 
