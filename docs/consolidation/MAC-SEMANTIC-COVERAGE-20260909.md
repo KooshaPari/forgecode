@@ -39,4 +39,10 @@ Live ls-remote confirmed exact SHA. This adds one remote ref, no new tip; not a 
 
 ## Method and limits
 
+Independent 73-tip merge-effect audit completed: 67 have no uncovered merges, four have empty remerge diffs, and two stash resolution deltas are present in baseline. Evidence: `/private/tmp/forgecode-73-candidate-independent-audit-20260909.md`. Historical source coverage is therefore 551/1093 Mac tips; 542 remain unmatched. This is not a guarantee of current runtime semantics.
+
+Exact remaining queue: `/tmp/forgecode-542-unmatched-baseline-20260909.json`, 586 source/ref aliases for542 baseline tips. Newly authored ledger and port branches are excluded from this fixed denominator. Frontier/shared-lineage audit delegated to independent reviewer.
+
+First actual semantic port: PR272, commit `9f19f1b92`, source39c597af partial. New legacy-discovery regression failed main before port; full forge_repo414 passed/1ignored after port; strict clippy passed. Internal TEMP VIEW provenance flag distinguishes missing-schema workspace from real local/legacy workspace0. Source DELETE/prune/local-only FTS broadening deliberately excluded; source branch remains PARTIAL, other unmatched changes unclassified. See PR272's `LEGACY-DISCOVERY-PORT-20260909.md` for disposition and exact proof.
+
 Read-only inventory script `/tmp/forgecode-mac-triage.py` uses for-each-ref, rev-list, commit peeling, full git cherry per pending tip, worktree porcelain/status and stash list. Raw historical snapshot remains under original coverage worktree. No private contents committed. No branch is approved for deletion or bulk merge. Windows live delta remains separate owner.
