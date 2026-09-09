@@ -39,6 +39,22 @@ Live ls-remote confirmed exact SHA. This adds one remote ref, no new tip; not a 
 
 ## Method and limits
 
+## Five additional source dispositions
+
+Read-only comparisons against main `999b5c5046c047b7041fdfe0104e1e0135d3adb2`; no build or runtime claim. These five exact tips close from the fixed 542-tip pending baseline, separately from the three SDK tips recorded in `SDK-SOURCE-DISPOSITION-20260909.md`.
+
+| Exact source tip | Disposition | Evidence |
+|---|---|---|
+| `8547d257c19f010e5d19ac9e85c556c5bf1ae029` | Represented | Entire retained SBOM merge tree equals parent `99cb7a0c08c997d28188aeefd7b9a420a9f3afb5`, an ancestor of audited main. |
+| `c183f10d20b377b31e9f07afe9caa700292c7c3a` | Represented through retained resolution | Original SBOM change retained in the `8547d257` lineage; its resolved aggregate tree is already contained. |
+| `cd677cee82d017002e3e4808d8fb2b949c67a983` | Represented through retained resolution | Intermediate SBOM merge is parent of `8547d257`; final merge resolutions select contained implementation, not an additional missing bundle. |
+| `a9929f235d84e9f8ca26352908c213bbbfbb18c5` | Represented and extended | All three touched paths exactly equal integration `c38aa7364` (PR216), including Cargo.lock. Main only adds serialization derives in semantic_memory.rs through `8837923f9` (PR247). All seven original contract tests remain. |
+| `ec13b571401e9617f5d7314bd5157b5d83ac96f4` | Superseded | Source temp_dir fixture is superseded by owned TempDir plus path assertion in `5ffdc3eda` (PR222), `crates/forge_sandbox/src/config.rs:216`. |
+
+No source port or synthetic PR is justified for these groups. Accounting delta is five covered and five fewer pending, without changing the denominator or authorizing ref retirement. Retained branch aliases are local/fork `fix/release-sbom-20260826`, `feat/forge-f3-semantic-memory-20260830`, and `fix/forge-sandbox-windows-config-20260901`.
+
+## Earlier audit baseline and limits
+
 Independent 73-tip merge-effect audit completed: 67 have no uncovered merges, four have empty remerge diffs, and two stash resolution deltas are present in baseline. Evidence: `/private/tmp/forgecode-73-candidate-independent-audit-20260909.md`. Historical source coverage is therefore 551/1093 Mac tips; 542 remain unmatched. This is not a guarantee of current runtime semantics.
 
 Exact remaining queue: `/tmp/forgecode-542-unmatched-baseline-20260909.json`, 586 source/ref aliases for542 baseline tips. Newly authored ledger and port branches are excluded from this fixed denominator. Frontier/shared-lineage audit delegated to independent reviewer.
