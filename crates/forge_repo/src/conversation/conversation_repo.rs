@@ -378,18 +378,23 @@ impl ConversationRepository for ConversationRepositoryImpl {
         conversation_id: &ConversationId,
     ) -> anyhow::Result<Option<Conversation>> {
         let conversation_id = *conversation_id;
-        self.run_with_connection(move |connection, _wid| {
+        self.run_with_connection(move |connection, wid| {
+            let workspace_id = wid.id() as i64;
             // Read from `conversations_all` so legacy rows are visible.
             // We use explicit column selection (rather than
             // `ConversationRecord::as_select()`)
             // because `ConversationRecord::table_name = conversations` (it is also used
             // for writes). The TEMP VIEW has identical column types so the SELECT … load
             // works regardless.
-            let record: Option<ConversationRecord> = conversations_all::table
-                .filter(conversations_all::conversation_id.eq(conversation_id.into_string()))
-                .select(conversations_all::all_columns)
-                .first(connection)
-                .optional()?;
+            let record: Option<ConversationRecord> =
+                conversations_all::table
+                    .filter(conversations_all::conversation_id.eq(conversation_id.into_string()))
+                    .filter(conversations_all::workspace_id.eq(workspace_id).or(
+                        diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                    ))
+                    .select(conversations_all::all_columns)
+                    .first(connection)
+                    .optional()?;
 
             match record {
                 Some(record) => Ok(Some(Conversation::try_from(record)?)),
@@ -4037,6 +4042,8 @@ mod tests {
             .unwrap_or_default();
         let expected = vec![legacy_id];
         assert_eq!(actual.iter().map(|c| c.id).collect::<Vec<_>>(), expected);
+        assert!(repo.get_conversation(&legacy_id).await.unwrap().is_some());
+        assert!(repo.get_conversation(&local.id).await.unwrap().is_none());
         assert!(
             repo.mark_intent_state(&legacy_id, "extracting")
                 .await
