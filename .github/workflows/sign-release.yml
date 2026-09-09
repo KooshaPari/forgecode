@@ -1,6 +1,28 @@
 name: Sign Release Binaries
 on:
   workflow_call:
+    inputs:
+      tag:
+        description: Release tag to sign
+        required: true
+        type: string
+    secrets:
+      MACOS_CERTIFICATE:
+        required: false
+      MACOS_CERTIFICATE_PWD:
+        required: false
+      MACOS_SIGNING_IDENTITY:
+        required: false
+      MACOS_NOTARIZATION_APPLE_ID:
+        required: false
+      MACOS_NOTARIZATION_PWD:
+        required: false
+      MACOS_NOTARIZATION_TEAM_ID:
+        required: false
+      SIGNPATH_API_TOKEN:
+        required: false
+      SIGNPATH_ORGANIZATION_ID:
+        required: false
 permissions:
   contents: read
 jobs:
@@ -14,6 +36,7 @@ jobs:
       run:
         shell: bash
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-latest
@@ -54,7 +77,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p binaries
-          gh release download "${{ github.event.release.tag_name }}" \
+          gh release download "${{ inputs.tag }}" \
             --repo "${{ github.repository }}" \
             --dir binaries \
             --pattern "${{ matrix.pattern }}"
@@ -172,7 +195,7 @@ jobs:
             [ -f "$f" ] || continue
             fname=$(basename "$f")
             echo "Uploading $fname..."
-            gh release upload "${{ github.event.release.tag_name }}" "$f" \
+            gh release upload "${{ inputs.tag }}" "$f" \
               --repo "${{ github.repository }}" \
               --clobber
           done

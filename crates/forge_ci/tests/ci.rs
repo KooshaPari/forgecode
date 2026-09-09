@@ -42,6 +42,28 @@ fn signing_is_serialized_before_release_provenance() {
             .contains_key("workflow_call")
     );
     assert!(!signing["on"].as_mapping().unwrap().contains_key("release"));
+    assert_eq!(
+        jobs["sign_release"]["with"]["tag"],
+        "${{ github.event.release.tag_name }}"
+    );
+    assert_eq!(
+        signing["on"]["workflow_call"]["inputs"]["tag"]["required"],
+        true
+    );
+    assert_eq!(signing["jobs"]["sign"]["strategy"]["fail-fast"], false);
+    let actual = jobs["sign_release"]["secrets"].as_mapping().unwrap();
+    let expected = signing["on"]["workflow_call"]["secrets"]
+        .as_mapping()
+        .unwrap();
+    assert_eq!(actual.len(), 8);
+    assert_eq!(
+        actual.keys().collect::<Vec<_>>(),
+        expected.keys().collect::<Vec<_>>()
+    );
+    for (name, value) in actual {
+        let expected = format!("${{{{ secrets.{} }}}}", name.as_str().unwrap());
+        assert_eq!(value.as_str().unwrap(), expected);
+    }
 }
 
 fn generated_workflow_path(name: &str) -> std::path::PathBuf {

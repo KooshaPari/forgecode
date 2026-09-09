@@ -101,6 +101,15 @@ fn release_workflow() -> Workflow {
                 "Sign release and regenerate checksums",
                 "./.github/workflows/sign-release.yml",
             )
+            .input("tag", "${{ github.event.release.tag_name }}")
+            .secret("MACOS_CERTIFICATE")
+            .secret("MACOS_CERTIFICATE_PWD")
+            .secret("MACOS_SIGNING_IDENTITY")
+            .secret("MACOS_NOTARIZATION_APPLE_ID")
+            .secret("MACOS_NOTARIZATION_PWD")
+            .secret("MACOS_NOTARIZATION_TEAM_ID")
+            .secret("SIGNPATH_API_TOKEN")
+            .secret("SIGNPATH_ORGANIZATION_ID")
             .needs("build_release")
             .permissions(
                 Permissions::default()

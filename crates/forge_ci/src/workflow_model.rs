@@ -226,8 +226,10 @@ pub(crate) struct Job {
     runs_on: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     uses: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    secrets: Option<String>,
+    #[serde(skip_serializing_if = "IndexMap::is_empty")]
+    secrets: IndexMap<String, String>,
+    #[serde(rename = "with", skip_serializing_if = "IndexMap::is_empty")]
+    inputs: IndexMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     needs: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -245,7 +247,6 @@ impl Job {
         Self {
             name: name.to_string(),
             uses: Some(workflow.to_string()),
-            secrets: Some("inherit".to_string()),
             ..Self::default()
         }
     }
@@ -256,6 +257,17 @@ impl Job {
             runs_on: "ubuntu-latest".to_string(),
             ..Self::default()
         }
+    }
+
+    pub(crate) fn input(mut self, key: &str, value: &str) -> Self {
+        self.inputs.insert(key.to_string(), value.to_string());
+        self
+    }
+
+    pub(crate) fn secret(mut self, name: &str) -> Self {
+        self.secrets
+            .insert(name.to_string(), format!("${{{{ secrets.{name} }}}}"));
+        self
     }
 
     pub(crate) fn add_step(mut self, step: Step) -> Self {
