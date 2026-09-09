@@ -37,8 +37,6 @@ Live ls-remote confirmed exact SHA. This adds one remote ref, no new tip; not a 
 4. `fix/stable-rustfmt-contract-20260829` / `dd4e1131f8cfe0e2a84402ddb58b7cce8069c0de`: one unmatched patch touching rustfmt and helper formatting; requires current policy comparison before bundling.
 5. F3 `feat/forge-f3-semantic-memory-20260830` / `a9929f235d84e9f8ca26352908c213bbbfbb18c5`: two unmatched patches; existing reconciled F3 bundle exists, so semantic equivalence remains required.
 
-## Method and limits
-
 ## Five additional source dispositions
 
 Read-only comparisons against main `999b5c5046c047b7041fdfe0104e1e0135d3adb2`; no build or runtime claim. These five exact tips close from the fixed 542-tip pending baseline, separately from the three SDK tips recorded in `SDK-SOURCE-DISPOSITION-20260909.md`.
@@ -52,6 +50,8 @@ Read-only comparisons against main `999b5c5046c047b7041fdfe0104e1e0135d3adb2`; n
 | `ec13b571401e9617f5d7314bd5157b5d83ac96f4` | Superseded | Source temp_dir fixture is superseded by owned TempDir plus path assertion in `5ffdc3eda` (PR222), `crates/forge_sandbox/src/config.rs:216`. |
 
 No source port or synthetic PR is justified for these groups. Accounting delta is five covered and five fewer pending, without changing the denominator or authorizing ref retirement. Retained branch aliases are local/fork `fix/release-sbom-20260826`, `feat/forge-f3-semantic-memory-20260830`, and `fix/forge-sandbox-windows-config-20260901`.
+
+Reconciled aggregate for this independently deduplicated five-tip increment: **556 represented / 537 pending / 1093 fixed Mac tips** (prior baseline 551 / 542). The three SDK dispositions remain separately recorded and are not added to this aggregate until their accounting is independently reconciled. Runtime readiness and the PARTIAL legacy source are not promoted by these source-only closures.
 
 ## Earlier audit baseline and limits
 
