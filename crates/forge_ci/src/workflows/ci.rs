@@ -53,7 +53,10 @@ pub fn generate_ci_workflow() {
         .if_condition("github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci: build all targets')");
     let events = Event::default()
         .push(Push::default().add_branch("main").add_tag("v*"))
-        .pull_request(["opened", "synchronize", "reopened", "labeled"], ["main"]);
+        .pull_request(
+            ["opened", "synchronize", "reopened", "labeled"],
+            ["main", "integration/forgecode-h0.1.7"],
+        );
     let workflow = Workflow::new("ci")
         .env("RUSTFLAGS", "-Dwarnings")
         .env("OPENROUTER_API_KEY", "${{secrets.OPENROUTER_API_KEY}}")
