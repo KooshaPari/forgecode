@@ -7,6 +7,7 @@ on:
     types: [opened, synchronize, reopened]
     branches:
       - main
+      - integration/forgecode-h0.1.7
   push:
     branches:
       - main

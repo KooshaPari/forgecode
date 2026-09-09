@@ -22,6 +22,7 @@ on:
     - labeled
     branches:
     - main
+    - integration/forgecode-h0.1.7
 permissions:
   contents: read
 env:
