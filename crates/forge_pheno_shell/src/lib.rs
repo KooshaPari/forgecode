@@ -1236,7 +1236,9 @@ mod tests {
         // Path::join uses platform separators, so normalize before matching
         // the unix-style expectation.
         assert!(
-            targets[0]
+            targets
+                .first()
+                .unwrap()
                 .path
                 .replace('\\', "/")
                 .contains(".zsh/completions/_forge")
@@ -1248,7 +1250,7 @@ mod tests {
         let home = std::path::Path::new("C:\\Users\\test");
         let targets = install_targets(ShellKind::PowerShellWindows, home, "forge");
         assert_eq!(targets.len(), 1);
-        assert!(targets[0].path.contains("PowerShell"));
+        assert!(targets.first().unwrap().path.contains("PowerShell"));
     }
 
     #[test]
@@ -1341,7 +1343,9 @@ mod tests {
         // Path::join uses platform separators, so normalize before matching
         // the unix-style expectation.
         assert!(
-            targets[0]
+            targets
+                .first()
+                .unwrap()
                 .path
                 .replace('\\', "/")
                 .contains(".config/fish/completions/forge.fish")
