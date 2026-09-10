@@ -96,7 +96,7 @@ fn release_tags_reach_gh_as_literal_arguments() {
         serde_yaml_ng::from_str(include_str!("../../../.github/workflows/sign-release.yml"))
             .unwrap();
     let tag = "v$(printf INJECTED)-`printf EXECUTED`-\"quoted\"";
-    let mut downloads = 0;
+    let mut release_commands = 0;
     for document in [&release, &signing] {
         for job in document["jobs"].as_mapping().unwrap().values() {
             let Some(steps) = job["steps"].as_sequence() else {
@@ -108,15 +108,11 @@ fn release_tags_reach_gh_as_literal_arguments() {
                 };
                 assert!(!script.contains("${{ inputs.tag }}"));
                 assert!(!script.contains("${{ github.event.release.tag_name }}"));
-                if !script.contains("gh release download") && !script.contains("gh release upload")
-                {
+                if !script.contains("gh release upload") {
                     continue;
                 }
                 assert!(script.contains("\"$RELEASE_TAG\""));
                 assert!(step["env"]["RELEASE_TAG"].is_string());
-                if !script.contains("gh release download") {
-                    continue;
-                }
                 let script = script
                     .replace("${{ github.repository }}", "owner/repo")
                     .replace("${{ matrix.pattern }}", "*apple-darwin*");
@@ -129,11 +125,11 @@ fn release_tags_reach_gh_as_literal_arguments() {
                     .unwrap();
                 assert!(actual.status.success());
                 assert_eq!(String::from_utf8(actual.stdout).unwrap(), tag);
-                downloads += 1;
+                release_commands += 1;
             }
         }
     }
-    assert_eq!(downloads, 3);
+    assert_eq!(release_commands, 1);
 }
 
 #[test]
@@ -228,16 +224,17 @@ fn test_release_workflow() {
     assert!(generated.contains("needs: build_release"));
     assert!(generated.contains("attestations: write"));
     assert!(generated.contains("id-token: write"));
-    assert!(generated.contains("gh release download"));
-    assert!(generated.contains("--repo \"${{ github.repository }}\""));
-    assert!(generated.contains("--pattern \"forge-*\""));
-    assert!(generated.contains("--pattern \"helioslite-*\""));
-    assert!(generated.contains("--pattern \"helioslite_helper-*\""));
+    assert!(generated.contains("Stage unsigned release assets"));
+    assert!(generated.contains("release-assets-unsigned-${{ matrix.target }}"));
+    assert!(generated.contains("publish_release_assets:"));
+    assert!(generated.contains("needs: attest_release_assets"));
+    assert!(generated.contains("gh release upload \"$RELEASE_TAG\" release-assets/*"));
+    assert!(!generated.contains("upload-to-github-release"));
     assert!(generated.contains("helioslite_name: helioslite-x86_64-unknown-linux-musl"));
     assert!(generated.contains("helioslite_name: helioslite-x86_64-pc-windows-msvc.exe"));
     assert!(generated.contains("Generate helioslite SHA-256 checksum"));
-    assert!(generated.contains("Upload helioslite to Release"));
-    assert!(generated.contains("Upload helioslite checksum to Release"));
+    assert!(!generated.contains("Upload helioslite to Release"));
+    assert!(!generated.contains("Upload helioslite checksum to Release"));
     assert!(
         !generated.contains(": \n"),
         "release workflow must not contain trailing whitespace"
@@ -249,7 +246,7 @@ fn test_release_workflow() {
     assert!(generated.contains("actions/attest-build-provenance@"));
     assert!(generated.contains("anchore/sbom-action@"));
     assert!(generated.contains("format: cyclonedx-json"));
-    assert!(generated.contains("upload-release-assets: 'true'"));
+    assert!(generated.contains("upload-release-assets: 'false'"));
     assert!(generated.contains("path: release-assets"));
 
     let expected = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(expected).unwrap();

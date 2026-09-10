@@ -46,10 +46,16 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            pattern: "*apple-darwin*"
+            target: x86_64-apple-darwin
+            platform: macos
+          - os: macos-latest
+            target: aarch64-apple-darwin
             platform: macos
           - os: windows-latest
-            pattern: "*windows-msvc*"
+            target: x86_64-pc-windows-msvc
+            platform: windows
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
             platform: windows
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -106,17 +112,11 @@ jobs:
               exit 1
             fi
           fi
-      - name: Download release binaries
-        run: |
-          set -euo pipefail
-          mkdir -p binaries
-          gh release download "$RELEASE_TAG" \
-            --repo "${{ github.repository }}" \
-            --dir binaries \
-            --pattern "${{ matrix.pattern }}"
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
+      - name: Download staged release binaries
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: release-assets-unsigned-${{ matrix.target }}
+          path: binaries
 
       # ── macOS Signing + Notarization ──
       - if: matrix.platform == 'macos'
@@ -197,7 +197,7 @@ jobs:
         id: unsigned
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: unsigned-windows
+          name: unsigned-windows-${{ matrix.target }}
           path: binaries/*.exe
           if-no-files-found: error
 
@@ -241,18 +241,9 @@ jobs:
              fi)
           done
 
-      # ── Re-upload signed binaries ──
-      - name: Re-upload signed binaries
-        run: |
-          set -euo pipefail
-          for f in binaries/*; do
-            [ -f "$f" ] || continue
-            fname=$(basename "$f")
-            echo "Uploading $fname..."
-            gh release upload "$RELEASE_TAG" "$f" \
-              --repo "${{ github.repository }}" \
-              --clobber
-          done
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
+      - name: Stage signed release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-assets-signed-${{ matrix.target }}
+          path: binaries/*
+          if-no-files-found: error

@@ -80,7 +80,7 @@ jobs:
           os: ubuntu-latest
           target: aarch64-linux-android
     permissions:
-      contents: write
+      contents: read
     steps:
     - name: Checkout Code
       uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -139,64 +139,12 @@ jobs:
     - name: Generate helioslite SHA-256 checksum
       run: if command -v sha256sum >/dev/null 2>&1; then sha256sum "${{ matrix.helioslite_name }}" > "${{ matrix.helioslite_name }}.sha256"; else shasum -a 256 "${{ matrix.helioslite_name }}" > "${{ matrix.helioslite_name }}.sha256"; fi
       shell: bash
-    - name: Upload to Release
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
-      with:
-        release_id: ${{ github.event.release.id }}
-        file: ${{ matrix.binary_name }}
-        overwrite: 'true'
-    - name: Upload checksum to Release
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
-      with:
-        release_id: ${{ github.event.release.id }}
-        file: ${{ matrix.binary_name }}.sha256
-        overwrite: 'true'
-    - name: Upload helioslite to Release
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
-      with:
-        release_id: ${{ github.event.release.id }}
-        file: ${{ matrix.helioslite_name }}
-        overwrite: 'true'
-    - name: Upload helioslite checksum to Release
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
-      with:
-        release_id: ${{ github.event.release.id }}
-        file: ${{ matrix.helioslite_name }}.sha256
-        overwrite: 'true'
     - name: Copy forge_dbd Binary
       run: if [[ "${{ matrix.target }}" == *windows* ]]; then cp "target/${{ matrix.target }}/release/forge_dbd.exe" "forge_dbd-${{ matrix.target }}.exe"; else cp "target/${{ matrix.target }}/release/forge_dbd" "forge_dbd-${{ matrix.target }}"; fi
       shell: bash
     - name: Generate forge_dbd SHA-256
       run: if [[ "${{ matrix.target }}" == *windows* ]]; then if command -v sha256sum >/dev/null 2>&1; then sha256sum "forge_dbd-${{ matrix.target }}.exe" > "forge_dbd-${{ matrix.target }}.exe.sha256"; else shasum -a 256 "forge_dbd-${{ matrix.target }}.exe" > "forge_dbd-${{ matrix.target }}.exe.sha256"; fi; else if command -v sha256sum >/dev/null 2>&1; then sha256sum "forge_dbd-${{ matrix.target }}" > "forge_dbd-${{ matrix.target }}.sha256"; else shasum -a 256 "forge_dbd-${{ matrix.target }}" > "forge_dbd-${{ matrix.target }}.sha256"; fi; fi
       shell: bash
-    - if: '!contains(matrix.target, ''windows'')'
-      name: Upload forge_dbd to Release (unix)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
-      with:
-        release_id: ${{ github.event.release.id }}
-        file: forge_dbd-${{ matrix.target }}
-        overwrite: 'true'
-    - if: '!contains(matrix.target, ''windows'')'
-      name: Upload forge_dbd checksum to Release (unix)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
-      with:
-        release_id: ${{ github.event.release.id }}
-        file: forge_dbd-${{ matrix.target }}.sha256
-        overwrite: 'true'
-    - if: contains(matrix.target, 'windows')
-      name: Upload forge_dbd to Release (windows)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
-      with:
-        release_id: ${{ github.event.release.id }}
-        file: forge_dbd-${{ matrix.target }}.exe
-        overwrite: 'true'
-    - if: contains(matrix.target, 'windows')
-      name: Upload forge_dbd checksum to Release (windows)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
-      with:
-        release_id: ${{ github.event.release.id }}
-        file: forge_dbd-${{ matrix.target }}.exe.sha256
-        overwrite: 'true'
     - if: contains(matrix.target, 'windows')
       name: Copy helioslite_helper Binary
       run: cp "${{ matrix.helper_path }}" "${{ matrix.helper_name }}"
@@ -205,20 +153,15 @@ jobs:
       name: Generate helioslite_helper SHA-256 checksum
       run: if command -v sha256sum >/dev/null 2>&1; then sha256sum "${{ matrix.helper_name }}" > "${{ matrix.helper_name }}.sha256"; else shasum -a 256 "${{ matrix.helper_name }}" > "${{ matrix.helper_name }}.sha256"; fi
       shell: bash
-    - if: contains(matrix.target, 'windows')
-      name: Upload helioslite_helper to Release (windows)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
+    - name: Stage unsigned release assets
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
-        release_id: ${{ github.event.release.id }}
-        file: ${{ matrix.helper_name }}
-        overwrite: 'true'
-    - if: contains(matrix.target, 'windows')
-      name: Upload helioslite_helper checksum to Release (windows)
-      uses: xresloader/upload-to-github-release@7c5757a90c0bcf0c0e1741da8f2abd7b85e675d0
-      with:
-        release_id: ${{ github.event.release.id }}
-        file: ${{ matrix.helper_name }}.sha256
-        overwrite: 'true'
+        name: release-assets-unsigned-${{ matrix.target }}
+        path: |-
+          forge-*
+          helioslite-*
+          forge_dbd-*
+        if-no-files-found: error
   sign_release:
     name: Sign release and regenerate checksums
     uses: ./.github/workflows/sign-release.yml
@@ -238,29 +181,30 @@ jobs:
       tag: ${{ github.event.release.tag_name }}
     needs: build_release
     permissions:
-      contents: write
+      contents: read
       actions: read
   sbom_release_assets:
     name: Generate release SBOM
     runs-on: ubuntu-latest
     needs: sign_release
     permissions:
-      contents: write
+      contents: read
     steps:
-    - name: Download release assets
+    - name: Download staged release assets
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        pattern: release-assets-*
+        path: staged-assets
+    - name: Assemble signed release assets
       run: |-
         set -euo pipefail
         mkdir -p release-assets
-        gh release download "$RELEASE_TAG" \
-          --repo "${{ github.repository }}" \
-          --dir release-assets \
-          --pattern "forge-*" \
-          --pattern "helioslite-*" \
-          --pattern "helioslite_helper-*" \
-          --pattern "forge_dbd-*"
-      env:
-        GH_TOKEN: ${{ github.token }}
-        RELEASE_TAG: ${{ github.event.release.tag_name }}
+        for asset_dir in staged-assets/*; do
+          case "$asset_dir" in
+            *unsigned-*-apple-darwin|*unsigned-*-windows-msvc) continue ;;
+          esac
+          find "$asset_dir" -maxdepth 1 -type f -exec cp {} release-assets/ \;
+        done
     - name: Generate CycloneDX SBOM
       uses: anchore/sbom-action@6b92ff5b2cce1787a99198f282dd8a26d1991449
       with:
@@ -269,13 +213,13 @@ jobs:
         artifact-name: forgecode-${{ github.event.release.tag_name }}.cdx.json
         output-file: release-assets/sbom.cdx.json
         upload-artifact: 'false'
-        upload-release-assets: 'true'
-    - name: Upload SBOM to Release
-      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        upload-release-assets: 'false'
+    - name: Stage release SBOM
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
-        tag_name: ${{ github.event.release.tag_name }}
-        files: release-assets/sbom.cdx.json
-        overwrite_files: 'true'
+        name: release-sbom
+        path: release-assets/sbom.cdx.json
+        if-no-files-found: error
   attest_release_assets:
     name: Attest release assets
     runs-on: ubuntu-latest
@@ -285,22 +229,61 @@ jobs:
       id-token: write
       attestations: write
     steps:
-    - name: Download release assets
+    - name: Download staged release assets
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        pattern: release-assets-*
+        path: staged-assets
+    - name: Assemble signed release assets
       run: |-
         set -euo pipefail
         mkdir -p release-assets
-        gh release download "$RELEASE_TAG" \
-          --repo "${{ github.repository }}" \
-          --dir release-assets \
-          --pattern "forge-*" \
-          --pattern "helioslite-*" \
-          --pattern "helioslite_helper-*" \
-          --pattern "forge_dbd-*" \
-          --pattern "*.cdx.json"
-      env:
-        GH_TOKEN: ${{ github.token }}
-        RELEASE_TAG: ${{ github.event.release.tag_name }}
+        for asset_dir in staged-assets/*; do
+          case "$asset_dir" in
+            *unsigned-*-apple-darwin|*unsigned-*-windows-msvc) continue ;;
+          esac
+          find "$asset_dir" -maxdepth 1 -type f -exec cp {} release-assets/ \;
+        done
+    - name: Download release SBOM
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: release-sbom
+        path: release-assets
     - name: Attest release assets
       uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
       with:
         subject-path: release-assets/*
+  publish_release_assets:
+    name: Publish verified release assets
+    runs-on: ubuntu-latest
+    needs: attest_release_assets
+    permissions:
+      contents: write
+    steps:
+    - name: Download staged release assets
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        pattern: release-assets-*
+        path: staged-assets
+    - name: Assemble signed release assets
+      run: |-
+        set -euo pipefail
+        mkdir -p release-assets
+        for asset_dir in staged-assets/*; do
+          case "$asset_dir" in
+            *unsigned-*-apple-darwin|*unsigned-*-windows-msvc) continue ;;
+          esac
+          find "$asset_dir" -maxdepth 1 -type f -exec cp {} release-assets/ \;
+        done
+    - name: Download release SBOM
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: release-sbom
+        path: release-assets
+    - name: Publish verified release assets
+      run: |-
+        set -euo pipefail
+        gh release upload "$RELEASE_TAG" release-assets/* --repo "${{ github.repository }}" --clobber
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RELEASE_TAG: ${{ github.event.release.tag_name }}
