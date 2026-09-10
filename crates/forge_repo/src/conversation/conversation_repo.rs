@@ -387,7 +387,7 @@ impl ConversationRepositoryImpl {
             // so neither source can bypass the final result bound.
             let mut seen = HashSet::new();
             raw_rows.retain(|row| seen.insert(row.conversation_id.clone()));
-            raw_rows.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+            raw_rows.sort_by_key(|row| std::cmp::Reverse(row.updated_at));
             if let Some(limit) = limit_value {
                 raw_rows.truncate(limit as usize);
             }
