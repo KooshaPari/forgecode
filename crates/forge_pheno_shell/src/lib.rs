@@ -242,7 +242,10 @@ impl TerminalEmulator {
 
     /// Whether this terminal supports **Sixel** graphics (DEC).
     pub fn supports_sixel(&self) -> bool {
-        matches!(self, Self::Xterm | Self::WezTerm | Self::Rio | Self::VSCode)
+        matches!(
+            self,
+            Self::Xterm | Self::WezTerm | Self::Rio | Self::ITerm2 | Self::VSCode
+        )
     }
 
     /// Whether this terminal supports **iTerm2 inline images** (OSC1337).
@@ -1307,7 +1310,7 @@ mod tests {
             ("kitty", TerminalEmulator::Kitty),
             ("iTerm.app", TerminalEmulator::ITerm2),
             ("Apple_Terminal", TerminalEmulator::AppleTerminal),
-            ("vscode", TerminalEmulator::Xterm), // not a real terminal
+            ("vscode", TerminalEmulator::VSCode),
         ] {
             let mut env = std::collections::HashMap::new();
             env.insert("TERM_PROGRAM".to_string(), val.to_string());
@@ -1334,11 +1337,16 @@ mod tests {
 
     #[test]
     fn terminal_emulator_supports_sixel_flag() {
-        // Kitty + WezTerm + iTerm2 support sixel; Unknown does not.
-        assert!(TerminalEmulator::Kitty.supports_sixel());
+        // Xterm, WezTerm, Rio, iTerm2, and VS Code support Sixel. Kitty uses
+        // its own graphics protocol instead.
+        assert!(TerminalEmulator::Xterm.supports_sixel());
         assert!(TerminalEmulator::WezTerm.supports_sixel());
+        assert!(TerminalEmulator::Rio.supports_sixel());
         assert!(TerminalEmulator::ITerm2.supports_sixel());
-        assert!(!TerminalEmulator::Xterm.supports_sixel());
+        assert!(TerminalEmulator::VSCode.supports_sixel());
+        assert!(!TerminalEmulator::Kitty.supports_sixel());
+        assert!(!TerminalEmulator::AppleTerminal.supports_sixel());
+        assert!(!TerminalEmulator::Tmux.supports_sixel());
     }
 
     #[test]
