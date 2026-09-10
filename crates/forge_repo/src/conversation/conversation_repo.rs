@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -212,18 +213,17 @@ impl ConversationRepositoryImpl {
             // `bm25()` returns a negative number where lower = more relevant, so `ORDER BY
             // rank_score` (ascending) yields "best match first".
             //
-            // We read from the primary `conversations` table: the FTS5 index
+            // We read FTS hits from the primary `conversations` table: the FTS5 index
             // is populated by `refresh_fts_index` from the primary table's
             // rows only, and the `rowid` join requires a real table (SQLite
-            // views do not expose `rowid`). Legacy rows are searchable only
-            // once they are re-indexed into the primary FTS5 index (e.g. by
-            // re-running the FTS refresh with the legacy DB attached).
+            // views do not expose `rowid`). A LIKE supplement below covers
+            // visible legacy rows, which are deliberately not indexed locally.
             //
             // We do NOT include `snippet()` here because it would force
             // the SELECT to return a column not in `ConversationRecord`.
             // The UI fetches a snippet on-demand via the separate
             // `get_conversation_snippet` method when the user picks a hit.
-            let mut sql = String::from(
+            let sql = String::from(
                 "SELECT c.*, bm25(conversations_fts) AS rank_score \
                  FROM conversations c \
                  JOIN conversations_fts fts ON c.rowid = fts.rowid \
@@ -231,22 +231,71 @@ impl ConversationRepositoryImpl {
                    AND c.workspace_id = ? \
                  ORDER BY rank_score",
             );
-            if limit_value.is_some() {
-                sql.push_str(" LIMIT ?");
-            }
 
             // We can't bind the FTS MATCH expression positionally because
             // diesel::sql_query does not have a typed binding for FTS5's
             // MATCH operator when used as a column. Use the lower-level
             // `sql_query` so we can read back the typed rows.
             let mut q = diesel::sql_query(sql).into_boxed();
-            q = q.bind::<diesel::sql_types::Text, _>(query);
+            q = q.bind::<diesel::sql_types::Text, _>(&query);
             q = q.bind::<diesel::sql_types::BigInt, _>(workspace_id);
-            if let Some(l) = limit_value {
-                q = q.bind::<diesel::sql_types::BigInt, _>(l);
+            let mut raw_rows: Vec<ConversationRecord> = q.load(connection)?;
+
+            // Keep the primary FTS ranking intact, then append matching legacy
+            // rows ordered by recency. `conversations_all` applies the global
+            // local-wins shadowing rule before this workspace visibility filter.
+            let escaped = query
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            let like_pattern = format!("%{escaped}%");
+            let legacy_sql = "\
+                SELECT * FROM conversations_all \
+                WHERE __forge_legacy_source = 1 \
+                  AND (workspace_id = ? OR __forge_legacy_unscoped = 1) \
+                  AND (title LIKE ? ESCAPE '\\' \
+                       OR context LIKE ? ESCAPE '\\' \
+                       OR cwd LIKE ? ESCAPE '\\') \
+                ORDER BY updated_at DESC";
+            let legacy_rows: Vec<ConversationRecord> = diesel::sql_query(legacy_sql)
+                .bind::<diesel::sql_types::BigInt, _>(workspace_id)
+                .bind::<diesel::sql_types::Text, _>(&like_pattern)
+                .bind::<diesel::sql_types::Text, _>(&like_pattern)
+                .bind::<diesel::sql_types::Text, _>(&like_pattern)
+                .load(connection)?;
+            raw_rows.extend(legacy_rows);
+
+            let compressed_sql = "\
+                SELECT * FROM conversations_all \
+                WHERE __forge_legacy_source = 1 \
+                  AND (workspace_id = ? OR __forge_legacy_unscoped = 1) \
+                  AND context IS NULL \
+                  AND context_zstd IS NOT NULL \
+                ORDER BY updated_at DESC";
+            let needle_lower = query.to_lowercase();
+            let compressed_rows: Vec<ConversationRecord> = diesel::sql_query(compressed_sql)
+                .bind::<diesel::sql_types::BigInt, _>(workspace_id)
+                .load(connection)?;
+            for row in compressed_rows {
+                if let Some(ref compressed) = row.context_zstd
+                    && zstd::decode_all(&compressed[..])
+                        .ok()
+                        .is_some_and(|decompressed| {
+                            decompressed[..]
+                                .to_str_lossy()
+                                .to_lowercase()
+                                .contains(&needle_lower)
+                        })
+                {
+                    raw_rows.push(row);
+                }
             }
 
-            let raw_rows: Vec<ConversationRecord> = q.load(connection)?;
+            let mut seen = HashSet::new();
+            raw_rows.retain(|row| seen.insert(row.conversation_id.clone()));
+            if let Some(limit) = limit_value {
+                raw_rows.truncate(limit as usize);
+            }
             let conversations: Result<Vec<Conversation>, _> =
                 raw_rows.into_iter().map(Conversation::try_from).collect();
             conversations
@@ -280,27 +329,20 @@ impl ConversationRepositoryImpl {
             let like_pattern = format!("%{escaped}%");
 
             // --- Part 1: plaintext columns (title, context, cwd) ---
-            let mut sql = String::from(
-                "SELECT * FROM conversations \
-                 WHERE workspace_id = ? \
+            let sql = String::from(
+                "SELECT * FROM conversations_all \
+                 WHERE (workspace_id = ? OR __forge_legacy_unscoped = 1) \
                    AND (title LIKE ? ESCAPE '\\' \
                         OR context LIKE ? ESCAPE '\\' \
                         OR cwd LIKE ? ESCAPE '\\') \
                  ORDER BY updated_at DESC",
             );
-            if limit_value.is_some() {
-                sql.push_str(" LIMIT ?");
-            }
 
             let mut q = diesel::sql_query(sql).into_boxed();
             q = q.bind::<diesel::sql_types::BigInt, _>(workspace_id);
             q = q.bind::<diesel::sql_types::Text, _>(&like_pattern);
             q = q.bind::<diesel::sql_types::Text, _>(&like_pattern);
             q = q.bind::<diesel::sql_types::Text, _>(&like_pattern);
-            if let Some(l) = limit_value {
-                q = q.bind::<diesel::sql_types::BigInt, _>(l);
-            }
-
             let mut raw_rows: Vec<ConversationRecord> = q.load(connection)?;
 
             // --- Part 2: compressed contexts (context IS NULL, context_zstd IS NOT NULL) ---
@@ -309,8 +351,8 @@ impl ConversationRepositoryImpl {
             // upsert. We fetch them separately, decompress in Rust, and
             // check for a substring match.
             let compressed_sql = "\
-                SELECT * FROM conversations \
-                WHERE workspace_id = ? \
+                SELECT * FROM conversations_all \
+                WHERE (workspace_id = ? OR __forge_legacy_unscoped = 1) \
                   AND context IS NULL \
                   AND context_zstd IS NOT NULL \
                 ORDER BY updated_at DESC";
@@ -338,12 +380,16 @@ impl ConversationRepositoryImpl {
                         Err(_) => continue,
                     }
                 }
-                // Respect limit: stop after we've collected enough.
-                if let Some(limit) = limit_value
-                    && raw_rows.len() as i64 >= limit
-                {
-                    break;
-                }
+            }
+
+            // Both scans use the same visibility projection. Re-sort after
+            // adding decompressed matches and apply the caller's limit once,
+            // so neither source can bypass the final result bound.
+            let mut seen = HashSet::new();
+            raw_rows.retain(|row| seen.insert(row.conversation_id.clone()));
+            raw_rows.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+            if let Some(limit) = limit_value {
+                raw_rows.truncate(limit as usize);
             }
 
             let conversations: Result<Vec<Conversation>, _> =
@@ -4224,6 +4270,121 @@ mod tests {
         assert_eq!(all2.len(), 2, "union shows legacy + write rows");
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_split_db_local_row_shadows_same_id_legacy_row() -> anyhow::Result<()> {
+        // A legacy row and a local row can legitimately share an ID after a
+        // split-DB cutover. Reads must consistently expose the local, writable
+        // representation; returning both would let a read disagree with a later
+        // mutation of that same ID.
+        let temp = tempfile::tempdir()?;
+        let legacy_db = temp.path().join("legacy.db");
+        let write_db = temp.path().join("write.db");
+        let duplicate_id = ConversationId::generate();
+
+        {
+            let legacy_pool = Arc::new(DatabasePool::try_from(
+                PoolConfig::new(legacy_db.clone()).with_legacy_database_path(None),
+            )?);
+            let legacy_repo = ConversationRepositoryImpl::new(legacy_pool, WorkspaceHash::new(0));
+            legacy_repo
+                .upsert_conversation(
+                    Conversation::new(duplicate_id).title(Some("legacy duplicate".to_string())),
+                )
+                .await?;
+        }
+        {
+            let write_pool = Arc::new(DatabasePool::try_from(
+                PoolConfig::new(write_db.clone()).with_legacy_database_path(None),
+            )?);
+            let write_repo = ConversationRepositoryImpl::new(write_pool, WorkspaceHash::new(0));
+            write_repo
+                .upsert_conversation(
+                    Conversation::new(duplicate_id).title(Some("local winner".to_string())),
+                )
+                .await?;
+        }
+
+        let pool = Arc::new(DatabasePool::try_from(
+            PoolConfig::new(write_db).with_legacy_database_path(Some(legacy_db)),
+        )?);
+        let repo = ConversationRepositoryImpl::new(pool, WorkspaceHash::new(0));
+
+        let fetched = repo
+            .get_conversation(&duplicate_id)
+            .await?
+            .expect("local row visible");
+        assert_eq!(fetched.title.as_deref(), Some("local winner"));
+
+        let all = repo
+            .get_all_conversations(None)
+            .await?
+            .expect("one visible row");
+        assert_eq!(all.len(), 1, "duplicate ID is represented once");
+        assert_eq!(all[0].title.as_deref(), Some("local winner"));
+
+        let last = repo
+            .get_last_conversation()
+            .await?
+            .expect("local row visible");
+        assert_eq!(last.id, duplicate_id);
+        assert_eq!(last.title.as_deref(), Some("local winner"));
+
+        let parents = repo
+            .get_parent_conversations(None)
+            .await?
+            .expect("local row visible");
+        assert_eq!(parents.len(), 1, "parent list must not expose both copies");
+        assert_eq!(parents[0].title.as_deref(), Some("local winner"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_split_db_search_finds_visible_legacy_rows_with_fts_and_like_fallback()
+    -> anyhow::Result<()> {
+        // The attached DB is intentionally not FTS-indexed by the write DB.
+        // Both the successful FTS path and the missing-FTS fallback must still
+        // supplement local results with visible legacy matches.
+        let temp = tempfile::tempdir()?;
+        let legacy_db = temp.path().join("legacy-search.db");
+        let write_db = temp.path().join("write-search.db");
+        let needle = "LEGACY_SPLIT_SEARCH_NEEDLE";
+        let legacy_id = ConversationId::generate();
+
+        {
+            let legacy_pool = Arc::new(DatabasePool::try_from(
+                PoolConfig::new(legacy_db.clone()).with_legacy_database_path(None),
+            )?);
+            let legacy_repo = ConversationRepositoryImpl::new(legacy_pool, WorkspaceHash::new(0));
+            legacy_repo
+                .upsert_conversation(Conversation::new(legacy_id).title(Some(needle.to_string())))
+                .await?;
+        }
+
+        let pool = Arc::new(DatabasePool::try_from(
+            PoolConfig::new(write_db).with_legacy_database_path(Some(legacy_db)),
+        )?);
+        let repo = ConversationRepositoryImpl::new(pool, WorkspaceHash::new(0));
+
+        let fts_hits = repo.search_conversations(needle, Some(1)).await?;
+        assert_eq!(
+            fts_hits.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+            vec![legacy_id]
+        );
+
+        repo.run_with_connection(move |connection, _wid| {
+            diesel::sql_query("DROP TABLE conversations_fts").execute(connection)?;
+            Ok(())
+        })
+        .await?;
+        let like_hits = repo.search_conversations(needle, Some(1)).await?;
+        assert_eq!(
+            like_hits.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+            vec![legacy_id]
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_get_parent_conversations_filters_agent_before_limit() -> anyhow::Result<()> {
         // Regression: the agent-exclusion predicate must run BEFORE the
