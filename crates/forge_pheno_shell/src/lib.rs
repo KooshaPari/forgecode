@@ -303,6 +303,23 @@ impl TerminalEmulator {
         // Preferred: TERM_PROGRAM (set by most modern terminals).
         if let Some(tp) = env_get("TERM_PROGRAM") {
             let lower = tp.to_ascii_lowercase();
+            let fallback = || {
+                // Fall through to secondary heuristics
+                if let Some(_wez) = env_get("WEZTERM_EXECUTABLE") {
+                    Self::WezTerm
+                } else if let Some(_kitty) = env_get("KITTY_WINDOW_ID") {
+                    Self::Kitty
+                } else if let Some(wt) = env_get("WT_SESSION") {
+                    let _ = wt;
+                    Self::WindowsTerminal
+                } else if let Some(_lc) = env_get("LC_TERMINAL") {
+                    Self::AppleTerminal
+                } else if let Some(_jetbrains) = env_get("JEDITERM_USER_DIR") {
+                    Self::JetBrains
+                } else {
+                    Self::Xterm
+                }
+            };
             let mapped = match lower.as_str() {
                 "wezterm" => Self::WezTerm,
                 "rio" => Self::Rio,
@@ -318,23 +335,8 @@ impl TerminalEmulator {
                 "tmux" => Self::Tmux,
                 "screen" => Self::Screen,
                 "vscode" => Self::VSCode,
-                "xterm" | "xterm-256color" | _ => {
-                    // Fall through to secondary heuristics
-                    if let Some(_wez) = env_get("WEZTERM_EXECUTABLE") {
-                        Self::WezTerm
-                    } else if let Some(_kitty) = env_get("KITTY_WINDOW_ID") {
-                        Self::Kitty
-                    } else if let Some(wt) = env_get("WT_SESSION") {
-                        let _ = wt;
-                        Self::WindowsTerminal
-                    } else if let Some(_lc) = env_get("LC_TERMINAL") {
-                        Self::AppleTerminal
-                    } else if let Some(_jetbrains) = env_get("JEDITERM_USER_DIR") {
-                        Self::JetBrains
-                    } else {
-                        Self::Xterm
-                    }
-                }
+                "xterm" | "xterm-256color" => fallback(),
+                _ => fallback(),
             };
             return (mapped, format!("TERM_PROGRAM={tp}"));
         }
@@ -1260,43 +1262,45 @@ mod tests {
         assert!(targets.is_empty());
     }
 
+    #[test]
     fn terminal_emulator_variants() {
         // Spot-check Display + PartialEq + default
-        assert_eq!(TerminalEmulator::WezTerm.to_string(), "WezTerm");
-        assert_eq!(TerminalEmulator::Rio.to_string(), "Rio");
-        assert_eq!(TerminalEmulator::Ghostty.to_string(), "Ghostty");
-        assert_eq!(TerminalEmulator::Kitty.to_string(), "Kitty");
-        assert_eq!(TerminalEmulator::ITerm2.to_string(), "iTerm2");
+        assert_eq!(TerminalEmulator::WezTerm.to_string(), "wezterm");
+        assert_eq!(TerminalEmulator::Rio.to_string(), "rio");
+        assert_eq!(TerminalEmulator::Ghostty.to_string(), "ghostty");
+        assert_eq!(TerminalEmulator::Kitty.to_string(), "kitty");
+        assert_eq!(TerminalEmulator::ITerm2.to_string(), "iterm2");
         assert_eq!(
             TerminalEmulator::AppleTerminal.to_string(),
-            "Apple Terminal"
+            "apple-terminal"
         );
         assert_eq!(
             TerminalEmulator::WindowsTerminal.to_string(),
-            "Windows Terminal"
+            "windows-terminal"
         );
-        assert_eq!(TerminalEmulator::Xterm.to_string(), "XTerm");
-        assert_eq!(TerminalEmulator::Xterm.to_string(), "XTerm (unknown)");
+        assert_eq!(TerminalEmulator::Xterm.to_string(), "xterm");
+        assert_eq!(TerminalEmulator::VSCode.to_string(), "vscode");
         assert_eq!(TerminalEmulator::default(), TerminalEmulator::Xterm);
         assert_ne!(TerminalEmulator::WezTerm, TerminalEmulator::Rio);
     }
 
+    #[test]
     fn terminal_emulator_detects_wezterm() {
         let mut env = std::collections::HashMap::new();
         env.insert("TERM_PROGRAM".to_string(), "WezTerm".to_string());
-        let (term, _source) =
-            TerminalEmulator::from_env(&|k: &str| env.get(k).map(|s: &String| s.clone()));
+        let (term, _source) = TerminalEmulator::from_env(&|k: &str| env.get(k).cloned());
         assert_eq!(term, TerminalEmulator::WezTerm);
     }
 
+    #[test]
     fn terminal_emulator_detects_rio() {
         let mut env = std::collections::HashMap::new();
         env.insert("TERM_PROGRAM".to_string(), "rio".to_string());
-        let (term, _source) =
-            TerminalEmulator::from_env(&|k: &str| env.get(k).map(|s: &String| s.clone()));
+        let (term, _source) = TerminalEmulator::from_env(&|k: &str| env.get(k).cloned());
         assert_eq!(term, TerminalEmulator::Rio);
     }
 
+    #[test]
     fn terminal_emulator_detects_ghostty_kitty_iterm2() {
         for (val, expected) in [
             ("ghostty", TerminalEmulator::Ghostty),
@@ -1307,8 +1311,7 @@ mod tests {
         ] {
             let mut env = std::collections::HashMap::new();
             env.insert("TERM_PROGRAM".to_string(), val.to_string());
-            let (term, _source) =
-                TerminalEmulator::from_env(&|k: &str| env.get(k).map(|s: &String| s.clone()));
+            let (term, _source) = TerminalEmulator::from_env(&|k: &str| env.get(k).cloned());
             assert_eq!(
                 term, expected,
                 "TERM_PROGRAM={val} -> {term:?}, expected {expected:?}"
@@ -1316,6 +1319,7 @@ mod tests {
         }
     }
 
+    #[test]
     fn terminal_emulator_promoted_through_shell_env() {
         // Verify the terminal_emulator field is wired through detect_shell().
         // Using PSEdition as the primary signal ensures non-TerminalEnv vars
@@ -1328,6 +1332,7 @@ mod tests {
         assert_eq!(shell_env.kind, ShellKind::PowerShellCore);
     }
 
+    #[test]
     fn terminal_emulator_supports_sixel_flag() {
         // Kitty + WezTerm + iTerm2 support sixel; Unknown does not.
         assert!(TerminalEmulator::Kitty.supports_sixel());
@@ -1336,6 +1341,7 @@ mod tests {
         assert!(!TerminalEmulator::Xterm.supports_sixel());
     }
 
+    #[test]
     fn install_targets_fish_path() {
         let home = std::path::Path::new("/Users/test");
         let targets = install_targets(ShellKind::Fish, home, "forge");
