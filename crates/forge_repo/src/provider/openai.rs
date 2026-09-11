@@ -310,15 +310,24 @@ impl<H: HttpInfra> OpenAIProvider<H> {
                     debug!(url = %url, "Fetching dynamic models");
                     match self.fetch_models(url.as_str()).await {
                         Ok(response) => {
-                            let data: ListModelResponse = serde_json::from_str(&response)
-                                .with_context(|| format_http_context(None, "GET", url))
-                                .with_context(|| "Failed to deserialize models response")?;
-                            let live_ids =
-                                data.data.into_iter().map(|m| m.id.to_string()).collect();
-                            Ok(forge_app::domain::Model::merge_live(
-                                live_ids,
-                                fallback.clone(),
-                            ))
+                            match serde_json::from_str::<ListModelResponse>(&response) {
+                                Ok(data) => {
+                                    let live_ids =
+                                        data.data.into_iter().map(|m| m.id.to_string()).collect();
+                                    Ok(forge_app::domain::Model::merge_live(
+                                        live_ids,
+                                        fallback.clone(),
+                                    ))
+                                }
+                                Err(deser_error) => {
+                                    tracing::warn!(
+                                        error = ?deser_error,
+                                        provider = %self.provider.id,
+                                        "Failed to deserialize dynamic models response; falling back to curated list"
+                                    );
+                                    Ok(fallback.clone())
+                                }
+                            }
                         }
                         Err(error) => {
                             tracing::warn!(

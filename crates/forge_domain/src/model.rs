@@ -86,7 +86,14 @@ impl Model {
     /// appended so metadata-only models (e.g. behind beta flags) remain
     /// selectable.
     pub fn merge_live(live_ids: Vec<String>, curated: Vec<Model>) -> Vec<Self> {
-        let mut merged: Vec<Self> = live_ids
+        // Deduplicate live IDs (upstream API may return duplicates)
+        let mut seen = std::collections::HashSet::new();
+        let unique_live: Vec<String> = live_ids
+            .into_iter()
+            .filter(|id| seen.insert(id.clone()))
+            .collect();
+
+        let mut merged: Vec<Self> = unique_live
             .into_iter()
             .map(|id| match curated.iter().find(|m| m.id.as_str() == id) {
                 Some(curated_model) => {

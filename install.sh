@@ -122,11 +122,13 @@ if [ "$LOCAL" = "1" ]; then
     fi
     echo -e "  → \033[36mLocal install — building from source...\033[0m"
     pushd "$(cd "$(dirname "$0")" && pwd)" >/dev/null
-    cargo build --release --bin helioslite --bin forge --features dev-binary --bin forge-dev
+    cargo build --release --bin helioslite
     cp "target/release/helioslite" "$INSTALL_DIR/helioslite"
-    cp "target/release/forge" "$INSTALL_DIR/forge"
-    cp "target/release/forge-dev" "$INSTALL_DIR/forge-dev"
-    chmod +x "$INSTALL_DIR/helioslite" "$INSTALL_DIR/forge" "$INSTALL_DIR/forge-dev"
+    if [ "$SKIP_FORGE" = "0" ]; then
+        cargo build --release --bin forge --features dev-binary --bin forge-dev 2>/dev/null || cargo build --release --bin forge 2>/dev/null || true
+        [ -f "target/release/forge" ] && cp "target/release/forge" "$INSTALL_DIR/forge" && chmod +x "$INSTALL_DIR/forge"
+        [ -f "target/release/forge-dev" ] && cp "target/release/forge-dev" "$INSTALL_DIR/forge-dev" && chmod +x "$INSTALL_DIR/forge-dev"
+    fi
     popd >/dev/null
 else
     TARGET="$(detect_target)"
@@ -199,13 +201,19 @@ add_to_path() {
 }
 add_to_path "$INSTALL_DIR"
 
-# 5) Optional: legacy forge alias
+# 5) Optional: legacy forge and forge-dev aliases
 if [ "$SKIP_FORGE" = "0" ]; then
     forge_path="$INSTALL_DIR/forge"
     if [ ! -e "$forge_path" ]; then
         cp "$INSTALL_DIR/helioslite" "$forge_path"
         chmod +x "$forge_path"
         echo -e "  ✓ \033[32mCreated legacy alias $forge_path\033[0m"
+    fi
+    forge_dev_path="$INSTALL_DIR/forge-dev"
+    if [ ! -e "$forge_dev_path" ]; then
+        cp "$INSTALL_DIR/helioslite" "$forge_dev_path"
+        chmod +x "$forge_dev_path"
+        echo -e "  ✓ \033[32mCreated legacy alias $forge_dev_path\033[0m"
     fi
 fi
 

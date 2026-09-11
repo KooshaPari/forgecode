@@ -94,10 +94,15 @@ impl<R> ForgeProviderService<R> {
                         &template_provider.url_params,
                     )
                     .ok();
-                model_url.map(|rendered| ModelSource::Dynamic {
-                    url: rendered,
-                    fallback: fallback.clone(),
-                })
+                match model_url {
+                    Some(rendered) => Some(ModelSource::Dynamic {
+                        url: rendered,
+                        fallback: fallback.clone(),
+                    }),
+                    // URL rendering failed — preserve the curated fallback as hardcoded
+                    // so the provider still exposes its models.
+                    None => Some(ModelSource::Hardcoded(fallback.clone())),
+                }
             }
             ModelSource::Hardcoded(list) => Some(ModelSource::Hardcoded(list.clone())),
         });
