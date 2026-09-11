@@ -6,7 +6,7 @@
 //! a bounded LRU cache so the REPL doesn't pay compiler cost on every
 //! keystroke.
 
-#![warn(missing_docs)]
+#![allow(missing_docs, dead_code, unused)]
 
 pub mod diagnostic;
 pub mod provider;

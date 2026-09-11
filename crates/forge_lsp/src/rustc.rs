@@ -35,6 +35,7 @@ struct CargoCode {
 struct CargoSpan {
     file_name: Option<String>,
     line_start: Option<u32>,
+    #[serde(default)]
     line_end: Option<u32>,
     #[serde(default)]
     column_start: Option<u32>,
@@ -43,6 +44,8 @@ struct CargoSpan {
     is_primary: Option<bool>,
 }
 
+/// `cargo check` provider. Run via [`DiagnosticsService`].
+#[derive(Default)]
 pub struct RustcProvider;
 
 impl RustcProvider {
@@ -154,6 +157,7 @@ fn find_cargo_root(path: &Path, workspace_root: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
+#[allow(unused, missing_docs)]
 mod tests {
     use super::*;
 

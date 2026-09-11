@@ -88,6 +88,6 @@ mod tests {
         // an `Err(String)` round-trips cleanly.
         let res: DiagnosticsResult = Err("tool not found".to_string());
         assert!(res.is_err());
-        assert_eq!(res.unwrap_err(), "tool not found");
+        assert_eq!(res.err().unwrap(), "tool not found");
     }
 }

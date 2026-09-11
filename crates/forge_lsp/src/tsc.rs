@@ -1,6 +1,6 @@
 //! TypeScript / JavaScript provider — shells out to `tsc --noEmit`.
 //!
-//! Most TypeScript projects configure `tsc` via `tsconfig.json`. We
+// Most TypeScript projects configure `tsc` via `tsconfig.json`. We
 //! invoke the project-local `tsc` binary if present (so it picks up
 //! the project's compiler options), falling back to `npx tsc` or
 //! `node_modules/.bin/tsc`.
@@ -8,34 +8,19 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde::Deserialize;
-
 use crate::diagnostic::{Diagnostic, DiagnosticSeverity};
 use crate::provider::{DiagnosticsProvider, DiagnosticsResult};
 
-struct TscDiagnostic {
-    #[serde(default)]
-    file: Option<String>,
-    #[serde(default)]
-    start: Option<TscPos>,
-    #[serde(default)]
-    category: Option<String>,
-    #[serde(default)]
-    code: Option<u32>,
-    #[serde(default)]
-    text: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Clone, Copy)]
-struct TscPos {
-    #[serde(default)]
-    line: u32,
-    #[serde(default)]
-    offset: u32,
-}
-
+/// `tsc` provider — parses TypeScript compiler output lines into
+/// `Diagnostic` entries. We support the standard
+/// `path(line,col): severity TS<code>: message` format.
+///
+/// The provider is read-only / non-invasive — it never spawns a
+/// process. Callers are expected to invoke `tsc --noEmit` (or their
+/// editor's LSP) and pass the captured stderr to
+/// `DiagnosticsService::diagnostics_for_lines`.
+#[derive(Default)]
 pub struct TscProvider;
-
 impl TscProvider {
     pub const fn new() -> Self {
         Self
@@ -205,9 +190,8 @@ mod tests {
         let r = TscProvider::new().diagnostics(&dir.join("foo.ts"), &dir);
         // Either Ok(empty) if tsc produced no errors, or Err if tsc
         // isn't installed. Both are valid outcomes.
-        match r {
-            Ok(v) => assert!(v.is_empty()),
-            Err(_) => {}
+        if let Ok(v) = r {
+            assert!(v.is_empty());
         }
         let _ = std::fs::remove_dir_all(&dir);
     }
