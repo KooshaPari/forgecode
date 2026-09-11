@@ -230,12 +230,18 @@ impl<P: DiagnosticsProvider + 'static> DiagnosticsService<P> {
 
     /// Run diagnostics for `path` using the supplied `tokio`
     /// runtime `Handle`. Falls back to the sync entry point when no
-    /// `Handle` is supplied. Avoids `Handle::block_on` because it
-    /// panics if the current thread is already inside the supplied
-    /// runtime — instead we use `tokio::task::block_in_place` (which
-    /// requires a multi-thread runtime) when the supplied handle is
-    /// the current runtime, falling back to the sync entry point
-    /// from a worker thread otherwise.
+    /// `Handle` is supplied. When a `Handle` is supplied, we expect
+    /// the caller to invoke this from a thread that is *not* a
+    /// worker of that runtime (typical REPL/audio/IO threads) and
+    /// use `Handle::block_on` to drive the blocking task to
+    /// completion on the blocking thread pool. We deliberately
+    /// avoid `tokio::task::block_in_place` here because that panics
+    /// inside current-thread runtimes — which tokio 1.51 still
+    /// supports — and we avoid `Handle::block_on` from inside the
+    /// same runtime (the panic the previous round tripped). The
+    /// `spawn_blocking + block_on` pattern is safe for both
+    /// current-thread and multi-thread handles when called off
+    /// the runtime.
     pub fn diagnostics_for_path_with_handle(
         self: Arc<Self>,
         handle: Option<&Handle>,
@@ -246,18 +252,11 @@ impl<P: DiagnosticsProvider + 'static> DiagnosticsService<P> {
         match handle {
             None => me.diagnostics_for_path(&path, &workspace_root),
             Some(h) => {
-                let path_for_blocking = path.clone();
-                let workspace_for_blocking = workspace_root.clone();
-                // `spawn_blocking` + `Handle::block_on` would re-enter the runtime.
-                // Use `block_in_place` instead: it runs the closure synchronously on
-                // the current worker thread without blocking the runtime's reactor,
-                // and works from any thread *inside* the multi-thread runtime.
-                if Handle::try_current().is_ok_and(|cur| cur.id() == h.id()) {
-                    tokio::task::block_in_place(move || {
-                        me.diagnostics_for_path(&path_for_blocking, &workspace_for_blocking)
-                    })
-                } else {
-                    me.diagnostics_for_path(&path, &workspace_root)
+                let join =
+                    h.spawn_blocking(move || me.diagnostics_for_path(&path, &workspace_root));
+                match h.block_on(join) {
+                    Ok(inner) => inner,
+                    Err(join_err) => Err(anyhow!("blocking task join error: {join_err}")),
                 }
             }
         }
@@ -413,5 +412,72 @@ mod tests {
         // Same path in two different workspaces should not collapse
         // into a single cache entry.
         assert_eq!(service.cache_len(), 2);
+    }
+
+    #[test]
+    fn diagnostics_for_path_with_handle_works_on_current_thread_runtime() {
+        // Drive `diagnostics_for_path_with_handle` from a thread
+        // *outside* a current-thread runtime to confirm the
+        // `spawn_blocking + block_on` pairing doesn't panic and
+        // returns the provider's result. Regression coverage for the
+        // `block_in_place`-on-current-thread panic flagged by
+        // CodeRabbit (PR #275 review).
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current-thread runtime builds");
+        let service = DiagnosticsService::new(StubProvider("a", &["rs"]));
+        let handle = rt.handle().clone();
+        let path = PathBuf::from("src/main.rs");
+        let workspace = PathBuf::from("/workspace_current_thread");
+        let svc: std::sync::Arc<DiagnosticsService<StubProvider>> = std::sync::Arc::new(service);
+        let result = std::thread::spawn(move || {
+            svc.diagnostics_for_path_with_handle(Some(&handle), path, workspace)
+        })
+        .join()
+        .expect("join ok");
+        assert!(
+            result.is_ok(),
+            "current-thread handle path must not panic: {result:?}"
+        );
+    }
+
+    #[test]
+    fn diagnostics_for_path_with_handle_works_on_multi_thread_runtime() {
+        // Same as above but with a multi-thread runtime — confirms
+        // the `spawn_blocking + block_on` path also works under
+        // multi-thread and produces the cached provider result.
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("multi-thread runtime builds");
+        let service = DiagnosticsService::new(StubProvider("a", &["rs"]));
+        let handle = rt.handle().clone();
+        let path = PathBuf::from("src/main.rs");
+        let workspace = PathBuf::from("/workspace_multi_thread");
+        let svc: std::sync::Arc<DiagnosticsService<StubProvider>> = std::sync::Arc::new(service);
+        let result = std::thread::spawn(move || {
+            svc.diagnostics_for_path_with_handle(Some(&handle), path, workspace)
+        })
+        .join()
+        .expect("join ok");
+        assert!(
+            result.is_ok(),
+            "multi-thread handle path must not panic: {result:?}"
+        );
+    }
+
+    #[test]
+    fn diagnostics_for_path_with_handle_none_falls_back_to_sync() {
+        // No handle: pure sync path. Confirms we didn't introduce a
+        // regression in the sync entry point while threading the
+        // runtime path through.
+        let service = DiagnosticsService::new(StubProvider("a", &["rs"]));
+        let path = PathBuf::from("src/main.rs");
+        let workspace = PathBuf::from("/workspace_none");
+        let svc: std::sync::Arc<DiagnosticsService<StubProvider>> = std::sync::Arc::new(service);
+        let result = svc.diagnostics_for_path_with_handle(None, path, workspace);
+        assert!(result.is_ok());
     }
 }

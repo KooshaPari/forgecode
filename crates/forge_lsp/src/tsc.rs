@@ -112,6 +112,12 @@ impl DiagnosticsProvider for TscProvider {
                 diagnostics.push(d);
             }
         }
+        // Filter to the requested path: `tsc --noEmit` reports every
+        // diagnostic in the project, not just for the file we asked
+        // about. Caching or surfacing the project-wide vector would
+        // leak unrelated files' diagnostics into the caller's view.
+        diagnostics.retain(|d| paths_match(&d.file, path));
+
         // If the process exited non-zero and we have stderr, surface it
         // as a single diagnostic attached to the requested path so the
         // REPL shows the user something instead of silently returning
@@ -167,6 +173,22 @@ fn parse_tsc_line(line: &str) -> Option<Diagnostic> {
     };
     let message = rest.trim().to_string();
     Some(Diagnostic::new(PathBuf::from(file), severity, line_num, message).with_source("tsc"))
+}
+
+/// `tsc` emits paths verbatim from the compiler's working directory,
+/// which may differ from the requested path's canonical form (e.g.
+/// when the caller passes a relative `foo.ts` and `tsc` reports
+/// `src/foo.ts`, or vice versa). Compare by exact byte representation
+/// first; fall back to a canonical-form comparison for the cases
+/// where both sides exist on the filesystem.
+fn paths_match(emitted: &Path, requested: &Path) -> bool {
+    if emitted == requested {
+        return true;
+    }
+    match (emitted.canonicalize(), requested.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -260,6 +282,45 @@ mod tests {
         if let Ok(v) = r {
             assert!(v.is_empty());
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn paths_match_exact_and_canonical() {
+        // Exact byte equality.
+        assert!(paths_match(
+            Path::new("src/foo.ts"),
+            Path::new("src/foo.ts")
+        ));
+        // Different-but-equivalent text: emit an absolute path that
+        // canonicalizes to the same inode as the requested relative path.
+        let dir = std::env::temp_dir().join("forge_lsp_paths_match");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let rel = PathBuf::from("a.ts");
+        let abs = dir.join("a.ts");
+        std::fs::write(&abs, "").unwrap();
+        assert!(paths_match(&rel, &rel));
+        // If emitted is relative and requested is absolute to the same
+        // file, the canonicalize fallback discovers they are equal.
+        let orig_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&dir).unwrap();
+        let emitted = Path::new("a.ts");
+        assert!(paths_match(emitted, &abs));
+        std::env::set_current_dir(orig_cwd).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn paths_match_different_files_not_equal() {
+        let dir = std::env::temp_dir().join("forge_lsp_paths_match_diff");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a.ts");
+        let b = dir.join("b.ts");
+        std::fs::write(&a, "x").unwrap();
+        std::fs::write(&b, "y").unwrap();
+        assert!(!paths_match(&a, &b));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
