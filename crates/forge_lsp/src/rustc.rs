@@ -213,7 +213,9 @@ fn diagnostic_matches_path(span_file: &Path, requested_path: &Path) -> bool {
     let span_len = span_components.len();
     let req_len = requested_components.len();
     let min_len = span_len.min(req_len);
-    span_components[span_len - min_len..] == requested_components[req_len - min_len..]
+    let span_tail = span_components.get(span_len - min_len..).unwrap_or(&[]);
+    let req_tail = requested_components.get(req_len - min_len..).unwrap_or(&[]);
+    span_tail == req_tail
 }
 
 /// Walk up from `path` looking for the closest `Cargo.toml`. Returns
