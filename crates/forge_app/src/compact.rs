@@ -143,7 +143,7 @@ impl Compactor {
         let compacted_usage = context
             .messages
             .get(start..=end)
-            .and_then(|slice| slice.iter().rev().find_map(|entry| entry.usage.clone()));
+            .and_then(|slice| slice.iter().rev().find_map(|entry| entry.usage));
 
         // Replace the range with the summary, transferring the accumulated usage
         let mut summary_entry = MessageEntry::from(ContextMessage::user(summary, None));

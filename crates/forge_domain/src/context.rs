@@ -440,10 +440,7 @@ impl Context {
         // turn. Earlier messages' usage values are cumulative historical
         // snapshots that would otherwise inflate the displayed total when
         // summed or even when reduced via max().
-        self.messages
-            .iter()
-            .rev()
-            .find_map(|msg| msg.usage.clone())
+        self.messages.iter().rev().find_map(|msg| msg.usage)
     }
 
     pub fn system_prompt(&self) -> Option<&str> {
