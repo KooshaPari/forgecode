@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::reader::ConfigReader;
 use crate::writer::ConfigWriter;
 use crate::{
-    AutoDumpFormat, Compact, Decimal, HttpConfig, ModelConfig, ReasoningConfig, RetryConfig, Update,
+    AutoDumpFormat, Compact, Decimal, HttpConfig, ModelConfig, OutputSettings, ReasoningConfig,
+    RetryConfig, Update,
 };
 
 /// Wire protocol a provider uses for chat completions.
@@ -268,15 +269,42 @@ pub struct ForgeConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_requests_per_turn: Option<usize>,
 
+    /// Whether to automatically continue after a per-turn limit interruption.
+    #[serde(default)]
+    pub auto_continue_on_interrupt: bool,
+
     /// Context compaction settings applied to all agents; falls back to each
     /// agent's individual setting when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact: Option<Compact>,
 
+    /// User-facing output rendering settings (verbose/concise/compact modes).
+    /// When absent the renderer falls back to `OutputSettings::default()`
+    /// (concise mode, trailing newline enabled).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<OutputSettings>,
+
     /// Whether restricted mode is active; when enabled, tool execution requires
     /// explicit permission grants.
     #[serde(default)]
     pub restricted: bool,
+
+    /// Whether the LLM guardian / risk-adjudication layer is active. When
+    /// enabled, a `GuardianAdjudicator` runs before the rule engine makes its
+    /// allow/deny/confirm decision, scoring risk and applying session-mode
+    /// gates (Plan/Build/AcceptEdits/Yolo). Defaults to off (backwards
+    /// compatible — current behavior unchanged when absent).
+    #[serde(default)]
+    pub guardian: bool,
+
+    /// Whether the OS-level sandbox should be applied to risky tool calls
+    /// (currently `Shell` and `Fetch`). When enabled, those tool calls are
+    /// routed through `forge_sandbox::Sandbox` instead of the bare shell —
+    /// providing Landlock/Seatbelt/Job Object containment per `SandboxPolicy`.
+    /// Defaults to off (backwards compatible — current behavior unchanged
+    /// when absent).
+    #[serde(default)]
+    pub sandbox: bool,
 
     /// Whether tool use is supported in the current environment; when false,
     /// all tool calls are disabled.
@@ -365,13 +393,19 @@ impl ForgeConfig {
 
     /// Writes the configuration to the user config file.
     ///
+    /// When `path` is `None`, the default config path (`~/.forge/.forge.toml`)
+    /// is used. When `Some(path)`, the configuration is written to that path
+    /// instead.
+    ///
     /// # Errors
     ///
     /// Returns an error if the configuration cannot be serialized or written to
     /// disk.
-    pub fn write(&self) -> crate::Result<()> {
-        let path = ConfigReader::config_path();
-        ConfigWriter::new(self.clone()).write(&path)
+    pub fn write(&self, path: Option<&std::path::Path>) -> crate::Result<()> {
+        let target = path
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(ConfigReader::config_path);
+        ConfigWriter::new(self.clone()).write(&target)
     }
 }
 

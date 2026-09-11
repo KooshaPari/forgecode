@@ -33,13 +33,28 @@ pub struct ToolRegistry<S> {
 }
 
 impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ToolRegistry<S> {
-    pub fn new(services: Arc<S>) -> Self {
-        Self {
+    pub fn new(services: Arc<S>) -> anyhow::Result<Self> {
+        // P1.1: route shell/fetch through forge_sandbox when config.sandbox is on
+        let config = services.get_config()?;
+        let tool_executor = if config.sandbox {
+            let cwd = services.get_environment().cwd.clone();
+            let cfg = forge_sandbox::SandboxConfig {
+                command: "sh".to_string(),
+                args: vec!["-c".to_string()],
+                working_dir: cwd,
+                env: Vec::new(),
+                ..forge_sandbox::SandboxConfig::default()
+            };
+            ToolExecutor::with_sandbox(services.clone(), cfg)
+        } else {
+            ToolExecutor::new(services.clone())
+        };
+        Ok(Self {
             services: services.clone(),
-            tool_executor: ToolExecutor::new(services.clone()),
+            tool_executor,
             agent_executor: AgentExecutor::new(services.clone()),
             mcp_executor: McpExecutor::new(services.clone()),
-        }
+        })
     }
 
     async fn call_with_timeout<F, Fut>(
@@ -90,6 +105,7 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ToolReg
         Ok(false)
     }
 
+    #[tracing::instrument(skip(self, agent, context), fields(tool = %input.name))]
     async fn call_inner(
         &self,
         agent: &Agent,
@@ -110,6 +126,7 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ToolReg
                 let executor = self.agent_executor.clone();
                 let session_id = task_input.session_id.clone();
                 let agent_id = task_input.agent_id.clone();
+                let parent_id = context.conversation_id();
                 // Parse session_id into ConversationId if present
                 let conversation_id = session_id
                     .map(|id| forge_domain::ConversationId::parse(&id))
@@ -122,7 +139,13 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ToolReg
                     let executor = executor.clone();
                     async move {
                         executor
-                            .execute(AgentId::new(&agent_id), task, context, conversation_id)
+                            .execute(
+                                AgentId::new(&agent_id),
+                                task,
+                                context,
+                                conversation_id,
+                                parent_id,
+                            )
                             .await
                     }
                 }))
@@ -169,13 +192,14 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ToolReg
             let agent_input = AgentInput::try_from(&input)?;
             let executor = self.agent_executor.clone();
             let agent_name = input.name.as_str().to_string();
+            let parent_id = context.conversation_id();
             // NOTE: Agents should not timeout
             let outputs = join_all(agent_input.tasks.into_iter().map(|task| {
                 let agent_name = agent_name.clone();
                 let executor = executor.clone();
                 async move {
                     executor
-                        .execute(AgentId::new(&agent_name), task, context, None)
+                        .execute(AgentId::new(&agent_name), task, context, None, parent_id)
                         .await
                 }
             }))
@@ -210,6 +234,7 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ToolReg
         }
     }
 
+    #[tracing::instrument(skip(self, agent, context), fields(tool = %call.name))]
     pub async fn call(
         &self,
         agent: &Agent,
@@ -219,7 +244,9 @@ impl<S: Services + EnvironmentInfra<Config = forge_config::ForgeConfig>> ToolReg
         let call_id = call.call_id.clone();
         let tool_name = call.name.clone();
         let output = self.call_inner(agent, call, context).await;
-
+        if output.is_err() {
+            tracing::warn!(tool = %tool_name, "tool call produced an error");
+        }
         ToolResult::new(tool_name).call_id(call_id).output(output)
     }
 

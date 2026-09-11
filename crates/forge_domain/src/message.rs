@@ -35,6 +35,12 @@ impl Usage {
     ///
     /// Use this for aggregating usage across **independent** requests (e.g.,
     /// session-level totals where each message has its own final usage).
+    ///
+    /// NOTE: As of the prompt-token-display fix, this method is no longer
+    /// called by production code. The chat header's `prompt_tokens` value
+    /// comes from `Context::accumulate_usage()` which now returns the most
+    /// recent message's usage directly. Tests that exercise this method
+    /// still pass with the original summing semantics.
     pub fn accumulate(mut self, other: &Usage) -> Self {
         self.prompt_tokens = self.prompt_tokens + other.prompt_tokens;
         self.completion_tokens = self.completion_tokens + other.completion_tokens;
@@ -162,6 +168,9 @@ pub enum FinishReason {
     /// violated filters.
     #[strum(serialize = "content_filter")]
     ContentFilter,
+    /// The Anthropic provider refused to generate a response.
+    #[strum(serialize = "refusal")]
+    Refusal,
     /// The model stopped generating output because it made a tool call.
     #[strum(serialize = "tool_calls")]
     ToolCalls,
@@ -393,6 +402,10 @@ mod tests {
         assert_eq!(
             FinishReason::from_str("content_filter").unwrap(),
             FinishReason::ContentFilter
+        );
+        assert_eq!(
+            FinishReason::from_str("refusal").unwrap(),
+            FinishReason::Refusal
         );
         assert_eq!(
             FinishReason::from_str("tool_calls").unwrap(),

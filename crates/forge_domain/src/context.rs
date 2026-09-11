@@ -364,6 +364,7 @@ pub enum Role {
     System,
     User,
     Assistant,
+    Tool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, Setters, PartialEq)]
 #[setters(into, strip_option)]
@@ -434,11 +435,12 @@ pub struct Context {
 
 impl Context {
     pub fn accumulate_usage(&self) -> Option<Usage> {
-        self.messages
-            .iter()
-            .filter_map(|msg| msg.usage.as_ref())
-            .cloned()
-            .reduce(|a, b| a.accumulate(&b))
+        // Returns the usage of the **most recent** message that has usage
+        // attached. This represents the actual prompt size for the current
+        // turn. Earlier messages' usage values are cumulative historical
+        // snapshots that would otherwise inflate the displayed total when
+        // summed or even when reduced via max().
+        self.messages.iter().rev().find_map(|msg| msg.usage)
     }
 
     pub fn system_prompt(&self) -> Option<&str> {
