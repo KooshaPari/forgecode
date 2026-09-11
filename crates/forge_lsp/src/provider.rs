@@ -10,13 +10,10 @@ use std::path::Path;
 
 use crate::diagnostic::Diagnostic;
 
-/// A boxed error from a provider — we don't bring in `anyhow`/`thiserror`
-/// to keep `forge_lsp` dependency-light. The string format is opaque
-/// to the service layer (it just gets surfaced to the agent verbatim).
-pub type DiagnosticsError = String;
-
-/// Result of a provider's diagnostic pass.
-pub type DiagnosticsResult = Result<Vec<Diagnostic>, DiagnosticsError>;
+/// Result of a provider's diagnostic pass. Per repo `AGENTS.md`, services
+/// surface errors through `anyhow::Result` so structured causes and
+/// context chains survive across the provider / service boundary.
+pub type DiagnosticsResult = anyhow::Result<Vec<Diagnostic>>;
 
 /// A language backend.
 pub trait DiagnosticsProvider: Send + Sync {
@@ -82,12 +79,16 @@ mod tests {
     }
 
     #[test]
-    fn diagnostics_result_err_propagates_string() {
-        // The trait uses `Result<Vec<Diagnostic>, String>` so an
-        // implementation can surface whatever it wants. Verify that
-        // an `Err(String)` round-trips cleanly.
-        let res: DiagnosticsResult = Err("tool not found".to_string());
+    fn diagnostics_result_err_propagates_anyhow() {
+        // The trait uses `anyhow::Result` so an implementation can
+        // surface whatever it wants. Verify that an `Err(anyhow!(...))`
+        // round-trips cleanly and renders its original message.
+        let res: DiagnosticsResult = Err(anyhow::anyhow!("tool not found"));
         assert!(res.is_err());
-        assert_eq!(res.unwrap_err(), "tool not found");
+        let err = match res {
+            Ok(_) => panic!("expected Err"),
+            Err(e) => e,
+        };
+        assert_eq!(err.to_string(), "tool not found");
     }
 }

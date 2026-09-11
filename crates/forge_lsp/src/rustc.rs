@@ -9,19 +9,40 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use anyhow::anyhow;
 use serde::Deserialize;
 
 use crate::diagnostic::{Diagnostic, DiagnosticSeverity};
 use crate::provider::{DiagnosticsProvider, DiagnosticsResult};
 
 /// One entry from `cargo check --message-format=json` output.
+///
+/// `cargo` emits many event kinds (`compiler-artifact`, `build-script-executed`,
+/// `compiler-message`, etc.). Only `compiler-message` carries the structured
+/// diagnostic data the REPL surfaces to the user, and that event wraps the
+/// actual diagnostic inside a nested `message` object — not the `String` we
+/// previously deserialized (which always failed silently).
 #[derive(Debug, Deserialize)]
 struct CargoCompilerMessage {
-    message: String,
+    /// Top-level event discriminator (`"compiler-message"`, …).
     #[serde(default)]
-    code: Option<CargoCode>,
+    reason: Option<String>,
+    /// Nested diagnostic object (only populated for compiler-message events).
+    #[serde(default)]
+    message: Option<CargoDiagnosticMessage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoDiagnosticMessage {
+    /// Human-readable diagnostic text.
+    message: String,
+    /// `error`, `warning`, `note`, `help`, or absent.
     #[serde(default)]
     level: Option<String>,
+    /// `E0001`-style code, when cargo has one.
+    #[serde(default)]
+    code: Option<CargoCode>,
+    /// Source spans attached to the diagnostic (primary + secondary).
     #[serde(default)]
     spans: Vec<CargoSpan>,
 }
@@ -32,6 +53,7 @@ struct CargoCode {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // Some span fields are kept for future filtering but unused today.
 struct CargoSpan {
     file_name: Option<String>,
     line_start: Option<u32>,
@@ -43,11 +65,28 @@ struct CargoSpan {
     is_primary: Option<bool>,
 }
 
+/// `cargo check --message-format=json` provider for the LSP layer.
+///
+/// The provider shells out to the host's `cargo` toolchain on each
+/// request; it caches its own parsed [`Diagnostic`] vector in the
+/// [`crate::service::DiagnosticsService`] so the REPL doesn't pay
+/// compiler cost on every keystroke.
+#[derive(Debug, Clone, Copy)]
 pub struct RustcProvider;
 
 impl RustcProvider {
+    /// Construct a new `RustcProvider`. The provider is stateless and
+    /// cheap to construct; prefer `RustcProvider::new()` for explicitness
+    /// over `RustcProvider::default()` to satisfy clippy's
+    /// `default_constructed_unit_structs` lint.
     pub const fn new() -> Self {
         Self
+    }
+}
+
+impl Default for RustcProvider {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -68,7 +107,7 @@ impl DiagnosticsProvider for RustcProvider {
         let cargo_root = match find_cargo_root(path, workspace_root) {
             Some(r) => r,
             None => {
-                return Err(format!("no Cargo.toml found for {}", path.display()));
+                return Err(anyhow!("no Cargo.toml found for {}", path.display()));
             }
         };
 
@@ -84,7 +123,7 @@ impl DiagnosticsProvider for RustcProvider {
         {
             Ok(out) => out,
             Err(e) => {
-                return Err(format!("failed to spawn cargo: {e} (is Rust installed?)"));
+                return Err(anyhow!("failed to spawn cargo: {e} (is Rust installed?)"));
             }
         };
 
@@ -101,15 +140,23 @@ impl DiagnosticsProvider for RustcProvider {
                 Ok(m) => m,
                 Err(_) => continue,
             };
-            if parsed.message.is_empty() {
+            // `cargo check --message-format=json` emits a top-level
+            // `reason` field; we only care about compiler-message events.
+            if parsed.reason.as_deref() != Some("compiler-message") {
+                continue;
+            }
+            let Some(msg) = parsed.message else {
+                continue;
+            };
+            if msg.message.is_empty() {
                 continue;
             }
             // Pick the primary span (is_primary=true) for the line/file.
-            let span = parsed
+            let span = msg
                 .spans
                 .iter()
                 .find(|s| s.is_primary.unwrap_or(false))
-                .or_else(|| parsed.spans.first());
+                .or_else(|| msg.spans.first());
             let (file, line_num) = match span {
                 Some(s) => (
                     PathBuf::from(s.file_name.clone().unwrap_or_default()),
@@ -117,21 +164,56 @@ impl DiagnosticsProvider for RustcProvider {
                 ),
                 None => continue,
             };
-            let severity = match parsed.level.as_deref() {
+            // `cargo check` reports project-wide diagnostics. Filter to
+            // those that touch the requested file (or its primary span
+            // file if the user asked for a directory), so the REPL
+            // doesn't surface unrelated diagnostics on every keystroke.
+            if !diagnostic_matches_path(&file, path) {
+                continue;
+            }
+            let severity = match msg.level.as_deref() {
                 Some("error") => DiagnosticSeverity::Error,
                 Some("warning") => DiagnosticSeverity::Warning,
                 Some("note") => DiagnosticSeverity::Information,
                 Some("help") => DiagnosticSeverity::Hint,
                 _ => DiagnosticSeverity::Warning,
             };
-            let mut message = parsed.message.clone();
-            if let Some(code) = parsed.code.as_ref().and_then(|c| c.code.clone()) {
+            let mut message = msg.message.clone();
+            if let Some(code) = msg.code.as_ref().and_then(|c| c.code.clone()) {
                 message = format!("{code}: {message}");
             }
-            diagnostics.push(Diagnostic::new(file, severity, line_num, message));
+            diagnostics.push(Diagnostic::new(
+                file.to_path_buf(),
+                severity,
+                line_num,
+                message,
+            ));
         }
         Ok(diagnostics)
     }
+}
+
+/// A span's file matches the user's requested path when either is a
+/// path-suffix match of the other. This handles the common cases:
+///   - user passes `src/main.rs`, span reports `src/main.rs` or `/abs/src/main.rs`
+///   - user passes `src/main.rs`, span reports `src/main.rs` relative to cargo_root
+fn diagnostic_matches_path(span_file: &Path, requested_path: &Path) -> bool {
+    use std::path::Component;
+    let span_components: Vec<_> = span_file
+        .components()
+        .filter(|c| !matches!(c, Component::RootDir | Component::Prefix(..)))
+        .collect();
+    let requested_components: Vec<_> = requested_path
+        .components()
+        .filter(|c| !matches!(c, Component::RootDir | Component::Prefix(..)))
+        .collect();
+    if span_components.is_empty() || requested_components.is_empty() {
+        return false;
+    }
+    let span_len = span_components.len();
+    let req_len = requested_components.len();
+    let min_len = span_len.min(req_len);
+    span_components[span_len - min_len..] == requested_components[req_len - min_len..]
 }
 
 /// Walk up from `path` looking for the closest `Cargo.toml`. Returns
@@ -156,19 +238,30 @@ fn find_cargo_root(path: &Path, workspace_root: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn rustc_provider_supports_rs_only() {
         let p = RustcProvider::new();
-        assert!(p.supports(Path::new("foo.rs")));
-        assert!(!p.supports(Path::new("foo.RS")));
-        assert!(!p.supports(Path::new("foo.toml")));
-        assert!(!p.supports(Path::new("foo")));
+        let actual: Vec<bool> = ["foo.rs", "foo.RS", "foo.toml", "foo"]
+            .iter()
+            .map(|f| p.supports(Path::new(f)))
+            .collect();
+        let expected: Vec<bool> = vec![true, false, false, false];
+        assert_eq!(actual, expected);
     }
 
     #[test]
     fn rustc_provider_name() {
-        assert_eq!(RustcProvider::new().name(), "rustc");
+        let actual = RustcProvider::new().name();
+        let expected = "rustc";
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn rustc_provider_default_matches_new() {
+        let actual = RustcProvider::new();
+        assert_eq!(actual.name(), RustcProvider::new().name());
     }
 
     #[test]
@@ -183,8 +276,12 @@ mod tests {
 
     #[test]
     fn rustc_provider_returns_empty_for_unsupported() {
-        assert!(!RustcProvider::new().supports(Path::new("foo.txt")));
-        assert!(!RustcProvider::new().supports(Path::new("foo.py")));
+        let actual: Vec<bool> = ["foo.txt", "foo.py"]
+            .iter()
+            .map(|f| RustcProvider::new().supports(Path::new(f)))
+            .collect();
+        let expected: Vec<bool> = vec![false, false];
+        assert_eq!(actual, expected);
     }
 
     #[test]
@@ -195,7 +292,7 @@ mod tests {
         let nested = dir.join("src");
         std::fs::create_dir_all(&nested).unwrap();
         let r = find_cargo_root(&nested.join("foo.rs"), &dir);
-        assert!(r.is_none());
+        assert_eq!(r, None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -214,5 +311,24 @@ mod tests {
         let r = find_cargo_root(&nested.join("foo.rs"), &dir).unwrap();
         assert_eq!(r, dir);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn diagnostic_matches_path_handles_absolute_and_relative() {
+        // Relative-to-relative match.
+        assert!(diagnostic_matches_path(
+            Path::new("src/main.rs"),
+            Path::new("src/main.rs"),
+        ));
+        // Span is absolute, requested is relative.
+        assert!(diagnostic_matches_path(
+            Path::new("/workspace/src/main.rs"),
+            Path::new("src/main.rs"),
+        ));
+        // Different files should not match.
+        assert!(!diagnostic_matches_path(
+            Path::new("src/main.rs"),
+            Path::new("src/lib.rs"),
+        ));
     }
 }
