@@ -103,11 +103,19 @@ impl DiagnosticsProvider for RustcProvider {
     }
 
     fn diagnostics(&self, path: &Path, workspace_root: &Path) -> DiagnosticsResult {
+        // Resolve the path against `workspace_root` first so that
+        // relative paths (e.g. unsaved files reported by an LSP
+        // client) walk up from inside the supplied workspace rather
+        // than the host process's CWD. Absolute paths are kept as-is.
+        let resolved_path = resolve_request_path(path, workspace_root);
         // Find the closest enclosing Cargo.toml.
-        let cargo_root = match find_cargo_root(path, workspace_root) {
+        let cargo_root = match find_cargo_root(&resolved_path, workspace_root) {
             Some(r) => r,
             None => {
-                return Err(anyhow!("no Cargo.toml found for {}", path.display()));
+                return Err(anyhow!(
+                    "no Cargo.toml found for {}",
+                    resolved_path.display()
+                ));
             }
         };
 
@@ -126,6 +134,24 @@ impl DiagnosticsProvider for RustcProvider {
                 return Err(anyhow!("failed to spawn cargo: {e} (is Rust installed?)"));
             }
         };
+
+        if !output.status.success() {
+            let stderr = String::from_utf8(output.stderr.clone()).unwrap_or_default();
+            let stderr_trimmed = stderr.trim();
+            if stderr_trimmed.is_empty() {
+                return Err(anyhow!(
+                    "cargo check failed for {} with status {:?} and no stderr",
+                    cargo_root.display(),
+                    output.status.code()
+                ));
+            }
+            return Err(anyhow!(
+                "cargo check failed for {} (status {:?}): {}",
+                cargo_root.display(),
+                output.status.code(),
+                stderr_trimmed
+            ));
+        }
 
         let stdout = String::from_utf8(output.stdout.clone()).unwrap_or_else(|e| {
             tracing::warn!("cargo check stdout is not valid UTF-8: {e}");
@@ -218,6 +244,18 @@ fn diagnostic_matches_path(span_file: &Path, requested_path: &Path) -> bool {
     span_tail == req_tail
 }
 
+/// Resolve a requested diagnostics path against the workspace root.
+/// Absolute paths are returned unchanged; relative paths are joined
+/// onto `workspace_root` so manifest discovery starts inside the
+/// workspace the caller supplied (not the host process CWD).
+fn resolve_request_path(path: &Path, workspace_root: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        workspace_root.join(path)
+    }
+}
+
 /// Walk up from `path` looking for the closest `Cargo.toml`. Returns
 /// `None` when no manifest exists (no rust diagnostic pass will run).
 fn find_cargo_root(path: &Path, workspace_root: &Path) -> Option<PathBuf> {
@@ -258,6 +296,40 @@ mod tests {
         let actual = RustcProvider::new().name();
         let expected = "rustc";
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn resolve_request_path_keeps_absolute() {
+        let abs = std::env::temp_dir().join("abs_probe.rs");
+        let ws = std::env::temp_dir().join("ws_probe");
+        let actual = resolve_request_path(&abs, &ws);
+        assert_eq!(actual, abs);
+    }
+
+    #[test]
+    fn resolve_request_path_joins_relative_to_workspace() {
+        let ws = std::env::temp_dir();
+        let rel = Path::new("crates/forge_app/src/lib.rs");
+        let actual = resolve_request_path(rel, &ws);
+        assert_eq!(actual, ws.join(rel));
+    }
+
+    #[test]
+    fn rustc_provider_resolves_relative_path_within_workspace() {
+        // Relative `foo.rs` inside a manifest-less workspace must
+        // still produce a `no Cargo.toml` error rather than a CWD
+        // walk that never reaches the workspace root.
+        let dir = std::env::temp_dir().join("forge_lsp_test_rel_ws");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let r = RustcProvider::new().diagnostics(Path::new("foo.rs"), &dir);
+        assert!(r.is_err(), "relative path must resolve into workspace");
+        let msg = format!("{}", r.unwrap_err());
+        assert!(
+            msg.contains("no Cargo.toml"),
+            "error should mention missing manifest, got: {msg}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

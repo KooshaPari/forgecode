@@ -95,10 +95,14 @@ impl<K: Eq + std::hash::Hash + Clone, V: Clone> LruCache<K, V> {
         self.map.get(key).cloned()
     }
 
-    /// Insert or replace the value for `key`. Evicts an arbitrary
-    /// existing entry when the cache is already at capacity.
+    /// Insert or replace the value for `key`. When the cache is at
+    /// capacity and `key` is not already present, evict an arbitrary
+    /// existing entry to make room. Re-inserting an existing key
+    /// never evicts an unrelated entry, so concurrent misses for the
+    /// same key cannot displace live results for other keys.
     pub fn insert(&mut self, key: K, value: V) {
-        if self.map.len() >= self.capacity.get() {
+        let already_present = self.map.contains_key(&key);
+        if !already_present && self.map.len() >= self.capacity.get() {
             // Drop one entry at random — HashMap doesn't have
             // strict LRU semantics but for a working-set cache this
             // is fine. The eviction just removes an arbitrary entry.
@@ -342,6 +346,34 @@ mod tests {
         cache.insert(7, 700);
         cache.invalidate(&7);
         assert!(cache.get(&7).is_none());
+    }
+
+    #[test]
+    fn lru_cache_insert_does_not_evict_when_replacing_existing_key() {
+        // Regression coverage for CodeRabbit review feedback on PR #275:
+        // when capacity is reached and an existing key is re-inserted,
+        // the cache must not evict a different key.
+        let cap = NonZeroUsize::new(2).unwrap();
+        let mut cache: LruCache<&str, i32> = LruCache::new(cap);
+        cache.insert("a", 1);
+        cache.insert("b", 2);
+        // Re-inserting "a" must not evict "b".
+        cache.insert("a", 11);
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.get(&"a"), Some(11));
+        assert_eq!(cache.get(&"b"), Some(2));
+        // Loop 100 times to confirm the invariant holds across the
+        // nondeterministic HashMap iteration order — the cache must
+        // never grow when re-inserting an existing key.
+        for i in 0..100 {
+            cache.insert("a", i);
+            assert_eq!(cache.len(), 2);
+        }
+        // Adding a brand-new key at capacity must evict exactly one
+        // of the existing keys (size stays at 2).
+        let before = cache.len();
+        cache.insert("c", 3);
+        assert_eq!(cache.len(), before);
     }
 
     #[test]
