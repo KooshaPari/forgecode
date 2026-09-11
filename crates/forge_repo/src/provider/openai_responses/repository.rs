@@ -700,6 +700,50 @@ impl<F: HttpInfra + EnvironmentInfra<Config = forge_config::ForgeConfig> + 'stat
     async fn models(&self, provider: Provider<Url>) -> anyhow::Result<Vec<Model>> {
         match provider.models().cloned() {
             Some(forge_domain::ModelSource::Hardcoded(models)) => Ok(models),
+            Some(forge_domain::ModelSource::Dynamic { url, fallback }) => {
+                let fetch_result = async {
+                    let provider_client =
+                        OpenAIResponsesProvider::new(provider.clone(), self.infra.clone());
+                    let headers = create_headers(provider_client.get_headers());
+                    let response = self
+                        .infra
+                        .http_get(&url, Some(headers))
+                        .await
+                        .with_context(|| format_http_context(None, "GET", &url))
+                        .with_context(|| "Failed to fetch models")?;
+
+                    let status = response.status();
+                    let ctx_message = format_http_context(Some(status), "GET", &url);
+                    let response_text = response
+                        .text()
+                        .await
+                        .with_context(|| ctx_message.clone())
+                        .with_context(|| "Failed to decode response into text")?;
+
+                    if !status.is_success() {
+                        anyhow::bail!("{}: {}", ctx_message, response_text);
+                    }
+
+                    let data: forge_app::dto::openai::ListModelResponse =
+                        serde_json::from_str(&response_text)
+                            .with_context(|| format_http_context(None, "GET", &url))
+                            .with_context(|| "Failed to deserialize models response")?;
+                    Ok(data.data.into_iter().map(|m| m.id.to_string()).collect())
+                }
+                .await;
+
+                match fetch_result {
+                    Ok(live_ids) => Ok(Model::merge_live(live_ids, fallback)),
+                    Err(error) => {
+                        tracing::warn!(
+                            error = ?error,
+                            provider = %provider.id,
+                            "Dynamic model fetch failed; falling back to curated list"
+                        );
+                        Ok(fallback)
+                    }
+                }
+            }
             Some(forge_domain::ModelSource::Url(url)) => {
                 let provider_client = OpenAIResponsesProvider::new(provider, self.infra.clone());
                 let headers = create_headers(provider_client.get_headers());

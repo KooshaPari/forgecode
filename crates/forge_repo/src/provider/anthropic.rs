@@ -289,6 +289,55 @@ impl<T: HttpInfra> Anthropic<T> {
                 debug!("Using hardcoded models");
                 Ok(models.clone())
             }
+            forge_domain::ModelSource::Dynamic { url, fallback } => {
+                debug!(url = %url, "Fetching dynamic models");
+
+                let fetch_result = async {
+                    let response = self
+                        .http
+                        .http_get(url, Some(create_headers(self.get_headers(None))))
+                        .await
+                        .with_context(|| format_http_context(None, "GET", url))
+                        .with_context(|| "Failed to fetch models")?;
+
+                    let status = response.status();
+                    let ctx_msg = format_http_context(Some(status), "GET", url);
+                    let text = response
+                        .text()
+                        .await
+                        .with_context(|| ctx_msg.clone())
+                        .with_context(|| "Failed to decode response into text")?;
+
+                    if !status.is_success() {
+                        anyhow::bail!("{}: {}", ctx_msg, text);
+                    }
+
+                    let response: ListModelResponse = serde_json::from_str(&text)
+                        .with_context(|| ctx_msg)
+                        .with_context(|| "Failed to deserialize models response")?;
+                    Ok(response
+                        .data
+                        .into_iter()
+                        .map(|m| m.id.to_string())
+                        .collect())
+                }
+                .await;
+
+                match fetch_result {
+                    Ok(live_ids) => Ok(forge_app::domain::Model::merge_live(
+                        live_ids,
+                        fallback.clone(),
+                    )),
+                    Err(error) => {
+                        tracing::warn!(
+                            error = ?error,
+                            provider = %self.provider.id,
+                            "Dynamic model fetch failed; falling back to curated list"
+                        );
+                        Ok(fallback.clone())
+                    }
+                }
+            }
         }
     }
 }

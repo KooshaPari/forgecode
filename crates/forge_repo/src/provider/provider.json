@@ -116,7 +116,9 @@
     "url_param_vars": [],
     "response_type": "OpenAI",
     "url": "https://api.openai.com/v1/chat/completions",
-    "models": [
+    "models": {
+        "url": "https://api.openai.com/v1/models",
+        "fallback": [
       {
         "id": "o1",
         "name": "O1",
@@ -615,8 +617,11 @@
         "supports_reasoning": true,
         "input_modalities": ["text", "image"]
       }
-    ],
-    "auth_methods": ["api_key"]
+    ]
+      },
+    "auth_methods": [
+      "api_key"
+    ]
   },
   {
     "id": "openai_compatible",
@@ -633,7 +638,9 @@
     "url_param_vars": [],
     "response_type": "OpenAI",
     "url": "https://api.kimi.com/coding/v1/chat/completions",
-    "models": [
+    "models": {
+        "url": "https://api.kimi.com/coding/v1/models",
+        "fallback": [
       {
         "id": "k3",
         "name": "Kimi K3",
@@ -664,8 +671,11 @@
         "supports_reasoning": true,
         "input_modalities": ["text", "image"]
       }
+    ]
+      },
+    "auth_methods": [
+      "api_key"
     ],
-    "auth_methods": ["api_key"],
     "custom_headers": {
       "User-Agent": "KimiCLI/1.0.0"
     }
@@ -677,58 +687,13 @@
     "response_type": "OpenAI",
     "url": "https://api.moonshot.ai/v1/chat/completions",
     "models": [
-      {
-        "id": "kimi-k3",
-        "name": "Kimi K3",
-        "description": "Moonshot AI Kimi K3 flagship model with 2.8T parameters, 1M-token context, native vision, always-on reasoning, and tool calling capabilities",
-        "context_length": 1048576,
-        "tools_supported": true,
-        "supports_parallel_tool_calls": true,
-        "supports_reasoning": true,
-        "input_modalities": ["text", "image"]
-      },
-      {
-        "id": "kimi-k2.7-code",
-        "name": "Kimi K2.7 Code",
-        "description": "Moonshot AI Kimi K2.7 Code model with 256K context, reasoning, and tool calling capabilities",
-        "context_length": 262144,
-        "tools_supported": true,
-        "supports_parallel_tool_calls": true,
-        "supports_reasoning": true,
-        "input_modalities": ["text", "image"]
-      },
-      {
-        "id": "kimi-k2.6",
-        "name": "Kimi K2.6",
-        "description": "Moonshot AI Kimi K2.6 model with multimodal input, reasoning, and tool calling capabilities",
-        "context_length": 262144,
-        "tools_supported": true,
-        "supports_parallel_tool_calls": true,
-        "supports_reasoning": true,
-        "input_modalities": ["text", "image"]
-      },
-      {
-        "id": "kimi-k2.5",
-        "name": "Kimi K2.5",
-        "description": "Moonshot AI Kimi K2.5 model with multimodal input, reasoning, and tool calling capabilities",
-        "context_length": 262144,
-        "tools_supported": true,
-        "supports_parallel_tool_calls": true,
-        "supports_reasoning": true,
-        "input_modalities": ["text", "image"]
-      },
-      {
-        "id": "kimi-k2-thinking",
-        "name": "Kimi K2 Thinking",
-        "description": "Moonshot AI Kimi K2 Thinking model with 256K context, reasoning, and tool calling capabilities",
-        "context_length": 262144,
-        "tools_supported": true,
-        "supports_parallel_tool_calls": true,
-        "supports_reasoning": true,
-        "input_modalities": ["text"]
-      }
+      {"id": "kimi-k3", "name": "Kimi K3", "description": "Moonshot AI's Kimi K3 reasoning model with extended context and tool use", "context_length": 262144, "tools_supported": true, "supports_parallel_tool_calls": true, "supports_reasoning": true, "input_modalities": ["text"]},
+      {"id": "kimi-k2-0905-preview", "name": "Kimi K2 0905 Preview", "description": "Moonshot AI's Kimi K2 model snapshot from September 2025", "context_length": 262144, "tools_supported": true, "supports_parallel_tool_calls": true, "supports_reasoning": true, "input_modalities": ["text"]},
+      {"id": "kimi-k2-turbo-preview", "name": "Kimi K2 Turbo Preview", "description": "Faster Kimi K2 variant optimized for latency-sensitive workloads", "context_length": 262144, "tools_supported": true, "supports_parallel_tool_calls": true, "supports_reasoning": false, "input_modalities": ["text"]}
     ],
-    "auth_methods": ["api_key"]
+    "auth_methods": [
+      "api_key"
+    ]
   },
   {
     "id": "openai_responses_compatible",
@@ -754,7 +719,9 @@
     "url_param_vars": [],
     "response_type": "Anthropic",
     "url": "https://api.anthropic.com/v1/messages",
-    "models": [
+    "models": {
+        "url": "https://api.anthropic.com/v1/models",
+        "fallback": [
       {
         "id": "claude-fable-5",
         "name": "Claude Fable 5",
@@ -911,7 +878,8 @@
         "supports_parallel_tool_calls": false,
         "input_modalities": ["text", "image"]
       }
-    ],
+    ]
+      },
     "auth_methods": [
       {
         "oauth_code": {
@@ -957,7 +925,9 @@
     "url_param_vars": [],
     "response_type": "OpenAI",
     "url": "https://api.neuralwatt.com/v1/chat/completions",
-    "models": [
+    "models": {
+        "url": "https://api.neuralwatt.com/v1/models",
+        "fallback": [
       {
         "id": "qwen3.5-397b",
         "name": "Qwen3.5 397B",
@@ -1138,8 +1108,11 @@
         "supports_reasoning": false,
         "input_modalities": ["text", "image"]
       }
-    ],
-    "auth_methods": ["api_key"]
+    ]
+      },
+    "auth_methods": [
+      "api_key"
+    ]
   },
   {
     "id": "zai",
@@ -1147,7 +1120,9 @@
     "url_param_vars": [],
     "response_type": "OpenAI",
     "url": "https://api.z.ai/api/paas/v4/chat/completions",
-    "models": [
+    "models": {
+        "url": "https://api.z.ai/api/paas/v4/models",
+        "fallback": [
       {
         "id": "glm-5.2",
         "name": "GLM-5.2",
@@ -1288,8 +1263,11 @@
         "supports_reasoning": false,
         "input_modalities": ["text"]
       }
-    ],
-    "auth_methods": ["api_key"]
+    ]
+      },
+    "auth_methods": [
+      "api_key"
+    ]
   },
   {
     "id": "zai_coding",
@@ -1297,7 +1275,9 @@
     "url_param_vars": [],
     "response_type": "OpenAI",
     "url": "https://api.z.ai/api/coding/paas/v4/chat/completions",
-    "models": [
+    "models": {
+        "url": "https://api.z.ai/api/coding/paas/v4/models",
+        "fallback": [
       {
         "id": "glm-5.2",
         "name": "GLM-5.2",
@@ -1448,8 +1428,11 @@
         "supports_reasoning": true,
         "input_modalities": ["text", "image"]
       }
-    ],
-    "auth_methods": ["api_key"]
+    ]
+      },
+    "auth_methods": [
+      "api_key"
+    ]
   },
   {
     "id": "big_model",
@@ -3939,7 +3922,9 @@
     "url_param_vars": [],
     "response_type": "OpenAI",
     "url": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions",
-    "models": [
+    "models": {
+        "url": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/models",
+        "fallback": [
       {
         "id": "qwen3.8-max-preview",
         "name": "Qwen3.8 Max Preview",
@@ -4090,8 +4075,11 @@
         "supports_reasoning": true,
         "input_modalities": ["text"]
       }
-    ],
-    "auth_methods": ["api_key"]
+    ]
+      },
+    "auth_methods": [
+      "api_key"
+    ]
   },
   {
     "id": "novita",
@@ -4456,17 +4444,12 @@
     "response_type": "OpenAIResponses",
     "url": "https://api.meta.ai/v1/responses",
     "models": [
-      {
-        "id": "muse-spark-1.1",
-        "name": "Muse Spark 1.1",
-        "description": "Meta's multimodal model for agentic tool calling, coding, structured output, image and video understanding, and long-context reasoning",
-        "context_length": 1048576,
-        "tools_supported": true,
-        "supports_parallel_tool_calls": true,
-        "supports_reasoning": true,
-        "input_modalities": ["text", "image"]
-      }
+      {"id": "muse-spark-1.1", "name": "Muse Spark 1.1", "description": "Meta's Muse Spark multimodal reasoning model with native tool use", "context_length": 1048576, "tools_supported": true, "supports_parallel_tool_calls": true, "supports_reasoning": true, "input_modalities": ["text", "image"]},
+      {"id": "muse-spark-1.0", "name": "Muse Spark 1.0", "description": "First-generation Muse Spark model with broad multimodal capability", "context_length": 524288, "tools_supported": true, "supports_parallel_tool_calls": true, "supports_reasoning": true, "input_modalities": ["text", "image"]},
+      {"id": "llama-4-maverick", "name": "Llama 4 Maverick", "description": "Open-weight Llama 4 Maverick model served by Meta's Muse API", "context_length": 1048576, "tools_supported": true, "supports_parallel_tool_calls": true, "supports_reasoning": false, "input_modalities": ["text", "image"]}
     ],
-    "auth_methods": ["api_key"]
+    "auth_methods": [
+      "api_key"
+    ]
   }
 ]
