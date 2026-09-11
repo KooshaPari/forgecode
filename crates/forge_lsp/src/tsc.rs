@@ -147,23 +147,14 @@ fn parse_tsc_line(line: &str) -> Option<Diagnostic> {
     // `(line,col)` location. tsc prefixes errors with the relative
     // file path; warnings often don't, so this helper is conservative
     // (errors and warnings only).
-    let open = line.find('(')?;
-    // Search for ')' in the substring starting *after* the '('.
-    // Use floor_char_boundary() so the byte index is on a UTF-8
-    // code-point boundary (string_slice lint compliance).
-    let rest_after_open = line.get(open + 1..)?;
-    let close_offset = rest_after_open.find(')')?;
-    if close_offset < 1 {
+    let (file, remainder) = line.split_once('(')?;
+    let (loc, after_loc) = remainder.split_once(')')?;
+    if loc.is_empty() {
         return None;
     }
-    // All indices below are derived from `find` over the same slice,
-    // so they are guaranteed to lie on UTF-8 code-point boundaries.
-    // The extra `floor_char_boundary` calls are belt-and-suspenders.
-    let file = line.get(..open)?;
-    let loc = line.get(open + 1..open + 1 + close_offset)?;
+
     let line_num: u32 = loc.split(',').next()?.parse().ok()?;
     // The remainder after `file(line,col): ` is the kind/code/message.
-    let after_loc = line.get(open + 1 + close_offset + 1..)?;
     let after_loc = after_loc.strip_prefix(':')?.trim_start();
     let (kind, rest) = after_loc.split_once(' ')?;
     let severity = match kind {
