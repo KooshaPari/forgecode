@@ -1,4 +1,5 @@
 use forge_ci::workflows as workflow;
+use pretty_assertions::assert_eq;
 
 const GENERATED_WORKFLOWS: [&str; 7] = [
     "autofix.yml",
@@ -10,11 +11,125 @@ const GENERATED_WORKFLOWS: [&str; 7] = [
     "stale.yml",
 ];
 
+#[test]
+fn signing_is_serialized_before_release_provenance() {
+    let fixture = workflow::release_publish_yaml().unwrap();
+    let actual: serde_yaml_ng::Value = serde_yaml_ng::from_str(&fixture).unwrap();
+    let jobs = &actual["jobs"];
+    assert_eq!(
+        jobs["sign_release"]["needs"].as_str(),
+        Some("build_release")
+    );
+    assert_eq!(
+        jobs["sbom_release_assets"]["needs"].as_str(),
+        Some("sign_release")
+    );
+    assert_eq!(
+        jobs["attest_release_assets"]["needs"].as_str(),
+        Some("sbom_release_assets")
+    );
+    assert_eq!(
+        jobs["sign_release"]["uses"].as_str(),
+        Some("./.github/workflows/sign-release.yml")
+    );
+    assert!(jobs["sign_release"]["runs-on"].is_null());
+    let signing_source =
+        std::fs::read_to_string(generated_workflow_path("sign-release.yml")).unwrap();
+    assert!(signing_source.contains("api_present=0"));
+    assert!(signing_source.contains("apple_present=0"));
+    assert!(signing_source.contains("Incomplete API-key notarization configuration"));
+    assert!(signing_source.contains("Incomplete Apple-ID notarization configuration"));
+    assert!(signing_source.contains("NOTARY_AUTH_MODE=api-key"));
+    assert!(signing_source.contains("notary-authkey.p8"));
+    assert!(signing_source.contains("trap 'rm -f \"$NOTARY_KEY_PATH\"' EXIT"));
+    let signing: serde_yaml_ng::Value = serde_yaml_ng::from_str(&signing_source).unwrap();
+    assert!(
+        signing["on"]
+            .as_mapping()
+            .unwrap()
+            .contains_key("workflow_call")
+    );
+    assert!(!signing["on"].as_mapping().unwrap().contains_key("release"));
+    assert_eq!(
+        jobs["sign_release"]["with"]["tag"],
+        "${{ github.event.release.tag_name }}"
+    );
+    assert_eq!(
+        signing["on"]["workflow_call"]["inputs"]["tag"]["required"],
+        true
+    );
+    assert_eq!(signing["jobs"]["sign"]["strategy"]["fail-fast"], false);
+    let actual = jobs["sign_release"]["secrets"].as_mapping().unwrap();
+    let expected = signing["on"]["workflow_call"]["secrets"]
+        .as_mapping()
+        .unwrap();
+    assert_eq!(actual.len(), 11);
+    assert_eq!(
+        actual.keys().collect::<Vec<_>>(),
+        expected.keys().collect::<Vec<_>>()
+    );
+    for (name, value) in actual {
+        let expected = format!("${{{{ secrets.{} }}}}", name.as_str().unwrap());
+        assert_eq!(value.as_str().unwrap(), expected);
+    }
+    for name in [
+        "MACOS_NOTARIZATION_API_KEY",
+        "MACOS_NOTARIZATION_KEY_ID",
+        "MACOS_NOTARIZATION_ISSUER_ID",
+    ] {
+        assert!(expected.contains_key(name));
+    }
+}
+
 fn generated_workflow_path(name: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join(".github/workflows")
         .join(name)
+}
+
+#[test]
+fn release_tags_reach_gh_as_literal_arguments() {
+    let release: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&workflow::release_publish_yaml().unwrap()).unwrap();
+    let signing: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(include_str!("../../../.github/workflows/sign-release.yml"))
+            .unwrap();
+    let tag = "v$(printf INJECTED)-`printf EXECUTED`-\"quoted\"";
+    let mut release_commands = 0;
+    for document in [&release, &signing] {
+        for job in document["jobs"].as_mapping().unwrap().values() {
+            let Some(steps) = job["steps"].as_sequence() else {
+                continue;
+            };
+            for step in steps {
+                let Some(script) = step["run"].as_str() else {
+                    continue;
+                };
+                assert!(!script.contains("${{ inputs.tag }}"));
+                assert!(!script.contains("${{ github.event.release.tag_name }}"));
+                if !script.contains("gh release upload") {
+                    continue;
+                }
+                assert!(script.contains("\"$RELEASE_TAG\""));
+                assert!(step["env"]["RELEASE_TAG"].is_string());
+                let script = script
+                    .replace("${{ github.repository }}", "owner/repo")
+                    .replace("${{ matrix.pattern }}", "*apple-darwin*");
+                // Exercise the actual rendered shell without network or filesystem writes.
+                let script = format!("mkdir() {{ :; }}\ngh() {{ printf '%s' \"$3\"; }}\n{script}");
+                let actual = std::process::Command::new("bash")
+                    .args(["-c", &script])
+                    .env("RELEASE_TAG", tag)
+                    .output()
+                    .unwrap();
+                assert!(actual.status.success());
+                assert_eq!(String::from_utf8(actual.stdout).unwrap(), tag);
+                release_commands += 1;
+            }
+        }
+    }
+    assert_eq!(release_commands, 1);
 }
 
 #[test]
@@ -24,7 +139,6 @@ fn generated_workflows_are_parseable_and_identify_forge_ci_generator() {
     workflow::generate_ci_workflow();
     workflow::generate_labels_workflow();
     workflow::generate_release_drafter_workflow();
-    workflow::release_publish();
     workflow::generate_stale_workflow();
 
     for name in GENERATED_WORKFLOWS {
@@ -97,15 +211,8 @@ fn test_release_drafter() {
 
 #[test]
 fn test_release_workflow() {
-    let expected = std::fs::read_to_string(generated_workflow_path("release.yml"))
-        .expect("release workflow baseline");
-    workflow::release_publish();
-
-    let generated = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.github/workflows/release.yml"),
-    )
-    .expect("generated release workflow");
+    let expected = include_str!("../../../.github/workflows/release.yml");
+    let generated = workflow::release_publish_yaml().unwrap();
     assert!(!generated.contains("npm_release"));
     assert!(!generated.contains("homebrew_release"));
     assert!(generated.contains("Generate SHA-256 checksum"));
@@ -117,16 +224,17 @@ fn test_release_workflow() {
     assert!(generated.contains("needs: build_release"));
     assert!(generated.contains("attestations: write"));
     assert!(generated.contains("id-token: write"));
-    assert!(generated.contains("gh release download"));
-    assert!(generated.contains("--repo \"${{ github.repository }}\""));
-    assert!(generated.contains("--pattern \"forge-*\""));
-    assert!(generated.contains("--pattern \"helioslite-*\""));
-    assert!(generated.contains("--pattern \"helioslite_helper-*\""));
+    assert!(generated.contains("Stage unsigned release assets"));
+    assert!(generated.contains("release-assets-unsigned-${{ matrix.target }}"));
+    assert!(generated.contains("publish_release_assets:"));
+    assert!(generated.contains("needs: attest_release_assets"));
+    assert!(generated.contains("gh release upload \"$RELEASE_TAG\" release-assets/*"));
+    assert!(!generated.contains("upload-to-github-release"));
     assert!(generated.contains("helioslite_name: helioslite-x86_64-unknown-linux-musl"));
     assert!(generated.contains("helioslite_name: helioslite-x86_64-pc-windows-msvc.exe"));
     assert!(generated.contains("Generate helioslite SHA-256 checksum"));
-    assert!(generated.contains("Upload helioslite to Release"));
-    assert!(generated.contains("Upload helioslite checksum to Release"));
+    assert!(!generated.contains("Upload helioslite to Release"));
+    assert!(!generated.contains("Upload helioslite checksum to Release"));
     assert!(
         !generated.contains(": \n"),
         "release workflow must not contain trailing whitespace"
@@ -138,10 +246,10 @@ fn test_release_workflow() {
     assert!(generated.contains("actions/attest-build-provenance@"));
     assert!(generated.contains("anchore/sbom-action@"));
     assert!(generated.contains("format: cyclonedx-json"));
-    assert!(generated.contains("upload-release-assets: 'true'"));
+    assert!(generated.contains("upload-release-assets: 'false'"));
     assert!(generated.contains("path: release-assets"));
 
-    let expected = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&expected).unwrap();
+    let expected = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(expected).unwrap();
     let actual = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&generated).unwrap();
     assert_eq!(actual, expected);
 }
