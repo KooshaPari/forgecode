@@ -2927,6 +2927,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge_lsp"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "forge_main"
 version = "2.13.21"
 dependencies = [
