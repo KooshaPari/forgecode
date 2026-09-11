@@ -64,13 +64,23 @@ pub struct ProviderUrlParam {
     pub optional: bool,
 }
 
-/// Source of models for a provider: either a URL to fetch them from or a
-/// static list defined inline.
+/// Source of models for a provider: a URL to fetch them from, a live fetch
+/// with a curated fallback, or a static list defined inline.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Dummy)]
 #[serde(untagged)]
 pub enum ModelListConfig {
     /// URL template used to fetch the model list dynamically.
     Url(String),
+    /// Fetch the live model list from `url` (e.g. `/v1/models`), enrich it
+    /// with curated metadata from `fallback` (matched by model id), and fall
+    /// back to `fallback` as-is when the fetch fails.
+    Dynamic {
+        /// Endpoint to fetch the live model list from (e.g. `/v1/models`).
+        url: String,
+        /// Curated metadata overlaid on the live list; the sole source when
+        /// the live fetch fails.
+        fallback: Vec<forge_domain::Model>,
+    },
     /// A static list of models defined directly in the configuration.
     Hardcoded(Vec<forge_domain::Model>),
 }
@@ -513,6 +523,43 @@ models = "http://example.com/v1/models"
             models: Some(ModelListConfig::Url(
                 "http://example.com/v1/models".to_string(),
             )),
+            ..Default::default()
+        }];
+
+        assert_eq!(actual.providers, expected);
+    }
+
+    #[test]
+    fn test_provider_dynamic_model_list_with_inline_fallback_deserialization() {
+        let fixture = r#"
+[[providers]]
+id = "kimi_coding"
+url = "https://api.kimi.com/coding/v1/chat/completions"
+
+[providers.models]
+url = "https://api.kimi.com/coding/v1/models"
+
+[[providers.models.fallback]]
+id = "k3"
+name = "Kimi k3"
+context_length = 262144
+tools_supported = true
+"#;
+
+        let actual = ConfigReader::default().read_toml(fixture).build().unwrap();
+
+        let expected = vec![ProviderEntry {
+            id: "kimi_coding".to_string(),
+            url: "https://api.kimi.com/coding/v1/chat/completions".to_string(),
+            models: Some(ModelListConfig::Dynamic {
+                url: "https://api.kimi.com/coding/v1/models".to_string(),
+                fallback: vec![
+                    forge_domain::Model::new("k3")
+                        .name("Kimi k3".to_string())
+                        .context_length(262144)
+                        .tools_supported(true),
+                ],
+            }),
             ..Default::default()
         }];
 

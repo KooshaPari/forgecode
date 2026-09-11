@@ -444,6 +444,27 @@
           "type": "string"
         },
         {
+          "description": "Fetch the live model list from `url` (e.g. `/v1/models`), enrich it\nwith curated metadata from `fallback` (matched by model id), and fall\nback to `fallback` as-is when the fetch fails.",
+          "properties": {
+            "fallback": {
+              "description": "Curated metadata overlaid on the live list; the sole source when\nthe live fetch fails.",
+              "items": {
+                "$ref": "#/$defs/Model"
+              },
+              "type": "array"
+            },
+            "url": {
+              "description": "Endpoint to fetch the live model list from (e.g. `/v1/models`).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "url",
+            "fallback"
+          ],
+          "type": "object"
+        },
+        {
           "description": "A static list of models defined directly in the configuration.",
           "items": {
             "$ref": "#/$defs/Model"
@@ -451,7 +472,7 @@
           "type": "array"
         }
       ],
-      "description": "Source of models for a provider: either a URL to fetch them from or a\nstatic list defined inline."
+      "description": "Source of models for a provider: a URL to fetch them from, a live fetch\nwith a curated fallback, or a static list defined inline."
     },
     "OutputMode": {
       "description": "Controls the verbosity of forge's tool output formatting.\n\nThe output mode affects how tool results are rendered in the chat UI:\n- `Concise`: Minimal output, just the essential information (default for\n  most users).\n- `Compact`: Same as concise but with extra whitespace trimming and\n  aggressive line folding for terminal-friendly display.\n- `Verbose`: Full output including all metadata, reasoning traces, and\n  intermediate computation steps. Useful for debugging.",
