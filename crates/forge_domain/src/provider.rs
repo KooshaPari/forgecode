@@ -264,7 +264,28 @@ pub enum ProviderResponse {
 pub enum ModelSource<T> {
     /// Can be a `Url` or a `Template`
     Url(T),
+    /// Models are fetched live from `url` (typically the provider's
+    /// `/v1/models` endpoint) and enriched with curated metadata from
+    /// `fallback` (matched by model id). If the fetch fails for any reason
+    /// (network, auth, schema), the curated `fallback` list is used as-is.
+    Dynamic {
+        /// Endpoint to fetch the live model list from (e.g. `/v1/models`).
+        url: T,
+        /// Curated metadata overlaid on top of the live list, and the sole
+        /// source when the live fetch fails.
+        fallback: Vec<Model>,
+    },
     Hardcoded(Vec<Model>),
+}
+
+impl<T: AsRef<str>> ModelSource<T> {
+    /// Returns the fetch URL if this source is dynamic.
+    pub fn dynamic_url(&self) -> Option<&T> {
+        match self {
+            ModelSource::Dynamic { url, .. } => Some(url),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

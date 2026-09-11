@@ -266,6 +266,12 @@ mod tests {
                         >::new(
                             url.as_str()
                         )),
+                        ModelSource::Dynamic { url, fallback } => ModelSource::Dynamic {
+                            url: forge_domain::Template::<forge_domain::URLParameters>::new(
+                                url.as_str(),
+                            ),
+                            fallback: fallback.clone(),
+                        },
                         ModelSource::Hardcoded(list) => ModelSource::Hardcoded(list.clone()),
                     }),
                     auth_methods: p.auth_methods.clone(),

@@ -296,6 +296,10 @@ impl BedrockProvider {
         // Return hardcoded models from configuration
         match &self.provider.models {
             Some(forge_domain::ModelSource::Hardcoded(models)) => Ok(models.clone()),
+            Some(forge_domain::ModelSource::Dynamic { fallback, .. }) => {
+                // No list API to query; curated fallback is the authoritative source
+                Ok(fallback.clone())
+            }
             _ => Ok(vec![]),
         }
     }
