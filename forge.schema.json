@@ -752,8 +752,7 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/Model"
-          },
-          "type": "array"
+          }
         }
       ],
       "description": "Source of models for a provider: a URL to fetch them from, a live fetch\nwith a curated fallback, or a static list defined inline."
