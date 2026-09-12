@@ -94,9 +94,30 @@
           "default": "api_key"
         },
         "models": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/Model" },
-          "description": "Explicit model list. If absent, the registry fetches the live model list from the provider's models endpoint."
+          "description": "Model list source. Either an explicit static array, or an object with `url` (live models endpoint, e.g. `/v1/models`) and `fallback` (curated metadata overlaid on the live list by model id; sole source when the live fetch fails). If absent, the registry fetches the live model list from the provider's models endpoint.",
+          "oneOf": [
+            {
+              "type": "array",
+              "items": { "$ref": "#/$defs/Model" }
+            },
+            {
+              "type": "object",
+              "required": ["url", "fallback"],
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "format": "uri",
+                  "description": "Live models endpoint, e.g. 'https://api.openai.com/v1/models'."
+                },
+                "fallback": {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/Model" },
+                  "description": "Curated metadata overlaid on the live list, matched by model id."
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
         },
         "env_key": {
           "type": ["string", "null"],

@@ -86,6 +86,19 @@ impl<R> ForgeProviderService<R> {
                     .ok();
                 model_url.map(ModelSource::Url)
             }
+            ModelSource::Dynamic { url, fallback } => {
+                let model_url = self
+                    .render_url_template(
+                        &url.template,
+                        &credential.url_params,
+                        &template_provider.url_params,
+                    )
+                    .ok();
+                model_url.map(|rendered| ModelSource::Dynamic {
+                    url: rendered,
+                    fallback: fallback.clone(),
+                })
+            }
             ModelSource::Hardcoded(list) => Some(ModelSource::Hardcoded(list.clone())),
         });
 
