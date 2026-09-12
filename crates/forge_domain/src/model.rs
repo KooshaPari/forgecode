@@ -78,32 +78,53 @@ impl Model {
         }
     }
 
-    /// Merges live model ids with curated metadata.
+    /// Merges live (server) models with curated metadata as fallback.
     ///
-    /// Every live model id produces an entry; curated entries with a matching
-    /// id overlay their metadata (name, context length, tool/reasoning
-    /// support, modalities). Curated entries not present in the live list are
-    /// appended so metadata-only models (e.g. behind beta flags) remain
-    /// selectable.
-    pub fn merge_live(live_ids: Vec<String>, curated: Vec<Model>) -> Vec<Self> {
-        let mut merged: Vec<Self> = live_ids
+    /// Every live model produces an entry using the server-provided metadata.
+    /// Curated entries fill in fields that the server left `None`, allowing
+    /// curated data to act as a fallback without overriding live values.
+    /// Curated entries not present in the live list are appended so
+    /// metadata-only models (e.g. behind beta flags) remain selectable.
+    pub fn merge_live(live: Vec<Model>, curated: Vec<Model>) -> Vec<Self> {
+        let mut merged: Vec<Self> = live
             .into_iter()
-            .map(|id| match curated.iter().find(|m| m.id.as_str() == id) {
-                Some(curated_model) => {
-                    let mut model = Self::new(id);
-                    model.name = curated_model.name.clone();
-                    model.description = curated_model.description.clone();
-                    model.context_length = curated_model.context_length;
-                    model.tools_supported = curated_model.tools_supported;
-                    model.supports_parallel_tool_calls = curated_model.supports_parallel_tool_calls;
-                    model.supports_reasoning = curated_model.supports_reasoning;
-                    model.input_modalities = curated_model.input_modalities.clone();
-                    model
+            .map(|server_model| {
+                match curated.iter().find(|m| m.id == server_model.id) {
+                    Some(curated_model) => {
+                        // Server metadata wins; curated fills in None gaps
+                        let mut model = server_model;
+                        if model.name.is_none() {
+                            model.name = curated_model.name.clone();
+                        }
+                        if model.description.is_none() {
+                            model.description = curated_model.description.clone();
+                        }
+                        if model.context_length.is_none() {
+                            model.context_length = curated_model.context_length;
+                        }
+                        if model.tools_supported.is_none() {
+                            model.tools_supported = curated_model.tools_supported;
+                        }
+                        if model.supports_parallel_tool_calls.is_none() {
+                            model.supports_parallel_tool_calls =
+                                curated_model.supports_parallel_tool_calls;
+                        }
+                        if model.supports_reasoning.is_none() {
+                            model.supports_reasoning = curated_model.supports_reasoning;
+                        }
+                        if model.input_modalities == vec![InputModality::Text]
+                            && curated_model.input_modalities != vec![InputModality::Text]
+                        {
+                            model.input_modalities = curated_model.input_modalities.clone();
+                        }
+                        model
+                    }
+                    None => server_model,
                 }
-                None => Self::new(id),
             })
             .collect();
 
+        // Append curated-only models not present in the live list
         for curated_model in curated {
             if !merged.iter().any(|m| m.id == curated_model.id) {
                 merged.push(curated_model);
@@ -144,32 +165,45 @@ mod merge_live_tests {
     use super::*;
 
     #[test]
-    fn merge_live_emits_one_entry_per_live_id_with_default_metadata() {
-        let merged = Model::merge_live(vec!["a".to_string(), "b".to_string()], vec![]);
+    fn merge_live_uses_server_metadata_when_available() {
+        let live = vec![
+            Model::new("a")
+                .name("Alpha Live".to_string())
+                .context_length(32768)
+                .tools_supported(true),
+            Model::new("b")
+                .name("Beta Live".to_string())
+                .context_length(16384),
+        ];
+
+        let merged = Model::merge_live(live, vec![]);
 
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[0].id.as_str(), "a");
+        assert_eq!(merged[0].name.as_deref(), Some("Alpha Live"));
+        assert_eq!(merged[0].context_length, Some(32768));
         assert_eq!(merged[1].id.as_str(), "b");
-        assert_eq!(merged[0].context_length, None);
-        assert_eq!(merged[0].tools_supported, None);
-        assert_eq!(merged[0].input_modalities, vec![InputModality::Text]);
+        assert_eq!(merged[1].name.as_deref(), Some("Beta Live"));
     }
 
     #[test]
-    fn merge_live_overlays_curated_metadata_onto_matching_live_id() {
-        let curated = Model::new("a")
-            .name("Alpha".to_string())
+    fn merge_live_curated_fills_none_gaps() {
+        let live = vec![Model::new("a").context_length(8192)];
+        let curated = vec![Model::new("a")
+            .name("Alpha Curated".to_string())
             .context_length(131072)
             .tools_supported(true)
             .supports_reasoning(true)
-            .input_modalities(vec![InputModality::Text, InputModality::Image]);
+            .input_modalities(vec![InputModality::Text, InputModality::Image])];
 
-        let merged = Model::merge_live(vec!["a".to_string()], vec![curated]);
+        let merged = Model::merge_live(live, curated);
 
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].id.as_str(), "a");
-        assert_eq!(merged[0].name.as_deref(), Some("Alpha"));
-        assert_eq!(merged[0].context_length, Some(131072));
+        // Server context_length wins
+        assert_eq!(merged[0].context_length, Some(8192));
+        // Curated fills in name, tools, reasoning, modalities
+        assert_eq!(merged[0].name.as_deref(), Some("Alpha Curated"));
         assert_eq!(merged[0].tools_supported, Some(true));
         assert_eq!(merged[0].supports_reasoning, Some(true));
         assert_eq!(
@@ -179,12 +213,29 @@ mod merge_live_tests {
     }
 
     #[test]
-    fn merge_live_appends_curated_entries_missing_from_live_list() {
-        let curated_beta = Model::new("beta-only")
-            .name("Beta".to_string())
-            .context_length(8192);
+    fn merge_live_server_wins_over_curated() {
+        let live = vec![Model::new("a")
+            .name("Alpha Server".to_string())
+            .context_length(32768)];
+        let curated = vec![Model::new("a")
+            .name("Alpha Curated".to_string())
+            .context_length(131072)];
 
-        let merged = Model::merge_live(vec!["a".to_string()], vec![curated_beta]);
+        let merged = Model::merge_live(live, curated);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].name.as_deref(), Some("Alpha Server"));
+        assert_eq!(merged[0].context_length, Some(32768));
+    }
+
+    #[test]
+    fn merge_live_appends_curated_entries_missing_from_live_list() {
+        let live = vec![Model::new("a").name("Alpha".to_string())];
+        let curated = vec![Model::new("beta-only")
+            .name("Beta".to_string())
+            .context_length(8192)];
+
+        let merged = Model::merge_live(live, curated);
 
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[0].id.as_str(), "a");
@@ -193,13 +244,43 @@ mod merge_live_tests {
     }
 
     #[test]
-    fn merge_live_deduplicates_curated_entries_that_already_match_live_ids() {
-        let curated = Model::new("a").name("Alpha".to_string());
+    fn merge_live_deduplicates_live_entries() {
+        let live = vec![
+            Model::new("a").name("Alpha First".to_string()),
+            Model::new("a").name("Alpha Second".to_string()),
+        ];
 
-        let merged = Model::merge_live(vec!["a".to_string()], vec![curated]);
+        let merged = Model::merge_live(live, vec![]);
 
-        // "a" appears once in the merged result, not twice.
+        // "a" appears once (first-seen wins)
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].id.as_str(), "a");
+        assert_eq!(merged[0].name.as_deref(), Some("Alpha First"));
+    }
+
+    #[test]
+    fn merge_live_server_model_without_curated_preserves_all_server_data() {
+        let live = vec![Model::new("gpt-4o")
+            .name("GPT-4o".to_string())
+            .description("A fast model".to_string())
+            .context_length(128000)
+            .tools_supported(true)
+            .supports_reasoning(false)
+            .input_modalities(vec![InputModality::Text, InputModality::Image])];
+
+        let merged = Model::merge_live(live, vec![]);
+
+        assert_eq!(merged.len(), 1);
+        let m = &merged[0];
+        assert_eq!(m.id.as_str(), "gpt-4o");
+        assert_eq!(m.name.as_deref(), Some("GPT-4o"));
+        assert_eq!(m.description.as_deref(), Some("A fast model"));
+        assert_eq!(m.context_length, Some(128000));
+        assert_eq!(m.tools_supported, Some(true));
+        assert_eq!(m.supports_reasoning, Some(false));
+        assert_eq!(
+            m.input_modalities,
+            vec![InputModality::Text, InputModality::Image]
+        );
     }
 }

@@ -348,19 +348,17 @@ impl<H: HttpInfra> OpenAIProvider<H> {
                         Ok(response) => {
                             match serde_json::from_str::<ListModelResponse>(&response) {
                                 Ok(data) => {
-                                    let live_ids: Vec<String> = data
+                                    // Convert DTO models to domain models,
+                                    // preserving server-provided metadata
+                                    let mut seen = std::collections::HashSet::new();
+                                    let live_models: Vec<forge_app::domain::Model> = data
                                         .data
                                         .into_iter()
-                                        .map(|m| m.id.to_string())
-                                        .collect();
-                                    // Deduplicate while preserving first-seen order
-                                    let mut seen = std::collections::HashSet::new();
-                                    let live_ids: Vec<String> = live_ids
-                                        .into_iter()
-                                        .filter(|id| seen.insert(id.clone()))
+                                        .filter(|m| seen.insert(m.id.clone()))
+                                        .map(|m| m.into())
                                         .collect();
                                     Ok(forge_app::domain::Model::merge_live(
-                                        live_ids,
+                                        live_models,
                                         fallback.clone(),
                                     ))
                                 }
@@ -829,7 +827,7 @@ mod tests {
 
         mock.assert_async().await;
 
-        // Live fetch returns 2 ids; merge should produce 2 entries.
+        // Live fetch returns 2 models with server metadata; merge should produce 2 entries.
         assert_eq!(
             actual.len(),
             2,
@@ -840,8 +838,13 @@ mod tests {
             .iter()
             .find(|m| m.id.as_str() == "model-1")
             .expect("model-1 should be present");
-        assert_eq!(model_1.name.as_deref(), Some("Model One Curated"));
-        assert_eq!(model_1.context_length, Some(16384));
+        // Server metadata wins over curated for present fields
+        assert_eq!(model_1.name.as_deref(), Some("Test Model 1"));
+        assert_eq!(model_1.context_length, Some(4096));
+        // Curated fills in reasoning (not present in server response)
+        assert_eq!(model_1.supports_reasoning, Some(true));
+        // Server's parallel tool call setting wins over curated
+        assert_eq!(model_1.supports_parallel_tool_calls, Some(true));
         Ok(())
     }
 
@@ -969,15 +972,26 @@ mod tests {
         assert_eq!(
             actual.len(),
             2,
-            "live ids (live-only-model, merged-model) should produce 2 entries"
+            "live models (live-only-model, merged-model) should produce 2 entries"
         );
         let merged = actual
             .iter()
             .find(|m| m.id.as_str() == "merged-model")
             .expect("merged-model should be present");
-        // merge_live overlays: curated `name` wins when curated entry has a name.
-        assert_eq!(merged.name.as_deref(), Some("Curated Override"));
-        assert_eq!(merged.context_length, Some(16384));
+        // Server metadata wins over curated for present fields
+        assert_eq!(merged.name.as_deref(), Some("Live Curated"));
+        assert_eq!(merged.context_length, Some(8192));
+        // Curated fills in supports_reasoning (not in server response)
+        assert_eq!(merged.supports_reasoning, Some(true));
+        // Server's supports_parallel_tool_calls absent, curated fills it
+        assert_eq!(merged.supports_parallel_tool_calls, Some(false));
+        // live-only-model: server metadata preserved (no curated match)
+        let live_only = actual
+            .iter()
+            .find(|m| m.id.as_str() == "live-only-model")
+            .expect("live-only-model should be present");
+        assert_eq!(live_only.name.as_deref(), Some("Live Only"));
+        assert_eq!(live_only.context_length, Some(4096));
         Ok(())
     }
 
