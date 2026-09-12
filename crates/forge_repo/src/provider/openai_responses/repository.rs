@@ -727,12 +727,19 @@ impl<F: HttpInfra + EnvironmentInfra<Config = forge_config::ForgeConfig> + 'stat
                         serde_json::from_str(&response_text)
                             .with_context(|| format_http_context(None, "GET", &url))
                             .with_context(|| "Failed to deserialize models response")?;
-                    Ok(data.data.into_iter().map(|m| m.id.to_string()).collect())
+                    // Convert DTO models to domain models, deduplicate by id
+                    let mut seen = std::collections::HashSet::new();
+                    Ok(data
+                        .data
+                        .into_iter()
+                        .filter(|m| seen.insert(m.id.clone()))
+                        .map(|m| m.into())
+                        .collect())
                 }
                 .await;
 
                 match fetch_result {
-                    Ok(live_ids) => Ok(Model::merge_live(live_ids, fallback)),
+                    Ok(live_models) => Ok(Model::merge_live(live_models, fallback)),
                     Err(error) => {
                         tracing::warn!(
                             error = ?error,
