@@ -346,31 +346,15 @@ impl<H: HttpInfra> OpenAIProvider<H> {
                     debug!(url = %url, "Fetching dynamic models");
                     match self.fetch_models(url.as_str()).await {
                         Ok(response) => {
-                            match serde_json::from_str::<ListModelResponse>(&response) {
-                                Ok(data) => {
-                                    // Convert DTO models to domain models,
-                                    // preserving server-provided metadata
-                                    let mut seen = std::collections::HashSet::new();
-                                    let live_models: Vec<forge_app::domain::Model> = data
-                                        .data
-                                        .into_iter()
-                                        .filter(|m| seen.insert(m.id.clone()))
-                                        .map(|m| m.into())
-                                        .collect();
-                                    Ok(forge_app::domain::Model::merge_live(
-                                        live_models,
-                                        fallback.clone(),
-                                    ))
-                                }
-                                Err(error) => {
-                                    tracing::warn!(
-                                        error = ?error,
-                                        provider = %self.provider.id,
-                                        "Dynamic model deserialization failed; falling back to curated list"
-                                    );
-                                    Ok(fallback.clone())
-                                }
-                            }
+                            let data: ListModelResponse = serde_json::from_str(&response)
+                                .with_context(|| format_http_context(None, "GET", url))
+                                .with_context(|| "Failed to deserialize models response")?;
+                            let live_ids =
+                                data.data.into_iter().map(|m| m.id.to_string()).collect();
+                            Ok(forge_app::domain::Model::merge_live(
+                                live_ids,
+                                fallback.clone(),
+                            ))
                         }
                         Err(error) => {
                             tracing::warn!(
@@ -827,7 +811,7 @@ mod tests {
 
         mock.assert_async().await;
 
-        // Live fetch returns 2 models with server metadata; merge should produce 2 entries.
+        // Live fetch returns 2 ids; merge should produce 2 entries.
         assert_eq!(
             actual.len(),
             2,
@@ -838,13 +822,8 @@ mod tests {
             .iter()
             .find(|m| m.id.as_str() == "model-1")
             .expect("model-1 should be present");
-        // Server metadata wins over curated for present fields
-        assert_eq!(model_1.name.as_deref(), Some("Test Model 1"));
-        assert_eq!(model_1.context_length, Some(4096));
-        // Curated fills in reasoning (not present in server response)
-        assert_eq!(model_1.supports_reasoning, Some(true));
-        // Server's parallel tool call setting wins over curated
-        assert_eq!(model_1.supports_parallel_tool_calls, Some(true));
+        assert_eq!(model_1.name.as_deref(), Some("Model One Curated"));
+        assert_eq!(model_1.context_length, Some(16384));
         Ok(())
     }
 
@@ -972,26 +951,15 @@ mod tests {
         assert_eq!(
             actual.len(),
             2,
-            "live models (live-only-model, merged-model) should produce 2 entries"
+            "live ids (live-only-model, merged-model) should produce 2 entries"
         );
         let merged = actual
             .iter()
             .find(|m| m.id.as_str() == "merged-model")
             .expect("merged-model should be present");
-        // Server metadata wins over curated for present fields
-        assert_eq!(merged.name.as_deref(), Some("Live Curated"));
-        assert_eq!(merged.context_length, Some(8192));
-        // Curated fills in supports_reasoning (not in server response)
-        assert_eq!(merged.supports_reasoning, Some(true));
-        // Server's supports_parallel_tool_calls absent, curated fills it
-        assert_eq!(merged.supports_parallel_tool_calls, Some(false));
-        // live-only-model: server metadata preserved (no curated match)
-        let live_only = actual
-            .iter()
-            .find(|m| m.id.as_str() == "live-only-model")
-            .expect("live-only-model should be present");
-        assert_eq!(live_only.name.as_deref(), Some("Live Only"));
-        assert_eq!(live_only.context_length, Some(4096));
+        // merge_live overlays: curated `name` wins when curated entry has a name.
+        assert_eq!(merged.name.as_deref(), Some("Curated Override"));
+        assert_eq!(merged.context_length, Some(16384));
         Ok(())
     }
 
