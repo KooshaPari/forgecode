@@ -507,8 +507,10 @@ impl ConversationRepositoryImpl {
                 q = q.bind::<diesel::sql_types::BigInt, _>(limit.max(1));
             }
             let ranked_rows: Vec<FtsRankedRow> = q.load(connection)?;
-            let raw_rows: Vec<ConversationRecord> =
-                ranked_rows.into_iter().map(FtsRankedRow::into_record).collect();
+            let raw_rows: Vec<ConversationRecord> = ranked_rows
+                .into_iter()
+                .map(FtsRankedRow::into_record)
+                .collect();
 
             // Preserve local BM25 order. Legacy MATCH semantics use the same
             // tokenizer and columns, but supplemental ranking is by recency.

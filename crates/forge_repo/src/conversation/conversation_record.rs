@@ -1138,7 +1138,12 @@ impl ConversationRecord {
     /// cross-checking two columns.
     fn encode_context(
         context: Option<&forge_domain::Context>,
-    ) -> (Option<String>, Option<Vec<u8>>, i32, Option<chrono::NaiveDateTime>) {
+    ) -> (
+        Option<String>,
+        Option<Vec<u8>>,
+        i32,
+        Option<chrono::NaiveDateTime>,
+    ) {
         let Some(ctx) = context else {
             return (None, None, 0, None);
         };
@@ -1150,7 +1155,12 @@ impl ConversationRecord {
             return (None, None, 0, None);
         };
         match crate::codec::compress(&json) {
-            Ok(zstd_bytes) => (None, Some(zstd_bytes), 1, Some(chrono::Utc::now().naive_utc())),
+            Ok(zstd_bytes) => (
+                None,
+                Some(zstd_bytes),
+                1,
+                Some(chrono::Utc::now().naive_utc()),
+            ),
             Err(_) => (Some(json), None, 0, Some(chrono::Utc::now().naive_utc())),
         }
     }
@@ -1294,16 +1304,12 @@ impl TryFrom<ConversationRecord> for forge_domain::Conversation {
                     conversation_id
                 )
             })?;
-            Some(
-                record
-                    .try_into()
-                    .with_context(|| {
-                        format!(
-                            "Failed to convert context record to domain type for conversation {}",
-                            conversation_id
-                        )
-                    })?,
-            )
+            Some(record.try_into().with_context(|| {
+                format!(
+                    "Failed to convert context record to domain type for conversation {}",
+                    conversation_id
+                )
+            })?)
         } else if let Some(context_str) = record.context {
             // Legacy plain-text format (rows written before P2.5).
             Some(
