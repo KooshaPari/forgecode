@@ -342,6 +342,45 @@ impl<H: HttpInfra> OpenAIProvider<H> {
                     debug!("Using hardcoded models");
                     Ok(models.clone())
                 }
+                forge_domain::ModelSource::Dynamic { url, fallback } => {
+                    debug!(url = %url, "Fetching dynamic models");
+                    match self.fetch_models(url.as_str()).await {
+                        Ok(response) => {
+                            match serde_json::from_str::<ListModelResponse>(&response) {
+                                Ok(data) => {
+                                    let live_ids: Vec<String> =
+                                        data.data.into_iter().map(|m| m.id.to_string()).collect();
+                                    // Deduplicate while preserving first-seen order
+                                    let mut seen = std::collections::HashSet::new();
+                                    let live_ids: Vec<String> = live_ids
+                                        .into_iter()
+                                        .filter(|id| seen.insert(id.clone()))
+                                        .collect();
+                                    Ok(forge_app::domain::Model::merge_live(
+                                        live_ids,
+                                        fallback.clone(),
+                                    ))
+                                }
+                                Err(error) => {
+                                    tracing::warn!(
+                                        error = ?error,
+                                        provider = %self.provider.id,
+                                        "Dynamic model deserialization failed; falling back to curated list"
+                                    );
+                                    Ok(fallback.clone())
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                error = ?error,
+                                provider = %self.provider.id,
+                                "Dynamic model fetch failed; falling back to curated list"
+                            );
+                            Ok(fallback.clone())
+                        }
+                    }
+                }
             }
         }
     }
@@ -643,6 +682,29 @@ mod tests {
         ))
     }
 
+    fn create_provider_with_dynamic(
+        base_url: &str,
+        dynamic_url: reqwest::Url,
+        fallback: Vec<forge_app::domain::Model>,
+    ) -> anyhow::Result<OpenAIProvider<MockHttpClient>> {
+        let provider = Provider {
+            id: ProviderId::OPENAI,
+            provider_type: forge_domain::ProviderType::Llm,
+            response: Some(ProviderResponse::OpenAI),
+            url: reqwest::Url::parse(base_url)?,
+            credential: make_credential(ProviderId::OPENAI, "test-api-key"),
+            custom_headers: None,
+            auth_methods: vec![forge_domain::AuthMethod::ApiKey],
+            url_params: vec![],
+            models: Some(forge_domain::ModelSource::Dynamic { url: dynamic_url, fallback }),
+        };
+
+        Ok(OpenAIProvider::new(
+            provider,
+            Arc::new(MockHttpClient::new()),
+        ))
+    }
+
     fn create_mock_models_response() -> serde_json::Value {
         serde_json::json!({
             "data": [
@@ -737,6 +799,182 @@ mod tests {
 
         mock.assert_async().await;
         assert!(actual.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_dynamic_models_success_overlays_curated_metadata() -> anyhow::Result<()> {
+        let mut fixture = MockServer::new().await;
+        let mock = fixture
+            .mock_models(create_mock_models_response(), 200)
+            .await;
+
+        let curated = vec![forge_app::domain::Model {
+            id: forge_app::domain::ModelId::new("model-1"),
+            name: Some("Model One Curated".to_string()),
+            description: Some("Curated override".to_string()),
+            context_length: Some(16384),
+            tools_supported: Some(true),
+            supports_parallel_tool_calls: Some(false),
+            supports_reasoning: Some(true),
+            input_modalities: vec![forge_app::domain::InputModality::Text],
+        }];
+
+        let dynamic_url = reqwest::Url::parse(&fixture.url())?.join("/models")?;
+        let provider = create_provider_with_dynamic(&fixture.url(), dynamic_url, curated)?;
+        let actual = provider.models().await?;
+
+        mock.assert_async().await;
+
+        // Live fetch returns 2 ids; merge should produce 2 entries.
+        assert_eq!(
+            actual.len(),
+            2,
+            "expected 2 merged models, got {}",
+            actual.len()
+        );
+        let model_1 = actual
+            .iter()
+            .find(|m| m.id.as_str() == "model-1")
+            .expect("model-1 should be present");
+        assert_eq!(model_1.name.as_deref(), Some("Model One Curated"));
+        assert_eq!(model_1.context_length, Some(16384));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_dynamic_models_failure_falls_back_to_curated() -> anyhow::Result<()> {
+        let mut fixture = MockServer::new().await;
+        // Mock a 401 — fetch_models errors, Dynamic arm must catch and return
+        // the curated fallback list instead of bubbling up.
+        let mock = fixture
+            .mock_models(create_error_response("Invalid API key", 401), 401)
+            .await;
+
+        let curated = vec![
+            forge_app::domain::Model {
+                id: forge_app::domain::ModelId::new("curated-a"),
+                name: Some("Curated A".to_string()),
+                ..forge_app::domain::Model::new("curated-a")
+            },
+            forge_app::domain::Model {
+                id: forge_app::domain::ModelId::new("curated-b"),
+                name: Some("Curated B".to_string()),
+                ..forge_app::domain::Model::new("curated-b")
+            },
+        ];
+
+        let dynamic_url = reqwest::Url::parse(&fixture.url())?.join("/models")?;
+        let provider = create_provider_with_dynamic(&fixture.url(), dynamic_url, curated)?;
+        let actual = provider.models().await?;
+
+        mock.assert_async().await;
+        assert_eq!(actual.len(), 2);
+        let ids: Vec<&str> = actual.iter().map(|m| m.id.as_str()).collect();
+        assert!(ids.contains(&"curated-a"));
+        assert!(ids.contains(&"curated-b"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_dynamic_models_appends_curated_extras_missing_from_live() -> anyhow::Result<()> {
+        let mut fixture = MockServer::new().await;
+        let mock = fixture
+            .mock_models(create_mock_models_response(), 200)
+            .await;
+
+        let curated = vec![forge_app::domain::Model {
+            id: forge_app::domain::ModelId::new("beta-only-model"),
+            name: Some("Beta only".to_string()),
+            ..forge_app::domain::Model::new("beta-only-model")
+        }];
+
+        let dynamic_url = reqwest::Url::parse(&fixture.url())?.join("/models")?;
+        let provider = create_provider_with_dynamic(&fixture.url(), dynamic_url, curated)?;
+        let actual = provider.models().await?;
+
+        mock.assert_async().await;
+        // Live fetch returns 2 ids; merge appends the curated extras that are
+        // not in the live list, so total should be 3.
+        assert_eq!(actual.len(), 3);
+        assert!(actual.iter().any(|m| m.id.as_str() == "beta-only-model"));
+        Ok(())
+    }
+
+    // The `test_dynamic_models_*` tests above use the project's `MockServer`
+    // helper, which internally wraps `mockito::Server` with a real TCP socket —
+    // so they already exercise the wire path end-to-end. The next test uses
+    // `mockito::Server` directly (no helper wrapper) to make the
+    // wire-level integration scope explicit.
+
+    #[tokio::test]
+    async fn test_dynamic_models_mockito_direct_wire_integration() -> anyhow::Result<()> {
+        use mockito::Server;
+
+        let mut server = Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/v1/models")
+            .match_header("authorization", "Bearer test-api-key")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                serde_json::json!({
+                    "data": [
+                        { "id": "live-only-model", "name": "Live Only", "context_length": 4096 },
+                        { "id": "merged-model", "name": "Live Curated", "context_length": 8192 }
+                    ]
+                })
+                .to_string(),
+            )
+            .create_async()
+            .await;
+
+        // Direct re-build of Provider with ModelSource::Dynamic, mirroring the
+        // crate-wide dispatch path but bypassing OpenAIProvider::new so we can
+        // assert the wire request shape independently.
+        let base_url = format!("{}/v1/chat/completions", server.url());
+        let dynamic_url = reqwest::Url::parse(&format!("{}/v1/models", server.url()))?;
+        let fallback = vec![forge_app::domain::Model {
+            id: forge_app::domain::ModelId::new("merged-model"),
+            name: Some("Curated Override".to_string()),
+            description: Some("Server metadata should win where present.".to_string()),
+            context_length: Some(16384),
+            tools_supported: Some(true),
+            supports_parallel_tool_calls: Some(false),
+            supports_reasoning: Some(true),
+            input_modalities: vec![forge_app::domain::InputModality::Text],
+        }];
+
+        let provider = Provider {
+            id: ProviderId::OPENAI,
+            provider_type: forge_domain::ProviderType::Llm,
+            response: Some(ProviderResponse::OpenAI),
+            url: reqwest::Url::parse(&base_url)?,
+            credential: make_credential(ProviderId::OPENAI, "test-api-key"),
+            custom_headers: None,
+            auth_methods: vec![forge_domain::AuthMethod::ApiKey],
+            url_params: vec![],
+            models: Some(forge_domain::ModelSource::Dynamic { url: dynamic_url, fallback }),
+        };
+        let openai_provider = OpenAIProvider::new(provider, Arc::new(MockHttpClient::new()));
+
+        let actual = openai_provider.models().await?;
+
+        _mock.assert_async().await;
+
+        // 2 live + 0 fallback extras (both curated ids are covered by live) = 2.
+        assert_eq!(
+            actual.len(),
+            2,
+            "live ids (live-only-model, merged-model) should produce 2 entries"
+        );
+        let merged = actual
+            .iter()
+            .find(|m| m.id.as_str() == "merged-model")
+            .expect("merged-model should be present");
+        // merge_live overlays: curated `name` wins when curated entry has a name.
+        assert_eq!(merged.name.as_deref(), Some("Curated Override"));
+        assert_eq!(merged.context_length, Some(16384));
         Ok(())
     }
 
