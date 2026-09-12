@@ -349,10 +349,17 @@ impl<H: HttpInfra> OpenAIProvider<H> {
                             let data: ListModelResponse = serde_json::from_str(&response)
                                 .with_context(|| format_http_context(None, "GET", url))
                                 .with_context(|| "Failed to deserialize models response")?;
-                            let live_ids =
-                                data.data.into_iter().map(|m| m.id.to_string()).collect();
+                            // Preserve server-side Model DTOs (OpenAI's
+                            // /v1/models payload carries a `description`
+                            // and other per-model metadata). The merge
+                            // function now treats the server side as
+                            // authoritative for fields it sets, with
+                            // curated data filling only the None gaps.
                             Ok(forge_app::domain::Model::merge_live(
-                                live_ids,
+                                data.data
+                                    .into_iter()
+                                    .map(forge_domain::Model::from)
+                                    .collect(),
                                 fallback.clone(),
                             ))
                         }
@@ -822,8 +829,19 @@ mod tests {
             .iter()
             .find(|m| m.id.as_str() == "model-1")
             .expect("model-1 should be present");
-        assert_eq!(model_1.name.as_deref(), Some("Model One Curated"));
-        assert_eq!(model_1.context_length, Some(16384));
+        // Server-provided metadata wins; curated values that match what
+        // the server also provided are simply ignored (server is
+        // authoritative). Curated data fills None gaps (e.g. when the
+        // server returns `description` but the curated entry added
+        // extra fields, like `supports_reasoning`, the server's None
+        // for that field would be filled by curated — but in this
+        // particular test the server provided everything populated).
+        assert_eq!(
+            model_1.name.as_deref(),
+            Some("Test Model 1"),
+            "server-provided name wins over curated"
+        );
+        assert_eq!(model_1.context_length, Some(4096));
         Ok(())
     }
 
@@ -957,9 +975,14 @@ mod tests {
             .iter()
             .find(|m| m.id.as_str() == "merged-model")
             .expect("merged-model should be present");
-        // merge_live overlays: curated `name` wins when curated entry has a name.
-        assert_eq!(merged.name.as_deref(), Some("Curated Override"));
-        assert_eq!(merged.context_length, Some(16384));
+        // Server-side metadata is authoritative for fields the server
+        // populated. Curated data only fills None gaps.
+        assert_eq!(
+            merged.name.as_deref(),
+            Some("Live Curated"),
+            "server-provided name wins; curated is ignored for fields the server populated"
+        );
+        assert_eq!(merged.context_length, Some(8192));
         Ok(())
     }
 

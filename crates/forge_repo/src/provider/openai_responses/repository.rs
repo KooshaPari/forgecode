@@ -727,12 +727,19 @@ impl<F: HttpInfra + EnvironmentInfra<Config = forge_config::ForgeConfig> + 'stat
                         serde_json::from_str(&response_text)
                             .with_context(|| format_http_context(None, "GET", &url))
                             .with_context(|| "Failed to deserialize models response")?;
-                    Ok(data.data.into_iter().map(|m| m.id.to_string()).collect())
+                    // Preserve server-side Model DTOs so the merge can
+                    // fill None gaps with curated metadata instead of
+                    // overriding the server values.
+                    Ok(data
+                        .data
+                        .into_iter()
+                        .map(forge_domain::Model::from)
+                        .collect())
                 }
                 .await;
 
                 match fetch_result {
-                    Ok(live_ids) => Ok(Model::merge_live(live_ids, fallback)),
+                    Ok(live) => Ok(Model::merge_live(live, fallback)),
                     Err(error) => {
                         tracing::warn!(
                             error = ?error,
