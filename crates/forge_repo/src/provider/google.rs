@@ -171,14 +171,13 @@ impl<T: HttpInfra> Google<T> {
                         .models
                         .into_iter()
                         .map(forge_domain::Model::from)
-                        .map(|m| m.id.to_string())
                         .collect())
                 }
                 .await;
 
                 match fetch_result {
-                    Ok(live_ids) => Ok(forge_app::domain::Model::merge_live(
-                        live_ids,
+                    Ok(live_models) => Ok(forge_app::domain::Model::merge_live(
+                        live_models,
                         fallback.clone(),
                     )),
                     Err(error) => {

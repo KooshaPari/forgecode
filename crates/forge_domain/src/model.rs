@@ -92,7 +92,7 @@ impl Model {
             if merged.iter().any(|m| m.id == server_model.id) {
                 continue;
             }
-            let mut model = match curated.iter().find(|m| m.id == server_model.id) {
+            let model = match curated.iter().find(|m| m.id == server_model.id) {
                 Some(curated_model) => {
                     let mut model = server_model;
                     // Server metadata wins; curated fills in None gaps
@@ -166,9 +166,13 @@ impl std::str::FromStr for ModelId {
 mod merge_live_tests {
     use super::*;
 
+    fn live(id: &str) -> Model {
+        Model::new(id)
+    }
+
     #[test]
-    fn merge_live_emits_one_entry_per_live_id_with_default_metadata() {
-        let merged = Model::merge_live(vec!["a".to_string(), "b".to_string()], vec![]);
+    fn merge_live_emits_one_entry_per_live_model_with_passthrough_metadata() {
+        let merged = Model::merge_live(vec![live("a"), live("b")], vec![]);
 
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[0].id.as_str(), "a");
@@ -179,21 +183,25 @@ mod merge_live_tests {
     }
 
     #[test]
-    fn merge_live_overlays_curated_metadata_onto_matching_live_id() {
+    fn merge_live_fills_curated_metadata_into_live_models_with_none_fields() {
+        let server = live("a").name("ServerName".to_string()).tools_supported(false);
         let curated = Model::new("a")
-            .name("Alpha".to_string())
+            .name("Curated".to_string())
             .context_length(131072)
             .tools_supported(true)
             .supports_reasoning(true)
             .input_modalities(vec![InputModality::Text, InputModality::Image]);
 
-        let merged = Model::merge_live(vec!["a".to_string()], vec![curated]);
+        let merged = Model::merge_live(vec![server], vec![curated]);
 
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].id.as_str(), "a");
-        assert_eq!(merged[0].name.as_deref(), Some("Alpha"));
+        // Server name wins (not None), curated name ignored
+        assert_eq!(merged[0].name.as_deref(), Some("ServerName"));
+        // Curated fills the None gaps
         assert_eq!(merged[0].context_length, Some(131072));
-        assert_eq!(merged[0].tools_supported, Some(true));
+        // Server tools_supported=false wins over curated true
+        assert_eq!(merged[0].tools_supported, Some(false));
         assert_eq!(merged[0].supports_reasoning, Some(true));
         assert_eq!(
             merged[0].input_modalities,
@@ -207,7 +215,7 @@ mod merge_live_tests {
             .name("Beta".to_string())
             .context_length(8192);
 
-        let merged = Model::merge_live(vec!["a".to_string()], vec![curated_beta]);
+        let merged = Model::merge_live(vec![live("a")], vec![curated_beta]);
 
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[0].id.as_str(), "a");
@@ -219,10 +227,22 @@ mod merge_live_tests {
     fn merge_live_deduplicates_curated_entries_that_already_match_live_ids() {
         let curated = Model::new("a").name("Alpha".to_string());
 
-        let merged = Model::merge_live(vec!["a".to_string()], vec![curated]);
+        let merged = Model::merge_live(vec![live("a")], vec![curated]);
 
         // "a" appears once in the merged result, not twice.
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].id.as_str(), "a");
+    }
+
+    #[test]
+    fn merge_live_deduplicates_live_entries_with_first_seen_wins() {
+        let first = live("a").name("First".to_string()).context_length(100);
+        let dup = live("a").name("Duplicate".to_string()).context_length(999);
+
+        let merged = Model::merge_live(vec![first, dup], vec![]);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].name.as_deref(), Some("First"));
+        assert_eq!(merged[0].context_length, Some(100));
     }
 }

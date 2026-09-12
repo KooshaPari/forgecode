@@ -349,10 +349,12 @@ impl<H: HttpInfra> OpenAIProvider<H> {
                             let data: ListModelResponse = serde_json::from_str(&response)
                                 .with_context(|| format_http_context(None, "GET", url))
                                 .with_context(|| "Failed to deserialize models response")?;
-                            let live_ids =
-                                data.data.into_iter().map(|m| m.id.to_string()).collect();
+                            // Preserve server-side DTO metadata so merge_live can
+                            // use it instead of building empty Model::new shells.
+                            let live_models: Vec<Model> =
+                                data.data.into_iter().map(Into::into).collect();
                             Ok(forge_app::domain::Model::merge_live(
-                                live_ids,
+                                live_models,
                                 fallback.clone(),
                             ))
                         }
@@ -957,9 +959,20 @@ mod tests {
             .iter()
             .find(|m| m.id.as_str() == "merged-model")
             .expect("merged-model should be present");
-        // merge_live overlays: curated `name` wins when curated entry has a name.
-        assert_eq!(merged.name.as_deref(), Some("Curated Override"));
-        assert_eq!(merged.context_length, Some(16384));
+        // merge_live: server-side DTO metadata wins when present; curated
+        // metadata only fills in None gaps. Live response had name set so
+        // curated "Curated Override" is NOT used.
+        assert_eq!(merged.name.as_deref(), Some("Live Curated"));
+        assert_eq!(merged.context_length, Some(8192));
+        // Server DTO did not provide description / tools_supported / reasoning,
+        // so curated fills those None gaps.
+        assert_eq!(
+            merged.description.as_deref(),
+            Some("Server metadata should win where present.")
+        );
+        assert_eq!(merged.tools_supported, Some(true));
+        assert_eq!(merged.supports_parallel_tool_calls, Some(false));
+        assert_eq!(merged.supports_reasoning, Some(true));
         Ok(())
     }
 

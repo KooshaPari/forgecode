@@ -325,7 +325,7 @@ impl<T: HttpInfra> Anthropic<T> {
 
                 match fetch_result {
                     Ok(live_ids) => Ok(forge_app::domain::Model::merge_live(
-                        live_ids,
+                        live_ids.into_iter().map(forge_app::domain::Model::new).collect(),
                         fallback.clone(),
                     )),
                     Err(error) => {
