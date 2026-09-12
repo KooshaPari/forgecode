@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -87,6 +88,213 @@ pub struct ConversationRepositoryImpl {
     wid: WorkspaceHash,
 }
 
+/// Reject foreign-workspace and attached-only rows, preserving missing-ID semantics.
+fn validate_local_mutation(
+    connection: &mut diesel::SqliteConnection,
+    conversation_id: &str,
+    workspace_id: i64,
+) -> anyhow::Result<()> {
+    let local_workspace = conversations::table
+        .filter(conversations::conversation_id.eq(conversation_id))
+        .select(conversations::workspace_id)
+        .first::<i64>(connection)
+        .optional()?;
+    if let Some(owner) = local_workspace {
+        anyhow::ensure!(
+            owner == workspace_id,
+            "Conversation belongs to another workspace"
+        );
+    } else {
+        let legacy = diesel::select(diesel::dsl::exists(
+            conversations_all::table.filter(conversations_all::conversation_id.eq(conversation_id)),
+        ))
+        .get_result::<bool>(connection)?;
+        if legacy {
+            anyhow::bail!("Conversation exists only in attached legacy history and is read-only");
+        }
+    }
+    Ok(())
+}
+
+/// Merge primary local search hits with supplemental legacy hits while keeping
+/// the caller's limit hard and guaranteeing that a visible legacy match is not
+/// starved whenever the primary result set fills the limit.
+fn merge_search_rows(
+    mut primary: Vec<ConversationRecord>,
+    supplemental: Vec<ConversationRecord>,
+    limit: Option<i64>,
+) -> Vec<ConversationRecord> {
+    let mut seen = HashSet::new();
+    primary.retain(|row| seen.insert(row.conversation_id.clone()));
+
+    let supplemental: Vec<ConversationRecord> = supplemental
+        .into_iter()
+        .filter(|row| seen.insert(row.conversation_id.clone()))
+        .collect();
+
+    let Some(limit) = limit else {
+        primary.extend(supplemental);
+        return primary;
+    };
+    let limit = limit.max(0) as usize;
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    if supplemental.is_empty() {
+        return primary.into_iter().take(limit).collect();
+    }
+
+    let primary_quota = limit.saturating_sub(1);
+    let mut primary = primary.into_iter();
+    let mut supplemental = supplemental.into_iter();
+    let mut merged = Vec::with_capacity(limit);
+    for _ in 0..primary_quota {
+        let Some(row) = primary.next() else { break };
+        merged.push(row);
+    }
+    if let Some(row) = supplemental.next() {
+        merged.push(row);
+    }
+
+    for row in primary {
+        if merged.len() == limit {
+            break;
+        }
+        merged.push(row);
+    }
+    for row in supplemental {
+        if merged.len() == limit {
+            break;
+        }
+        merged.push(row);
+    }
+    merged
+}
+
+/// Bound retained unique hits, not examined candidates. Rare/no matches can
+/// require a full scan, and SQLite may sort candidates before streaming them.
+fn collect_search_rows(
+    rows: impl Iterator<Item = diesel::QueryResult<ConversationRecord>>,
+    limit: Option<i64>,
+    mut matches: impl FnMut(&ConversationRecord) -> anyhow::Result<bool>,
+) -> anyhow::Result<Vec<ConversationRecord>> {
+    let mut hits = Vec::new();
+    let mut seen = HashSet::new();
+    if limit.is_some_and(|limit| limit <= 0) {
+        return Ok(hits);
+    }
+    for row in rows {
+        let row = row?;
+        if !seen.contains(&row.conversation_id) && matches(&row)? {
+            seen.insert(row.conversation_id.clone());
+            hits.push(row);
+            if limit.is_some_and(|limit| hits.len() >= limit as usize) {
+                break;
+            }
+        }
+    }
+    Ok(hits)
+}
+
+/// Decode only one candidate at a time. Corrupt contexts do not hide title/cwd
+/// matches, but cannot themselves supply searchable text.
+fn search_context(row: &ConversationRecord) -> String {
+    if row.is_compressed == 1 || row.context.is_none() {
+        row.context_zstd
+            .as_ref()
+            .and_then(|bytes| zstd::decode_all(&bytes[..]).ok())
+            .map(|bytes| bytes.to_str_lossy().into_owned())
+            .unwrap_or_default()
+    } else {
+        row.context.clone().unwrap_or_default()
+    }
+}
+
+/// Evaluate legacy MATCH expressions with the same schema/tokenizer as the
+/// local index. The isolated connection lets the source cursor remain streaming
+/// and drops all temporary history on return, including on errors.
+struct LegacyFtsMatcher(diesel::SqliteConnection);
+
+impl LegacyFtsMatcher {
+    fn new() -> anyhow::Result<Self> {
+        let mut connection = diesel::SqliteConnection::establish(":memory:")?;
+        // Keep aligned with 2026-08-27-180000_fts5_unicode61_highlight.
+        diesel::sql_query(
+            "CREATE VIRTUAL TABLE candidate USING fts5(title, content, cwd, tokenize='unicode61 remove_diacritics 1')",
+        )
+        .execute(&mut connection)?;
+        Ok(Self(connection))
+    }
+
+    fn matches(&mut self, row: &ConversationRecord, query: &str) -> anyhow::Result<bool> {
+        #[derive(diesel::QueryableByName)]
+        struct MatchRow {
+            #[diesel(sql_type = diesel::sql_types::Bool)]
+            matched: bool,
+        }
+
+        diesel::sql_query("DELETE FROM candidate").execute(&mut self.0)?;
+        diesel::sql_query("INSERT INTO candidate(rowid, title, content, cwd) VALUES (1, ?, ?, ?)")
+            .bind::<diesel::sql_types::Text, _>(row.title.as_deref().unwrap_or_default())
+            .bind::<diesel::sql_types::Text, _>(search_context(row))
+            .bind::<diesel::sql_types::Text, _>(row.cwd.as_deref().unwrap_or_default())
+            .execute(&mut self.0)?;
+        let result = diesel::sql_query(
+            "SELECT EXISTS(SELECT 1 FROM candidate WHERE candidate MATCH ?) AS matched",
+        )
+        .bind::<diesel::sql_types::Text, _>(query)
+        .get_result::<MatchRow>(&mut self.0)?;
+        Ok(result.matched)
+    }
+}
+
+/// Collect one source in recency order. SQL excludes irrelevant plaintext rows,
+/// but compressed candidates have no scan cap: matching requires decoding.
+fn collect_like_source(
+    connection: &mut diesel::SqliteConnection,
+    workspace_id: i64,
+    legacy: bool,
+    query: &str,
+    limit: Option<i64>,
+) -> anyhow::Result<Vec<ConversationRecord>> {
+    let escaped = query
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("%{escaped}%");
+    let needle = query.to_ascii_lowercase();
+    let rows = diesel::sql_query(
+        "SELECT * FROM conversations_all \
+         WHERE __forge_legacy_source = ? \
+           AND (workspace_id = ? OR __forge_legacy_unscoped = 1) \
+           AND (title LIKE ? ESCAPE '\\' OR context LIKE ? ESCAPE '\\' \
+                OR cwd LIKE ? ESCAPE '\\' \
+                OR (context IS NULL AND context_zstd IS NOT NULL)) \
+         ORDER BY updated_at DESC, conversation_id",
+    )
+    .bind::<diesel::sql_types::Integer, _>(i32::from(legacy))
+    .bind::<diesel::sql_types::BigInt, _>(workspace_id)
+    .bind::<diesel::sql_types::Text, _>(&pattern)
+    .bind::<diesel::sql_types::Text, _>(&pattern)
+    .bind::<diesel::sql_types::Text, _>(&pattern)
+    .load_iter::<ConversationRecord, _>(connection)?;
+    collect_search_rows(rows, limit, |row| {
+        // SQLite LIKE folds ASCII, not arbitrary Unicode. Keep storage formats
+        // equivalent, including multiword order, quotes and literal wildcards.
+        Ok([
+            row.title.as_deref(),
+            row.context.as_deref(),
+            row.cwd.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|text| text.to_ascii_lowercase().contains(&needle))
+            || (row.context.is_none()
+                && search_context(row).to_ascii_lowercase().contains(&needle)))
+    })
+}
+
 impl ConversationRepositoryImpl {
     pub fn new(pool: Arc<DatabasePool>, workspace_id: WorkspaceHash) -> Self {
         Self { pool, wid: workspace_id }
@@ -121,29 +329,48 @@ impl ConversationRepositoryImpl {
         .await
     }
 
-    /// Upsert the borrowed-conversation write representation. The context
+    /// Validate ordinary writes before entering the shared persistence primitive.
+    /// Explicit import uses its separate insert-only, skip-existing path.
+    fn upsert_local_conversation_record(
+        connection: &mut PooledSqliteConnection,
+        record: &ConversationRecord,
+    ) -> anyhow::Result<()> {
+        validate_local_mutation(connection, &record.conversation_id, record.workspace_id)?;
+        Self::upsert_conversation_ref_record(connection, record)
+    }
+
+    /// Persist a prevalidated local conversation representation. The context
     /// columns form one storage value and must therefore be updated together.
+    /// The conflict predicate also protects against a foreign insert racing the
+    /// caller's ownership check; zero affected rows must not report success.
     fn upsert_conversation_ref_record(
         connection: &mut PooledSqliteConnection,
         record: &ConversationRecord,
     ) -> anyhow::Result<()> {
-        diesel::insert_into(conversations::table)
-            .values(record)
-            .on_conflict(conversations::conversation_id)
-            .do_update()
-            .set((
-                conversations::title.eq(&record.title),
-                conversations::context.eq(&record.context),
-                conversations::context_zstd.eq(&record.context_zstd),
-                conversations::is_compressed.eq(record.is_compressed),
-                conversations::updated_at.eq(record.updated_at),
-                conversations::metrics.eq(&record.metrics),
-                conversations::parent_id.eq(&record.parent_id),
-                conversations::source.eq(&record.source),
-                conversations::cwd.eq(&record.cwd),
-                conversations::message_count.eq(record.message_count),
-            ))
-            .execute(connection)?;
+        let affected = diesel::query_dsl::methods::FilterDsl::filter(
+            diesel::insert_into(conversations::table)
+                .values(record)
+                .on_conflict(conversations::conversation_id)
+                .do_update()
+                .set((
+                    conversations::title.eq(&record.title),
+                    conversations::context.eq(&record.context),
+                    conversations::context_zstd.eq(&record.context_zstd),
+                    conversations::is_compressed.eq(record.is_compressed),
+                    conversations::updated_at.eq(record.updated_at),
+                    conversations::metrics.eq(&record.metrics),
+                    conversations::parent_id.eq(&record.parent_id),
+                    conversations::source.eq(&record.source),
+                    conversations::cwd.eq(&record.cwd),
+                    conversations::message_count.eq(record.message_count),
+                )),
+            conversations::workspace_id.eq(record.workspace_id),
+        )
+        .execute(connection)?;
+        anyhow::ensure!(
+            affected == 1,
+            "Conversation upsert did not affect a writable local row"
+        );
         Ok(())
     }
 }
@@ -158,6 +385,9 @@ impl ConversationRepositoryImpl {
         query: String,
         limit_value: Option<i64>,
     ) -> anyhow::Result<Vec<Conversation>> {
+        if query.trim().is_empty() || limit_value.is_some_and(|limit| limit <= 0) {
+            return Ok(Vec::new());
+        }
         self.run_with_connection(move |connection, wid| {
             let workspace_id = wid.id() as i64;
             // FTS5 BM25 search joined back to the base table on
@@ -165,12 +395,11 @@ impl ConversationRepositoryImpl {
             // `bm25()` returns a negative number where lower = more relevant, so `ORDER BY
             // rank_score` (ascending) yields "best match first".
             //
-            // We read from the primary `conversations` table: the FTS5 index
+            // We read FTS hits from the primary `conversations` table: the FTS5 index
             // is populated by `refresh_fts_index` from the primary table's
             // rows only, and the `rowid` join requires a real table (SQLite
-            // views do not expose `rowid`). Legacy rows are searchable only
-            // once they are re-indexed into the primary FTS5 index (e.g. by
-            // re-running the FTS refresh with the legacy DB attached).
+            // views do not expose `rowid`). A streamed MATCH supplement covers
+            // visible legacy rows, which are deliberately not indexed locally.
             //
             // We do NOT include `snippet()` here because it would force
             // the SELECT to return a column not in `ConversationRecord`.
@@ -193,13 +422,28 @@ impl ConversationRepositoryImpl {
             // MATCH operator when used as a column. Use the lower-level
             // `sql_query` so we can read back the typed rows.
             let mut q = diesel::sql_query(sql).into_boxed();
-            q = q.bind::<diesel::sql_types::Text, _>(query);
+            q = q.bind::<diesel::sql_types::Text, _>(&query);
             q = q.bind::<diesel::sql_types::BigInt, _>(workspace_id);
-            if let Some(l) = limit_value {
-                q = q.bind::<diesel::sql_types::BigInt, _>(l);
+            if let Some(limit) = limit_value {
+                q = q.bind::<diesel::sql_types::BigInt, _>(limit.max(1));
             }
-
             let raw_rows: Vec<ConversationRecord> = q.load(connection)?;
+
+            // Preserve local BM25 order. Legacy MATCH semantics use the same
+            // tokenizer and columns, but supplemental ranking is by recency.
+            let mut matcher = LegacyFtsMatcher::new()?;
+            let legacy_candidates = diesel::sql_query(
+                "SELECT * FROM conversations_all \
+                 WHERE __forge_legacy_source = 1 \
+                   AND (workspace_id = ? OR __forge_legacy_unscoped = 1) \
+                 ORDER BY updated_at DESC, conversation_id",
+            )
+            .bind::<diesel::sql_types::BigInt, _>(workspace_id)
+            .load_iter::<ConversationRecord, _>(connection)?;
+            let legacy_rows = collect_search_rows(legacy_candidates, limit_value, |row| {
+                matcher.matches(row, &query)
+            })?;
+            let raw_rows = merge_search_rows(raw_rows, legacy_rows, limit_value);
             let conversations: Result<Vec<Conversation>, _> =
                 raw_rows.into_iter().map(Conversation::try_from).collect();
             conversations
@@ -207,101 +451,46 @@ impl ConversationRepositoryImpl {
         .await
     }
 
-    /// Defensive fallback for when `conversations_fts` is unreachable or the
-    /// query has an FTS5 syntax error. A full table scan over `title` and
-    /// `context` with `LIKE '%term%'` is much slower than FTS5 but always
-    /// returns something useful for the user rather than an empty result.
-    ///
-    /// When `persist_context` compresses a context via zstd the `context`
-    /// column is NULL and the payload lives in `context_zstd` (binary).
-    /// LIKE cannot match binary data, so after the plaintext scan we also
-    /// fetch rows where `context IS NULL AND context_zstd IS NOT NULL`,
-    /// decompress each one in Rust, and check for a substring match.
+    /// Literal substring recovery when FTS is unavailable or malformed. Each
+    /// source contributes independent, unique recency-ordered hits, regardless
+    /// of storage encoding. Selection reserves a legacy slot, then output is
+    /// sorted by recency. This path deliberately does not interpret FTS syntax.
     async fn search_conversations_like(
         &self,
         query: String,
         limit_value: Option<i64>,
     ) -> anyhow::Result<Vec<Conversation>> {
+        if query.trim().is_empty() || limit_value.is_some_and(|limit| limit <= 0) {
+            return Ok(Vec::new());
+        }
         self.run_with_connection(move |connection, wid| {
             let workspace_id = wid.id() as i64;
-            // Escape LIKE wildcards so a query for "100%" doesn't try to
-            // match everything. Backslash is the default ESCAPE in SQLite.
-            let escaped = query
-                .replace('\\', "\\\\")
-                .replace('%', "\\%")
-                .replace('_', "\\_");
-            let like_pattern = format!("%{escaped}%");
-
-            // --- Part 1: plaintext columns (title, context, cwd) ---
-            let mut sql = String::from(
-                "SELECT * FROM conversations \
-                 WHERE workspace_id = ? \
-                   AND (title LIKE ? ESCAPE '\\' \
-                        OR context LIKE ? ESCAPE '\\' \
-                        OR cwd LIKE ? ESCAPE '\\') \
-                 ORDER BY updated_at DESC",
-            );
-            if limit_value.is_some() {
-                sql.push_str(" LIMIT ?");
-            }
-
-            let mut q = diesel::sql_query(sql).into_boxed();
-            q = q.bind::<diesel::sql_types::BigInt, _>(workspace_id);
-            q = q.bind::<diesel::sql_types::Text, _>(&like_pattern);
-            q = q.bind::<diesel::sql_types::Text, _>(&like_pattern);
-            q = q.bind::<diesel::sql_types::Text, _>(&like_pattern);
-            if let Some(l) = limit_value {
-                q = q.bind::<diesel::sql_types::BigInt, _>(l);
-            }
-
-            let mut raw_rows: Vec<ConversationRecord> = q.load(connection)?;
-
-            // --- Part 2: compressed contexts (context IS NULL, context_zstd IS NOT NULL) ---
-            // These rows were skipped by the plaintext LIKE scan because
-            // `context` is NULL when zstd compression succeeded during
-            // upsert. We fetch them separately, decompress in Rust, and
-            // check for a substring match.
-            let compressed_sql = "\
-                SELECT * FROM conversations \
-                WHERE workspace_id = ? \
-                  AND context IS NULL \
-                  AND context_zstd IS NOT NULL \
-                ORDER BY updated_at DESC";
-            let compressed_rows: Vec<ConversationRecord> = diesel::sql_query(compressed_sql)
-                .bind::<diesel::sql_types::BigInt, _>(workspace_id)
-                .load(connection)?;
-
-            let needle_lower = query.to_lowercase();
-            for row in compressed_rows {
-                // Skip rows already found by the plaintext scan.
-                if raw_rows
+            let local = collect_like_source(connection, workspace_id, false, &query, limit_value)?;
+            let legacy = collect_like_source(connection, workspace_id, true, &query, limit_value)?;
+            let legacy_ids: HashSet<_> = legacy
+                .iter()
+                .map(|row| row.conversation_id.clone())
+                .collect();
+            let mut rows = merge_search_rows(local, legacy, None);
+            rows.sort_by(|a, b| {
+                b.updated_at
+                    .cmp(&a.updated_at)
+                    .then_with(|| a.conversation_id.cmp(&b.conversation_id))
+            });
+            if let Some(limit) = limit_value {
+                let limit = limit as usize;
+                // Prefer globally recent hits, only replacing the oldest
+                // selected local when all visible legacy hits would be lost.
+                if let Some(index) = rows
                     .iter()
-                    .any(|r| r.conversation_id == row.conversation_id)
+                    .position(|row| legacy_ids.contains(&row.conversation_id))
+                    && index >= limit
                 {
-                    continue;
+                    rows.swap(limit - 1, index);
                 }
-                if let Some(ref compressed) = row.context_zstd {
-                    match zstd::decode_all(&compressed[..]) {
-                        Ok(decompressed) => {
-                            let text = decompressed[..].to_str_lossy();
-                            if text.to_lowercase().contains(&needle_lower) {
-                                raw_rows.push(row);
-                            }
-                        }
-                        Err(_) => continue,
-                    }
-                }
-                // Respect limit: stop after we've collected enough.
-                if let Some(limit) = limit_value
-                    && raw_rows.len() as i64 >= limit
-                {
-                    break;
-                }
+                rows.truncate(limit);
             }
-
-            let conversations: Result<Vec<Conversation>, _> =
-                raw_rows.into_iter().map(Conversation::try_from).collect();
-            conversations
+            rows.into_iter().map(Conversation::try_from).collect()
         })
         .await
     }
@@ -313,7 +502,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let conversation = conversation.clone();
         self.run_with_connection(move |connection, wid| {
             let record = ConversationRecord::new_ref(&conversation, wid);
-            Self::upsert_conversation_ref_record(connection, &record)
+            Self::upsert_local_conversation_record(connection, &record)
         })
         .await
     }
@@ -321,24 +510,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
     async fn upsert_conversation(&self, conversation: Conversation) -> anyhow::Result<()> {
         self.run_with_connection(move |connection, wid| {
             let record = ConversationRecord::new(conversation, wid);
-            diesel::insert_into(conversations::table)
-                .values(&record)
-                .on_conflict(conversations::conversation_id)
-                .do_update()
-                .set((
-                    conversations::title.eq(&record.title),
-                    conversations::context.eq(&record.context),
-                    conversations::context_zstd.eq(&record.context_zstd),
-                    conversations::is_compressed.eq(record.is_compressed),
-                    conversations::updated_at.eq(record.updated_at),
-                    conversations::metrics.eq(&record.metrics),
-                    conversations::parent_id.eq(&record.parent_id),
-                    conversations::source.eq(&record.source),
-                    conversations::cwd.eq(&record.cwd),
-                    conversations::message_count.eq(record.message_count),
-                ))
-                .execute(connection)?;
-            Ok(())
+            Self::upsert_local_conversation_record(connection, &record)
         })
         .await
     }
@@ -348,18 +520,23 @@ impl ConversationRepository for ConversationRepositoryImpl {
         conversation_id: &ConversationId,
     ) -> anyhow::Result<Option<Conversation>> {
         let conversation_id = *conversation_id;
-        self.run_with_connection(move |connection, _wid| {
+        self.run_with_connection(move |connection, wid| {
+            let workspace_id = wid.id() as i64;
             // Read from `conversations_all` so legacy rows are visible.
             // We use explicit column selection (rather than
             // `ConversationRecord::as_select()`)
             // because `ConversationRecord::table_name = conversations` (it is also used
             // for writes). The TEMP VIEW has identical column types so the SELECT … load
             // works regardless.
-            let record: Option<ConversationRecord> = conversations_all::table
-                .filter(conversations_all::conversation_id.eq(conversation_id.into_string()))
-                .select(conversations_all::all_columns)
-                .first(connection)
-                .optional()?;
+            let record: Option<ConversationRecord> =
+                conversations_all::table
+                    .filter(conversations_all::conversation_id.eq(conversation_id.into_string()))
+                    .filter(conversations_all::workspace_id.eq(workspace_id).or(
+                        diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                    ))
+                    .select(conversations_all::all_columns)
+                    .first(connection)
+                    .optional()?;
 
             match record {
                 Some(record) => Ok(Some(Conversation::try_from(record)?)),
@@ -382,10 +559,13 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // are both NULL — those rows have titles + timestamps but no
             // message history. We must not filter them out at the SQL layer
             // or the picker will hide them.
-            let mut query = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id))
-                .order(conversations_all::updated_at.desc())
-                .into_boxed();
+            let mut query =
+                conversations_all::table
+                    .filter(conversations_all::workspace_id.eq(&workspace_id).or(
+                        diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                    ))
+                    .order(conversations_all::updated_at.desc())
+                    .into_boxed();
 
             if let Some(limit_value) = limit {
                 query = query.limit(limit_value as i64);
@@ -416,12 +596,15 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // are both NULL — those rows have titles + timestamps but no
             // message history. We must not filter them out at the SQL layer
             // or the picker will hide them.
-            let record: Option<ConversationRecord> = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id))
-                .order(conversations_all::updated_at.desc())
-                .select(conversations_all::all_columns)
-                .first(connection)
-                .optional()?;
+            let record: Option<ConversationRecord> =
+                conversations_all::table
+                    .filter(conversations_all::workspace_id.eq(&workspace_id).or(
+                        diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                    ))
+                    .order(conversations_all::updated_at.desc())
+                    .select(conversations_all::all_columns)
+                    .first(connection)
+                    .optional()?;
             let conversation = match record {
                 Some(record) => Some(Conversation::try_from(record)?),
                 None => None,
@@ -435,6 +618,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let conversation_id = *conversation_id;
         self.run_with_connection(move |connection, wid| {
             let workspace_id = wid.id() as i64;
+            validate_local_mutation(connection, &conversation_id.into_string(), workspace_id)?;
 
             // Security: Ensure users can only delete conversations within their workspace
             diesel::delete(conversations::table)
@@ -457,12 +641,15 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             let workspace_id = wid.id() as i64;
             // Read from `conversations_all` so legacy rows are visible.
-            let records: Vec<ConversationRecord> = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id))
-                .filter(conversations_all::parent_id.eq(&parent_id))
-                .order(conversations_all::updated_at.desc())
-                .select(conversations_all::all_columns)
-                .load(connection)?;
+            let records: Vec<ConversationRecord> =
+                conversations_all::table
+                    .filter(conversations_all::workspace_id.eq(&workspace_id).or(
+                        diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                    ))
+                    .filter(conversations_all::parent_id.eq(&parent_id))
+                    .order(conversations_all::updated_at.desc())
+                    .select(conversations_all::all_columns)
+                    .load(connection)?;
 
             if records.is_empty() {
                 return Ok(None);
@@ -490,14 +677,17 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // must run BEFORE the LIMIT so the most-recent rows are not
             // dominated by ephemeral subagent runs that truncate older
             // user conversations.
-            let mut query = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id))
-                .filter(conversations_all::parent_id.is_null())
-                .filter(sql::<diesel::sql_types::Bool>(
-                    "COALESCE(json_extract(context, '$.initiator'), 'user') <> 'agent'",
-                ))
-                .order(conversations_all::updated_at.desc())
-                .into_boxed();
+            let mut query =
+                conversations_all::table
+                    .filter(conversations_all::workspace_id.eq(&workspace_id).or(
+                        diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                    ))
+                    .filter(conversations_all::parent_id.is_null())
+                    .filter(sql::<diesel::sql_types::Bool>(
+                        "COALESCE(json_extract(context, '$.initiator'), 'user') <> 'agent'",
+                    ))
+                    .order(conversations_all::updated_at.desc())
+                    .into_boxed();
 
             if let Some(limit_value) = limit {
                 query = query.limit(limit_value as i64);
@@ -547,7 +737,9 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             if !all_workspaces {
                 let workspace_id = wid.id() as i64;
-                query = query.filter(conversations_all::workspace_id.eq(workspace_id));
+                query = query.filter(conversations_all::workspace_id.eq(workspace_id).or(
+                    diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                ));
             }
 
             if let Some(limit_value) = limit {
@@ -578,11 +770,14 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             let workspace_id = wid.id() as i64;
             // Read from `conversations_all` so legacy rows are visible.
-            let mut query = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id))
-                .filter(conversations_all::source.eq(&source))
-                .order(conversations_all::updated_at.desc())
-                .into_boxed();
+            let mut query =
+                conversations_all::table
+                    .filter(conversations_all::workspace_id.eq(&workspace_id).or(
+                        diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                    ))
+                    .filter(conversations_all::source.eq(&source))
+                    .order(conversations_all::updated_at.desc())
+                    .into_boxed();
 
             if let Some(limit_value) = limit {
                 query = query.limit(limit_value as i64);
@@ -609,7 +804,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
         limit: Option<usize>,
     ) -> anyhow::Result<Vec<Conversation>> {
         let query = query.to_string();
-        let limit_value = limit.map(|n| n as i64);
+        let limit_value = limit.map(|n| i64::try_from(n).unwrap_or(i64::MAX));
         // Try FTS5 first; if the virtual table is missing/corrupt or the
         // MATCH expression has a syntax error, fall back to a LIKE scan so
         // the UI never silently drops results.
@@ -819,17 +1014,38 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let new_parent_id_str: Option<String> = new_parent_id.map(|id| id.into_string());
         let conversation_id_str = conversation_id.into_string();
         let now: chrono::NaiveDateTime = chrono::Utc::now().naive_utc();
-        self.run_with_connection(move |connection, _wid| {
-            diesel::update(
-                conversations::table
-                    .filter(conversations::conversation_id.eq(&conversation_id_str)),
-            )
-            .set((
-                conversations::parent_id.eq(new_parent_id_str),
-                conversations::updated_at.eq(Some(now)),
-            ))
-            .execute(connection)?;
-            Ok(())
+        self.run_with_connection(move |connection, wid| {
+            // Reserve the SQLite writer before checking ownership or existence so
+            // another connection cannot delete or replace the row between checks.
+            connection.immediate_transaction::<_, anyhow::Error, _>(|connection| {
+                let workspace_id = wid.id() as i64;
+                validate_local_mutation(connection, &conversation_id_str, workspace_id)?;
+                let exists = conversations::table
+                    .filter(conversations::workspace_id.eq(workspace_id))
+                    .filter(conversations::conversation_id.eq(&conversation_id_str))
+                    .select(conversations::conversation_id)
+                    .first::<String>(connection)
+                    .optional()?
+                    .is_some();
+                if !exists {
+                    return Ok(());
+                }
+                let affected = diesel::update(
+                    conversations::table
+                        .filter(conversations::workspace_id.eq(workspace_id))
+                        .filter(conversations::conversation_id.eq(&conversation_id_str)),
+                )
+                .set((
+                    conversations::parent_id.eq(new_parent_id_str),
+                    conversations::updated_at.eq(Some(now)),
+                ))
+                .execute(connection)?;
+                anyhow::ensure!(
+                    affected == 1,
+                    "Conversation update did not affect a writable local row"
+                );
+                Ok(())
+            })
         })
         .await
     }
@@ -841,16 +1057,22 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let conversation_id_str = conversation_id.into_string();
         let now: chrono::NaiveDateTime = chrono::Utc::now().naive_utc();
         let result = self
-            .run_with_connection(move |connection, _wid| {
+            .run_with_connection(move |connection, wid| {
+                let workspace_id = wid.id() as i64;
+                validate_local_mutation(connection, &conversation_id_str, workspace_id)?;
                 // MVP rewind semantics: find the most recent user message followed by
                 // a tool call (i.e. last compaction point heuristic) and truncate
                 // the context JSON to that prefix. If no tool call is found,
                 // fall back to clearing context to the most recent user message.
-                let record: Option<ConversationRecord> = conversations_all::table
-                    .filter(conversations_all::conversation_id.eq(&conversation_id_str))
+                let record: Option<ConversationRecord> = conversations::table
+                    .filter(conversations::workspace_id.eq(workspace_id))
+                    .filter(conversations::conversation_id.eq(&conversation_id_str))
                     .first(connection)
                     .optional()?;
 
+                if record.is_none() {
+                    return Ok(None);
+                }
                 let new_context: Option<String> = match record {
                     Some(r) if r.context.is_some() => {
                         let ctx = r.context.as_ref().unwrap();
@@ -862,6 +1084,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
                 diesel::update(
                     conversations::table
+                        .filter(conversations::workspace_id.eq(workspace_id))
                         .filter(conversations::conversation_id.eq(&conversation_id_str)),
                 )
                 .set((
@@ -871,8 +1094,9 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 .execute(connection)?;
 
                 // Re-read the updated record so we can return it.
-                let updated: Option<ConversationRecord> = conversations_all::table
-                    .filter(conversations_all::conversation_id.eq(&conversation_id_str))
+                let updated: Option<ConversationRecord> = conversations::table
+                    .filter(conversations::workspace_id.eq(workspace_id))
+                    .filter(conversations::conversation_id.eq(&conversation_id_str))
                     .first(connection)
                     .optional()?;
                 Ok(updated.and_then(|r| Conversation::try_from(r).ok()))
@@ -892,11 +1116,14 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             let workspace_id = wid.id() as i64;
             // Read from `conversations_all` so legacy rows are visible.
-            let mut query = conversations_all::table
-                .filter(conversations_all::workspace_id.eq(&workspace_id))
-                .filter(conversations_all::cwd.eq(&cwd))
-                .order(conversations_all::updated_at.desc())
-                .into_boxed();
+            let mut query =
+                conversations_all::table
+                    .filter(conversations_all::workspace_id.eq(&workspace_id).or(
+                        diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                    ))
+                    .filter(conversations_all::cwd.eq(&cwd))
+                    .order(conversations_all::updated_at.desc())
+                    .into_boxed();
 
             if let Some(limit_value) = limit {
                 query = query.limit(limit_value as i64);
@@ -928,10 +1155,13 @@ impl ConversationRepository for ConversationRepositoryImpl {
         let new_state_str = new_state.to_string();
         let new_state = IntentState::from_str(new_state)?;
 
-        self.run_with_connection(move |connection, _wid| {
+        self.run_with_connection(move |connection, wid| {
+            let workspace_id = wid.id() as i64;
+            validate_local_mutation(connection, &conversation_id, workspace_id)?;
             // Read current state to validate transition
-            let current_record: Option<ConversationRecord> = conversations_all::table
-                .filter(conversations_all::conversation_id.eq(&conversation_id))
+            let current_record: Option<ConversationRecord> = conversations::table
+                .filter(conversations::workspace_id.eq(workspace_id))
+                .filter(conversations::conversation_id.eq(&conversation_id))
                 .first(connection)
                 .optional()?;
 
@@ -953,7 +1183,9 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // Update the state
             let now = chrono::Utc::now().naive_utc();
             diesel::update(
-                conversations::table.filter(conversations::conversation_id.eq(&conversation_id)),
+                conversations::table
+                    .filter(conversations::workspace_id.eq(workspace_id))
+                    .filter(conversations::conversation_id.eq(&conversation_id)),
             )
             .set((
                 conversations::intent_state.eq(&new_state_str),
@@ -977,14 +1209,16 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             // Use raw SQL to order by context blob size (descending) to prioritize
             // largest contexts first for maximum space reclamation.
-            // Reads from `conversations_all` so legacy rows are also evaluated.
+            // Pruning is a writable operation, so read only from the local
+            // conversations table. Attached legacy rows are read-only and must
+            // never occupy a pruning slot.
             //
             // We deliberately keep the `(context IS NOT NULL OR is_compressed = 1)`
             // filter here because pruning operates on the actual context payload
             // (rows without a context cannot be pruned further) — but the picker
             // and other read APIs no longer apply this filter (they show all
             // rows, including tombstone rows whose context was damaged).
-            let sql = "SELECT c.* FROM conversations_all c \
+            let sql = "SELECT c.* FROM conversations c \
                  WHERE c.workspace_id = ? \
                    AND c.intent_state = 'verified' \
                    AND (c.context IS NOT NULL OR c.is_compressed = 1) \
@@ -1008,11 +1242,14 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
         let conversation_id = conversation_id.into_string();
 
-        self.run_with_connection(move |connection, _wid| {
+        self.run_with_connection(move |connection, wid| {
+            let workspace_id = wid.id() as i64;
+            validate_local_mutation(connection, &conversation_id, workspace_id)?;
             // Read current state to enforce invariant: only prune from 'verified'.
-            // Reads from `conversations_all` so legacy rows are also covered.
-            let current_record: Option<ConversationRecord> = conversations_all::table
-                .filter(conversations_all::conversation_id.eq(&conversation_id))
+            // Mutation validation reads only local, writable records.
+            let current_record: Option<ConversationRecord> = conversations::table
+                .filter(conversations::workspace_id.eq(workspace_id))
+                .filter(conversations::conversation_id.eq(&conversation_id))
                 .first(connection)
                 .optional()?;
 
@@ -1041,7 +1278,9 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             let now = chrono::Utc::now().naive_utc();
             diesel::update(
-                conversations::table.filter(conversations::conversation_id.eq(&conversation_id)),
+                conversations::table
+                    .filter(conversations::workspace_id.eq(workspace_id))
+                    .filter(conversations::conversation_id.eq(&conversation_id)),
             )
             .set((
                 conversations::context.eq(compressed_context),
@@ -2129,6 +2368,48 @@ mod tests {
         assert!(actual.is_some());
         assert_eq!(actual.unwrap().title, Some("Updated Title".to_string()));
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn ordinary_upserts_allow_new_and_owned_local_records() {
+        for borrowed in [false, true] {
+            let repo = repository().unwrap();
+            let mut fixture = Conversation::new(ConversationId::generate());
+            for title in ["new", "updated"] {
+                fixture = fixture.title(Some(title.to_string()));
+                if borrowed {
+                    repo.upsert_conversation_ref(&fixture).await.unwrap();
+                } else {
+                    repo.upsert_conversation(fixture.clone()).await.unwrap();
+                }
+                let actual = repo.get_conversation(&fixture.id).await.unwrap().unwrap();
+                assert_eq!(actual.title, Some(title.to_string()));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn upsert_conflict_primitive_rejects_foreign_owner_without_changing_row() {
+        let repo = repository().unwrap();
+        let fixture =
+            Conversation::new(ConversationId::generate()).title(Some("original".to_string()));
+        repo.upsert_conversation(fixture.clone()).await.unwrap();
+        let incoming = fixture.clone().title(Some("foreign overwrite".to_string()));
+        let record = ConversationRecord::new_ref(&incoming, WorkspaceHash::new(42));
+        // Bypass the ordinary precheck to model a foreign insert winning the
+        // race before the ON CONFLICT statement executes.
+        let error = repo
+            .run_with_connection(move |connection, _wid| {
+                ConversationRepositoryImpl::upsert_conversation_ref_record(connection, &record)
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "Conversation upsert did not affect a writable local row"
+        );
+        let actual = repo.get_conversation(&fixture.id).await.unwrap().unwrap();
+        assert_eq!(actual.title, fixture.title);
     }
 
     #[tokio::test]
@@ -3890,6 +4171,171 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_split_db_unscoped_legacy_discovery_preserves_workspace_writes() {
+        use diesel::Connection;
+        let fixture = tempfile::tempdir().unwrap();
+        let legacy_path = fixture.path().join("legacy.db");
+        let legacy_id = ConversationId::generate();
+        let mut legacy =
+            diesel::SqliteConnection::establish(legacy_path.to_str().unwrap()).unwrap();
+        diesel::sql_query("CREATE TABLE conversations (conversation_id TEXT PRIMARY KEY NOT NULL, title TEXT, context TEXT, created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP, metrics TEXT)")
+            .execute(&mut legacy).unwrap();
+        diesel::sql_query("INSERT INTO conversations (conversation_id, title, created_at) VALUES (?, 'unscoped legacy', CURRENT_TIMESTAMP)")
+            .bind::<diesel::sql_types::Text, _>(legacy_id.to_string())
+            .execute(&mut legacy).unwrap();
+        drop(legacy);
+        let pool = Arc::new(
+            DatabasePool::try_from(
+                PoolConfig::new(fixture.path().join("write.db"))
+                    .with_legacy_database_path(Some(legacy_path.clone())),
+            )
+            .unwrap(),
+        );
+        let zero_repo = ConversationRepositoryImpl::new(pool.clone(), WorkspaceHash::new(0));
+        let local = Conversation::new(ConversationId::generate())
+            .title(Some("local workspace zero".to_string()));
+        zero_repo.upsert_conversation(local.clone()).await.unwrap();
+        let repo = ConversationRepositoryImpl::new(pool, WorkspaceHash::new(42));
+
+        let actual = repo
+            .get_all_conversations(None)
+            .await
+            .unwrap()
+            .unwrap_or_default();
+        let expected = vec![legacy_id];
+        assert_eq!(actual.iter().map(|c| c.id).collect::<Vec<_>>(), expected);
+        assert!(repo.get_conversation(&legacy_id).await.unwrap().is_some());
+        assert!(repo.get_conversation(&local.id).await.unwrap().is_none());
+        assert!(
+            repo.mark_intent_state(&legacy_id, "extracting")
+                .await
+                .is_err()
+        );
+        assert!(repo.rewind_conversation(&legacy_id).await.is_err());
+        assert!(repo.prune_conversation(&legacy_id).await.is_err());
+        assert!(repo.delete_conversation(&legacy_id).await.is_err());
+        assert!(repo.update_parent_id(&legacy_id, None).await.is_err());
+        let legacy_copy = Conversation::new(legacy_id).title(Some("shadow".to_string()));
+        assert!(repo.upsert_conversation(legacy_copy.clone()).await.is_err());
+        assert!(repo.upsert_conversation_ref(&legacy_copy).await.is_err());
+        let visible = repo.get_all_conversations(None).await.unwrap().unwrap();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].title.as_deref(), Some("unscoped legacy"));
+        // Explicit import retains its existing skip-existing contract; it does
+        // not promote an attached legacy row into the writable database.
+        let report = repo.import_forge_db(legacy_path.clone()).await.unwrap();
+        assert_eq!((report.imported, report.skipped_existing), (0, 1));
+        let local_legacy_count = repo
+            .run_with_connection(move |connection, _wid| {
+                Ok(conversations::table
+                    .filter(conversations::conversation_id.eq(legacy_id.into_string()))
+                    .count()
+                    .get_result::<i64>(connection)?)
+            })
+            .await
+            .unwrap();
+        assert_eq!(local_legacy_count, 0);
+        // Missing IDs retain the existing idempotent no-op contract.
+        let missing_id = ConversationId::generate();
+        repo.delete_conversation(&missing_id).await.unwrap();
+        repo.update_parent_id(&missing_id, None).await.unwrap();
+        assert!(
+            repo.rewind_conversation(&missing_id)
+                .await
+                .unwrap()
+                .is_none(),
+            "rewinding an unknown conversation is an idempotent no-op"
+        );
+        zero_repo
+            .update_parent_id(&local.id, Some(&missing_id))
+            .await
+            .unwrap();
+        assert_eq!(
+            zero_repo
+                .get_conversation(&local.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .parent_id,
+            Some(missing_id)
+        );
+        let before = zero_repo
+            .get_conversation(&local.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let errors = [
+            repo.upsert_conversation(local.clone()).await.unwrap_err(),
+            repo.upsert_conversation_ref(&local).await.unwrap_err(),
+            repo.delete_conversation(&local.id).await.unwrap_err(),
+            repo.update_parent_id(&local.id, None).await.unwrap_err(),
+            repo.rewind_conversation(&local.id).await.unwrap_err(),
+            repo.mark_intent_state(&local.id, "extracting")
+                .await
+                .unwrap_err(),
+            repo.prune_conversation(&local.id).await.unwrap_err(),
+        ];
+        for error in errors {
+            assert_eq!(
+                error.to_string(),
+                "Conversation belongs to another workspace"
+            );
+        }
+        let after = zero_repo
+            .get_conversation(&local.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(after).unwrap(),
+            serde_json::to_value(before).unwrap()
+        );
+        let remaining = zero_repo
+            .get_all_conversations(None)
+            .await
+            .unwrap()
+            .unwrap_or_default();
+        assert!(remaining.iter().any(|c| c.id == local.id));
+        // Release all pooled attachments before changing the legacy schema.
+        drop(repo);
+        drop(zero_repo);
+        let mut legacy =
+            diesel::SqliteConnection::establish(legacy_path.to_str().unwrap()).unwrap();
+        #[derive(diesel::QueryableByName)]
+        struct Count {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            count: i64,
+        }
+        let actual = diesel::sql_query("SELECT count(*) AS count FROM conversations")
+            .get_result::<Count>(&mut legacy)
+            .unwrap()
+            .count;
+        assert_eq!(actual, 1);
+        // A real workspace-zero legacy row must not be confused with a
+        // projected placeholder for a schema that lacked workspace ownership.
+        diesel::sql_query(
+            "ALTER TABLE conversations ADD COLUMN workspace_id BIGINT NOT NULL DEFAULT 0",
+        )
+        .execute(&mut legacy)
+        .unwrap();
+        drop(legacy);
+        let scoped_pool = Arc::new(
+            DatabasePool::try_from(
+                PoolConfig::new(fixture.path().join("scoped-write.db"))
+                    .with_legacy_database_path(Some(legacy_path)),
+            )
+            .unwrap(),
+        );
+        let scoped_repo = ConversationRepositoryImpl::new(scoped_pool, WorkspaceHash::new(42));
+        let actual = scoped_repo
+            .get_all_conversations(None)
+            .await
+            .unwrap()
+            .unwrap_or_default();
+        assert!(actual.is_empty());
+    }
+
+    #[tokio::test]
     async fn test_split_db_union_reads_legacy_rows() -> anyhow::Result<()> {
         // Proves the split-DB read path: a pool whose primary (write) DB is
         // separate from a legacy DB sees rows from BOTH via the
@@ -3947,6 +4393,417 @@ mod tests {
         assert_eq!(all2.len(), 2, "union shows legacy + write rows");
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_split_db_local_row_shadows_same_id_legacy_row() -> anyhow::Result<()> {
+        // A legacy row and a local row can legitimately share an ID after a
+        // split-DB cutover. Reads must consistently expose the local, writable
+        // representation; returning both would let a read disagree with a later
+        // mutation of that same ID.
+        let temp = tempfile::tempdir()?;
+        let legacy_db = temp.path().join("legacy.db");
+        let write_db = temp.path().join("write.db");
+        let duplicate_id = ConversationId::generate();
+
+        {
+            let legacy_pool = Arc::new(DatabasePool::try_from(
+                PoolConfig::new(legacy_db.clone()).with_legacy_database_path(None),
+            )?);
+            let legacy_repo = ConversationRepositoryImpl::new(legacy_pool, WorkspaceHash::new(0));
+            legacy_repo
+                .upsert_conversation(
+                    Conversation::new(duplicate_id).title(Some("legacy duplicate".to_string())),
+                )
+                .await?;
+        }
+        {
+            let write_pool = Arc::new(DatabasePool::try_from(
+                PoolConfig::new(write_db.clone()).with_legacy_database_path(None),
+            )?);
+            let write_repo = ConversationRepositoryImpl::new(write_pool, WorkspaceHash::new(0));
+            write_repo
+                .upsert_conversation(
+                    Conversation::new(duplicate_id).title(Some("local winner".to_string())),
+                )
+                .await?;
+        }
+
+        let pool = Arc::new(DatabasePool::try_from(
+            PoolConfig::new(write_db).with_legacy_database_path(Some(legacy_db)),
+        )?);
+        let repo = ConversationRepositoryImpl::new(pool, WorkspaceHash::new(0));
+
+        let fetched = repo
+            .get_conversation(&duplicate_id)
+            .await?
+            .expect("local row visible");
+        assert_eq!(fetched.title.as_deref(), Some("local winner"));
+
+        let all = repo
+            .get_all_conversations(None)
+            .await?
+            .expect("one visible row");
+        assert_eq!(all.len(), 1, "duplicate ID is represented once");
+        assert_eq!(all[0].title.as_deref(), Some("local winner"));
+
+        let last = repo
+            .get_last_conversation()
+            .await?
+            .expect("local row visible");
+        assert_eq!(last.id, duplicate_id);
+        assert_eq!(last.title.as_deref(), Some("local winner"));
+
+        let parents = repo
+            .get_parent_conversations(None)
+            .await?
+            .expect("local row visible");
+        assert_eq!(parents.len(), 1, "parent list must not expose both copies");
+        assert_eq!(parents[0].title.as_deref(), Some("local winner"));
+        Ok(())
+    }
+
+    async fn search_fixture(
+        local: &[(&str, &str, i64, bool)],
+        legacy: &[(&str, &str, i64, bool)],
+    ) -> anyhow::Result<(tempfile::TempDir, ConversationRepositoryImpl)> {
+        let temp = tempfile::tempdir()?;
+        let write_db = temp.path().join("write.db");
+        let legacy_db = temp.path().join("legacy.db");
+        for (path, rows) in [(&write_db, local), (&legacy_db, legacy)] {
+            let pool = DatabasePool::try_from(
+                PoolConfig::new(path.clone()).with_legacy_database_path(None),
+            )?;
+            let mut connection = pool.get_connection()?;
+            for &(title, text, timestamp, compressed) in rows {
+                let context =
+                    Context::default().messages(vec![ContextMessage::user(text, None).into()]);
+                let json = serde_json::to_string(&ContextRecord::from(&context))?;
+                let mut record = ConversationRecord::new(
+                    Conversation::new(ConversationId::generate())
+                        .title(Some(title.to_string()))
+                        .context(Some(context)),
+                    WorkspaceHash::new(0),
+                );
+                record.updated_at = Some(
+                    chrono::DateTime::from_timestamp(timestamp, 0)
+                        .unwrap()
+                        .naive_utc(),
+                );
+                record.context = (!compressed).then_some(json.clone());
+                record.context_zstd = if compressed {
+                    Some(zstd::encode_all(json.as_bytes(), 0)?)
+                } else {
+                    None
+                };
+                record.is_compressed = i32::from(compressed);
+                diesel::insert_into(conversations::table)
+                    .values(record)
+                    .execute(&mut connection)?;
+            }
+        }
+        let pool = Arc::new(DatabasePool::try_from(
+            PoolConfig::new(write_db).with_legacy_database_path(Some(legacy_db)),
+        )?);
+        Ok((
+            temp,
+            ConversationRepositoryImpl::new(pool, WorkspaceHash::new(0)),
+        ))
+    }
+
+    fn search_titles(rows: Vec<Conversation>) -> Vec<String> {
+        rows.into_iter().map(|row| row.title.unwrap()).collect()
+    }
+
+    #[tokio::test]
+    async fn test_search_like_compressed_local_does_not_starve_legacy() {
+        let (_temp, fixture) = search_fixture(
+            &[
+                ("local newest", "needle", 40, true),
+                ("local next", "needle", 30, true),
+                ("local plaintext needle", "", 20, false),
+            ],
+            &[("legacy oldest", "needle", 10, true)],
+        )
+        .await
+        .unwrap();
+
+        let actual = search_titles(
+            fixture
+                .search_conversations_like("needle".into(), Some(2))
+                .await
+                .unwrap(),
+        );
+
+        let expected = vec!["local newest", "legacy oldest"];
+        assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn test_search_duplicate_legacy_plaintext_and_compressed_does_not_underfill() {
+        let (_temp, fixture) = search_fixture(
+            &[],
+            &[
+                ("needle duplicate", "needle", 30, true),
+                ("compressed second", "needle", 20, true),
+                ("compressed third", "needle", 10, true),
+            ],
+        )
+        .await
+        .unwrap();
+
+        let actual = vec![
+            search_titles(
+                fixture
+                    .search_conversations_fts("needle".into(), Some(3))
+                    .await
+                    .unwrap(),
+            ),
+            search_titles(
+                fixture
+                    .search_conversations_like("needle".into(), Some(3))
+                    .await
+                    .unwrap(),
+            ),
+        ];
+
+        let expected = vec![vec!["needle duplicate", "compressed second", "compressed third"]; 2];
+        assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn test_search_like_local_multiword_is_literal_for_both_storage_formats() {
+        let (_temp, fixture) = search_fixture(
+            &[
+                ("compressed separated", "rust async refactor", 60, true),
+                ("compressed reversed", "refactor rust", 50, true),
+                ("compressed literal", "RUST REFACTOR", 40, true),
+                ("plaintext separated", "rust async refactor", 30, false),
+                ("plaintext literal", "rust refactor", 20, false),
+            ],
+            &[("legacy literal", "rust refactor", 10, true)],
+        )
+        .await
+        .unwrap();
+
+        let actual = search_titles(
+            fixture
+                .search_conversations_like("rust refactor".into(), None)
+                .await
+                .unwrap(),
+        );
+
+        let expected = vec!["compressed literal", "plaintext literal", "legacy literal"];
+        assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn test_search_empty_terms_do_not_match_all_compressed_rows() {
+        let (_temp, fixture) = search_fixture(
+            &[("local", "ordinary content", 20, true)],
+            &[("legacy", "ordinary content", 10, true)],
+        )
+        .await
+        .unwrap();
+
+        let mut actual = Vec::new();
+        for query in ["", "   ", "*", "\"\"", "\"\"*"] {
+            actual.push(search_titles(
+                fixture.search_conversations(query, Some(3)).await.unwrap(),
+            ));
+        }
+
+        let expected: Vec<Vec<String>> = vec![vec![]; 5];
+        assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn test_search_legacy_fts_matches_local_expression_semantics() {
+        let rows = [
+            ("prefix", "tokio runtime", 70, true),
+            ("substring", "notokio runtime", 60, false),
+            ("rust", "refactor async", 50, true),
+            ("phrase", "rust refactor", 40, false),
+            ("separated", "rust async refactor", 30, true),
+            ("stem", "running", 20, false),
+            ("accent", "café", 10, true),
+        ];
+        let (_temp, fixture) = search_fixture(&rows, &rows).await.unwrap();
+        fixture.refresh_fts_index().await.unwrap();
+
+        let mut actual = Vec::new();
+        for query in [
+            "tokio*",
+            "rust refactor",
+            "\"rust refactor\"",
+            "rust NOT async",
+            "tokio OR running",
+            "title:rust content:refactor",
+            "NEAR(rust refactor, 1)",
+            "run",
+            "cafe",
+        ] {
+            let hits = fixture
+                .search_conversations_fts(query.into(), None)
+                .await
+                .unwrap();
+            let mut titles = search_titles(hits);
+            titles.sort();
+            actual.push(titles);
+        }
+
+        let expected = [
+            vec!["prefix", "prefix"],
+            vec!["phrase", "phrase", "rust", "rust", "separated", "separated"],
+            vec!["phrase", "phrase"],
+            vec!["phrase", "phrase"],
+            vec!["prefix", "prefix", "stem", "stem"],
+            vec!["rust", "rust"],
+            vec!["phrase", "phrase", "separated", "separated"],
+            vec![], // unicode61 does not stem "running" into "run".
+            vec!["accent", "accent"],
+        ];
+        assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn test_search_like_orders_selected_sources_by_recency() {
+        let (_temp, fixture) = search_fixture(
+            &[
+                ("local needle", "", 20, false),
+                ("local compressed", "needle", 40, true),
+            ],
+            &[
+                ("legacy needle", "", 10, false),
+                ("legacy compressed", "needle", 50, true),
+            ],
+        )
+        .await
+        .unwrap();
+
+        let actual = vec![
+            search_titles(
+                fixture
+                    .search_conversations_like("needle".into(), None)
+                    .await
+                    .unwrap(),
+            ),
+            search_titles(
+                fixture
+                    .search_conversations_like("needle".into(), Some(2))
+                    .await
+                    .unwrap(),
+            ),
+        ];
+
+        let expected = vec![
+            vec![
+                "legacy compressed",
+                "local compressed",
+                "local needle",
+                "legacy needle",
+            ],
+            vec!["legacy compressed", "local compressed"],
+        ];
+        assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn test_search_like_newer_legacy_hits_are_not_displaced_by_old_local() {
+        let (_temp, fixture) = search_fixture(
+            &[("old local", "needle", 10, true)],
+            &[
+                ("new legacy", "needle", 30, true),
+                ("next legacy", "needle", 20, false),
+            ],
+        )
+        .await
+        .unwrap();
+
+        let actual = search_titles(
+            fixture
+                .search_conversations_like("needle".into(), Some(2))
+                .await
+                .unwrap(),
+        );
+
+        let expected = vec!["new legacy", "next legacy"];
+        assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn test_split_db_search_finds_visible_legacy_rows_with_fts_and_like_fallback()
+    -> anyhow::Result<()> {
+        // The attached DB is intentionally not FTS-indexed by the write DB.
+        // Both the successful FTS path and the missing-FTS fallback must still
+        // supplement local results with visible legacy matches.
+        let temp = tempfile::tempdir()?;
+        let legacy_db = temp.path().join("legacy-search.db");
+        let write_db = temp.path().join("write-search.db");
+        let needle = "LEGACY_SPLIT_SEARCH_NEEDLE";
+        let legacy_id = ConversationId::generate();
+
+        {
+            let legacy_pool = Arc::new(DatabasePool::try_from(
+                PoolConfig::new(legacy_db.clone()).with_legacy_database_path(None),
+            )?);
+            let legacy_repo = ConversationRepositoryImpl::new(legacy_pool, WorkspaceHash::new(0));
+            legacy_repo
+                .upsert_conversation(Conversation::new(legacy_id).title(Some(needle.to_string())))
+                .await?;
+        }
+
+        // Two local FTS hits expose the regression where the legacy supplement
+        // is appended after the local results and then discarded by the final
+        // limit truncation.
+        {
+            let write_pool = Arc::new(DatabasePool::try_from(
+                PoolConfig::new(write_db.clone()).with_legacy_database_path(None),
+            )?);
+            let write_repo = ConversationRepositoryImpl::new(write_pool, WorkspaceHash::new(0));
+            for title in ["local search hit one", "local search hit two"] {
+                write_repo
+                    .upsert_conversation(
+                        Conversation::new(ConversationId::generate())
+                            .title(Some(format!("{title} {needle}"))),
+                    )
+                    .await?;
+            }
+        }
+
+        let pool = Arc::new(DatabasePool::try_from(
+            PoolConfig::new(write_db).with_legacy_database_path(Some(legacy_db)),
+        )?);
+        let repo = ConversationRepositoryImpl::new(pool, WorkspaceHash::new(0));
+        repo.refresh_fts_index().await?;
+        let fts_hits = repo.search_conversations(needle, Some(2)).await?;
+        assert_eq!(
+            fts_hits.len(),
+            2,
+            "the requested limit must remain a hard upper bound"
+        );
+        assert!(
+            fts_hits.iter().any(|hit| hit.id == legacy_id),
+            "legacy matches must not be hidden when local matches fill the limit"
+        );
+        let prefix_hits = repo.search_conversations("LEGACY*", Some(2)).await?;
+        assert!(
+            prefix_hits.iter().any(|hit| hit.id == legacy_id),
+            "legacy prefix expressions must retain FTS-style semantics"
+        );
+
+        repo.run_with_connection(move |connection, _wid| {
+            diesel::sql_query("DROP TABLE conversations_fts").execute(connection)?;
+            Ok(())
+        })
+        .await?;
+        let like_hits = repo
+            .search_conversations_like(needle.to_string(), Some(2))
+            .await?;
+        assert_eq!(like_hits.len(), 2);
+        assert!(like_hits.iter().any(|hit| hit.id == legacy_id));
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_get_parent_conversations_filters_agent_before_limit() -> anyhow::Result<()> {
         // Regression: the agent-exclusion predicate must run BEFORE the
