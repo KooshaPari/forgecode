@@ -1341,10 +1341,16 @@ impl TryFrom<ConversationRecord> for forge_domain::Conversation {
                 forge_domain::Metrics::default().started_at(record.created_at.and_utc())
             });
 
+        let parent_id = record
+            .parent_id
+            .as_deref()
+            .and_then(|raw| forge_domain::ConversationId::parse(raw).ok());
+
         Ok(forge_domain::Conversation::new(id)
             .context(context)
             .title(record.title)
             .metrics(metrics)
+            .parent_id(parent_id)
             .metadata(
                 forge_domain::MetaData::new(record.created_at.and_utc())
                     .updated_at(record.updated_at.map(|updated_at| updated_at.and_utc())),

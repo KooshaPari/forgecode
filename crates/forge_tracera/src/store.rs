@@ -13,8 +13,8 @@ use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use crate::event::TraceraEvent;
 use crate::SinkError;
+use crate::event::TraceraEvent;
 
 /// Thread-safe handle to a [`MemoryStore`].
 #[derive(Clone)]
@@ -25,9 +25,7 @@ pub struct StoreHandle {
 impl StoreHandle {
     /// Wrap a [`MemoryStore`] in an `Arc` and return a clonable handle.
     pub fn new(capacity: usize) -> Self {
-        Self {
-            inner: Arc::new(MemoryStore::new(capacity)),
-        }
+        Self { inner: Arc::new(MemoryStore::new(capacity)) }
     }
 
     /// Push an event; returns `StoreFull` if `block_on_full=false` and the
@@ -205,10 +203,7 @@ impl From<StoreFull> for SinkError {
         // totals — we re-construct the variant at the sink layer instead
         // of threading a struct through `From`. This stub keeps the type
         // available for future use.
-        SinkError::StoreFull {
-            capacity: 0,
-            dropped: 0,
-        }
+        SinkError::StoreFull { capacity: 0, dropped: 0 }
     }
 }
 
