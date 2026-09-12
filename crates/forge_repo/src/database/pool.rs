@@ -321,7 +321,7 @@ impl SqliteCustomizer {
         "is_compressed",
     ];
 
-    fn legacy_projection(conn: &mut SqliteConnection) -> Option<String> {
+    fn legacy_projection(conn: &mut SqliteConnection) -> Option<(String, bool)> {
         #[derive(QueryableByName)]
         struct ColumnName {
             #[diesel(sql_type = Text)]
@@ -332,26 +332,26 @@ impl SqliteCustomizer {
                 .load::<ColumnName>(conn)
                 .ok()?;
         let present: std::collections::HashSet<_> = columns.into_iter().map(|c| c.name).collect();
-        Some(
-            Self::CONVERSATION_COLUMNS
-                .iter()
-                .map(|column| {
-                    if present.contains(*column) {
-                        format!("legacy.{column}")
-                    } else {
-                        match *column {
-                            // These columns were added as NOT NULL in later
-                            // migrations, so an older attached database needs
-                            // the same domain defaults as a newly migrated row.
-                            "intent_state" => "'pending' AS intent_state".to_string(),
-                            "is_compressed" => "0 AS is_compressed".to_string(),
-                            _ => format!("NULL AS {column}"),
-                        }
+        let legacy_has_workspace_id = present.contains("workspace_id");
+        let projection = Self::CONVERSATION_COLUMNS
+            .iter()
+            .map(|column| {
+                if present.contains(*column) {
+                    format!("legacy.{column}")
+                } else {
+                    match *column {
+                        // These columns were added as NOT NULL in later
+                        // migrations, so an older attached database needs
+                        // the same domain defaults as a newly migrated row.
+                        "intent_state" => "'pending' AS intent_state".to_string(),
+                        "is_compressed" => "0 AS is_compressed".to_string(),
+                        _ => format!("NULL AS {column}"),
                     }
-                })
-                .collect::<Vec<_>>()
-                .join(", "),
-        )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        Some((projection, legacy_has_workspace_id))
     }
 
     /// ATTACHes the legacy DB (when present and distinct from the primary)
@@ -420,15 +420,22 @@ impl SqliteCustomizer {
                 "{local_columns}, 0 AS __forge_legacy_source, 0 AS __forge_legacy_unscoped"
             );
             let union_ok = Self::legacy_projection(conn)
-                .map(|legacy_columns| {
-                    // Legacy rows are by definition pre-workspace-scoping, so
-                    // mark every legacy row as `__forge_legacy_unscoped = 1`
-                    // unconditionally. The `__forge_legacy_source` discriminator
-                    // is what callers use to distinguish legacy rows from
-                    // local rows for the same id (local-first ordering).
+                .map(|(legacy_columns, legacy_has_workspace_id)| {
+                    // Legacy rows with `workspace_id IS NULL` predate workspace
+                    // scoping and are marked unscoped (visible to all). Legacy
+                    // rows that already carry a workspace_id are owned by that
+                    // workspace and must respect the same scoping as local
+                    // rows. When the legacy DB has no `workspace_id` column at
+                    // all, every legacy row is unscoped (pre-workspace-era).
+                    let workspace_expr = if legacy_has_workspace_id {
+                        "legacy.workspace_id"
+                    } else {
+                        "NULL"
+                    };
                     let legacy_sql = format!(
                         "{legacy_columns}, 1 AS __forge_legacy_source, \
-                         1 AS __forge_legacy_unscoped"
+                         (CASE WHEN {workspace_expr} IS NULL THEN 1 ELSE 0 END) \
+                         AS __forge_legacy_unscoped"
                     );
                     let sql = format!(
                         "CREATE TEMP VIEW IF NOT EXISTS conversations_all AS \

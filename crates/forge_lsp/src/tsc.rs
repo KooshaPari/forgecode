@@ -112,13 +112,18 @@ fn parse_tsc_line(line: &str) -> Option<Diagnostic> {
     let (path_part, rest) = line.split_once(": ").or_else(|| line.split_once(':'))?;
     // Must contain a parenthesised location somewhere.
     let open = path_part.find('(')?;
-    // Search for ')' in the substring starting *after* the '('.
+    // `find('(')` returns the byte index of an ASCII char so it is always
+    // on a UTF-8 char boundary. Likewise `find(')')`. The `string_slice`
+    // lint cannot prove this without runtime checks, so we allow it.
+    #[allow(clippy::string_slice)]
     let close_offset = path_part[open + 1..].find(')')?;
     if close_offset < 1 {
         return None;
     }
-    let file = &path_part[..open];
-    let loc = &path_part[open + 1..open + 1 + close_offset];
+    #[allow(clippy::string_slice)]
+    let (file, after_open) = path_part.split_at(open);
+    #[allow(clippy::string_slice)]
+    let loc = &after_open[1..1 + close_offset];
     let line_num: u32 = loc.split(',').next()?.parse().ok()?;
     // `rest` is the severity + code + message portion.
     let (kind, rest) = rest.split_once(' ')?;

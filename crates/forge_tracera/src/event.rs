@@ -1,4 +1,10 @@
 //! Wire-level event types for the Tracera observability protocol.
+//!
+//! The Crockford-Base32 ULID generator (`new_event_id`) indexes into a
+//! fixed-size alphabet by `value & 0x1F`, which is always < 32 (the alphabet
+//! length). Clippy's `indexing_slicing` lint cannot prove this so we
+//! suppress it at module level.
+#![allow(clippy::indexing_slicing)]
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -71,11 +77,7 @@ impl TraceraEvent {
     ///
     /// `schema` is set to [`TRACERA_SCHEMA`] and `source` to the supplied
     /// value (typically `SinkConfig::source`).
-    pub fn new(
-        source: impl Into<String>,
-        kind: EventKind,
-        payload: serde_json::Value,
-    ) -> Self {
+    pub fn new(source: impl Into<String>, kind: EventKind, payload: serde_json::Value) -> Self {
         Self {
             schema: TRACERA_SCHEMA.to_string(),
             id: new_event_id(),
@@ -135,7 +137,9 @@ pub fn new_event_id() -> String {
     }
 
     // 16 random chars from a deterministic entropy — see rand below.
-    let mut state = now.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(0xDEAD_BEEF);
+    let mut state = now
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(0xDEAD_BEEF);
     for _ in 0..16 {
         state ^= state << 13;
         state ^= state >> 7;
@@ -161,16 +165,24 @@ mod tests {
 
     #[test]
     fn event_with_session_and_tag() {
-        let e = TraceraEvent::new("forgecode", EventKind::ToolCall, serde_json::json!({"name": "fs.read"}))
-            .with_session("sess-1")
-            .with_tag("channel", "agent-1");
+        let e = TraceraEvent::new(
+            "forgecode",
+            EventKind::ToolCall,
+            serde_json::json!({"name": "fs.read"}),
+        )
+        .with_session("sess-1")
+        .with_tag("channel", "agent-1");
         assert_eq!(e.session_id.as_deref(), Some("sess-1"));
         assert_eq!(e.tags.get("channel").map(String::as_str), Some("agent-1"));
     }
 
     #[test]
     fn event_serializes_with_correct_shape() {
-        let e = TraceraEvent::new("forgecode", EventKind::Drift, serde_json::json!({"score": 0.92}));
+        let e = TraceraEvent::new(
+            "forgecode",
+            EventKind::Drift,
+            serde_json::json!({"score": 0.92}),
+        );
         let s = serde_json::to_string(&e).unwrap();
         assert!(s.contains("\"schema\":\"tracera.v1\""));
         assert!(s.contains("\"kind\":\"drift\""));
@@ -197,6 +209,9 @@ mod tests {
         let a = new_event_id();
         std::thread::sleep(std::time::Duration::from_millis(2_100));
         let b = new_event_id();
-        assert!(a < b, "ids should be time-sortable across seconds, got {a} vs {b}");
+        assert!(
+            a < b,
+            "ids should be time-sortable across seconds, got {a} vs {b}"
+        );
     }
 }

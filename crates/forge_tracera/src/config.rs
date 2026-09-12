@@ -160,7 +160,11 @@ impl SinkConfig {
             .map_err(|e| format!("endpoint is not a valid URL: {e}"))?;
         match url.scheme() {
             "http" | "https" => {}
-            other => return Err(format!("endpoint scheme must be http or https, got {other}")),
+            other => {
+                return Err(format!(
+                    "endpoint scheme must be http or https, got {other}"
+                ));
+            }
         }
         if self.batch_size == 0 {
             return Err("batch_size must be > 0".to_string());
@@ -222,19 +226,13 @@ mod tests {
 
     #[test]
     fn auth_mode_validate_catches_empty_secret() {
-        let bad = AuthMode::Hmac {
-            secret: String::new(),
-            header: "X-Sig".into(),
-        };
+        let bad = AuthMode::Hmac { secret: String::new(), header: "X-Sig".into() };
         assert!(bad.validate().is_err());
     }
 
     #[test]
     fn auth_mode_validate_catches_empty_header() {
-        let bad = AuthMode::Hmac {
-            secret: "s".into(),
-            header: String::new(),
-        };
+        let bad = AuthMode::Hmac { secret: "s".into(), header: String::new() };
         assert!(bad.validate().is_err());
     }
 
@@ -247,15 +245,14 @@ mod tests {
 
     #[test]
     fn config_default_validates() {
-        SinkConfig::default().validate().expect("default must validate");
+        SinkConfig::default()
+            .validate()
+            .expect("default must validate");
     }
 
     #[test]
     fn config_rejects_empty_endpoint() {
-        let c = SinkConfig {
-            endpoint: String::new(),
-            ..SinkConfig::default()
-        };
+        let c = SinkConfig { endpoint: String::new(), ..SinkConfig::default() };
         assert!(c.validate().is_err());
     }
 
@@ -270,10 +267,7 @@ mod tests {
 
     #[test]
     fn config_rejects_zero_batch_size() {
-        let c = SinkConfig {
-            batch_size: 0,
-            ..SinkConfig::default()
-        };
+        let c = SinkConfig { batch_size: 0, ..SinkConfig::default() };
         assert!(c.validate().is_err());
     }
 
