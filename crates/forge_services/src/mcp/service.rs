@@ -190,7 +190,17 @@ where
 
         let failures = self.failed_servers.read().await.clone();
 
-        Ok(McpServers::new(grouped_tools, failures))
+        // Record per-server last-seen (epoch millis) for health tracking
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as u64);
+        let last_seen = grouped_tools
+            .keys()
+            .cloned()
+            .map(|name| (name, now_ms))
+            .collect();
+
+        Ok(McpServers::new(grouped_tools, failures).with_last_seen(last_seen))
     }
     async fn clear_tools(&self) {
         self.tools.write().await.clear()
