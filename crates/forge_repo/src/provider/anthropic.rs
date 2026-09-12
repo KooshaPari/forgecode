@@ -315,19 +315,22 @@ impl<T: HttpInfra> Anthropic<T> {
                     let response: ListModelResponse = serde_json::from_str(&text)
                         .with_context(|| ctx_msg)
                         .with_context(|| "Failed to deserialize models response")?;
+                    // Preserve the full server-side Model DTOs so the
+                    // curated overlay can fill None gaps instead of
+                    // overriding server values. Anthropic's /v1/models
+                    // response carries per-model metadata (display_name,
+                    // created_at) that we want to surface when the
+                    // server provided it.
                     Ok(response
                         .data
                         .into_iter()
-                        .map(|m| m.id.to_string())
+                        .map(forge_domain::Model::from)
                         .collect())
                 }
                 .await;
 
                 match fetch_result {
-                    Ok(live_ids) => Ok(forge_app::domain::Model::merge_live(
-                        live_ids,
-                        fallback.clone(),
-                    )),
+                    Ok(live) => Ok(forge_app::domain::Model::merge_live(live, fallback.clone())),
                     Err(error) => {
                         tracing::warn!(
                             error = ?error,

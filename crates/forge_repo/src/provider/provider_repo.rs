@@ -1052,33 +1052,32 @@ mod tests {
             "https://api.neuralwatt.com/v1/chat/completions"
         );
         // Neuralwatt exposes a non-standard /models schema, so the curated
-        // fallback in provider.json is overlaid onto the live fetch.
+        // Neuralwatt exposes a non-standard /models schema. The curated list
+        // in provider.json is the source of truth (no live fetch). The
+        // earlier Dynamic overlay was retired in #277 (P2.5) in favor
+        // of a simpler Hardcoded list here.
         match config.models.as_ref().expect("models should be present") {
-            Models::Dynamic { url, fallback } => {
-                assert_eq!(
-                    url, "https://api.neuralwatt.com/v1/models",
-                    "neuralwatt should fetch from /v1/models"
+            Models::Hardcoded(models) => {
+                assert!(
+                    models.iter().any(|m| m.id.as_str() == "glm-5.2"),
+                    "expected glm-5.2 to be present in curated models"
                 );
                 assert!(
-                    fallback.iter().any(|m| m.id.as_str() == "glm-5.2"),
-                    "expected glm-5.2 to be present in fallback"
+                    models.iter().any(|m| m.id.as_str() == "qwen3.5-397b"),
+                    "expected qwen3.5-397b to be present in curated models"
                 );
                 assert!(
-                    fallback.iter().any(|m| m.id.as_str() == "qwen3.5-397b"),
-                    "expected qwen3.5-397b to be present in fallback"
+                    models.iter().any(|m| m.id.as_str() == "glm-5.2-flex"),
+                    "expected glm-5.2-flex to be present in curated models"
                 );
                 assert!(
-                    fallback.iter().any(|m| m.id.as_str() == "glm-5.2-flex"),
-                    "expected glm-5.2-flex to be present in fallback"
-                );
-                assert!(
-                    fallback
+                    models
                         .iter()
                         .any(|m| m.id.as_str() == "kimi-k2.7-code-flex"),
-                    "expected kimi-k2.7-code-flex to be present in fallback"
+                    "expected kimi-k2.7-code-flex to be present in curated models"
                 );
             }
-            other => panic!("expected dynamic models, got {other:?}"),
+            other => panic!("expected hardcoded models, got {other:?}"),
         }
     }
 
@@ -1144,22 +1143,18 @@ mod tests {
             config.url.as_str(),
             "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
         );
-        // Alibaba Token Plan exposes an OpenAI-compatible endpoint but no
-        // capability metadata via /models, so the curated fallback in
-        // provider.json is overlaid onto the live fetch.
+        // Alibaba Token Plan exposes an OpenAI-compatible endpoint. Capability
+        // metadata is curated in provider.json (no live fetch). The
+        // Dynamic arm from earlier drafts has been replaced with the
+        // simpler Hardcoded list in #277 (P2.5).
         match config.models.as_ref().expect("models should be present") {
-            Models::Dynamic { url, fallback } => {
-                assert_eq!(
-                    url,
-                    "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/models",
-                    "alibaba_token_plan should fetch from compatible-mode /v1/models"
-                );
+            Models::Hardcoded(models) => {
                 assert!(
-                    fallback.iter().any(|m| m.id.as_str() == "qwen3.7-max"),
-                    "expected qwen3.7-max to be present in fallback"
+                    models.iter().any(|m| m.id.as_str() == "qwen3.7-max"),
+                    "expected qwen3.7-max to be present in curated models"
                 );
             }
-            other => panic!("expected dynamic models, got {other:?}"),
+            other => panic!("expected hardcoded models, got {other:?}"),
         }
     }
 
@@ -1201,20 +1196,17 @@ mod tests {
             "https://api.kimi.com/coding/v1/chat/completions"
         );
         // Kimi Code's /models endpoint omits capability metadata, so the
-        // curated fallback in provider.json (with platform-canonical ids like
-        // k3) is overlaid onto the live fetch.
+        // models are curated in provider.json with platform-canonical ids
+        // (e.g. k3). Earlier drafts tried a Dynamic overlay; #277 (P2.5)
+        // settled on a plain Hardcoded list here.
         match config.models.as_ref().expect("models should be present") {
-            Models::Dynamic { url, fallback } => {
-                assert_eq!(
-                    url, "https://api.kimi.com/coding/v1/models",
-                    "kimi_coding should fetch from /coding/v1/models"
-                );
+            Models::Hardcoded(models) => {
                 assert!(
-                    fallback.iter().any(|m| m.id.as_str() == "k3"),
-                    "expected k3 to be present in fallback"
+                    models.iter().any(|m| m.id.as_str() == "k3"),
+                    "expected k3 to be present in curated models"
                 );
             }
-            other => panic!("expected dynamic models, got {other:?}"),
+            other => panic!("expected hardcoded models, got {other:?}"),
         }
     }
 
