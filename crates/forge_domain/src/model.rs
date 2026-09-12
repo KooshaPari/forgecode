@@ -86,43 +86,46 @@ impl Model {
     /// Curated entries not present in the live list are appended so
     /// metadata-only models (e.g. behind beta flags) remain selectable.
     pub fn merge_live(live: Vec<Model>, curated: Vec<Model>) -> Vec<Self> {
-        let mut merged: Vec<Self> = live
-            .into_iter()
-            .map(|server_model| {
-                match curated.iter().find(|m| m.id == server_model.id) {
-                    Some(curated_model) => {
-                        // Server metadata wins; curated fills in None gaps
-                        let mut model = server_model;
-                        if model.name.is_none() {
-                            model.name = curated_model.name.clone();
-                        }
-                        if model.description.is_none() {
-                            model.description = curated_model.description.clone();
-                        }
-                        if model.context_length.is_none() {
-                            model.context_length = curated_model.context_length;
-                        }
-                        if model.tools_supported.is_none() {
-                            model.tools_supported = curated_model.tools_supported;
-                        }
-                        if model.supports_parallel_tool_calls.is_none() {
-                            model.supports_parallel_tool_calls =
-                                curated_model.supports_parallel_tool_calls;
-                        }
-                        if model.supports_reasoning.is_none() {
-                            model.supports_reasoning = curated_model.supports_reasoning;
-                        }
-                        if model.input_modalities == vec![InputModality::Text]
-                            && curated_model.input_modalities != vec![InputModality::Text]
-                        {
-                            model.input_modalities = curated_model.input_modalities.clone();
-                        }
-                        model
+        let mut merged: Vec<Self> = Vec::with_capacity(live.len());
+        for server_model in live {
+            // First-seen wins on duplicate live entries
+            if merged.iter().any(|m| m.id == server_model.id) {
+                continue;
+            }
+            let mut model = match curated.iter().find(|m| m.id == server_model.id) {
+                Some(curated_model) => {
+                    let mut model = server_model;
+                    // Server metadata wins; curated fills in None gaps
+                    if model.name.is_none() {
+                        model.name = curated_model.name.clone();
                     }
-                    None => server_model,
+                    if model.description.is_none() {
+                        model.description = curated_model.description.clone();
+                    }
+                    if model.context_length.is_none() {
+                        model.context_length = curated_model.context_length;
+                    }
+                    if model.tools_supported.is_none() {
+                        model.tools_supported = curated_model.tools_supported;
+                    }
+                    if model.supports_parallel_tool_calls.is_none() {
+                        model.supports_parallel_tool_calls =
+                            curated_model.supports_parallel_tool_calls;
+                    }
+                    if model.supports_reasoning.is_none() {
+                        model.supports_reasoning = curated_model.supports_reasoning;
+                    }
+                    if model.input_modalities == vec![InputModality::Text]
+                        && curated_model.input_modalities != vec![InputModality::Text]
+                    {
+                        model.input_modalities = curated_model.input_modalities.clone();
+                    }
+                    model
                 }
-            })
-            .collect();
+                None => server_model,
+            };
+            merged.push(model);
+        }
 
         // Append curated-only models not present in the live list
         for curated_model in curated {
