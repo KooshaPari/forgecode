@@ -83,6 +83,76 @@ impl diesel::QueryableByName<diesel::sqlite::Sqlite> for FtsRefreshRow {
     }
 }
 
+/// Row type for the BM25-ranked FTS5 SELECT (`SELECT c.*, bm25(...) AS
+/// rank_score`). Carries the same columns as `ConversationRecord` plus an
+/// extra `rank_score` that lets the loader project the SQL columns directly
+/// without stripping the extra column at the SQL layer. The `into_record`
+/// conversion discards `rank_score` — ranking is consumed by `ORDER BY`
+/// before the rows leave SQLite.
+#[derive(Debug, Clone)]
+struct FtsRankedRow {
+    record: ConversationRecord,
+    #[allow(dead_code)]
+    rank_score: f64,
+}
+
+impl FtsRankedRow {
+    fn into_record(self) -> ConversationRecord {
+        self.record
+    }
+}
+
+impl diesel::QueryableByName<diesel::sqlite::Sqlite> for FtsRankedRow {
+    fn build<'a>(
+        row: &impl diesel::row::NamedRow<'a, diesel::sqlite::Sqlite>,
+    ) -> diesel::deserialize::Result<Self> {
+        use diesel::row::NamedRow;
+        use diesel::sql_types::{BigInt, Binary, Double, Integer, Nullable, Text, Timestamp};
+
+        let conversation_id = NamedRow::get::<Text, _>(row, "conversation_id")?;
+        let title = NamedRow::get::<Nullable<Text>, _>(row, "title")?;
+        let workspace_id = NamedRow::get::<Nullable<BigInt>, _>(row, "workspace_id")?;
+        let context = NamedRow::get::<Nullable<Text>, _>(row, "context")?;
+        let created_at = NamedRow::get::<Timestamp, _>(row, "created_at")?;
+        let updated_at = NamedRow::get::<Nullable<Timestamp>, _>(row, "updated_at")?;
+        let metrics = NamedRow::get::<Nullable<Text>, _>(row, "metrics")?;
+        let parent_id = NamedRow::get::<Nullable<Text>, _>(row, "parent_id")?;
+        let source = NamedRow::get::<Nullable<Text>, _>(row, "source")?;
+        let cwd = NamedRow::get::<Nullable<Text>, _>(row, "cwd")?;
+        let message_count = NamedRow::get::<Nullable<Integer>, _>(row, "message_count")?;
+        let intent_state = NamedRow::get::<Text, _>(row, "intent_state")?;
+        let extracted_at = NamedRow::get::<Nullable<Timestamp>, _>(row, "extracted_at")?;
+        let memory_id = NamedRow::get::<Nullable<Text>, _>(row, "memory_id")?;
+        let intent_hash = NamedRow::get::<Nullable<Text>, _>(row, "intent_hash")?;
+        let context_zstd = NamedRow::get::<Nullable<Binary>, _>(row, "context_zstd")?;
+        let is_compressed = NamedRow::get::<Integer, _>(row, "is_compressed")?;
+        let rank_score = NamedRow::get::<Double, _>(row, "rank_score").unwrap_or(0.0);
+
+        Ok(FtsRankedRow {
+            record: ConversationRecord {
+                conversation_id,
+                title,
+                workspace_id,
+                context,
+                created_at,
+                updated_at,
+                metrics,
+                parent_id,
+                source,
+                cwd,
+                message_count,
+                intent_state,
+                extracted_at,
+                memory_id,
+                intent_hash,
+                context_zstd,
+                is_compressed,
+            },
+            rank_score,
+        })
+    }
+}
+
 pub struct ConversationRepositoryImpl {
     pool: Arc<DatabasePool>,
     wid: WorkspaceHash,
@@ -97,9 +167,9 @@ fn validate_local_mutation(
     let local_workspace = conversations::table
         .filter(conversations::conversation_id.eq(conversation_id))
         .select(conversations::workspace_id)
-        .first::<i64>(connection)
+        .first::<Option<i64>>(connection)
         .optional()?;
-    if let Some(owner) = local_workspace {
+    if let Some(Some(owner)) = local_workspace {
         anyhow::ensure!(
             owner == workspace_id,
             "Conversation belongs to another workspace"
@@ -335,7 +405,12 @@ impl ConversationRepositoryImpl {
         connection: &mut PooledSqliteConnection,
         record: &ConversationRecord,
     ) -> anyhow::Result<()> {
-        validate_local_mutation(connection, &record.conversation_id, record.workspace_id)?;
+        // `workspace_id` is nullable on disk (legacy rows may have NULL),
+        // but local writes always set it. Use 0 as a defensive fallback so
+        // validation rejects a malformed call rather than silently writing
+        // a row that ownership-checks would later refuse.
+        let workspace_id = record.workspace_id.unwrap_or(0);
+        validate_local_mutation(connection, &record.conversation_id, workspace_id)?;
         Self::upsert_conversation_ref_record(connection, record)
     }
 
@@ -405,6 +480,10 @@ impl ConversationRepositoryImpl {
             // the SELECT to return a column not in `ConversationRecord`.
             // The UI fetches a snippet on-demand via the separate
             // `get_conversation_snippet` method when the user picks a hit.
+            //
+            // BM25 rank is added as a non-struct column (`rank_score`),
+            // so the SELECT is loaded into `FtsRankedRow` (which flattens
+            // back to `ConversationRecord` for the rest of the pipeline).
             let mut sql = String::from(
                 "SELECT c.*, bm25(conversations_fts) AS rank_score \
                  FROM conversations c \
@@ -427,7 +506,9 @@ impl ConversationRepositoryImpl {
             if let Some(limit) = limit_value {
                 q = q.bind::<diesel::sql_types::BigInt, _>(limit.max(1));
             }
-            let raw_rows: Vec<ConversationRecord> = q.load(connection)?;
+            let ranked_rows: Vec<FtsRankedRow> = q.load(connection)?;
+            let raw_rows: Vec<ConversationRecord> =
+                ranked_rows.into_iter().map(FtsRankedRow::into_record).collect();
 
             // Preserve local BM25 order. Legacy MATCH semantics use the same
             // tokenizer and columns, but supplemental ranking is by recency.
@@ -528,11 +609,18 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // because `ConversationRecord::table_name = conversations` (it is also used
             // for writes). The TEMP VIEW has identical column types so the SELECT … load
             // works regardless.
+            //
+            // Order by `__forge_legacy_source` ascending so that the local row
+            // (`__forge_legacy_source = 0`) takes precedence over the legacy
+            // row (`__forge_legacy_source = 1`) when both share an id.
             let record: Option<ConversationRecord> =
                 conversations_all::table
                     .filter(conversations_all::conversation_id.eq(conversation_id.into_string()))
                     .filter(conversations_all::workspace_id.eq(workspace_id).or(
                         diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
+                    ))
+                    .order(diesel::dsl::sql::<diesel::sql_types::Integer>(
+                        "__forge_legacy_source ASC",
                     ))
                     .select(conversations_all::all_columns)
                     .first(connection)
@@ -559,6 +647,13 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // are both NULL — those rows have titles + timestamps but no
             // message history. We must not filter them out at the SQL layer
             // or the picker will hide them.
+            //
+            // When a local row and a legacy row share a `conversation_id`
+            // (split-DB cutover), we must surface only the local row —
+            // returning both would let a read disagree with a later
+            // mutation of that same id. The `__forge_legacy_source`
+            // discriminator added by the view makes local-first ordering
+            // a stable ORDER BY.
             let mut query =
                 conversations_all::table
                     .filter(conversations_all::workspace_id.eq(&workspace_id).or(
@@ -579,8 +674,21 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 return Ok(None);
             }
 
+            // Deduplicate by conversation_id: the first-seen row wins.
+            // Since the rows arrive sorted by updated_at desc and the
+            // `__forge_legacy_source` discriminator on the view makes
+            // local rows come before legacy rows for the same id (because
+            // local rows have `__forge_legacy_source = 0`, which sorts
+            // before `1` under natural numeric ordering), the first-seen
+            // row is always the local row when one exists.
+            let mut seen = std::collections::HashSet::new();
+            let deduped: Vec<ConversationRecord> = records
+                .into_iter()
+                .filter(|row| seen.insert(row.conversation_id.clone()))
+                .collect();
+
             let conversations: Result<Vec<Conversation>, _> =
-                records.into_iter().map(Conversation::try_from).collect();
+                deduped.into_iter().map(Conversation::try_from).collect();
             Ok(Some(conversations?))
         })
         .await
@@ -641,13 +749,17 @@ impl ConversationRepository for ConversationRepositoryImpl {
 
             let workspace_id = wid.id() as i64;
             // Read from `conversations_all` so legacy rows are visible.
+            // Local rows win dedup by ordering by `__forge_legacy_source ASC`.
             let records: Vec<ConversationRecord> =
                 conversations_all::table
                     .filter(conversations_all::workspace_id.eq(&workspace_id).or(
                         diesel::dsl::sql::<diesel::sql_types::Bool>("__forge_legacy_unscoped = 1"),
                     ))
                     .filter(conversations_all::parent_id.eq(&parent_id))
-                    .order(conversations_all::updated_at.desc())
+                    .order(diesel::dsl::sql::<diesel::sql_types::Integer>(
+                        "__forge_legacy_source ASC",
+                    ))
+                    .then_order_by(conversations_all::updated_at.desc())
                     .select(conversations_all::all_columns)
                     .load(connection)?;
 
@@ -655,8 +767,14 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 return Ok(None);
             }
 
+            let mut seen = std::collections::HashSet::new();
+            let deduped: Vec<ConversationRecord> = records
+                .into_iter()
+                .filter(|row| seen.insert(row.conversation_id.clone()))
+                .collect();
+
             let conversations: Result<Vec<Conversation>, _> =
-                records.into_iter().map(Conversation::try_from).collect();
+                deduped.into_iter().map(Conversation::try_from).collect();
             Ok(Some(conversations?))
         })
         .await
@@ -677,6 +795,9 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // must run BEFORE the LIMIT so the most-recent rows are not
             // dominated by ephemeral subagent runs that truncate older
             // user conversations.
+            //
+            // Order by `__forge_legacy_source` first so local rows win the
+            // dedup pass over legacy rows that share an id.
             let mut query =
                 conversations_all::table
                     .filter(conversations_all::workspace_id.eq(&workspace_id).or(
@@ -686,7 +807,10 @@ impl ConversationRepository for ConversationRepositoryImpl {
                     .filter(sql::<diesel::sql_types::Bool>(
                         "COALESCE(json_extract(context, '$.initiator'), 'user') <> 'agent'",
                     ))
-                    .order(conversations_all::updated_at.desc())
+                    .order(diesel::dsl::sql::<diesel::sql_types::Integer>(
+                        "__forge_legacy_source ASC",
+                    ))
+                    .then_order_by(conversations_all::updated_at.desc())
                     .into_boxed();
 
             if let Some(limit_value) = limit {
@@ -701,8 +825,16 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 return Ok(None);
             }
 
+            // Deduplicate by conversation_id: local wins because it appears
+            // first (we sort by `__forge_legacy_source ASC` above).
+            let mut seen = std::collections::HashSet::new();
+            let deduped: Vec<ConversationRecord> = records
+                .into_iter()
+                .filter(|row| seen.insert(row.conversation_id.clone()))
+                .collect();
+
             let conversations: Result<Vec<Conversation>, _> =
-                records.into_iter().map(Conversation::try_from).collect();
+                deduped.into_iter().map(Conversation::try_from).collect();
             Ok(Some(conversations?))
         })
         .await
@@ -1019,9 +1151,10 @@ impl ConversationRepository for ConversationRepositoryImpl {
             // another connection cannot delete or replace the row between checks.
             connection.immediate_transaction::<_, anyhow::Error, _>(|connection| {
                 let workspace_id = wid.id() as i64;
+                let workspace_id_opt: Option<i64> = Some(workspace_id);
                 validate_local_mutation(connection, &conversation_id_str, workspace_id)?;
                 let exists = conversations::table
-                    .filter(conversations::workspace_id.eq(workspace_id))
+                    .filter(conversations::workspace_id.eq(workspace_id_opt))
                     .filter(conversations::conversation_id.eq(&conversation_id_str))
                     .select(conversations::conversation_id)
                     .first::<String>(connection)
@@ -1032,7 +1165,7 @@ impl ConversationRepository for ConversationRepositoryImpl {
                 }
                 let affected = diesel::update(
                     conversations::table
-                        .filter(conversations::workspace_id.eq(workspace_id))
+                        .filter(conversations::workspace_id.eq(workspace_id_opt))
                         .filter(conversations::conversation_id.eq(&conversation_id_str)),
                 )
                 .set((
@@ -2747,7 +2880,7 @@ mod tests {
             context: None,
             created_at: Utc::now().naive_utc(),
             updated_at: None,
-            workspace_id: 0,
+            workspace_id: Some(0),
             metrics: None,
             parent_id: None,
             source: None,
@@ -3201,7 +3334,7 @@ mod tests {
             context: Some("invalid json".to_string()), // Invalid JSON to trigger error
             created_at: Utc::now().naive_utc(),
             updated_at: None,
-            workspace_id: 0,
+            workspace_id: Some(0),
             metrics: None,
             parent_id: None,
             source: None,

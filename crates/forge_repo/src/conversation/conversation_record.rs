@@ -278,6 +278,7 @@ pub enum RoleRecord {
     System,
     User,
     Assistant,
+    Tool,
 }
 
 impl From<&forge_domain::Role> for RoleRecord {
@@ -286,6 +287,7 @@ impl From<&forge_domain::Role> for RoleRecord {
             forge_domain::Role::System => Self::System,
             forge_domain::Role::User => Self::User,
             forge_domain::Role::Assistant => Self::Assistant,
+            forge_domain::Role::Tool => Self::Tool,
         }
     }
 }
@@ -296,6 +298,7 @@ impl From<RoleRecord> for forge_domain::Role {
             RoleRecord::System => Self::System,
             RoleRecord::User => Self::User,
             RoleRecord::Assistant => Self::Assistant,
+            RoleRecord::Tool => Self::Tool,
         }
     }
 }
@@ -1028,33 +1031,78 @@ impl From<MetricsRecord> for forge_domain::Metrics {
     }
 }
 
-/// Database model for conversations table
-#[derive(Debug, diesel::Queryable, diesel::Selectable, diesel::Insertable, diesel::AsChangeset)]
+/// Database model for conversations table.
+///
+/// Column set mirrors `crate::database::schema::conversations` 1:1 so that
+/// Diesel can `select(ConversationRecord::as_select())` / `as_changeset()`
+/// against the table (or the read-only `conversations_all` view) without an
+/// explicit column list. Fields added after P2.5 (`context_zstd`,
+/// `is_compressed`, `cwd`, `parent_id`, `source`, `message_count`,
+/// `intent_state`, `extracted_at`, `memory_id`, `intent_hash`) are
+/// `Option<...>` so legacy rows written by older migrations deserialize
+/// cleanly.
+#[derive(
+    Debug,
+    Clone,
+    diesel::Queryable,
+    diesel::Selectable,
+    diesel::Insertable,
+    diesel::AsChangeset,
+    diesel::QueryableByName,
+)]
 #[diesel(table_name = crate::database::schema::conversations)]
 #[diesel(check_for_backend(diesel::sqlite::Sqlite))]
 pub(super) struct ConversationRecord {
     pub conversation_id: String,
     pub title: Option<String>,
-    pub workspace_id: i64,
+    /// Nullable so legacy rows from older `conversations` tables (which
+    /// pre-date the `workspace_id` column) deserialize cleanly through the
+    /// `conversations_all` VIEW. Local writes always populate this column.
+    pub workspace_id: Option<i64>,
     pub context: Option<String>,
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: Option<chrono::NaiveDateTime>,
     pub metrics: Option<String>,
+    pub parent_id: Option<String>,
+    pub source: Option<String>,
+    #[diesel(column_name = cwd)]
+    pub cwd: Option<String>,
+    #[diesel(column_name = message_count)]
+    pub message_count: Option<i32>,
+    pub intent_state: String,
+    pub extracted_at: Option<chrono::NaiveDateTime>,
+    pub memory_id: Option<String>,
+    pub intent_hash: Option<String>,
+    pub context_zstd: Option<Vec<u8>>,
+    pub is_compressed: i32,
 }
 
 impl ConversationRecord {
-    /// Creates a new ConversationRecord from a Conversation domain object
+    /// Creates a new ConversationRecord from a Conversation domain object.
+    ///
+    /// The context is **compressed** via `crate::codec::compress` and stored
+    /// in `context_zstd` with `is_compressed = 1`; the plain-text `context`
+    /// column is left NULL. This matches the on-disk format expected by
+    /// the search / picker paths, which decompress on demand. Callers that
+    /// want a plain-text row (e.g. snapshot export) can overwrite the fields
+    /// after construction.
+    ///
+    /// Fields the domain `Conversation` does not carry (`parent_id`, `source`,
+    /// `cwd`, `intent_state`, etc.) default to safe on-disk values: NULL /
+    /// empty / "pending". Callers that need to persist richer state can
+    /// populate them directly on the returned struct.
     pub fn new(
         conversation: forge_domain::Conversation,
         workspace_id: forge_domain::WorkspaceHash,
     ) -> Self {
-        let context = conversation
+        let created_at = conversation.metadata.created_at.naive_utc();
+        let message_count = conversation
             .context
             .as_ref()
-            .filter(|ctx| !ctx.messages.is_empty() || ctx.initiator.is_some())
-            .map(ContextRecord::from)
-            .and_then(|ctx_record| serde_json::to_string(&ctx_record).ok());
-        let updated_at = context.as_ref().map(|_| chrono::Utc::now().naive_utc());
+            .map(|ctx| ctx.messages.len() as i32);
+
+        let (context, context_zstd, is_compressed, updated_at) =
+            Self::encode_context(conversation.context.as_ref());
         let metrics_record = MetricsRecord::from(&conversation.metrics);
         let metrics = serde_json::to_string(&metrics_record).ok();
 
@@ -1062,10 +1110,158 @@ impl ConversationRecord {
             conversation_id: conversation.id.into_string(),
             title: conversation.title.clone(),
             context,
+            created_at,
+            updated_at,
+            workspace_id: Some(workspace_id.id() as i64),
+            metrics,
+            parent_id: None,
+            source: None,
+            cwd: None,
+            message_count,
+            intent_state: "pending".to_string(),
+            extracted_at: None,
+            memory_id: None,
+            intent_hash: None,
+            context_zstd,
+            is_compressed,
+        }
+    }
+
+    /// Compress the conversation context to the on-disk wire format.
+    ///
+    /// Returns `(plaintext_column, zstd_blob, is_compressed_flag, updated_at)`.
+    /// Empty contexts (no messages, no initiator) compress to `(None, None, 0,
+    /// None)` so existing rows stay NULL. Non-empty contexts are serialized
+    /// to the record DTO and stored **only** in `context_zstd` with
+    /// `is_compressed = 1`. The plain `context` column stays NULL so search /
+    /// picker paths can rely on the compressed-or-empty signal without
+    /// cross-checking two columns.
+    fn encode_context(
+        context: Option<&forge_domain::Context>,
+    ) -> (Option<String>, Option<Vec<u8>>, i32, Option<chrono::NaiveDateTime>) {
+        let Some(ctx) = context else {
+            return (None, None, 0, None);
+        };
+        if ctx.messages.is_empty() && ctx.initiator.is_none() {
+            return (None, None, 0, None);
+        }
+        let record = ContextRecord::from(ctx);
+        let Ok(json) = serde_json::to_string(&record) else {
+            return (None, None, 0, None);
+        };
+        match crate::codec::compress(&json) {
+            Ok(zstd_bytes) => (None, Some(zstd_bytes), 1, Some(chrono::Utc::now().naive_utc())),
+            Err(_) => (Some(json), None, 0, Some(chrono::Utc::now().naive_utc())),
+        }
+    }
+
+    /// Creates a "ref" record used by `upsert_conversation_ref`.
+    ///
+    /// Unlike `ConversationRecord::new`, the ref path **does** propagate the
+    /// incoming conversation's context payload (compressed via the same
+    /// `encode_context` helper). The "ref" name is historical — it stems from
+    /// a pre-P2.5 era when this method only carried the conversation id /
+    /// title for shell-style reference rows. After P2.5 the path is used as
+    /// the "incoming context wins over existing row" upsert: callers
+    /// expecting plain-text semantics pass an empty `Context`; callers
+    /// expecting compressed semantics let `encode_context` do the work.
+    ///
+    /// Tests like `ref_upsert_replaces_existing_plain_context_with_incoming_compressed_context`
+    /// assert this contract — the ref upsert **replaces** any existing
+    /// context with the incoming payload (compressed or empty).
+    pub fn new_ref(
+        conversation: &forge_domain::Conversation,
+        workspace_id: forge_domain::WorkspaceHash,
+    ) -> Self {
+        let (context, context_zstd, is_compressed, updated_at) =
+            Self::encode_context(conversation.context.as_ref());
+        let metrics_record = MetricsRecord::from(&conversation.metrics);
+        let metrics = serde_json::to_string(&metrics_record).ok();
+        let message_count = conversation
+            .context
+            .as_ref()
+            .map(|ctx| ctx.messages.len() as i32);
+
+        Self {
+            conversation_id: conversation.id.into_string(),
+            title: conversation.title.clone(),
+            workspace_id: Some(workspace_id.id() as i64),
+            context,
             created_at: conversation.metadata.created_at.naive_utc(),
             updated_at,
-            workspace_id: workspace_id.id() as i64,
             metrics,
+            parent_id: None,
+            source: None,
+            cwd: None,
+            message_count,
+            intent_state: "pending".to_string(),
+            extracted_at: None,
+            memory_id: None,
+            intent_hash: None,
+            context_zstd,
+            is_compressed,
+        }
+    }
+}
+
+/// Slim projection of `ConversationRecord` for the picker / recent-list path.
+///
+/// `get_parent_conversations_lite` only needs columns that summarise a
+/// conversation for display: id, title, workspace, updated_at, plus the
+/// compressed-context hints that the search code reuses for LIKE fallback.
+/// Defining a dedicated Diesel-deserializable struct keeps the picker query
+/// free of unused columns (context JSON can be megabytes per row) without
+/// forcing the full `ConversationRecord` to be loaded.
+///
+/// `table_name` points at the read-only `conversations_all` view (not the
+/// local `conversations` table) because the picker query reads through
+/// `conversations_all::table` — the VIEW that UNIONs the local table with
+/// the legacy DB ATTACH. Diesel ties `Selectable` impls to a single table,
+/// so the picker query reads via `ConversationRecordLite::as_select()`
+/// against `conversations_all::table`.
+#[derive(Debug, diesel::Queryable, diesel::Selectable, Clone)]
+#[diesel(table_name = crate::database::schema::conversations_all)]
+#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+pub(super) struct ConversationRecordLite {
+    pub conversation_id: String,
+    pub title: Option<String>,
+    /// Nullable on disk; the picker filters rows via SQL `WHERE workspace_id
+    /// = ?` rather than reading this column into Rust.
+    #[allow(dead_code)]
+    pub workspace_id: Option<i64>,
+    pub updated_at: Option<chrono::NaiveDateTime>,
+    #[diesel(column_name = cwd)]
+    pub cwd: Option<String>,
+    #[diesel(column_name = message_count)]
+    pub message_count: Option<i32>,
+    pub parent_id: Option<String>,
+    /// Read from the DB; consumed by SQL `WHERE` filters but not by the
+    /// picker projection itself.
+    #[allow(dead_code)]
+    pub source: Option<String>,
+    /// Read from the DB; consumed by SQL `WHERE` filters but not by the
+    /// picker projection itself.
+    #[allow(dead_code)]
+    pub intent_state: String,
+    pub created_at: chrono::NaiveDateTime,
+}
+
+impl From<ConversationRecordLite> for forge_domain::ConversationSummary {
+    fn from(record: ConversationRecordLite) -> Self {
+        let id = forge_domain::ConversationId::parse(record.conversation_id)
+            .unwrap_or_else(|_| forge_domain::ConversationId::generate());
+        let parent_id = record
+            .parent_id
+            .as_deref()
+            .and_then(|raw| forge_domain::ConversationId::parse(raw).ok());
+        Self {
+            id,
+            title: record.title,
+            parent_id,
+            created_at: record.created_at.and_utc(),
+            updated_at: record.updated_at.map(|updated_at| updated_at.and_utc()),
+            message_count: record.message_count,
+            cwd: record.cwd,
         }
     }
 }
@@ -1078,7 +1274,38 @@ impl TryFrom<ConversationRecord> for forge_domain::Conversation {
         let id = ConversationId::parse(conversation_id.clone())
             .with_context(|| format!("Failed to parse conversation ID: {}", conversation_id))?;
 
-        let context = if let Some(context_str) = record.context {
+        let context = if record.is_compressed == 1 {
+            // Compressed on-disk format: context lives in `context_zstd`.
+            let Some(bytes) = record.context_zstd.as_ref() else {
+                anyhow::bail!(
+                    "Conversation {} marked compressed but has no context_zstd blob",
+                    conversation_id
+                );
+            };
+            let json = crate::codec::decompress(bytes).with_context(|| {
+                format!(
+                    "Failed to decompress context for conversation {}",
+                    conversation_id
+                )
+            })?;
+            let record = serde_json::from_str::<ContextRecord>(&json).with_context(|| {
+                format!(
+                    "Failed to deserialize decompressed context for conversation {}",
+                    conversation_id
+                )
+            })?;
+            Some(
+                record
+                    .try_into()
+                    .with_context(|| {
+                        format!(
+                            "Failed to convert context record to domain type for conversation {}",
+                            conversation_id
+                        )
+                    })?,
+            )
+        } else if let Some(context_str) = record.context {
+            // Legacy plain-text format (rows written before P2.5).
             Some(
                 serde_json::from_str::<ContextRecord>(&context_str)
                     .with_context(|| {
