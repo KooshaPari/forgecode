@@ -5131,7 +5131,10 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
 
         while let Some(message) = stream.next().await {
             match message {
-                Ok(message) => self.handle_chat_response(message, &mut writer).await?,
+                Ok(message) => {
+                    self.emit_stream_json(&message)?;
+                    self.handle_chat_response(message, &mut writer).await?
+                }
                 Err(err) => {
                     writer.finish()?;
                     self.spinner.stop(None)?;
@@ -5146,6 +5149,40 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
         self.spinner.reset();
         self.state.last_activity = std::time::Instant::now();
 
+        Ok(())
+    }
+
+    /// Emits each streaming `ChatResponse` as one NDJSON line when
+    /// `--stream-json` (stdout) or `--stream-json-log <path>` is set.
+    fn emit_stream_json(&self, message: &ChatResponse) -> Result<()> {
+        if !self.cli.stream_json && self.cli.stream_json_log.is_none() {
+            return Ok(());
+        }
+        let kind = match message {
+            ChatResponse::TaskMessage { .. } => "message",
+            ChatResponse::TaskReasoning { .. } => "reasoning",
+            ChatResponse::TaskComplete => "complete",
+            ChatResponse::ToolCallStart { .. } => "tool_start",
+            ChatResponse::ToolCallEnd(..) => "tool_end",
+            ChatResponse::RetryAttempt { .. } => "retry",
+            ChatResponse::Interrupt { .. } => "interrupt",
+        };
+        let line = serde_json::json!({
+            "type": kind,
+            "empty": message.is_empty(),
+        });
+        let s = serde_json::to_string(&line)?;
+        if self.cli.stream_json {
+            println!("{s}");
+        }
+        if let Some(path) = &self.cli.stream_json_log {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)?;
+            writeln!(f, "{s}")?;
+        }
         Ok(())
     }
 
