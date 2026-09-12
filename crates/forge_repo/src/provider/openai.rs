@@ -346,15 +346,33 @@ impl<H: HttpInfra> OpenAIProvider<H> {
                     debug!(url = %url, "Fetching dynamic models");
                     match self.fetch_models(url.as_str()).await {
                         Ok(response) => {
-                            let data: ListModelResponse = serde_json::from_str(&response)
-                                .with_context(|| format_http_context(None, "GET", url))
-                                .with_context(|| "Failed to deserialize models response")?;
-                            let live_ids =
-                                data.data.into_iter().map(|m| m.id.to_string()).collect();
-                            Ok(forge_app::domain::Model::merge_live(
-                                live_ids,
-                                fallback.clone(),
-                            ))
+                            match serde_json::from_str::<ListModelResponse>(&response) {
+                                Ok(data) => {
+                                    let live_ids: Vec<String> = data
+                                        .data
+                                        .into_iter()
+                                        .map(|m| m.id.to_string())
+                                        .collect();
+                                    // Deduplicate while preserving first-seen order
+                                    let mut seen = std::collections::HashSet::new();
+                                    let live_ids: Vec<String> = live_ids
+                                        .into_iter()
+                                        .filter(|id| seen.insert(id.clone()))
+                                        .collect();
+                                    Ok(forge_app::domain::Model::merge_live(
+                                        live_ids,
+                                        fallback.clone(),
+                                    ))
+                                }
+                                Err(error) => {
+                                    tracing::warn!(
+                                        error = ?error,
+                                        provider = %self.provider.id,
+                                        "Dynamic model deserialization failed; falling back to curated list"
+                                    );
+                                    Ok(fallback.clone())
+                                }
+                            }
                         }
                         Err(error) => {
                             tracing::warn!(
