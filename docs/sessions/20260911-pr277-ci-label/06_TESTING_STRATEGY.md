@@ -6,7 +6,17 @@ Unix-only semantic tests substitute static fixture context into actual serialize
 
 Planned gates: crate cargo insta test --accept, check, clippy, scoped rustfmt check, actionlint ci.yml. Regenerate only ci.yml; full suite uses CI=true to prevent unrelated workflow writes.
 
-Results: pending.
+## Observed results
+
+- `cargo test -p forge_ci --test ci generate -- --exact`: passed, regenerated ci.yml only.
+- `CI=true cargo insta test -p forge_ci --accept`: 18 tests passed across 2 binaries, 0 skipped.
+- `CI=true cargo check -p forge_ci`: passed.
+- `CI=true cargo clippy -p forge_ci --all-targets -- -D warnings`: passed.
+- `rustfmt --edition 2024 --check crates/forge_ci/src/workflows/ci.rs`: passed.
+- `actionlint .github/workflows/ci.yml`: passed.
+- Scoped `git diff --check`: passed.
+
+No hosted jobs or paid runners were executed.
 
 ## Observed results
 
