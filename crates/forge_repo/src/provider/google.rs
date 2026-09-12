@@ -167,20 +167,18 @@ impl<T: HttpInfra> Google<T> {
                     let response: ModelsResponse = serde_json::from_str(&text)
                         .with_context(|| ctx_msg)
                         .with_context(|| "Failed to deserialize models response")?;
-                    // Convert to domain models, deduplicate by id
-                    let mut seen = std::collections::HashSet::new();
                     Ok(response
                         .models
                         .into_iter()
                         .map(forge_domain::Model::from)
-                        .filter(|m| seen.insert(m.id.clone()))
+                        .map(|m| m.id.to_string())
                         .collect())
                 }
                 .await;
 
                 match fetch_result {
-                    Ok(live_models) => Ok(forge_app::domain::Model::merge_live(
-                        live_models,
+                    Ok(live_ids) => Ok(forge_app::domain::Model::merge_live(
+                        live_ids,
                         fallback.clone(),
                     )),
                     Err(error) => {
