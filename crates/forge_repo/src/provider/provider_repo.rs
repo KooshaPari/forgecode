@@ -15,6 +15,15 @@ use serde::Deserialize;
 enum Models {
     /// Models are fetched from a URL
     Url(String),
+    /// Models are fetched live from `url`, enriched with curated metadata
+    /// from `fallback`, falling back to `fallback` when the fetch fails
+    Dynamic {
+        /// Endpoint to fetch the live model list from (e.g. `/v1/models`).
+        url: String,
+        /// Curated metadata overlaid on the live list; sole source on fetch
+        /// failure.
+        fallback: Vec<forge_app::domain::Model>,
+    },
     /// Models are hardcoded in the configuration
     Hardcoded(Vec<forge_app::domain::Model>),
 }
@@ -213,6 +222,9 @@ impl From<forge_config::ProviderEntry> for ProviderConfig {
 
         let models = entry.models.map(|m| match m {
             forge_config::ModelListConfig::Url(url) => Models::Url(url),
+            forge_config::ModelListConfig::Dynamic { url, fallback } => {
+                Models::Dynamic { url, fallback }
+            }
             forge_config::ModelListConfig::Hardcoded(model_list) => Models::Hardcoded(model_list),
         });
 
@@ -236,6 +248,10 @@ impl From<&ProviderConfig> for forge_domain::ProviderTemplate {
             Models::Url(model_url_template) => forge_domain::ModelSource::Url(
                 forge_domain::Template::<forge_domain::URLParameters>::new(model_url_template),
             ),
+            Models::Dynamic { url, fallback } => forge_domain::ModelSource::Dynamic {
+                url: forge_domain::Template::<forge_domain::URLParameters>::new(url),
+                fallback: fallback.clone(),
+            },
             Models::Hardcoded(model_list) => {
                 forge_domain::ModelSource::Hardcoded(model_list.clone())
             }
@@ -488,6 +504,10 @@ impl<
             Models::Url(model_url_template) => forge_domain::ModelSource::Url(
                 forge_domain::Template::<forge_domain::URLParameters>::new(model_url_template),
             ),
+            Models::Dynamic { url, fallback } => forge_domain::ModelSource::Dynamic {
+                url: forge_domain::Template::<forge_domain::URLParameters>::new(url),
+                fallback: fallback.clone(),
+            },
             Models::Hardcoded(model_list) => {
                 forge_domain::ModelSource::Hardcoded(model_list.clone())
             }
@@ -891,7 +911,7 @@ mod tests {
                 assert!(model_url.contains("api-version"));
                 assert!(model_url.contains("/models"));
             }
-            Models::Hardcoded(_) => panic!("Expected Models::Url variant"),
+            _ => panic!("Expected Models::Url variant"),
         }
     }
 
@@ -940,7 +960,7 @@ mod tests {
         assert_eq!(config.url, "{{OPENAI_URL}}/responses");
         match config.models.as_ref().unwrap() {
             Models::Url(model_url) => assert_eq!(model_url, "{{OPENAI_URL}}/models"),
-            Models::Hardcoded(_) => panic!("Expected Models::Url variant"),
+            _ => panic!("Expected Models::Url variant"),
         }
     }
 
@@ -1031,30 +1051,34 @@ mod tests {
             config.url.as_str(),
             "https://api.neuralwatt.com/v1/chat/completions"
         );
-        // Neuralwatt exposes a non-standard /models schema, so models are
-        // hardcoded in provider.json instead of fetched from the URL.
+        // Neuralwatt exposes a non-standard /models schema, so the curated
+        // fallback in provider.json is overlaid onto the live fetch.
         match config.models.as_ref().expect("models should be present") {
-            Models::Hardcoded(models) => {
-                assert!(
-                    models.iter().any(|m| m.id.as_str() == "glm-5.2"),
-                    "expected glm-5.2 to be present in hardcoded models"
+            Models::Dynamic { url, fallback } => {
+                assert_eq!(
+                    url, "https://api.neuralwatt.com/v1/models",
+                    "neuralwatt should fetch from /v1/models"
                 );
                 assert!(
-                    models.iter().any(|m| m.id.as_str() == "qwen3.5-397b"),
-                    "expected qwen3.5-397b to be present in hardcoded models"
+                    fallback.iter().any(|m| m.id.as_str() == "glm-5.2"),
+                    "expected glm-5.2 to be present in fallback"
                 );
                 assert!(
-                    models.iter().any(|m| m.id.as_str() == "glm-5.2-flex"),
-                    "expected glm-5.2-flex to be present in hardcoded models"
+                    fallback.iter().any(|m| m.id.as_str() == "qwen3.5-397b"),
+                    "expected qwen3.5-397b to be present in fallback"
                 );
                 assert!(
-                    models
+                    fallback.iter().any(|m| m.id.as_str() == "glm-5.2-flex"),
+                    "expected glm-5.2-flex to be present in fallback"
+                );
+                assert!(
+                    fallback
                         .iter()
                         .any(|m| m.id.as_str() == "kimi-k2.7-code-flex"),
-                    "expected kimi-k2.7-code-flex to be present in hardcoded models"
+                    "expected kimi-k2.7-code-flex to be present in fallback"
                 );
             }
-            other => panic!("expected hardcoded models, got {other:?}"),
+            other => panic!("expected dynamic models, got {other:?}"),
         }
     }
 
@@ -1121,16 +1145,21 @@ mod tests {
             "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/chat/completions"
         );
         // Alibaba Token Plan exposes an OpenAI-compatible endpoint but no
-        // capability metadata via /models, so models are hardcoded in
-        // provider.json.
+        // capability metadata via /models, so the curated fallback in
+        // provider.json is overlaid onto the live fetch.
         match config.models.as_ref().expect("models should be present") {
-            Models::Hardcoded(models) => {
+            Models::Dynamic { url, fallback } => {
+                assert_eq!(
+                    url,
+                    "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/models",
+                    "alibaba_token_plan should fetch from compatible-mode /v1/models"
+                );
                 assert!(
-                    models.iter().any(|m| m.id.as_str() == "qwen3.7-max"),
-                    "expected qwen3.7-max to be present in hardcoded models"
+                    fallback.iter().any(|m| m.id.as_str() == "qwen3.7-max"),
+                    "expected qwen3.7-max to be present in fallback"
                 );
             }
-            other => panic!("expected hardcoded models, got {other:?}"),
+            other => panic!("expected dynamic models, got {other:?}"),
         }
     }
 
@@ -1171,16 +1200,21 @@ mod tests {
             config.url.as_str(),
             "https://api.kimi.com/coding/v1/chat/completions"
         );
-        // Kimi Code's /models endpoint omits capability metadata, so models are
-        // hardcoded using the platform's canonical model IDs (k3, etc.).
+        // Kimi Code's /models endpoint omits capability metadata, so the
+        // curated fallback in provider.json (with platform-canonical ids like
+        // k3) is overlaid onto the live fetch.
         match config.models.as_ref().expect("models should be present") {
-            Models::Hardcoded(models) => {
+            Models::Dynamic { url, fallback } => {
+                assert_eq!(
+                    url, "https://api.kimi.com/coding/v1/models",
+                    "kimi_coding should fetch from /coding/v1/models"
+                );
                 assert!(
-                    models.iter().any(|m| m.id.as_str() == "k3"),
-                    "expected k3 to be present in hardcoded models"
+                    fallback.iter().any(|m| m.id.as_str() == "k3"),
+                    "expected k3 to be present in fallback"
                 );
             }
-            other => panic!("expected hardcoded models, got {other:?}"),
+            other => panic!("expected dynamic models, got {other:?}"),
         }
     }
 
@@ -1246,6 +1280,45 @@ mod tests {
             response_type: None,
             url: "http://example.com/v1/chat/completions".to_string(),
             models: Some(Models::Url("http://example.com/v1/models".to_string())),
+            auth_methods: vec![forge_domain::AuthMethod::ApiKey],
+            custom_headers: None,
+        };
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_provider_entry_with_dynamic_models_converts_to_dynamic() {
+        let fallback_model = forge_app::domain::Model::new("k3")
+            .name("Kimi k3".to_string())
+            .context_length(262144)
+            .tools_supported(true);
+
+        let entry = forge_config::ProviderEntry {
+            id: "kimi_coding".to_string(),
+            url: "https://api.kimi.com/coding/v1/chat/completions".to_string(),
+            response_type: Some(forge_config::ProviderResponseType::OpenAI),
+            auth_methods: vec![forge_config::ProviderAuthMethod::ApiKey],
+            models: Some(forge_config::ModelListConfig::Dynamic {
+                url: "https://api.kimi.com/coding/v1/models".to_string(),
+                fallback: vec![fallback_model.clone()],
+            }),
+            ..Default::default()
+        };
+
+        let actual = ProviderConfig::from(entry);
+
+        let expected = ProviderConfig {
+            id: ProviderId::from("kimi_coding".to_string()),
+            provider_type: forge_domain::ProviderType::Llm,
+            api_key_vars: None,
+            url_param_vars: vec![],
+            response_type: Some(forge_app::domain::ProviderResponse::OpenAI),
+            url: "https://api.kimi.com/coding/v1/chat/completions".to_string(),
+            models: Some(Models::Dynamic {
+                url: "https://api.kimi.com/coding/v1/models".to_string(),
+                fallback: vec![fallback_model],
+            }),
             auth_methods: vec![forge_domain::AuthMethod::ApiKey],
             custom_headers: None,
         };
@@ -1798,7 +1871,7 @@ mod env_tests {
                     "https://{{AZURE_RESOURCE_NAME}}.openai.azure.com/openai/models?api-version={{AZURE_API_VERSION}}"
                 );
             }
-            forge_domain::ModelSource::Hardcoded(_) => panic!("Expected ModelSource::Url variant"),
+            _ => panic!("Expected ModelSource::Url variant"),
         }
     }
 
