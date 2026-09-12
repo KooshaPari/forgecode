@@ -79,6 +79,14 @@ pub struct Cli {
     /// Event to dispatch to the workflow in JSON format.
     #[arg(long, short = 'e')]
     pub event: Option<String>,
+
+    /// Emit each streaming ChatResponse as one NDJSON line to stdout.
+    #[arg(long, default_value_t = false)]
+    pub stream_json: bool,
+
+    /// Path to append NDJSON streaming log to.
+    #[arg(long)]
+    pub stream_json_log: Option<PathBuf>,
 }
 
 impl Cli {
