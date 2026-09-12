@@ -408,13 +408,32 @@ impl SqliteCustomizer {
             // once migrations have created the table. If the union cannot be
             // created (e.g. `legacy_read` was not attached), fall through to
             // the plain view.
+            //
+            // The view also adds two virtual columns used by the read layer
+            // to discriminate legacy rows from local rows:
+            //   * `__forge_legacy_source` — 0 for local, 1 for legacy
+            //   * `__forge_legacy_unscoped` — 1 for legacy rows that should be
+            //     visible to all workspaces (e.g. older legacy DBs whose rows
+            //     predate workspace scoping)
             let local_columns = Self::CONVERSATION_COLUMNS.join(", ");
+            let local_sql = format!(
+                "{local_columns}, 0 AS __forge_legacy_source, 0 AS __forge_legacy_unscoped"
+            );
             let union_ok = Self::legacy_projection(conn)
                 .map(|legacy_columns| {
+                    // Legacy rows are by definition pre-workspace-scoping, so
+                    // mark every legacy row as `__forge_legacy_unscoped = 1`
+                    // unconditionally. The `__forge_legacy_source` discriminator
+                    // is what callers use to distinguish legacy rows from
+                    // local rows for the same id (local-first ordering).
+                    let legacy_sql = format!(
+                        "{legacy_columns}, 1 AS __forge_legacy_source, \
+                         1 AS __forge_legacy_unscoped"
+                    );
                     let sql = format!(
                         "CREATE TEMP VIEW IF NOT EXISTS conversations_all AS \
-                     SELECT {local_columns} FROM conversations \
-                     UNION ALL SELECT {legacy_columns} FROM legacy_read.conversations AS legacy"
+                     SELECT {local_sql} FROM conversations \
+                     UNION ALL SELECT {legacy_sql} FROM legacy_read.conversations AS legacy"
                     );
                     diesel::sql_query(sql).execute(conn).is_ok()
                 })
@@ -426,7 +445,8 @@ impl SqliteCustomizer {
 
         let _ = diesel::sql_query(
             "CREATE TEMP VIEW IF NOT EXISTS conversations_all AS \
-             SELECT * FROM conversations",
+             SELECT *, 0 AS __forge_legacy_source, 0 AS __forge_legacy_unscoped \
+             FROM conversations",
         )
         .execute(conn);
     }

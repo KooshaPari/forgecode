@@ -4,7 +4,7 @@ diesel::table! {
     conversations (conversation_id) {
         conversation_id -> Text,
         title -> Nullable<Text>,
-        workspace_id -> BigInt,
+        workspace_id -> Nullable<BigInt>,
         context -> Nullable<Text>,
         created_at -> Timestamp,
         updated_at -> Nullable<Timestamp>,
@@ -39,7 +39,7 @@ diesel::table! {
     conversations_all (conversation_id) {
         conversation_id -> Text,
         title -> Nullable<Text>,
-        workspace_id -> BigInt,
+        workspace_id -> Nullable<BigInt>,
         context -> Nullable<Text>,
         created_at -> Timestamp,
         updated_at -> Nullable<Timestamp>,
