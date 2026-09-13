@@ -413,11 +413,20 @@ mod tests {
             .complete("file:///foo.rs", Position { line: 0, character: 0 }, None)
             .unwrap();
         assert_eq!(items.len(), 2);
-        assert_eq!(items[0].label, "foo");
-        assert_eq!(items[0].kind, Some(CompletionKind::Function));
-        assert_eq!(items[0].detail.as_deref(), Some("fn()"));
-        assert_eq!(items[1].label, "bar");
-        assert_eq!(items[1].kind, Some(CompletionKind::Variable));
+        assert_eq!(items.first().map(|x| x.label.as_str()), Some("foo"));
+        assert_eq!(
+            items.first().map(|x| x.kind),
+            Some(Some(CompletionKind::Function))
+        );
+        assert_eq!(
+            items.first().and_then(|x| x.detail.as_deref()),
+            Some("fn()")
+        );
+        assert_eq!(items.get(1).map(|x| x.label.as_str()), Some("bar"));
+        assert_eq!(
+            items.get(1).map(|x| x.kind),
+            Some(Some(CompletionKind::Variable))
+        );
     }
 
     #[test]
@@ -440,9 +449,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].label, "baz");
-        assert_eq!(items[0].kind, Some(CompletionKind::Keyword));
-        assert_eq!(items[0].insert_text.as_deref(), Some("baz"));
+        assert_eq!(items.first().map(|x| x.label.as_str()), Some("baz"));
+        assert_eq!(
+            items.first().map(|x| x.kind),
+            Some(Some(CompletionKind::Keyword))
+        );
+        assert_eq!(
+            items.first().and_then(|x| x.insert_text.as_deref()),
+            Some("baz")
+        );
     }
 
     #[test]
@@ -456,8 +471,11 @@ mod tests {
             .complete("file:///foo.ts", Position { line: 0, character: 0 }, None)
             .unwrap();
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0].label, "qux");
-        assert_eq!(items[0].kind, Some(CompletionKind::Method));
+        assert_eq!(items.first().map(|x| x.label.as_str()), Some("qux"));
+        assert_eq!(
+            items.first().map(|x| x.kind),
+            Some(Some(CompletionKind::Method))
+        );
     }
 
     #[test]
@@ -493,7 +511,7 @@ mod tests {
             .unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(
-            items[0].documentation.as_deref(),
+            items.first().and_then(|x| x.documentation.as_deref()),
             Some("## foo\ndocs"),
             "MarkupContent.value must be flattened into documentation"
         );

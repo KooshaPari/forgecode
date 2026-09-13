@@ -361,9 +361,9 @@ mod tests {
             .definition("file:///foo.rs", Position { line: 5, character: 2 })
             .unwrap();
         assert_eq!(locs.len(), 1);
-        assert_eq!(locs[0].uri, "file:///lib.rs");
-        assert_eq!(locs[0].range.start.line, 10);
-        assert_eq!(locs[0].range.end.character, 4);
+        assert_eq!(locs.first().map(|x| x.uri.as_str()), Some("file:///lib.rs"));
+        assert_eq!(locs.first().map(|x| x.range.start.line), Some(10));
+        assert_eq!(locs.first().map(|x| x.range.end.character), Some(4));
     }
 
     #[test]
@@ -380,8 +380,8 @@ mod tests {
             .definition("file:///foo.ts", Position { line: 9, character: 0 })
             .unwrap();
         assert_eq!(locs.len(), 2);
-        assert_eq!(locs[0].uri, "file:///a.ts");
-        assert_eq!(locs[1].uri, "file:///b.ts");
+        assert_eq!(locs.first().map(|x| x.uri.as_str()), Some("file:///a.ts"));
+        assert_eq!(locs.get(1).map(|x| x.uri.as_str()), Some("file:///b.ts"));
     }
 
     #[test]
@@ -412,9 +412,9 @@ mod tests {
             .definition("file:///foo.rs", Position { line: 5, character: 5 })
             .unwrap();
         assert_eq!(locs.len(), 1);
-        assert_eq!(locs[0].uri, "file:///lib.rs");
-        assert_eq!(locs[0].range.start.line, 10);
-        assert_eq!(locs[0].range.end.character, 8);
+        assert_eq!(locs.first().map(|x| x.uri.as_str()), Some("file:///lib.rs"));
+        assert_eq!(locs.first().map(|x| x.range.start.line), Some(10));
+        assert_eq!(locs.first().map(|x| x.range.end.character), Some(8));
     }
 
     #[test]

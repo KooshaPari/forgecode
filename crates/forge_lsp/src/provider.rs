@@ -78,7 +78,7 @@ mod tests {
             .diagnostics(Path::new("/tmp/foo.xyz"), Path::new("/tmp"))
             .unwrap();
         assert_eq!(d.len(), 1);
-        assert_eq!(d[0].message, "stub");
+        assert_eq!(d.first().map(|d| d.message.as_str()), Some("stub"));
     }
 
     #[test]

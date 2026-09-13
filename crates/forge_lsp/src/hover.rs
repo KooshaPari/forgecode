@@ -405,6 +405,9 @@ mod tests {
             .unwrap();
         let captured = client.captured.lock().unwrap();
         assert_eq!(captured.len(), 1);
-        assert_eq!(captured[0].method, "textDocument/hover");
+        assert_eq!(
+            captured.first().map(|c| c.method),
+            Some("textDocument/hover")
+        );
     }
 }
