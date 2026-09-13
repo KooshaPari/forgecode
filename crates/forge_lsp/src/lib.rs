@@ -23,6 +23,7 @@ pub mod definition;
 pub mod diagnostic;
 pub mod hover;
 pub mod lsp_client;
+pub mod mcp_watcher;
 pub mod provider;
 pub mod rustc;
 pub mod server;
@@ -34,6 +35,10 @@ pub use definition::{DefinitionProvider, Location};
 pub use diagnostic::{Diagnostic, DiagnosticSeverity};
 pub use hover::{Hover, HoverProvider};
 pub use lsp_client::{LspClient, ProcessLspClient, ServerCapabilities, WeakProcessClient};
+pub use mcp_watcher::{
+    DEFAULT_DEBOUNCE, McpAutoReloadConfig, McpReloadFn, McpWatcher, McpWatcherError,
+    McpWatcherHandle, default_mcp_config_path,
+};
 pub use provider::{DiagnosticsError, DiagnosticsProvider, DiagnosticsResult};
 pub use rustc::RustcProvider;
 pub use server::{Server, SharedServer};
