@@ -253,12 +253,18 @@ mod tests {
             .diagnostics_for_path(&PathBuf::from("foo.rs"), &PathBuf::from("."))
             .unwrap();
         assert_eq!(rs_diags.len(), 1);
-        assert_eq!(rs_diags[0].source.as_deref(), Some("a"));
+        assert_eq!(
+            rs_diags.first().and_then(|d| d.source.as_deref()),
+            Some("a")
+        );
 
         let ts_diags = service
             .diagnostics_for_path(&PathBuf::from("foo.ts"), &PathBuf::from("."))
             .unwrap();
-        assert_eq!(ts_diags[0].source.as_deref(), Some("b"));
+        assert_eq!(
+            ts_diags.first().and_then(|d| d.source.as_deref()),
+            Some("b")
+        );
     }
 
     #[test]

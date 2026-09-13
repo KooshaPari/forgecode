@@ -33,7 +33,7 @@ pub use completion::{CompletionItem, CompletionKind, CompletionProvider};
 pub use definition::{DefinitionProvider, Location};
 pub use diagnostic::{Diagnostic, DiagnosticSeverity};
 pub use hover::{Hover, HoverProvider};
-pub use lsp_client::LspClient;
+pub use lsp_client::{LspClient, ProcessLspClient, ServerCapabilities, WeakProcessClient};
 pub use provider::{DiagnosticsError, DiagnosticsProvider, DiagnosticsResult};
 pub use rustc::RustcProvider;
 pub use server::{Server, SharedServer};
