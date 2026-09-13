@@ -2496,6 +2496,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge_agileplus"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tracing",
+]
+
+[[package]]
 name = "forge_api"
 version = "0.1.1"
 dependencies = [
@@ -2959,6 +2972,7 @@ dependencies = [
  "dirs",
  "enable-ansi-support",
  "fake",
+ "forge_agileplus",
  "forge_api",
  "forge_app",
  "forge_config",
