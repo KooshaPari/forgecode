@@ -23,7 +23,13 @@ use crate::completion::{CompletionItem, CompletionProvider, CompletionResult};
 use crate::definition::{DefinitionProvider, DefinitionResult, Location};
 use crate::diagnostic::Diagnostic;
 use crate::hover::{Hover, HoverProvider, HoverResult};
+use crate::implementation::{ImplementationError, ImplementationProvider, ImplementationResult};
 use crate::lsp_client::{LspClient, Position, ProcessLspClient};
+use crate::references::{
+    ReferencesError, ReferencesOptions, ReferencesProvider, ReferencesResult,
+    TypeDefinitionProvider,
+};
+use crate::rename::{RenameError, RenameOutcome, RenameProvider, WorkspaceEdit};
 
 /// Alias preserved from prior P2.3 naming.
 pub use crate::service::DiagnosticsService;
@@ -41,12 +47,22 @@ pub type SharedServer = std::sync::Arc<Server>;
 ///     `typescript-language-server`
 ///   * `definition` — `DefinitionRouter` over the same
 ///   * `completion` — `CompletionRouter` over the same
+///   * `implementation` — `ImplementationRouter` over the same
+///     (P2.3.2)
+///   * `references` — `ReferencesRouter` over the same (P2.3.2)
+///   * `type_definition` — `TypeDefinitionRouter` over the same
+///     (P2.3.2)
+///   * `rename` — `RenameRouter` over the same (P2.3.2)
 pub struct Server {
     workspace_root: PathBuf,
     diagnostics: DiagnosticsService,
     hover: HoverRouter,
     definition: DefinitionRouter,
     completion: CompletionRouter,
+    implementation: ImplementationRouter,
+    references: ReferencesRouter,
+    type_definition: TypeDefinitionRouter,
+    rename: RenameRouter,
 }
 
 impl std::fmt::Debug for Server {
@@ -56,6 +72,10 @@ impl std::fmt::Debug for Server {
             .field("hover", &self.hover.name())
             .field("definition", &self.definition.name())
             .field("completion", &self.completion.name())
+            .field("implementation", &self.implementation.name())
+            .field("references", &self.references.name())
+            .field("type_definition", &self.type_definition.name())
+            .field("rename", &self.rename.name())
             .finish()
     }
 }
@@ -86,9 +106,11 @@ pub(crate) enum Language {
 
 impl Server {
     /// Build a server with the default providers:
-    ///   * `rust-analyzer` for Rust hover/definition/completion
+    ///   * `rust-analyzer` for Rust hover/definition/completion/
+    ///     implementation/references/typeDefinition/rename
     ///   * `typescript-language-server` for TypeScript-family
-    ///     hover/definition/completion
+    ///     hover/definition/completion/implementation/references/
+    ///     typeDefinition/rename
     ///   * Plus rustc + tsc for diagnostics
     ///
     /// Both language servers are spawned, initialized against
@@ -104,9 +126,9 @@ impl Server {
         let ts = ProcessLspClient::typescript_language_server()?;
         ts.initialize(workspace_root)?;
 
-        // We hand the same Arc<ProcessLspClient> to all three providers
-        // for each language family. `ProcessLspClient` clones share
-        // the subprocess via Arc.
+        // We hand the same Arc<ProcessLspClient> to all of the
+        // providers for each language family. `ProcessLspClient`
+        // clones share the subprocess via Arc.
         let rust_arc = std::sync::Arc::new(rust);
         let ts_arc = std::sync::Arc::new(ts);
 
@@ -115,20 +137,28 @@ impl Server {
             DiagnosticsService::with_defaults(),
             HoverProvider::new(rust_arc.clone()),
             DefinitionProvider::new(rust_arc.clone()),
-            CompletionProvider::new(rust_arc),
+            CompletionProvider::new(rust_arc.clone()),
+            ImplementationProvider::new(rust_arc.clone()),
+            ReferencesProvider::new(rust_arc.clone()),
+            TypeDefinitionProvider::new(rust_arc.clone()),
+            RenameProvider::new(rust_arc),
             HoverProvider::new(ts_arc.clone()),
             DefinitionProvider::new(ts_arc.clone()),
-            CompletionProvider::new(ts_arc),
+            CompletionProvider::new(ts_arc.clone()),
+            ImplementationProvider::new(ts_arc.clone()),
+            ReferencesProvider::new(ts_arc.clone()),
+            TypeDefinitionProvider::new(ts_arc.clone()),
+            RenameProvider::new(ts_arc),
         ))
     }
 
     /// Build a server with explicit providers (used by tests and by
     /// callers that need finer-grained control).
     ///
-    /// `Server::hover` / `definition` / `complete` route by file
-    /// extension internally, so each operation pair (hover,
-    /// definition, completion) needs both a Rust and a TypeScript
-    /// family provider.
+    /// `Server::hover` / `definition` / `complete` /
+    /// `implementation` / `references` / `type_definition` / `rename`
+    /// route by file extension internally, so each operation needs
+    /// both a Rust and a TypeScript family provider.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         workspace_root: &Path,
@@ -136,9 +166,17 @@ impl Server {
         hover_rust: HoverProvider<ProcessLspClient>,
         definition_rust: DefinitionProvider<ProcessLspClient>,
         completion_rust: CompletionProvider<ProcessLspClient>,
+        implementation_rust: ImplementationProvider<ProcessLspClient>,
+        references_rust: ReferencesProvider<ProcessLspClient>,
+        type_definition_rust: TypeDefinitionProvider<ProcessLspClient>,
+        rename_rust: RenameProvider<ProcessLspClient>,
         hover_ts: HoverProvider<ProcessLspClient>,
         definition_ts: DefinitionProvider<ProcessLspClient>,
         completion_ts: CompletionProvider<ProcessLspClient>,
+        implementation_ts: ImplementationProvider<ProcessLspClient>,
+        references_ts: ReferencesProvider<ProcessLspClient>,
+        type_definition_ts: TypeDefinitionProvider<ProcessLspClient>,
+        rename_ts: RenameProvider<ProcessLspClient>,
     ) -> Self {
         Self {
             workspace_root: workspace_root.to_path_buf(),
@@ -146,6 +184,10 @@ impl Server {
             hover: HoverRouter::new(hover_rust, hover_ts),
             definition: DefinitionRouter::new(definition_rust, definition_ts),
             completion: CompletionRouter::new(completion_rust, completion_ts),
+            implementation: ImplementationRouter::new(implementation_rust, implementation_ts),
+            references: ReferencesRouter::new(references_rust, references_ts),
+            type_definition: TypeDefinitionRouter::new(type_definition_rust, type_definition_ts),
+            rename: RenameRouter::new(rename_rust, rename_ts),
         }
     }
 
@@ -201,6 +243,57 @@ impl Server {
             Language::Rust | Language::TypeScript => {
                 let uri = path_to_uri(path, &self.workspace_root);
                 self.completion.complete(&uri, position, trigger)
+            }
+        }
+    }
+
+    /// Implementation at `position` in `path` (P2.3.2).
+    pub fn implementation(&self, path: &Path, position: Position) -> ImplementationResult {
+        match classify_language(path) {
+            Language::Unsupported => Ok(Vec::new()),
+            Language::Rust | Language::TypeScript => {
+                let uri = path_to_uri(path, &self.workspace_root);
+                self.implementation.implementation(&uri, position)
+            }
+        }
+    }
+
+    /// References at `position` in `path` (P2.3.2).
+    pub fn references(
+        &self,
+        path: &Path,
+        position: Position,
+        options: ReferencesOptions,
+    ) -> ReferencesResult {
+        match classify_language(path) {
+            Language::Unsupported => Ok(Vec::new()),
+            Language::Rust | Language::TypeScript => {
+                let uri = path_to_uri(path, &self.workspace_root);
+                self.references.references(&uri, position, options)
+            }
+        }
+    }
+
+    /// Type definition at `position` in `path` (P2.3.2).
+    pub fn type_definition(&self, path: &Path, position: Position) -> ReferencesResult {
+        match classify_language(path) {
+            Language::Unsupported => Ok(Vec::new()),
+            Language::Rust | Language::TypeScript => {
+                let uri = path_to_uri(path, &self.workspace_root);
+                self.type_definition.type_definition(&uri, position)
+            }
+        }
+    }
+
+    /// Rename the symbol at `position` in `path` to `new_name`
+    /// (P2.3.2). Returns the workspace edit set on success, or
+    /// `Ok(None)` when the server says "nothing to rename".
+    pub fn rename(&self, path: &Path, position: Position, new_name: &str) -> RenameOutcome {
+        match classify_language(path) {
+            Language::Unsupported => Ok(None),
+            Language::Rust | Language::TypeScript => {
+                let uri = path_to_uri(path, &self.workspace_root);
+                self.rename.rename(&uri, position, new_name)
             }
         }
     }
@@ -319,6 +412,129 @@ impl CompletionRouter {
 }
 
 // ---------------------------------------------------------------------------
+// P2.3.2 routers — implementation / references / typeDefinition / rename.
+// All mirror the existing HoverRouter / DefinitionRouter / CompletionRouter
+// pattern: pick the rust or ts provider based on file extension.
+// ---------------------------------------------------------------------------
+
+pub struct ImplementationRouter {
+    rust: ImplementationProvider<ProcessLspClient>,
+    ts: ImplementationProvider<ProcessLspClient>,
+}
+
+impl ImplementationRouter {
+    pub fn new(
+        rust: ImplementationProvider<ProcessLspClient>,
+        ts: ImplementationProvider<ProcessLspClient>,
+    ) -> Self {
+        Self { rust, ts }
+    }
+
+    pub fn name(&self) -> &'static str {
+        self.rust.name()
+    }
+
+    pub fn implementation(
+        &self,
+        uri: &str,
+        position: Position,
+    ) -> Result<Vec<Location>, ImplementationError> {
+        if pick_ts_family(uri) {
+            self.ts.implementation(uri, position)
+        } else {
+            self.rust.implementation(uri, position)
+        }
+    }
+}
+
+pub struct ReferencesRouter {
+    rust: ReferencesProvider<ProcessLspClient>,
+    ts: ReferencesProvider<ProcessLspClient>,
+}
+
+impl ReferencesRouter {
+    pub fn new(
+        rust: ReferencesProvider<ProcessLspClient>,
+        ts: ReferencesProvider<ProcessLspClient>,
+    ) -> Self {
+        Self { rust, ts }
+    }
+
+    pub fn name(&self) -> &'static str {
+        self.rust.name()
+    }
+
+    pub fn references(
+        &self,
+        uri: &str,
+        position: Position,
+        options: ReferencesOptions,
+    ) -> Result<Vec<Location>, ReferencesError> {
+        if pick_ts_family(uri) {
+            self.ts.references(uri, position, options)
+        } else {
+            self.rust.references(uri, position, options)
+        }
+    }
+}
+
+pub struct TypeDefinitionRouter {
+    rust: TypeDefinitionProvider<ProcessLspClient>,
+    ts: TypeDefinitionProvider<ProcessLspClient>,
+}
+
+impl TypeDefinitionRouter {
+    pub fn new(
+        rust: TypeDefinitionProvider<ProcessLspClient>,
+        ts: TypeDefinitionProvider<ProcessLspClient>,
+    ) -> Self {
+        Self { rust, ts }
+    }
+
+    pub fn name(&self) -> &'static str {
+        self.rust.name()
+    }
+
+    pub fn type_definition(
+        &self,
+        uri: &str,
+        position: Position,
+    ) -> Result<Vec<Location>, ReferencesError> {
+        if pick_ts_family(uri) {
+            self.ts.type_definition(uri, position)
+        } else {
+            self.rust.type_definition(uri, position)
+        }
+    }
+}
+
+pub struct RenameRouter {
+    rust: RenameProvider<ProcessLspClient>,
+    ts: RenameProvider<ProcessLspClient>,
+}
+
+impl RenameRouter {
+    pub fn new(
+        rust: RenameProvider<ProcessLspClient>,
+        ts: RenameProvider<ProcessLspClient>,
+    ) -> Self {
+        Self { rust, ts }
+    }
+
+    pub fn name(&self) -> &'static str {
+        self.rust.name()
+    }
+
+    pub fn rename(&self, uri: &str, position: Position, new_name: &str) -> RenameOutcome {
+        if pick_ts_family(uri) {
+            self.ts.rename(uri, position, new_name)
+        } else {
+            self.rust.rename(uri, position, new_name)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Path <-> URI conversion (percent-encoded file:// URIs)
 // ---------------------------------------------------------------------------
 
@@ -420,6 +636,35 @@ mod tests {
     }
 
     // Compile-time sanity: re-exported types are usable.
-    #[allow(dead_code)]
-    fn _type_aliases(_h: Hover, _l: Location, _c: CompletionItem) {}
+    #[allow(clippy::too_many_arguments, dead_code)]
+    fn _type_aliases(
+        _h: Hover,
+        _l: Location,
+        _c: CompletionItem,
+        _impl_err: ImplementationError,
+        _refs_err: ReferencesError,
+        _refs_opt: ReferencesOptions,
+        _rename_err: RenameError,
+        _we: WorkspaceEdit,
+    ) {
+    }
+
+    // Compile-time sanity: the new P2.3.2 routers are constructible
+    // with the same shape as the P2.3.1 ones.
+    #[allow(clippy::too_many_arguments, dead_code)]
+    fn _routers_constructible(
+        rust_impl: ImplementationProvider<ProcessLspClient>,
+        ts_impl: ImplementationProvider<ProcessLspClient>,
+        rust_refs: ReferencesProvider<ProcessLspClient>,
+        ts_refs: ReferencesProvider<ProcessLspClient>,
+        rust_tdef: TypeDefinitionProvider<ProcessLspClient>,
+        ts_tdef: TypeDefinitionProvider<ProcessLspClient>,
+        rust_rename: RenameProvider<ProcessLspClient>,
+        ts_rename: RenameProvider<ProcessLspClient>,
+    ) {
+        let _ = ImplementationRouter::new(rust_impl, ts_impl);
+        let _ = ReferencesRouter::new(rust_refs, ts_refs);
+        let _ = TypeDefinitionRouter::new(rust_tdef, ts_tdef);
+        let _ = RenameRouter::new(rust_rename, ts_rename);
+    }
 }
