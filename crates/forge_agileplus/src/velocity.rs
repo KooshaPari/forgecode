@@ -57,21 +57,21 @@ impl VelocityReport {
 }
 
 /// Compute the rolling five-sprint average completion velocity for a
-/// series of velocity reports.
+/// Compute the rolling-window average of completed points across a chronologically
+/// ordered series of velocity reports.
 ///
 /// `reports` is expected to be ordered chronologically (oldest first).
 /// The result is the simple moving average of the **last
 /// [`ROLLING_WINDOW`] entries** (or all entries if fewer than the window
 /// has been recorded). Returns `0.0` when the input is empty.
+#[allow(clippy::indexing_slicing)] // bounded by reports.len() checks below
 pub fn rolling_average(reports: &[VelocityReport]) -> f32 {
     if reports.is_empty() {
         return 0.0;
     }
     let window = reports.len().min(ROLLING_WINDOW);
-    // Defensive: take the last `window` entries. Slicing on `&[T]` is
-    // safe; clippy's `indexing_slicing` lint fires when the index is
-    // computed and could panic. Here `reports.len() >= window` so the
-    // subtraction is always sound.
+    // Take the last `window` entries. `start = len - window <= len`, so the
+    // slice index is sound; the lint allow above documents the invariant.
     let start = reports.len() - window;
     let slice = &reports[start..];
     let total: f32 = slice.iter().map(|r| r.completed_points).sum();
@@ -80,14 +80,14 @@ pub fn rolling_average(reports: &[VelocityReport]) -> f32 {
 
 /// Build a fully-populated [`VelocityReport`] list, computing the rolling
 /// average for each entry.
+#[allow(clippy::indexing_slicing)] // i < reports.len() and window_start <= window_end <= i+1 <= len
 pub fn with_rolling_averages(reports: Vec<VelocityReport>) -> Vec<VelocityReport> {
     let mut out = Vec::with_capacity(reports.len());
     for i in 0..reports.len() {
         let mut r = reports[i].clone();
         // Window for entry i: the previous up-to-(WINDOW-1) entries plus this one.
-        // Use a half-open range so we don't depend on the `..=` inclusive-range
-        // overload (older toolchains + clippy `indexing_slicing` lint disagree
-        // on whether `..=` is panic-proof here).
+        // window_start uses saturating_sub, so the lower bound is always <= i + 1
+        // (= window_end). The slice is therefore in-bounds.
         let window_start = (i + 1).saturating_sub(ROLLING_WINDOW);
         let window_end = i + 1;
         let slice = &reports[window_start..window_end];
@@ -97,7 +97,6 @@ pub fn with_rolling_averages(reports: Vec<VelocityReport>) -> Vec<VelocityReport
     }
     out
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,6 +156,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::indexing_slicing)] // indices are bounded by reports.len() and known-good
     fn with_rolling_averages_walks_chronologically() {
         let v = reports(&[10.0, 20.0, 30.0, 40.0, 50.0, 60.0]);
         let out = with_rolling_averages(v);
@@ -168,7 +168,6 @@ mod tests {
         // Entry 5: last 5 = [20, 30, 40, 50, 60] / 5 = 40
         assert!((out[5].rolling_average - 40.0).abs() < 1e-4);
     }
-
     #[test]
     fn json_round_trip_preserves_velocity_report() {
         let r = VelocityReport::new("sprint-47", 30.0, 25.0);
