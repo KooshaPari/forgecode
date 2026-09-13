@@ -13,3 +13,12 @@ tokio = { workspace = true }
 async-trait = { workspace = true }
 url = { workspace = true }
 serde_derive = "1"
+# P2.5.1 — MCP config auto-reload watcher. `notify` is added directly here
+# (rather than as a workspace dep) because it's only consumed by the
+# `McpWatcher` surface and we don't want to take on the transitive dep
+# tree (inotify / FSEvents / ReadDirectoryChangesW shims) for the rest
+# of the workspace.
+notify = "8"
+
+[dev-dependencies]
+tempfile = "3"
