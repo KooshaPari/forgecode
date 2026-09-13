@@ -23,6 +23,18 @@ use forge_domain::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::debug;
+
+/// P3.4 remote semantic-memory adapters (HTTP). Each adapter implements
+/// the same `SemanticMemoryPort` trait that the JSONL adapter above does,
+/// but routes the request to a remote provider (Supermemory, Letta, Cognee).
+///
+/// The modules are kept side-by-side so a future swap to the "real" SQLite
+/// adapter can land without re-wiring either half.
+pub mod cognee;
+pub mod config;
+pub mod http;
+pub mod letta;
+pub mod supermemory;
 /// Errors specific to the JSONL adapter (separate from the port trait).
 #[derive(Debug, Error)]
 pub enum LocalError {
