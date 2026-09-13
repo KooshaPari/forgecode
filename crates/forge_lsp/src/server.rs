@@ -25,7 +25,11 @@ use crate::definition::{DefinitionProvider, DefinitionResult, Location};
 use crate::diagnostic as _diag; // alias to avoid name clash; not used directly
 use crate::diagnostic::Diagnostic;
 use crate::hover::{Hover, HoverProvider, HoverResult};
+use crate::implementation::{ImplementationProvider, ImplementationResult};
 use crate::lsp_client::Position;
+use crate::references::{ReferencesProvider, ReferencesResult};
+use crate::rename::{RenameProvider, RenameResult, WorkspaceEdit};
+use crate::type_definition::{TypeDefinitionProvider, TypeDefinitionResult};
 
 /// Alias preserved from prior P2.3 naming.
 pub use crate::service::DiagnosticsService;
@@ -42,12 +46,20 @@ pub type SharedServer = Arc<Server>;
 ///   * `hover`       — `HoverProvider` over `rust-analyzer` / `tsserver`
 ///   * `definition`  — `DefinitionProvider` over the same
 ///   * `completion`  — `CompletionProvider` over the same
+///   * `implementation` — `ImplementationProvider` (F1)
+///   * `references`  — `ReferencesProvider` (F1)
+///   * `rename`      — `RenameProvider` (F1)
+///   * `type_definition` — `TypeDefinitionProvider` (F1)
 pub struct Server {
     workspace_root: PathBuf,
     diagnostics: DiagnosticsService,
     hover: HoverProvider,
     definition: DefinitionProvider,
     completion: CompletionProvider,
+    implementation: ImplementationProvider,
+    references: ReferencesProvider,
+    rename: RenameProvider,
+    type_definition: TypeDefinitionProvider,
 }
 
 impl std::fmt::Debug for Server {
@@ -57,6 +69,10 @@ impl std::fmt::Debug for Server {
             .field("hover", &self.hover.name())
             .field("definition", &self.definition.name())
             .field("completion", &self.completion.name())
+            .field("implementation", &self.implementation.name())
+            .field("references", &self.references.name())
+            .field("rename", &self.rename.name())
+            .field("type_definition", &self.type_definition.name())
             .finish()
     }
 }
@@ -70,12 +86,10 @@ impl Server {
     pub fn with_defaults(workspace_root: &Path) -> Result<Self, String> {
         let rust = crate::lsp_client::ProcessLspClient::rust_analyzer()?;
         let ts = crate::lsp_client::ProcessLspClient::tsserver()?;
-        // The default routing: rust-analyzer for Rust, tsserver for TS/JS.
-        // Both providers receive the same two clients — `supports()`
-        // filters by file extension so the wrong client is never invoked.
-        // `ProcessLspClient` is `Clone` because its internal state is
-        // wrapped in `Arc<Mutex<…>>`; cloning keeps both providers using
-        // the same subprocess.
+        let rust2 = rust.clone();
+        let rust3 = rust.clone();
+        let rust4 = rust.clone();
+        let rust5 = rust.clone();
         let rust_hover = rust.clone();
         Ok(Self::new(
             workspace_root,
@@ -83,6 +97,10 @@ impl Server {
             HoverProvider::new(Box::new(rust_hover)),
             DefinitionProvider::new(Box::new(ts)),
             CompletionProvider::new(Box::new(rust)),
+            ImplementationProvider::new(Box::new(rust2)),
+            ReferencesProvider::new(Box::new(rust3)),
+            RenameProvider::new(Box::new(rust4)),
+            TypeDefinitionProvider::new(Box::new(rust5)),
         ))
     }
 
@@ -94,6 +112,10 @@ impl Server {
         hover: HoverProvider,
         definition: DefinitionProvider,
         completion: CompletionProvider,
+        implementation: ImplementationProvider,
+        references: ReferencesProvider,
+        rename: RenameProvider,
+        type_definition: TypeDefinitionProvider,
     ) -> Self {
         Self {
             workspace_root: workspace_root.to_path_buf(),
@@ -101,6 +123,10 @@ impl Server {
             hover,
             definition,
             completion,
+            implementation,
+            references,
+            rename,
+            type_definition,
         }
     }
 
@@ -156,6 +182,23 @@ impl Server {
         }
         let uri = path_to_uri(path);
         self.completion.complete(&uri, position, trigger)
+    }
+
+    pub fn implementation(&self, path: &Path, position: Position) -> ImplementationResult {
+        if !self.implementation.supports(path) { return Ok(Vec::new()); }
+        self.implementation.implementation(&path_to_uri(path), position)
+    }
+    pub fn references(&self, path: &Path, position: Position, include_declaration: bool) -> ReferencesResult {
+        if !self.references.supports(path) { return Ok(Vec::new()); }
+        self.references.references(&path_to_uri(path), position, include_declaration)
+    }
+    pub fn rename(&self, path: &Path, position: Position, new_name: &str) -> RenameResult {
+        if !self.rename.supports(path) { return Ok(None); }
+        self.rename.rename(&path_to_uri(path), position, new_name)
+    }
+    pub fn type_definition(&self, path: &Path, position: Position) -> TypeDefinitionResult {
+        if !self.type_definition.supports(path) { return Ok(Vec::new()); }
+        self.type_definition.type_definition(&path_to_uri(path), position)
     }
 }
 
@@ -233,6 +276,10 @@ mod tests {
             HoverProvider::new(boxed(client_name("rust-analyzer"))),
             DefinitionProvider::new(boxed(client_name("rust-analyzer"))),
             CompletionProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::implementation::ImplementationProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::references::ReferencesProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::rename::RenameProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::type_definition::TypeDefinitionProvider::new(boxed(client_name("rust-analyzer"))),
         );
         let h = server
             .hover(&PathBuf::from("foo.py"), Position { line: 0, character: 0 })
@@ -260,6 +307,10 @@ mod tests {
             HoverProvider::new(boxed(client_name("rust-analyzer"))),
             DefinitionProvider::new(boxed(client_name("tsserver"))),
             CompletionProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::implementation::ImplementationProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::references::ReferencesProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::rename::RenameProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::type_definition::TypeDefinitionProvider::new(boxed(client_name("rust-analyzer"))),
         );
         assert_eq!(server.workspace_root(), workspace_dir());
         let dbg = format!("{server:?}");
@@ -289,6 +340,10 @@ mod tests {
             HoverProvider::new(boxed(client_name("rust-analyzer"))),
             DefinitionProvider::new(boxed(client)),
             CompletionProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::implementation::ImplementationProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::references::ReferencesProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::rename::RenameProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::type_definition::TypeDefinitionProvider::new(boxed(client_name("rust-analyzer"))),
         );
         let locs = server
             .definition(
@@ -319,6 +374,10 @@ mod tests {
             HoverProvider::new(boxed(client_name("tsserver"))),
             DefinitionProvider::new(boxed(client_name("tsserver"))),
             CompletionProvider::new(boxed(client)),
+            crate::implementation::ImplementationProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::references::ReferencesProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::rename::RenameProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::type_definition::TypeDefinitionProvider::new(boxed(client_name("rust-analyzer"))),
         );
         let comps = server
             .complete(
@@ -349,6 +408,10 @@ mod tests {
             HoverProvider::new(boxed(client)),
             DefinitionProvider::new(boxed(client_name("rust-analyzer"))),
             CompletionProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::implementation::ImplementationProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::references::ReferencesProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::rename::RenameProvider::new(boxed(client_name("rust-analyzer"))),
+            crate::type_definition::TypeDefinitionProvider::new(boxed(client_name("rust-analyzer"))),
         );
         let h = server
             .hover(
