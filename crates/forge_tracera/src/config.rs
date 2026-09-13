@@ -34,6 +34,23 @@ fn default_hmac_header() -> String {
 }
 
 impl AuthMode {
+    /// Stable string identity used by the rotation overlap logic.
+    ///
+    /// Format: `"none"`, `"bearer:<token>"`, or `"hmac:<secret>"`. The
+    /// `header` name on `Hmac` is intentionally excluded so header-name
+    /// migrations don't trigger a second key rotation.
+    ///
+    /// Two [`AuthMode`]s are considered to have the same identity when
+    /// their `kind` and (for HMAC) their `secret` / (for Bearer) their
+    /// `token` match.
+    pub fn identity(&self) -> String {
+        match self {
+            AuthMode::None => "none".to_string(),
+            AuthMode::Bearer { token } => format!("bearer:{token}"),
+            AuthMode::Hmac { secret, .. } => format!("hmac:{secret}"),
+        }
+    }
+
     /// Returns true when this auth mode carries a credential that should
     /// be redacted in logs / debug output.
     pub fn has_secret(&self) -> bool {
@@ -102,6 +119,31 @@ pub struct SinkConfig {
     /// Source identifier stamped on every event. Defaults to "forgecode".
     #[serde(default = "default_source")]
     pub source: String,
+
+    /// When true, outbound batches are gzipped and sent with
+    /// `Content-Encoding: gzip`.
+    ///
+    /// Default: true. Disable for endpoints that cannot decode gzip, or
+    /// for tiny batches where the CPU cost outweighs the network savings.
+    #[serde(default = "default_compression_enabled")]
+    pub compression_enabled: bool,
+
+    /// Duration of the auth overlap window in milliseconds.
+    ///
+    /// When [`TraceraSink::rotate_auth`](crate::TraceraSink::rotate_auth)
+    /// is called, the previous auth mode remains active (requests are
+    /// signed with both the new and the old credentials) for this many
+    /// milliseconds. After the window elapses the previous mode is
+    /// dropped — collectors must be ready to accept only the new
+    /// credential by then.
+    ///
+    /// Set to `0` to disable overlap (the previous mode is dropped
+    /// immediately on rotation).
+    #[serde(
+        default = "default_auth_overlap_window_ms",
+        with = "humantime_serde_compat"
+    )]
+    pub auth_overlap_window_ms: Duration,
 }
 
 fn default_capacity() -> usize {
@@ -132,6 +174,14 @@ fn default_source() -> String {
     "forgecode".to_string()
 }
 
+fn default_compression_enabled() -> bool {
+    true
+}
+
+fn default_auth_overlap_window_ms() -> Duration {
+    Duration::from_millis(60_000)
+}
+
 impl Default for SinkConfig {
     fn default() -> Self {
         Self {
@@ -145,6 +195,8 @@ impl Default for SinkConfig {
             max_backoff: default_max_backoff(),
             request_timeout: default_request_timeout(),
             source: default_source(),
+            compression_enabled: default_compression_enabled(),
+            auth_overlap_window_ms: default_auth_overlap_window_ms(),
         }
     }
 }
@@ -244,10 +296,34 @@ mod tests {
     }
 
     #[test]
+    fn auth_mode_identity_is_stable() {
+        let a = AuthMode::Hmac { secret: "k1".into(), header: "X-A".into() };
+        let b = AuthMode::Hmac { secret: "k1".into(), header: "X-B".into() };
+        // header rename must NOT change identity.
+        assert_eq!(a.identity(), b.identity());
+        let c = AuthMode::Hmac { secret: "k2".into(), header: "X-A".into() };
+        assert_ne!(a.identity(), c.identity());
+        assert_eq!(AuthMode::None.identity(), "none");
+        assert_eq!(
+            AuthMode::Bearer { token: "tok".into() }.identity(),
+            "bearer:tok"
+        );
+    }
+
+    #[test]
     fn config_default_validates() {
         SinkConfig::default()
             .validate()
             .expect("default must validate");
+    }
+
+    #[test]
+    fn config_default_compression_enabled() {
+        assert!(SinkConfig::default().compression_enabled);
+        assert_eq!(
+            SinkConfig::default().auth_overlap_window_ms,
+            Duration::from_millis(60_000)
+        );
     }
 
     #[test]

@@ -3433,6 +3433,7 @@ dependencies = [
  "async-trait",
  "bstr",
  "chrono",
+ "flate2",
  "parking_lot",
  "reqwest 0.12.28",
  "serde",
