@@ -88,12 +88,17 @@ struct ReferencesContext {
 // ---------------------------------------------------------------------------
 
 /// Forwards `textDocument/references` to an LSP client.
-pub struct ReferencesProvider {
-    client: Box<dyn LspClient>,
+///
+/// Generic over `C: LspClient` (rather than `Box<dyn LspClient>`) so we
+/// can share a single concrete client (e.g. `ProcessLspClient` or a
+/// test mock) via `Arc` without paying for dynamic dispatch. Matches
+/// the convention used by [`crate::hover::HoverProvider`].
+pub struct ReferencesProvider<C: LspClient + ?Sized> {
+    client: std::sync::Arc<C>,
 }
 
-impl ReferencesProvider {
-    pub fn new(client: Box<dyn LspClient>) -> Self {
+impl<C: LspClient + ?Sized> ReferencesProvider<C> {
+    pub fn new(client: std::sync::Arc<C>) -> Self {
         Self { client }
     }
 
@@ -160,12 +165,16 @@ impl ReferencesProvider {
 // ---------------------------------------------------------------------------
 
 /// Forwards `textDocument/typeDefinition` to an LSP client.
-pub struct TypeDefinitionProvider {
-    client: Box<dyn LspClient>,
+///
+/// Generic over `C: LspClient` (rather than `Box<dyn LspClient>`) so
+/// we can share a single concrete client via `Arc`. Matches the
+/// convention used by [`crate::definition::DefinitionProvider`].
+pub struct TypeDefinitionProvider<C: LspClient + ?Sized> {
+    client: std::sync::Arc<C>,
 }
 
-impl TypeDefinitionProvider {
-    pub fn new(client: Box<dyn LspClient>) -> Self {
+impl<C: LspClient + ?Sized> TypeDefinitionProvider<C> {
+    pub fn new(client: std::sync::Arc<C>) -> Self {
         Self { client }
     }
 
@@ -429,7 +438,7 @@ mod tests {
 
     #[test]
     fn references_supports_common_languages() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(Value::Null),
         ));
@@ -454,7 +463,7 @@ mod tests {
 
     #[test]
     fn references_returns_empty_when_server_returns_null() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(Value::Null),
         ));
@@ -471,7 +480,7 @@ mod tests {
 
     #[test]
     fn references_parses_array_of_locations() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(json!([
                 {"uri":"file:///a.rs","range":{"start":{"line":1,"character":0},"end":{"line":1,"character":3}}},
@@ -494,7 +503,7 @@ mod tests {
 
     #[test]
     fn references_parses_location_link_payload() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(json!([
                 {
@@ -531,7 +540,7 @@ mod tests {
             response: ok_response(Value::Null),
             captured: captured.clone(),
         };
-        let p = ReferencesProvider::new(Box::new(client));
+        let p = ReferencesProvider::new(Arc::new(client));
         let _ = p
             .references(
                 "file:///x.rs",
@@ -555,7 +564,7 @@ mod tests {
             response: ok_response(Value::Null),
             captured: captured.clone(),
         };
-        let p = ReferencesProvider::new(Box::new(client));
+        let p = ReferencesProvider::new(Arc::new(client));
         let _ = p
             .references(
                 "file:///x.rs",
@@ -574,7 +583,7 @@ mod tests {
 
     #[test]
     fn references_propagates_server_error() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             err_response(-32601, "method not found"),
         ));
@@ -589,7 +598,7 @@ mod tests {
 
     #[test]
     fn references_surfaces_transport_failure() {
-        let client = Box::new(MockLspClient::failing("rust-analyzer", "io: broken pipe"));
+        let client = Arc::new(MockLspClient::failing("rust-analyzer", "io: broken pipe"));
         let p = ReferencesProvider::new(client);
         let r = p.references(
             "file:///foo.rs",
@@ -601,7 +610,7 @@ mod tests {
 
     #[test]
     fn references_rejects_malformed_payload() {
-        let client = Box::new(MockLspClient::new("rust-analyzer", ok_response(json!(42))));
+        let client = Arc::new(MockLspClient::new("rust-analyzer", ok_response(json!(42))));
         let p = ReferencesProvider::new(client);
         let r = p.references(
             "file:///foo.rs",
@@ -617,7 +626,7 @@ mod tests {
 
     #[test]
     fn type_definition_supports_common_languages() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(Value::Null),
         ));
@@ -631,7 +640,7 @@ mod tests {
 
     #[test]
     fn type_definition_returns_empty_when_server_returns_null() {
-        let client = Box::new(MockLspClient::new("tsserver", ok_response(Value::Null)));
+        let client = Arc::new(MockLspClient::new("tsserver", ok_response(Value::Null)));
         let p = TypeDefinitionProvider::new(client);
         let locs = p
             .type_definition("file:///foo.ts", Position { line: 0, character: 0 })
@@ -641,7 +650,7 @@ mod tests {
 
     #[test]
     fn type_definition_parses_single_location() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(json!({
                 "uri": "file:///types.rs",
@@ -665,7 +674,7 @@ mod tests {
 
     #[test]
     fn type_definition_parses_array_of_locations() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "tsserver",
             ok_response(json!([
                 {"uri":"file:///a.ts","range":{"start":{"line":1,"character":0},"end":{"line":1,"character":3}}}
@@ -686,7 +695,7 @@ mod tests {
             response: ok_response(Value::Null),
             captured: captured.clone(),
         };
-        let p = TypeDefinitionProvider::new(Box::new(client));
+        let p = TypeDefinitionProvider::new(Arc::new(client));
         let _ = p
             .type_definition("file:///x.rs", Position { line: 1, character: 2 })
             .unwrap();
@@ -700,7 +709,7 @@ mod tests {
 
     #[test]
     fn type_definition_propagates_server_error() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             err_response(-32601, "method not found"),
         ));
@@ -711,7 +720,7 @@ mod tests {
 
     #[test]
     fn type_definition_surfaces_transport_failure() {
-        let client = Box::new(MockLspClient::failing("rust-analyzer", "io: closed"));
+        let client = Arc::new(MockLspClient::failing("rust-analyzer", "io: closed"));
         let p = TypeDefinitionProvider::new(client);
         let r = p.type_definition("file:///foo.rs", Position { line: 0, character: 0 });
         assert!(matches!(r, Err(ReferencesError::ServerError(m)) if m == "io: closed"));
@@ -719,7 +728,7 @@ mod tests {
 
     #[test]
     fn type_definition_rejects_malformed_payload() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(json!("a string")),
         ));

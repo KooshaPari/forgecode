@@ -51,12 +51,18 @@ pub type ImplementationResult = Result<Vec<Location>, ImplementationError>;
 // ---------------------------------------------------------------------------
 
 /// Forwards `textDocument/implementation` to an LSP client.
-pub struct ImplementationProvider {
-    client: Box<dyn LspClient>,
+///
+/// Generic over `C: LspClient` (rather than `Box<dyn LspClient>`) so we
+/// can share a single concrete client (e.g. `ProcessLspClient` or a
+/// test mock) via `Arc` without paying for dynamic dispatch. This
+/// matches the convention used by [`crate::hover::HoverProvider`] and
+/// [`crate::definition::DefinitionProvider`].
+pub struct ImplementationProvider<C: LspClient + ?Sized> {
+    client: std::sync::Arc<C>,
 }
 
-impl ImplementationProvider {
-    pub fn new(client: Box<dyn LspClient>) -> Self {
+impl<C: LspClient + ?Sized> ImplementationProvider<C> {
+    pub fn new(client: std::sync::Arc<C>) -> Self {
         Self { client }
     }
 
@@ -299,7 +305,7 @@ mod tests {
 
     #[test]
     fn implementation_supports_common_languages() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(Value::Null),
         ));
@@ -316,7 +322,7 @@ mod tests {
 
     #[test]
     fn implementation_returns_empty_when_server_returns_null() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(Value::Null),
         ));
@@ -329,7 +335,7 @@ mod tests {
 
     #[test]
     fn implementation_parses_single_location() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(json!({
                 "uri": "file:///impl.rs",
@@ -354,7 +360,7 @@ mod tests {
 
     #[test]
     fn implementation_parses_array_of_locations() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "tsserver",
             ok_response(json!([
                 {"uri":"file:///a.ts","range":{"start":{"line":1,"character":0},"end":{"line":1,"character":3}}},
@@ -372,7 +378,7 @@ mod tests {
 
     #[test]
     fn implementation_parses_location_link_payload() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(json!([
                 {
@@ -403,7 +409,7 @@ mod tests {
 
     #[test]
     fn implementation_parses_envelope_with_items() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(json!({"items": [
                 {"uri":"file:///x.rs","range":{"start":{"line":1,"character":0},"end":{"line":1,"character":1}}}
@@ -419,7 +425,7 @@ mod tests {
 
     #[test]
     fn implementation_propagates_server_error() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             err_response(-32601, "method not found"),
         ));
@@ -430,7 +436,7 @@ mod tests {
 
     #[test]
     fn implementation_surfaces_transport_failure() {
-        let client = Box::new(MockLspClient::failing("rust-analyzer", "io: broken pipe"));
+        let client = Arc::new(MockLspClient::failing("rust-analyzer", "io: broken pipe"));
         let p = ImplementationProvider::new(client);
         let r = p.implementation("file:///foo.rs", Position { line: 0, character: 0 });
         assert!(matches!(r, Err(ImplementationError::ServerError(m)) if m == "io: broken pipe"));
@@ -438,7 +444,7 @@ mod tests {
 
     #[test]
     fn implementation_rejects_malformed_payload() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(json!("just a string")),
         ));
@@ -450,7 +456,7 @@ mod tests {
     #[test]
     fn implementation_request_includes_method_and_uri() {
         // Capture via Arc so we can read the captured requests after
-        // the provider (which owns the only strong `Box<dyn LspClient>`)
+        // the provider (which owns the only strong `Arc<MockLspClient>`)
         // drops.
         let captured: Arc<Mutex<Vec<LspRequest>>> = Arc::new(Mutex::new(Vec::new()));
         let client = CaptureClient {
@@ -458,7 +464,7 @@ mod tests {
             response: ok_response(Value::Null),
             captured: captured.clone(),
         };
-        let p = ImplementationProvider::new(Box::new(client));
+        let p = ImplementationProvider::new(Arc::new(client));
         let _ = p
             .implementation("file:///x.rs", Position { line: 1, character: 2 })
             .unwrap();

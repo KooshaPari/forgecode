@@ -98,12 +98,17 @@ pub type RenameOutcome = Result<Option<WorkspaceEdit>, RenameError>;
 // ---------------------------------------------------------------------------
 
 /// Forwards `textDocument/rename` to an LSP client.
-pub struct RenameProvider {
-    client: Box<dyn LspClient>,
+///
+/// Generic over `C: LspClient` (rather than `Box<dyn LspClient>`) so
+/// we can share a single concrete client via `Arc` without paying for
+/// dynamic dispatch. Matches the convention used by
+/// [`crate::hover::HoverProvider`].
+pub struct RenameProvider<C: LspClient + ?Sized> {
+    client: std::sync::Arc<C>,
 }
 
-impl RenameProvider {
-    pub fn new(client: Box<dyn LspClient>) -> Self {
+impl<C: LspClient + ?Sized> RenameProvider<C> {
+    pub fn new(client: std::sync::Arc<C>) -> Self {
         Self { client }
     }
 
@@ -333,7 +338,7 @@ mod tests {
 
     #[test]
     fn rename_supports_common_languages() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(Value::Null),
         ));
@@ -350,7 +355,7 @@ mod tests {
 
     #[test]
     fn rename_returns_none_when_server_returns_null() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(Value::Null),
         ));
@@ -367,7 +372,7 @@ mod tests {
 
     #[test]
     fn rename_parses_modern_document_changes_payload() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(json!({
                 "documentChanges": [
@@ -410,7 +415,7 @@ mod tests {
 
     #[test]
     fn rename_parses_legacy_changes_payload() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "tsserver",
             ok_response(json!({
                 "changes": {
@@ -444,7 +449,7 @@ mod tests {
             response: ok_response(Value::Null),
             captured: captured.clone(),
         };
-        let p = RenameProvider::new(Box::new(client));
+        let p = RenameProvider::new(Arc::new(client));
         let _ = p
             .rename(
                 "file:///x.rs",
@@ -464,7 +469,7 @@ mod tests {
 
     #[test]
     fn rename_propagates_server_error() {
-        let client = Box::new(MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             err_response(-32601, "method not found"),
         ));
@@ -475,7 +480,7 @@ mod tests {
 
     #[test]
     fn rename_surfaces_transport_failure() {
-        let client = Box::new(MockLspClient::failing("rust-analyzer", "io: closed"));
+        let client = Arc::new(MockLspClient::failing("rust-analyzer", "io: closed"));
         let p = RenameProvider::new(client);
         let r = p.rename("file:///foo.rs", Position { line: 0, character: 0 }, "new");
         assert!(matches!(r, Err(RenameError::ServerError(m)) if m == "io: closed"));
@@ -483,7 +488,7 @@ mod tests {
 
     #[test]
     fn rename_rejects_malformed_payload() {
-        let client = Box::new(MockLspClient::new("rust-analyzer", ok_response(json!(42))));
+        let client = Arc::new(MockLspClient::new("rust-analyzer", ok_response(json!(42))));
         let p = RenameProvider::new(client);
         let r = p.rename("file:///foo.rs", Position { line: 0, character: 0 }, "new");
         assert!(matches!(r, Err(RenameError::InvalidResponse(_))));
