@@ -3338,6 +3338,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge_sharecli"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "futures",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "forge_similarity"
 version = "0.1.0"
 dependencies = [
