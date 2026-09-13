@@ -7,7 +7,8 @@
 //! - [`TelemetrySink`] — async trait that any sink implements.
 //! - [`TraceraEvent`] — the canonical wire-level event type (serde-tagged).
 //! - [`TraceraSink`] — concrete HTTP sink with bearer / HMAC auth, batching,
-//!   offline retry, and back-pressure.
+//!   offline retry, back-pressure, optional gzip, and runtime auth
+//!   rotation with overlap.
 //! - [`MemoryStore`] — pluggable in-memory batch queue with offline retry,
 //!   used by default; suitable for tests and short-lived processes.
 //!
@@ -28,13 +29,28 @@
 //! ```
 //!
 //! Batches are sent as `{ "events": [...] }` to the configured endpoint.
+//! When [`SinkConfig::compression_enabled`] is true (the default) the
+//! batch is gzipped on the wire and a `Content-Encoding: gzip` header is
+//! set; HMAC signatures are computed over the gzipped bytes so collectors
+//! can verify the wire payload as transmitted.
 //!
 //! ## Auth
 //!
-//! Two strategies are supported via [`AuthMode`]:
+//! Three strategies are supported via [`AuthMode`]:
 //!
+//! - `None` — no authentication. Suitable for local development.
 //! - `Bearer(token)` — `Authorization: Bearer <token>` header.
 //! - `Hmac { secret, header }` — `X-Tracera-Signature: <hex hmac-sha256>`.
+//!
+//! ## Auth rotation (overlap window)
+//!
+//! Call [`TraceraSink::rotate_auth`] to swap to a new credential. The
+//! previous mode remains active for
+//! [`SinkConfig::auth_overlap_window_ms`] (default 60s); during that
+//! window requests are signed with both credentials. After the window
+//! elapses the previous mode is dropped — collectors must be ready to
+//! accept only the new credential by then. Use
+//! [`TraceraSink::set_auth`] for a hard atomic swap with no overlap.
 //!
 //! ## Offline retry
 //!
@@ -56,7 +72,7 @@ mod error;
 pub use config::{AuthMode, SinkConfig};
 pub use error::{SinkError, SinkResult};
 pub use event::{EventKind, TraceraEvent};
-pub use sink::TraceraSink;
+pub use sink::{AuthSnapshot, AuthSnapshotOwned, AuthState, TraceraSink};
 pub use store::{MemoryStore, StoreHandle};
 
 use async_trait::async_trait;
