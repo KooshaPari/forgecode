@@ -1502,9 +1502,7 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                         print!("{output}");
                     }
                     Err(err) => {
-                        self.writeln_title(TitleFormat::error(format!(
-                            "agileplus: {err}"
-                        )))?;
+                        self.writeln_title(TitleFormat::error(format!("agileplus: {err}")))?;
                     }
                 }
                 return Ok(());
