@@ -211,6 +211,10 @@ pub enum TopLevelCommand {
     /// Print heliosLite/forge environment diagnostics (base path, db path,
     /// updater channel, binary identity).
     Heliosdoctor(HeliosdoctorArgs),
+
+    /// Inspect the AgilePlus 31-pillar scorecard and velocity reports.
+    #[command(subcommand)]
+    Agileplus(AgileplusCommandGroup),
 }
 
 /// Arguments for `helioslite heliosdoctor` (or `forge heliosdoctor`).
@@ -841,11 +845,18 @@ pub struct McpAuthArgs {
 
 #[derive(Parser, Debug, Clone)]
 pub struct McpLogoutArgs {
-    /// Name of the MCP server to remove credentials for, or "all" to
+    /// Name of the server to remove credentials for, or "all" to
     /// remove all MCP OAuth credentials.
     pub name: String,
 }
 
+/// Command group for the AgilePlus scorecard & velocity engine.
+///
+/// Re-export of the [`forge_agileplus::commands::Command`] enum so the
+/// `helioslite` / `forge` binary surfaces `helioslite agileplus
+/// <subcommand>`. Each variant maps 1:1 to a subcommand provided by the
+/// `forge_agileplus` crate.
+pub type AgileplusCommandGroup = forge_agileplus::commands::Command;
 /// Configuration scope for settings.
 #[derive(Copy, Clone, Debug, ValueEnum, Default)]
 pub enum Scope {

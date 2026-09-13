@@ -1492,6 +1492,21 @@ impl<A: API + ConsoleWriter + 'static, F: Fn(ForgeConfig) -> A + Send + Sync> UI
                 ))?;
                 return Ok(());
             }
+            TopLevelCommand::Agileplus(cmd) => {
+                // The AgilePlus subcommands are dispatched in main.rs before
+                // the UI starts (so they can exit without touching the TUI).
+                // This arm is a defensive fallback so the match remains
+                // exhaustive even if a future caller reaches it.
+                match forge_agileplus::commands::Cli::run_command(&cmd) {
+                    Ok(output) => {
+                        print!("{output}");
+                    }
+                    Err(err) => {
+                        self.writeln_title(TitleFormat::error(format!("agileplus: {err}")))?;
+                    }
+                }
+                return Ok(());
+            }
         }
         Ok(())
     }

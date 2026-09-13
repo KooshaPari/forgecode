@@ -186,6 +186,26 @@ async fn run() -> Result<()> {
         return Ok(());
     }
 
+    // Handle AgilePlus subcommands before the full UI startup. The
+    // engine is synchronous and exits cleanly with stdout/stderr
+    // results, matching the pattern used by other inspector commands
+    // (e.g. heliosdoctor).
+    if let Some(TopLevelCommand::Agileplus(cmd)) = &cli.subcommands {
+        match forge_agileplus::commands::Cli::run_command(cmd) {
+            Ok(output) => {
+                print!("{output}");
+                return Ok(());
+            }
+            Err(err) => {
+                eprintln!(
+                    "{}",
+                    TitleFormat::error(format!("agileplus: {err}")).display()
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+
     // Handle worktree creation if specified
     let cwd: PathBuf = match (&cli.sandbox, &cli.directory) {
         (Some(sandbox), Some(cli)) => {

@@ -6,6 +6,7 @@
 
 members = [
   "crates/forge_api",
+  "crates/forge_agileplus",
   "crates/forge_app",
   "crates/forge_audit",
   "crates/forge_ci",
@@ -248,6 +249,7 @@ forge_template = { path = "crates/forge_template" }
 forge_tool_macros = { path = "crates/forge_tool_macros" }
 forge_tracker = { path = "crates/forge_tracker" }
 forge_tracera = { path = "crates/forge_tracera" }
+forge_agileplus = { path = "crates/forge_agileplus" }
 forge_walker = { path = "crates/forge_walker" }
 forge_json_repair = { path = "crates/forge_json_repair" }
 forge_plugin = { path = "crates/forge_plugin" }
