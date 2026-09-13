@@ -17,6 +17,7 @@ mod kv_storage;
 mod mcp_client;
 mod mcp_server;
 pub mod resilience;
+pub mod terminal_emulator;
 mod walker;
 
 // L133: forgecode utility cross-pollination from substrate gateway —
