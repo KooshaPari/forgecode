@@ -2,7 +2,8 @@
 //!
 //! `forge_lsp` already shells out to `cargo check` / `tsc` for
 //! diagnostics. For hover, definition, and completion we need to talk
-//! JSON-RPC to a real language server (`rust-analyzer`, `tsserver`).
+//! JSON-RPC to a real language server (`rust-analyzer`,
+//! `typescript-language-server`).
 //!
 //! This module defines:
 //!   * the JSON-RPC message envelope (request / response / notification),
@@ -20,7 +21,8 @@
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -75,13 +77,15 @@ pub struct LspError {
 /// the server returned for the request. Providers (hover / definition /
 /// completion) parse that value into the appropriate domain type.
 pub trait LspClient: Send + Sync {
-    /// Send `request` and wait for the matching response. Implementations
-    /// are responsible for routing by `id` and for handling server-initiated
-    /// notifications (which they may simply discard).
-    fn send(&self, request: LspRequest) -> Result<LspResponse, String>;
-
-    /// Identifier of the underlying server (`"rust-analyzer"`, `"tsserver"`).
+    /// Identifier of the underlying server (`"rust-analyzer"`,
+    /// `"typescript-language-server"`).
     fn server_name(&self) -> &'static str;
+
+    /// Send `request` and wait for the matching response. Implementations
+    /// are responsible for routing by `id` and for handling
+    /// server-initiated notifications (which they discard while waiting
+    /// for the matching response).
+    fn send(&self, request: LspRequest) -> Result<LspResponse, String>;
 }
 
 // ---------------------------------------------------------------------------
@@ -90,23 +94,25 @@ pub trait LspClient: Send + Sync {
 
 /// Standard LSP `Content-Length` header parser. Returns the body.
 fn read_framed<R: Read>(reader: &mut R) -> Result<String, String> {
-    // Read headers.
-    let mut header = String::new();
+    // Read headers one byte at a time (LSP requires ASCII headers).
+    let mut header: Vec<u8> = Vec::with_capacity(128);
+    let mut byte = [0u8; 1];
     loop {
-        let mut byte = [0u8; 1];
         match reader.read_exact(&mut byte) {
-            Ok(_) => {}
+            Ok(()) => {
+                header.push(byte[0]);
+                if header.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+                if header.len() > 8 * 1024 {
+                    return Err("header too large".to_string());
+                }
+            }
             Err(e) => return Err(format!("header read failed: {e}")),
         }
-        header.push(byte[0] as char);
-        if header.ends_with("\r\n\r\n") {
-            break;
-        }
-        if header.len() > 8 * 1024 {
-            return Err("header too large".to_string());
-        }
     }
-    let content_length = header
+    let header_str = std::str::from_utf8(&header).map_err(|e| format!("header not utf-8: {e}"))?;
+    let content_length = header_str
         .lines()
         .find_map(|l| {
             let (k, v) = l.split_once(':')?;
@@ -135,20 +141,42 @@ fn write_framed<W: Write>(writer: &mut W, body: &str) -> Result<(), String> {
     writer.flush().map_err(|e| format!("flush failed: {e}"))
 }
 
-/// Spawn a real LSP server subprocess and talk JSON-RPC over its stdio.
-#[derive(Clone)]
-pub struct ProcessLspClient {
-    name: &'static str,
-    child: Arc<Mutex<Option<Child>>>,
-    // For simplicity we serialize writes/reads behind a single mutex. The
-    // providers' requests are infrequent (hover/definition/completion) so
-    // this is fine; a production rewrite would use channels.
-    io: Arc<Mutex<ProcessIo>>,
+/// A capability bundle returned by the LSP `initialize` handshake.
+///
+/// We only carry the bits `forge_lsp` needs: the server identifier and
+/// the server's own advertised capabilities (left as opaque JSON for
+/// callers that care).
+#[derive(Debug, Clone)]
+pub struct ServerCapabilities {
+    pub server_name: String,
+    pub capabilities: Value,
 }
 
 struct ProcessIo {
     stdin: std::process::ChildStdin,
     stdout: std::process::ChildStdout,
+}
+
+struct SharedClientState {
+    name: &'static str,
+    child: Option<Child>,
+    io: Option<ProcessIo>,
+    initialized: AtomicBool,
+}
+
+/// Spawn a real LSP server subprocess and talk JSON-RPC over its stdio.
+///
+/// `ProcessLspClient` is intentionally cheap-cloneable. Cloning the
+/// `ProcessLspClient` shares the same underlying subprocess via
+/// `Arc<Mutex<...>>` so multiple providers (hover, definition,
+/// completion) can talk to one server.
+///
+/// Subprocess termination is governed by the **last clone's** `Drop`.
+/// Earlier drops don't kill the process — only when the `Arc` strong
+/// count returns to zero does the final `Drop` reap the child.
+#[derive(Clone)]
+pub struct ProcessLspClient {
+    state: Arc<Mutex<SharedClientState>>,
 }
 
 impl ProcessLspClient {
@@ -172,9 +200,12 @@ impl ProcessLspClient {
             .take()
             .ok_or_else(|| "child stdout unavailable".to_string())?;
         Ok(Self {
-            name,
-            child: Arc::new(Mutex::new(Some(child))),
-            io: Arc::new(Mutex::new(ProcessIo { stdin, stdout })),
+            state: Arc::new(Mutex::new(SharedClientState {
+                name,
+                child: Some(child),
+                io: Some(ProcessIo { stdin, stdout }),
+                initialized: AtomicBool::new(false),
+            })),
         })
     }
 
@@ -183,36 +214,188 @@ impl ProcessLspClient {
         Self::spawn(Path::new("rust-analyzer"), &[], "rust-analyzer")
     }
 
-    /// Spawn `tsserver`.
-    pub fn tsserver() -> Result<Self, String> {
-        Self::spawn(Path::new("tsserver"), &[], "tsserver")
+    /// Spawn `typescript-language-server` (the LSP-compliant TypeScript
+    /// language server). The original `tsserver` binary is the
+    /// legacy/non-LSP command-server; we talk JSON-RPC here, so we
+    /// require an LSP-speaking server.
+    pub fn typescript_language_server() -> Result<Self, String> {
+        Self::spawn(
+            Path::new("typescript-language-server"),
+            &["--stdio"],
+            "typescript-language-server",
+        )
+    }
+
+    /// Perform the LSP `initialize` handshake. The first time this is
+    /// called on a `ProcessLspClient`, it sends `initialize` + waits
+    /// for the response, then sends `initialized`. Subsequent calls are
+    /// a no-op.
+    ///
+    /// `workspace_root` is the LSP `rootUri`; we send it as
+    /// `file://...` per spec.
+    pub fn initialize(&self, workspace_root: &Path) -> Result<ServerCapabilities, String> {
+        // Fast path: another thread already initialized.
+        if self
+            .state
+            .lock()
+            .map_err(|e| format!("state mutex poisoned: {e}"))?
+            .initialized
+            .load(Ordering::Acquire)
+        {
+            return Ok(ServerCapabilities {
+                server_name: self
+                    .state
+                    .lock()
+                    .map_err(|e| format!("state mutex poisoned: {e}"))?
+                    .name
+                    .to_string(),
+                capabilities: Value::Null,
+            });
+        }
+
+        let root_uri = crate::server::path_to_uri_for(workspace_root);
+        let init_params = json!({
+            "processId": std::process::id(),
+            "clientInfo": { "name": "forge_lsp", "version": env!("CARGO_PKG_VERSION") },
+            "rootUri": root_uri,
+            "capabilities": {
+                "workspace": { "workspaceFolders": true },
+                "textDocument": {
+                    "hover": { "contentFormat": ["markdown", "plaintext"] },
+                    "completion": { "completionItem": { "snippetSupport": false } },
+                    "definition": { "linkSupport": true },
+                    "synchronization": { "dynamicRegistration": false }
+                }
+            }
+        });
+
+        let resp = self.send(LspRequest::new(0, "initialize", init_params))?;
+
+        // Send the `initialized` notification (no `id`, no response).
+        let initialized_notification = json!({
+            "jsonrpc": "2.0",
+            "method": "initialized",
+            "params": {}
+        });
+        {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|e| format!("state mutex poisoned: {e}"))?;
+            let io = state
+                .io
+                .as_mut()
+                .ok_or_else(|| "io unavailable".to_string())?;
+            let body = serde_json::to_string(&initialized_notification)
+                .map_err(|e| format!("serialize initialized: {e}"))?;
+            write_framed(&mut io.stdin, &body)?;
+        }
+
+        self.state
+            .lock()
+            .map_err(|e| format!("state mutex poisoned: {e}"))?
+            .initialized
+            .store(true, Ordering::Release);
+
+        let capabilities = resp
+            .result
+            .as_ref()
+            .and_then(|r| r.get("capabilities").cloned())
+            .unwrap_or(Value::Null);
+        Ok(ServerCapabilities {
+            server_name: self
+                .state
+                .lock()
+                .map_err(|e| format!("state mutex poisoned: {e}"))?
+                .name
+                .to_string(),
+            capabilities,
+        })
+    }
+
+    /// Cheap-clone the [`ProcessLspClient`] as a [`WeakProcessClient`]
+    /// handle that participates in lifecycle but doesn't keep the
+    /// subprocess alive on its own.
+    pub fn downgrade(&self) -> WeakProcessClient {
+        WeakProcessClient { state: Arc::downgrade(&self.state) }
+    }
+
+    /// Kill the underlying subprocess immediately, regardless of how
+    /// many clones remain. Idempotent.
+    pub fn kill(&self) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|e| format!("state mutex poisoned: {e}"))?;
+        if let Some(mut child) = state.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        state.io = None;
+        Ok(())
+    }
+}
+
+/// A non-owning handle to a [`ProcessLspClient`]. Cloning does not keep
+/// the subprocess alive.
+#[derive(Clone)]
+pub struct WeakProcessClient {
+    state: Weak<Mutex<SharedClientState>>,
+}
+
+impl WeakProcessClient {
+    /// Try to upgrade to a strong reference. Returns `None` if the
+    /// underlying client has already been dropped.
+    pub fn upgrade(&self) -> Option<ProcessLspClient> {
+        self.state.upgrade().map(|state| ProcessLspClient { state })
     }
 }
 
 impl LspClient for ProcessLspClient {
+    fn server_name(&self) -> &'static str {
+        self.state.lock().map(|s| s.name).unwrap_or("<poisoned>")
+    }
+
     fn send(&self, request: LspRequest) -> Result<LspResponse, String> {
         let body =
             serde_json::to_string(&request).map_err(|e| format!("serialize request: {e}"))?;
-        let mut io = self
-            .io
-            .lock()
-            .map_err(|e| format!("io mutex poisoned: {e}"))?;
-        write_framed(&mut io.stdin, &body)?;
-        let response_body = read_framed(&mut io.stdout)?;
-        serde_json::from_str(&response_body)
-            .map_err(|e| format!("parse response: {e} (body={response_body:?})"))
-    }
+        let request_id = request.id;
 
-    fn server_name(&self) -> &'static str {
-        self.name
+        // Write under the same lock we read under to avoid interleaved
+        // framing. Because the lock is process-wide, concurrent senders
+        // will serialize — fine for our low-volume use.
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|e| format!("state mutex poisoned: {e}"))?;
+        let io = state
+            .io
+            .as_mut()
+            .ok_or_else(|| "subprocess not running".to_string())?;
+        write_framed(&mut io.stdin, &body)?;
+
+        // Read responses until we see one whose `id` matches our request.
+        // Server-initiated notifications (no `id`) and out-of-order
+        // responses are discarded.
+        loop {
+            let response_body = read_framed(&mut io.stdout)?;
+            let resp: LspResponse = serde_json::from_str(&response_body)
+                .map_err(|e| format!("parse response: {e} (body={response_body:?})"))?;
+            match resp.id {
+                Some(id) if id == request_id => return Ok(resp),
+                // Same logical request seen before — duplicates or
+                // stray responses. Drop and continue.
+                Some(_) => continue,
+                // No `id` => notification; discard and keep reading.
+                None => continue,
+            }
+        }
     }
 }
 
-impl Drop for ProcessLspClient {
+impl Drop for SharedClientState {
     fn drop(&mut self) {
-        if let Ok(mut guard) = self.child.lock()
-            && let Some(mut child) = guard.take()
-        {
+        if let Some(mut child) = self.child.take() {
             let _ = child.kill();
             let _ = child.wait();
         }

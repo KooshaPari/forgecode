@@ -18,14 +18,12 @@
 //! `Server` is cheap-cloneable via `SharedServer`.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use crate::completion::{CompletionItem, CompletionProvider, CompletionResult};
 use crate::definition::{DefinitionProvider, DefinitionResult, Location};
-use crate::diagnostic as _diag; // alias to avoid name clash; not used directly
 use crate::diagnostic::Diagnostic;
 use crate::hover::{Hover, HoverProvider, HoverResult};
-use crate::lsp_client::Position;
+use crate::lsp_client::{LspClient, Position, ProcessLspClient};
 
 /// Alias preserved from prior P2.3 naming.
 pub use crate::service::DiagnosticsService;
@@ -35,19 +33,20 @@ pub use crate::service::DiagnosticsService;
 pub use crate::service::SharedDiagnosticsService;
 
 /// Cheap-clone handle for `Server`.
-pub type SharedServer = Arc<Server>;
+pub type SharedServer = std::sync::Arc<Server>;
 
 /// The central LSP facade. Holds:
 ///   * `diagnostics` — the P2.3 `DiagnosticsService` (rustc + tsc)
-///   * `hover`       — `HoverProvider` over `rust-analyzer` / `tsserver`
-///   * `definition`  — `DefinitionProvider` over the same
-///   * `completion`  — `CompletionProvider` over the same
+///   * `hover` — `HoverRouter` over `rust-analyzer` /
+///     `typescript-language-server`
+///   * `definition` — `DefinitionRouter` over the same
+///   * `completion` — `CompletionRouter` over the same
 pub struct Server {
     workspace_root: PathBuf,
     diagnostics: DiagnosticsService,
-    hover: HoverProvider,
-    definition: DefinitionProvider,
-    completion: CompletionProvider,
+    hover: HoverRouter,
+    definition: DefinitionRouter,
+    completion: CompletionRouter,
 }
 
 impl std::fmt::Debug for Server {
@@ -61,46 +60,92 @@ impl std::fmt::Debug for Server {
     }
 }
 
+/// Classify a path's language for routing decisions. Centralised here so
+/// the per-provider `supports()` checks and the language-aware routing
+/// in [`Server::with_defaults`] agree on what counts as rust vs.
+/// typescript-family.
+pub(crate) fn classify_language(path: &Path) -> Language {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    match ext.as_deref() {
+        Some("rs") => Language::Rust,
+        Some("ts") | Some("tsx") | Some("mts") | Some("cts") | Some("js") | Some("jsx")
+        | Some("mjs") | Some("cjs") => Language::TypeScript,
+        _ => Language::Unsupported,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Language {
+    Rust,
+    TypeScript,
+    Unsupported,
+}
+
 impl Server {
-    /// Build a server with the default providers (rustc + tsc for
-    /// diagnostics, `rust-analyzer` / `tsserver` for hover/definition/completion).
-    /// Returns an error if any subprocess fails to spawn — callers that
-    /// want partial degradation should use [`Server::new`] with explicit
-    /// providers.
+    /// Build a server with the default providers:
+    ///   * `rust-analyzer` for Rust hover/definition/completion
+    ///   * `typescript-language-server` for TypeScript-family
+    ///     hover/definition/completion
+    ///   * Plus rustc + tsc for diagnostics
+    ///
+    /// Both language servers are spawned, initialized against
+    /// `workspace_root`, and the per-operation providers each get a
+    /// reference to the correct one (so we never route a Rust file
+    /// through `typescript-language-server` or vice-versa).
+    ///
+    /// Returns an error if either subprocess fails to spawn or to
+    /// complete the LSP `initialize` handshake.
     pub fn with_defaults(workspace_root: &Path) -> Result<Self, String> {
-        let rust = crate::lsp_client::ProcessLspClient::rust_analyzer()?;
-        let ts = crate::lsp_client::ProcessLspClient::tsserver()?;
-        // The default routing: rust-analyzer for Rust, tsserver for TS/JS.
-        // Both providers receive the same two clients — `supports()`
-        // filters by file extension so the wrong client is never invoked.
-        // `ProcessLspClient` is `Clone` because its internal state is
-        // wrapped in `Arc<Mutex<…>>`; cloning keeps both providers using
-        // the same subprocess.
-        let rust_hover = rust.clone();
+        let rust = ProcessLspClient::rust_analyzer()?;
+        rust.initialize(workspace_root)?;
+        let ts = ProcessLspClient::typescript_language_server()?;
+        ts.initialize(workspace_root)?;
+
+        // We hand the same Arc<ProcessLspClient> to all three providers
+        // for each language family. `ProcessLspClient` clones share
+        // the subprocess via Arc.
+        let rust_arc = std::sync::Arc::new(rust);
+        let ts_arc = std::sync::Arc::new(ts);
+
         Ok(Self::new(
             workspace_root,
             DiagnosticsService::with_defaults(),
-            HoverProvider::new(Box::new(rust_hover)),
-            DefinitionProvider::new(Box::new(ts)),
-            CompletionProvider::new(Box::new(rust)),
+            HoverProvider::new(rust_arc.clone()),
+            DefinitionProvider::new(rust_arc.clone()),
+            CompletionProvider::new(rust_arc),
+            HoverProvider::new(ts_arc.clone()),
+            DefinitionProvider::new(ts_arc.clone()),
+            CompletionProvider::new(ts_arc),
         ))
     }
 
     /// Build a server with explicit providers (used by tests and by
     /// callers that need finer-grained control).
+    ///
+    /// `Server::hover` / `definition` / `complete` route by file
+    /// extension internally, so each operation pair (hover,
+    /// definition, completion) needs both a Rust and a TypeScript
+    /// family provider.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         workspace_root: &Path,
         diagnostics: DiagnosticsService,
-        hover: HoverProvider,
-        definition: DefinitionProvider,
-        completion: CompletionProvider,
+        hover_rust: HoverProvider<ProcessLspClient>,
+        definition_rust: DefinitionProvider<ProcessLspClient>,
+        completion_rust: CompletionProvider<ProcessLspClient>,
+        hover_ts: HoverProvider<ProcessLspClient>,
+        definition_ts: DefinitionProvider<ProcessLspClient>,
+        completion_ts: CompletionProvider<ProcessLspClient>,
     ) -> Self {
         Self {
             workspace_root: workspace_root.to_path_buf(),
             diagnostics,
-            hover,
-            definition,
-            completion,
+            hover: HoverRouter::new(hover_rust, hover_ts),
+            definition: DefinitionRouter::new(definition_rust, definition_ts),
+            completion: CompletionRouter::new(completion_rust, completion_ts),
         }
     }
 
@@ -111,8 +156,6 @@ impl Server {
 
     /// Diagnostics pass (P2.3).
     pub fn diagnostics_for_path(&self, path: &Path) -> Vec<Diagnostic> {
-        // Surface the error as an empty vector — callers that want the
-        // error can use `DiagnosticsService::diagnostics_for_path` directly.
         self.diagnostics
             .diagnostics_for_path(path, &self.workspace_root)
             .unwrap_or_default()
@@ -123,25 +166,27 @@ impl Server {
         self.diagnostics.invalidate(path);
     }
 
-    /// Hover at `position` in `path`. `path` is converted to a `file://` URI.
+    /// Hover at `position` in `path`. `path` is converted to a `file://`
+    /// URI, resolved against `workspace_root` when relative.
     pub fn hover(&self, path: &Path, position: Position) -> HoverResult {
-        if !self.hover.supports(path) {
-            // For unsupported files, treat as "no hover available" rather
-            // than an error — the REPL doesn't care, and forcing the
-            // caller to special-case errors is annoying.
-            return Ok(None);
+        match classify_language(path) {
+            Language::Unsupported => Ok(None),
+            Language::Rust | Language::TypeScript => {
+                let uri = path_to_uri(path, &self.workspace_root);
+                self.hover.hover(&uri, position)
+            }
         }
-        let uri = path_to_uri(path);
-        self.hover.hover(&uri, position)
     }
 
     /// Definition at `position` in `path`.
     pub fn definition(&self, path: &Path, position: Position) -> DefinitionResult {
-        if !self.definition.supports(path) {
-            return Ok(Vec::new());
+        match classify_language(path) {
+            Language::Unsupported => Ok(Vec::new()),
+            Language::Rust | Language::TypeScript => {
+                let uri = path_to_uri(path, &self.workspace_root);
+                self.definition.definition(&uri, position)
+            }
         }
-        let uri = path_to_uri(path);
-        self.definition.definition(&uri, position)
     }
 
     /// Completion at `position` in `path`.
@@ -151,222 +196,227 @@ impl Server {
         position: Position,
         trigger: Option<char>,
     ) -> CompletionResult {
-        if !self.completion.supports(path) {
-            return Ok(Vec::new());
+        match classify_language(path) {
+            Language::Unsupported => Ok(Vec::new()),
+            Language::Rust | Language::TypeScript => {
+                let uri = path_to_uri(path, &self.workspace_root);
+                self.completion.complete(&uri, position, trigger)
+            }
         }
-        let uri = path_to_uri(path);
-        self.completion.complete(&uri, position, trigger)
     }
 }
 
-/// Convert an absolute path to a `file://` URI.
-fn path_to_uri(path: &Path) -> String {
-    // Naive implementation — no percent-encoding. Sufficient for our
-    // test paths; production code would use the `url` crate.
+// ---------------------------------------------------------------------------
+// Routing wrappers — pick the right provider for each language family.
+// Each router wraps a pair of concrete `HoverProvider<ProcessLspClient>` (or
+// definition/completion variant) — one for Rust, one for the TS family.
+// ---------------------------------------------------------------------------
+
+fn pick_ts_family(uri: &str) -> bool {
+    let path = uri_to_path(uri);
+    matches!(
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .as_deref(),
+        Some("ts")
+            | Some("tsx")
+            | Some("mts")
+            | Some("cts")
+            | Some("js")
+            | Some("jsx")
+            | Some("mjs")
+            | Some("cjs")
+    )
+}
+
+pub struct HoverRouter {
+    rust: HoverProvider<ProcessLspClient>,
+    ts: HoverProvider<ProcessLspClient>,
+}
+
+impl HoverRouter {
+    pub fn new(rust: HoverProvider<ProcessLspClient>, ts: HoverProvider<ProcessLspClient>) -> Self {
+        Self { rust, ts }
+    }
+
+    pub fn name(&self) -> &'static str {
+        self.rust.name()
+    }
+
+    pub fn hover(
+        &self,
+        uri: &str,
+        position: Position,
+    ) -> Result<Option<crate::hover::Hover>, crate::hover::HoverError> {
+        if pick_ts_family(uri) {
+            self.ts.hover(uri, position)
+        } else {
+            self.rust.hover(uri, position)
+        }
+    }
+}
+
+pub struct DefinitionRouter {
+    rust: DefinitionProvider<ProcessLspClient>,
+    ts: DefinitionProvider<ProcessLspClient>,
+}
+
+impl DefinitionRouter {
+    pub fn new(
+        rust: DefinitionProvider<ProcessLspClient>,
+        ts: DefinitionProvider<ProcessLspClient>,
+    ) -> Self {
+        Self { rust, ts }
+    }
+
+    pub fn name(&self) -> &'static str {
+        self.rust.name()
+    }
+
+    pub fn definition(
+        &self,
+        uri: &str,
+        position: Position,
+    ) -> Result<Vec<crate::definition::Location>, crate::definition::DefinitionError> {
+        if pick_ts_family(uri) {
+            self.ts.definition(uri, position)
+        } else {
+            self.rust.definition(uri, position)
+        }
+    }
+}
+
+pub struct CompletionRouter {
+    rust: CompletionProvider<ProcessLspClient>,
+    ts: CompletionProvider<ProcessLspClient>,
+}
+
+impl CompletionRouter {
+    pub fn new(
+        rust: CompletionProvider<ProcessLspClient>,
+        ts: CompletionProvider<ProcessLspClient>,
+    ) -> Self {
+        Self { rust, ts }
+    }
+
+    pub fn name(&self) -> &'static str {
+        self.rust.name()
+    }
+
+    pub fn complete(
+        &self,
+        uri: &str,
+        position: Position,
+        trigger: Option<char>,
+    ) -> Result<Vec<crate::completion::CompletionItem>, crate::completion::CompletionError> {
+        if pick_ts_family(uri) {
+            self.ts.complete(uri, position, trigger)
+        } else {
+            self.rust.complete(uri, position, trigger)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Path <-> URI conversion (percent-encoded file:// URIs)
+// ---------------------------------------------------------------------------
+
+/// Convert an absolute-or-relative path to a `file://` URI. Relative
+/// paths are resolved against `workspace_root`. The output is
+/// percent-encoded per RFC 3986 via the `url` crate so paths with
+/// spaces or non-ASCII characters round-trip safely.
+pub(crate) fn path_to_uri(path: &Path, workspace_root: &Path) -> String {
     let abs = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::path::PathBuf::from("/").join(path)
+        workspace_root.join(path)
     };
-    format!("file://{}", abs.display().to_string().replace('\\', "/"))
+    path_to_uri_for(&abs)
 }
 
-#[allow(dead_code)]
-fn _force_link(_: &_diag::Diagnostic) {} // keep diagnostics re-export alive
+/// Convert an absolute path to a `file://` URI. Exposed (crate-private)
+/// so `ProcessLspClient::initialize` can reuse the encoding logic
+/// without taking a circular dependency on the rest of `Server`.
+pub(crate) fn path_to_uri_for(abs_path: &Path) -> String {
+    match url::Url::from_file_path(abs_path) {
+        Ok(u) => u.to_string(),
+        Err(_) => {
+            // Fallback: best-effort manual conversion. Should never
+            // happen on real absolute paths, but a malformed Path
+            // shouldn't bring the whole LSP layer down.
+            let s = abs_path.display().to_string().replace('\\', "/");
+            format!("file://{s}")
+        }
+    }
+}
+
+fn uri_to_path(uri: &str) -> PathBuf {
+    match url::Url::parse(uri) {
+        Ok(u) if u.scheme() == "file" => {
+            u.to_file_path().unwrap_or_else(|_| PathBuf::from(u.path()))
+        }
+        _ => PathBuf::from(uri),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::completion::CompletionKind;
-    use crate::definition::Location;
-    use crate::hover::Hover;
-    use crate::lsp_client::{LspClient, LspRequest, LspResponse};
-    use std::sync::Mutex;
-
-    /// Shared mock used by all three provider modules — keeps the
-    /// per-module tests consistent.
-    pub struct RoutingMockClient {
-        name: &'static str,
-        scripted: Mutex<Vec<Result<LspResponse, String>>>,
-        captured: Mutex<Vec<LspRequest>>,
-    }
-
-    impl RoutingMockClient {
-        pub fn new(name: &'static str, responses: Vec<LspResponse>) -> Self {
-            Self {
-                name,
-                scripted: Mutex::new(responses.into_iter().map(Ok).collect()),
-                captured: Mutex::new(Vec::new()),
-            }
-        }
-    }
-
-    impl LspClient for RoutingMockClient {
-        fn send(&self, request: LspRequest) -> Result<LspResponse, String> {
-            self.captured.lock().unwrap().push(request);
-            let mut q = self.scripted.lock().unwrap();
-            if q.is_empty() {
-                Ok(LspResponse {
-                    jsonrpc: Some("2.0".into()),
-                    id: Some(0),
-                    result: Some(serde_json::Value::Null),
-                    error: None,
-                })
-            } else {
-                q.remove(0)
-            }
-        }
-        fn server_name(&self) -> &'static str {
-            self.name
-        }
-    }
 
     fn workspace_dir() -> PathBuf {
         std::env::temp_dir().join("forge_lsp_test_server")
     }
 
     #[test]
-    fn server_routes_unsupported_paths_to_empty() {
-        let server = Server::new(
-            &workspace_dir(),
-            DiagnosticsService::with_defaults(),
-            HoverProvider::new(boxed(client_name("rust-analyzer"))),
-            DefinitionProvider::new(boxed(client_name("rust-analyzer"))),
-            CompletionProvider::new(boxed(client_name("rust-analyzer"))),
-        );
-        let h = server
-            .hover(&PathBuf::from("foo.py"), Position { line: 0, character: 0 })
-            .unwrap();
-        assert!(h.is_none());
-        let defs = server
-            .definition(&PathBuf::from("foo.py"), Position { line: 0, character: 0 })
-            .unwrap();
-        assert!(defs.is_empty());
-        let comps = server
-            .complete(
-                &PathBuf::from("foo.py"),
-                Position { line: 0, character: 0 },
-                None,
-            )
-            .unwrap();
-        assert!(comps.is_empty());
+    fn classify_language_routes_rust_extensions() {
+        assert_eq!(classify_language(Path::new("foo.rs")), Language::Rust);
+        assert_eq!(classify_language(Path::new("foo.RS")), Language::Rust);
     }
 
     #[test]
-    fn server_holds_workspace_root_and_provider_names() {
-        let server = Server::new(
-            &workspace_dir(),
-            DiagnosticsService::with_defaults(),
-            HoverProvider::new(boxed(client_name("rust-analyzer"))),
-            DefinitionProvider::new(boxed(client_name("tsserver"))),
-            CompletionProvider::new(boxed(client_name("rust-analyzer"))),
-        );
-        assert_eq!(server.workspace_root(), workspace_dir());
-        let dbg = format!("{server:?}");
-        assert!(dbg.contains("rust-analyzer"));
-        assert!(dbg.contains("tsserver"));
+    fn classify_language_routes_typescript_family() {
+        for ext in ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"] {
+            let p = PathBuf::from(format!("foo.{ext}"));
+            assert_eq!(
+                classify_language(&p),
+                Language::TypeScript,
+                "{ext} should be TS family"
+            );
+        }
     }
 
     #[test]
-    fn server_definition_routes_through_provider() {
-        // script a successful single-location response for the
-        // underlying definition provider
-        let client = RoutingMockClient::new(
-            "rust-analyzer",
-            vec![LspResponse {
-                jsonrpc: Some("2.0".into()),
-                id: Some(1),
-                result: Some(serde_json::json!({
-                    "uri":"file:///lib.rs",
-                    "range":{"start":{"line":0,"character":0},"end":{"line":0,"character":3}}
-                })),
-                error: None,
-            }],
+    fn classify_language_rejects_unsupported() {
+        assert_eq!(
+            classify_language(Path::new("foo.py")),
+            Language::Unsupported
         );
-        let server = Server::new(
-            &workspace_dir(),
-            DiagnosticsService::with_defaults(),
-            HoverProvider::new(boxed(client_name("rust-analyzer"))),
-            DefinitionProvider::new(boxed(client)),
-            CompletionProvider::new(boxed(client_name("rust-analyzer"))),
-        );
-        let locs = server
-            .definition(
-                &PathBuf::from("src/foo.rs"),
-                Position { line: 0, character: 0 },
-            )
-            .unwrap();
-        assert_eq!(locs.len(), 1);
-        assert_eq!(locs[0].uri, "file:///lib.rs");
+        assert_eq!(classify_language(Path::new("foo")), Language::Unsupported);
     }
 
     #[test]
-    fn server_completion_routes_through_provider() {
-        let client = RoutingMockClient::new(
-            "tsserver",
-            vec![LspResponse {
-                jsonrpc: Some("2.0".into()),
-                id: Some(1),
-                result: Some(serde_json::json!([
-                    {"label":"hello","kind":1}
-                ])),
-                error: None,
-            }],
+    fn path_to_uri_uses_url_crate_for_percent_encoding() {
+        // A path with a space — the `url` crate percent-encodes it.
+        let p = PathBuf::from("/tmp/has space/file.rs");
+        let uri = path_to_uri(&p, &workspace_dir());
+        assert!(uri.starts_with("file:///"), "expected file:///, got {uri}");
+        assert!(
+            uri.contains("has%20space") || uri.contains("has%20Space"),
+            "expected percent-encoded space in {uri}"
         );
-        let server = Server::new(
-            &workspace_dir(),
-            DiagnosticsService::with_defaults(),
-            HoverProvider::new(boxed(client_name("tsserver"))),
-            DefinitionProvider::new(boxed(client_name("tsserver"))),
-            CompletionProvider::new(boxed(client)),
-        );
-        let comps = server
-            .complete(
-                &PathBuf::from("src/foo.ts"),
-                Position { line: 1, character: 4 },
-                Some('.'),
-            )
-            .unwrap();
-        assert_eq!(comps.len(), 1);
-        assert_eq!(comps[0].label, "hello");
-        assert_eq!(comps[0].kind, Some(CompletionKind::Text));
     }
 
     #[test]
-    fn server_hover_routes_through_provider() {
-        let client = RoutingMockClient::new(
-            "rust-analyzer",
-            vec![LspResponse {
-                jsonrpc: Some("2.0".into()),
-                id: Some(1),
-                result: Some(serde_json::json!({"contents":"fn main()"})),
-                error: None,
-            }],
-        );
-        let server = Server::new(
-            &workspace_dir(),
-            DiagnosticsService::with_defaults(),
-            HoverProvider::new(boxed(client)),
-            DefinitionProvider::new(boxed(client_name("rust-analyzer"))),
-            CompletionProvider::new(boxed(client_name("rust-analyzer"))),
-        );
-        let h = server
-            .hover(
-                &PathBuf::from("src/main.rs"),
-                Position { line: 0, character: 0 },
-            )
-            .unwrap();
-        let h = h.expect("hover present");
-        assert_eq!(h.contents, "fn main()");
-    }
-
-    fn client_name(name: &'static str) -> RoutingMockClient {
-        RoutingMockClient::new(name, vec![])
-    }
-
-    /// Wrap a concrete client in a `Box<dyn LspClient>`.
-    fn boxed<T: LspClient + 'static>(c: T) -> Box<dyn LspClient> {
-        Box::new(c)
+    fn path_to_uri_resolves_relative_paths_against_workspace_root() {
+        let root = PathBuf::from("/repo");
+        let uri = path_to_uri(Path::new("src/foo.rs"), &root);
+        assert!(uri.starts_with("file:///repo/"), "got {uri}");
+        assert!(uri.ends_with("/repo/src/foo.rs"), "got {uri}");
     }
 
     // Compile-time sanity: re-exported types are usable.

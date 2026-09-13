@@ -1,10 +1,11 @@
 //! `DefinitionProvider` — forwards `textDocument/definition` to a real
-//! LSP server (`rust-analyzer`, `tsserver`).
+//! LSP server (`rust-analyzer`, `typescript-language-server`).
 //!
-//! Per LSP spec the server returns either a single [`Location`] or an
-//! array. We normalize both to `Vec<Location>` so callers always work
-//! with a list (a definition is usually 1 item, but type-usages can
-//! produce multiple).
+//! Per LSP spec the server returns either a single [`Location`], an
+//! array, or (with `linkSupport: true`) one or more `LocationLink`
+//! objects. We normalize all three to `Vec<Location>` so callers
+//! always work with a list (a definition is usually 1 item, but
+//! type-usages can produce multiple).
 //!
 //! [`Location`]: crate::definition::Location
 
@@ -54,12 +55,13 @@ pub type DefinitionResult = Result<Vec<Location>, DefinitionError>;
 // Provider
 // ---------------------------------------------------------------------------
 
-pub struct DefinitionProvider {
-    client: Box<dyn LspClient>,
+/// Generic over `C: LspClient` (no `Box<dyn>`).
+pub struct DefinitionProvider<C: LspClient + ?Sized> {
+    client: std::sync::Arc<C>,
 }
 
-impl DefinitionProvider {
-    pub fn new(client: Box<dyn LspClient>) -> Self {
+impl<C: LspClient + ?Sized> DefinitionProvider<C> {
+    pub fn new(client: std::sync::Arc<C>) -> Self {
         Self { client }
     }
 
@@ -73,7 +75,15 @@ impl DefinitionProvider {
                 .and_then(|e| e.to_str())
                 .map(|e| e.to_ascii_lowercase())
                 .as_deref(),
-            Some("rs") | Some("ts") | Some("tsx") | Some("js") | Some("jsx")
+            Some("rs")
+                | Some("ts")
+                | Some("tsx")
+                | Some("mts")
+                | Some("cts")
+                | Some("js")
+                | Some("jsx")
+                | Some("mjs")
+                | Some("cjs")
         )
     }
 
@@ -111,25 +121,107 @@ impl DefinitionProvider {
 // Parsing
 // ---------------------------------------------------------------------------
 
-/// Normalize a `Location` / `Location[]` payload into `Vec<Location>`.
+/// Normalize a `Location` / `Location[]` / `LocationLink[]` payload
+/// into `Vec<Location>`. We try `LocationLink` first (it has
+/// `targetUri` / `targetRange` keys) and fall back to plain
+/// `Location`.
 fn parse_locations(raw: &Value) -> DefinitionResult {
     match raw {
         Value::Null => Ok(Vec::new()),
         Value::Array(_) => {
-            let locs: Vec<Location> = serde_json::from_value(raw.clone())
-                .map_err(|e| DefinitionError::InvalidResponse(format!("array of Location: {e}")))?;
-            Ok(locs)
+            // Mixed array: each element might be Location or
+            // LocationLink. Inspect the first key to dispatch.
+            let arr = raw
+                .as_array()
+                .ok_or_else(|| DefinitionError::InvalidResponse("expected array".to_string()))?;
+            let mut out = Vec::with_capacity(arr.len());
+            for item in arr {
+                out.push(parse_single_location(item)?);
+            }
+            Ok(out)
         }
-        Value::Object(_) => {
-            let loc: Location = serde_json::from_value(raw.clone())
-                .map_err(|e| DefinitionError::InvalidResponse(format!("single Location: {e}")))?;
-            Ok(vec![loc])
-        }
+        Value::Object(_) => parse_locations_vec(raw),
         _ => Err(DefinitionError::InvalidResponse(format!(
             "unexpected payload kind: {}",
             raw
         ))),
     }
+}
+
+fn parse_locations_vec(raw: &Value) -> DefinitionResult {
+    if let Some(items) = raw.get("items") {
+        // Some servers wrap Location[] in `{ items: [...] }`. Match
+        // both shapes (`Location[]` and `LocationList`).
+        let arr = items
+            .as_array()
+            .ok_or_else(|| DefinitionError::InvalidResponse("items not an array".to_string()))?;
+        let mut out = Vec::with_capacity(arr.len());
+        for item in arr {
+            out.push(parse_single_location(item)?);
+        }
+        return Ok(out);
+    }
+    Ok(vec![parse_single_location(raw)?])
+}
+
+fn parse_single_location(item: &Value) -> Result<Location, DefinitionError> {
+    // LocationLink: { targetUri, targetRange, targetSelectionRange,
+    //                 originSelectionRange, originRange? }
+    if let Some(uri) = item.get("targetUri").and_then(Value::as_str) {
+        let range = item
+            .get("targetRange")
+            .ok_or_else(|| {
+                DefinitionError::InvalidResponse("LocationLink missing 'targetRange'".to_string())
+            })
+            .and_then(range_from_value)?;
+        return Ok(Location { uri: uri.to_string(), range });
+    }
+    // Location: { uri, range }
+    if let (Some(uri), Some(range)) = (item.get("uri").and_then(Value::as_str), item.get("range")) {
+        let range = range_from_value(range)?;
+        return Ok(Location { uri: uri.to_string(), range });
+    }
+    Err(DefinitionError::InvalidResponse(format!(
+        "object missing 'uri'+'range' or 'targetUri'+'targetRange': {}",
+        item
+    )))
+}
+
+fn range_from_value(v: &Value) -> Result<Range, DefinitionError> {
+    let start = v
+        .get("start")
+        .ok_or_else(|| DefinitionError::InvalidResponse("range missing 'start'".to_string()))?;
+    let end = v
+        .get("end")
+        .ok_or_else(|| DefinitionError::InvalidResponse("range missing 'end'".to_string()))?;
+    Ok(Range {
+        start: Position {
+            line: start
+                .get("line")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| DefinitionError::InvalidResponse("range.start.line".to_string()))?
+                as u32,
+            character: start
+                .get("character")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    DefinitionError::InvalidResponse("range.start.character".to_string())
+                })? as u32,
+        },
+        end: Position {
+            line: end
+                .get("line")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| DefinitionError::InvalidResponse("range.end.line".to_string()))?
+                as u32,
+            character: end
+                .get("character")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    DefinitionError::InvalidResponse("range.end.character".to_string())
+                })? as u32,
+        },
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -150,7 +242,7 @@ fn next_request_id() -> u64 {
 mod tests {
     use super::*;
     use crate::lsp_client::LspResponse;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     pub struct MockLspClient {
         pub name: &'static str,
@@ -181,6 +273,10 @@ mod tests {
     }
 
     impl crate::lsp_client::LspClient for MockLspClient {
+        fn server_name(&self) -> &'static str {
+            self.name
+        }
+
         fn send(&self, request: LspRequest) -> Result<LspResponse, String> {
             self.captured.lock().unwrap().push(request);
             let next = self.scripted.lock().unwrap().take();
@@ -193,9 +289,6 @@ mod tests {
                     error: None,
                 }),
             }
-        }
-        fn server_name(&self) -> &'static str {
-            self.name
         }
     }
 
@@ -223,23 +316,28 @@ mod tests {
 
     #[test]
     fn definition_supports_common_languages() {
-        let client = MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(
                 json!({"uri":"file:///foo.rs","range":{"start":{"line":0,"character":0},"end":{"line":0,"character":3}}}),
             ),
-        );
-        let p = DefinitionProvider::new(Box::new(client));
+        ));
+        let p = DefinitionProvider::new(client);
         assert!(p.supports(Path::new("foo.rs")));
         assert!(p.supports(Path::new("foo.tsx")));
         assert!(p.supports(Path::new("foo.JS")));
+        assert!(p.supports(Path::new("foo.mts")));
+        assert!(p.supports(Path::new("foo.cts")));
         assert!(!p.supports(Path::new("foo.py")));
     }
 
     #[test]
     fn definition_returns_empty_when_server_returns_null() {
-        let client = MockLspClient::new("rust-analyzer", ok_response(Value::Null));
-        let p = DefinitionProvider::new(Box::new(client));
+        let client = Arc::new(MockLspClient::new(
+            "rust-analyzer",
+            ok_response(Value::Null),
+        ));
+        let p = DefinitionProvider::new(client);
         let locs = p
             .definition("file:///foo.rs", Position { line: 0, character: 0 })
             .unwrap();
@@ -248,7 +346,7 @@ mod tests {
 
     #[test]
     fn definition_parses_single_location() {
-        let client = MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(json!({
                 "uri": "file:///lib.rs",
@@ -257,8 +355,8 @@ mod tests {
                     "end":   {"line": 10, "character": 4}
                 }
             })),
-        );
-        let p = DefinitionProvider::new(Box::new(client));
+        ));
+        let p = DefinitionProvider::new(client);
         let locs = p
             .definition("file:///foo.rs", Position { line: 5, character: 2 })
             .unwrap();
@@ -270,14 +368,14 @@ mod tests {
 
     #[test]
     fn definition_parses_array_of_locations() {
-        let client = MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "tsserver",
             ok_response(json!([
                 {"uri":"file:///a.ts","range":{"start":{"line":1,"character":0},"end":{"line":1,"character":3}}},
                 {"uri":"file:///b.ts","range":{"start":{"line":2,"character":0},"end":{"line":2,"character":3}}}
             ])),
-        );
-        let p = DefinitionProvider::new(Box::new(client));
+        ));
+        let p = DefinitionProvider::new(client);
         let locs = p
             .definition("file:///foo.ts", Position { line: 9, character: 0 })
             .unwrap();
@@ -287,25 +385,64 @@ mod tests {
     }
 
     #[test]
+    fn definition_parses_location_link_payload() {
+        // rust-analyzer with linkSupport returns LocationLink[].
+        let client = Arc::new(MockLspClient::new(
+            "rust-analyzer",
+            ok_response(json!([
+                {
+                    "originSelectionRange": {
+                        "start": {"line": 5, "character": 4},
+                        "end":   {"line": 5, "character": 8}
+                    },
+                    "targetUri": "file:///lib.rs",
+                    "targetRange": {
+                        "start": {"line": 10, "character": 0},
+                        "end":   {"line": 10, "character": 8}
+                    },
+                    "targetSelectionRange": {
+                        "start": {"line": 10, "character": 3},
+                        "end":   {"line": 10, "character": 6}
+                    }
+                }
+            ])),
+        ));
+        let p = DefinitionProvider::new(client);
+        let locs = p
+            .definition("file:///foo.rs", Position { line: 5, character: 5 })
+            .unwrap();
+        assert_eq!(locs.len(), 1);
+        assert_eq!(locs[0].uri, "file:///lib.rs");
+        assert_eq!(locs[0].range.start.line, 10);
+        assert_eq!(locs[0].range.end.character, 8);
+    }
+
+    #[test]
     fn definition_propagates_server_error() {
-        let client = MockLspClient::new("rust-analyzer", err_response(-32601, "method not found"));
-        let p = DefinitionProvider::new(Box::new(client));
+        let client = Arc::new(MockLspClient::new(
+            "rust-analyzer",
+            err_response(-32601, "method not found"),
+        ));
+        let p = DefinitionProvider::new(client);
         let r = p.definition("file:///foo.rs", Position { line: 0, character: 0 });
         assert!(matches!(r, Err(DefinitionError::ServerError(_))));
     }
 
     #[test]
     fn definition_surfaces_transport_failure() {
-        let client = MockLspClient::failing("rust-analyzer", "io: broken pipe");
-        let p = DefinitionProvider::new(Box::new(client));
+        let client = Arc::new(MockLspClient::failing("rust-analyzer", "io: broken pipe"));
+        let p = DefinitionProvider::new(client);
         let r = p.definition("file:///foo.rs", Position { line: 0, character: 0 });
         assert!(matches!(r, Err(DefinitionError::ServerError(m)) if m == "io: broken pipe"));
     }
 
     #[test]
     fn definition_rejects_malformed_payload() {
-        let client = MockLspClient::new("rust-analyzer", ok_response(json!("just a string")));
-        let p = DefinitionProvider::new(Box::new(client));
+        let client = Arc::new(MockLspClient::new(
+            "rust-analyzer",
+            ok_response(json!("just a string")),
+        ));
+        let p = DefinitionProvider::new(client);
         let r = p.definition("file:///foo.rs", Position { line: 0, character: 0 });
         assert!(matches!(r, Err(DefinitionError::InvalidResponse(_))));
     }
