@@ -2885,6 +2885,7 @@ dependencies = [
  "forge_domain",
  "forge_eventsource",
  "forge_fs",
+ "forge_pheno_shell",
  "forge_select",
  "forge_services",
  "forge_snaps",

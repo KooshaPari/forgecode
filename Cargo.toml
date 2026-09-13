@@ -266,6 +266,7 @@ forge_mux = { path = "crates/forge_mux" }
 forge_graph = { path = "crates/forge_graph" }
 forge_lsp = { path = "crates/forge_lsp" }
 forge_paste = { path = "crates/forge_paste" }
+forge_pheno_shell = { path = "crates/forge_pheno_shell" }
 forge_render = { path = "crates/forge_render" }
 
 [workspace.dev-dependencies]

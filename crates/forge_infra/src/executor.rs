@@ -10,6 +10,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 
 use crate::console::StdConsoleWriter;
+use crate::terminal_emulator::{apply_emulator_env, detect_terminal_emulator};
 
 /// Service for executing shell commands
 #[derive(Clone, Debug)]
@@ -61,6 +62,16 @@ impl ForgeCommandExecutorService {
         if let Some(path) = sanitize_windows_path() {
             command.env("PATH", path);
         }
+
+        // Detect the terminal emulator wrapping the executor (WezTerm,
+        // iTerm2, Kitty, Windows Terminal, etc.) and stamp a marker env
+        // var onto the subprocess so downstream tooling can read our
+        // detection result without re-scanning. Detection is cheap (a
+        // hashmap lookup) but we still gate it on `trace!` so release
+        // builds don't pay for the secondary-heuristic scan in the
+        // child unless the executor is running under a debugger.
+        let (terminal_emulator, _terminal_source) = detect_terminal_emulator();
+        apply_emulator_env(&mut command, terminal_emulator);
 
         let parameter = if is_windows { "/C" } else { "-c" };
         command.arg(parameter);
