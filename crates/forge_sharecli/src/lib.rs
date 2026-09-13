@@ -1,0 +1,34 @@
+//! `forge_sharecli` — ShareCLI realtime relay (P3.3).
+//!
+//! In-process broadcast channels, bounded queues, and a cloneable hub that
+//! ties them together. No network I/O — this crate is the local fanout
+//! substrate that the future WS/SSE transport will sit on top of.
+//!
+//! # Quick start
+//!
+//! ```rust,no_run
+//! use forge_sharecli::{ShareHub, ShareMessage};
+//!
+//! # async fn demo() {
+//! let hub = ShareHub::new();
+//! let mut sub = hub.subscribe("chat").unwrap();
+//! hub.publish_text("chat", "hello, world").unwrap();
+//! let msg = sub.recv().await.unwrap();
+//! assert_eq!(msg.payload.as_str().unwrap(), "hello, world");
+//! # }
+//! ```
+
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+
+pub mod channel;
+pub mod error;
+pub mod hub;
+pub mod message;
+pub mod queue;
+
+pub use channel::{Channel, Subscriber};
+pub use error::ShareError;
+pub use hub::ShareHub;
+pub use message::ShareMessage;
+pub use queue::{Queue, QueueConsumer, QueueProducer};

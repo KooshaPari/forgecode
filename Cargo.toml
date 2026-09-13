@@ -50,6 +50,7 @@ members = [
   "crates/forge_template",
   "crates/forge_test_kit",
   "crates/forge_tool_macros",
+  "crates/forge_sharecli",
   "crates/forge_tracera",
   "crates/forge_tracker",
   "crates/forge_tui",
@@ -249,6 +250,7 @@ forge_template = { path = "crates/forge_template" }
 forge_tool_macros = { path = "crates/forge_tool_macros" }
 forge_tracker = { path = "crates/forge_tracker" }
 forge_tracera = { path = "crates/forge_tracera" }
+forge_sharecli = { path = "crates/forge_sharecli" }
 forge_agileplus = { path = "crates/forge_agileplus" }
 forge_walker = { path = "crates/forge_walker" }
 forge_json_repair = { path = "crates/forge_json_repair" }
