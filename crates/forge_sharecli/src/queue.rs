@@ -174,7 +174,7 @@ mod tests {
     #[tokio::test]
     async fn queue_full_returns_error() {
         let q = Queue::new("jobs", 1);
-        let _c = q.try_publish(ShareMessage::text("jobs", "a")).unwrap();
+        q.try_publish(ShareMessage::text("jobs", "a")).unwrap();
         // capacity 1, one message already buffered → next try_publish should be full
         // (mpsc channel 1 may still accept — we use try_send which checks capacity).
         // For tokio mpsc with capacity 1, the first send succeeds and the
