@@ -1,5 +1,6 @@
 //! `HoverProvider` — forwards `textDocument/hover` to a real LSP server
-//! (`rust-analyzer` for `.rs`, `tsserver` for `.ts`/`.tsx`).
+//! (`rust-analyzer` for `.rs`, `typescript-language-server` for
+//! `.ts`/`.tsx`/`.mts`/`.cts`/`.js`/`.jsx`).
 //!
 //! The provider speaks the LSP [`textDocument/hover`](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_hover)
 //! request and returns the parsed [`Hover`] result. On error it
@@ -72,12 +73,17 @@ pub type HoverResult = Result<Option<Hover>, HoverError>;
 // ---------------------------------------------------------------------------
 
 /// A provider that forwards hover requests to an LSP client.
-pub struct HoverProvider {
-    client: Box<dyn LspClient>,
+///
+/// Generic over `C: LspClient` (instead of `Box<dyn LspClient>`) so we
+/// don't pay for dynamic dispatch and so concrete client types like
+/// `ProcessLspClient` and `MockLspClient` can be used without
+/// allocation. Per AGENTS.md, service crates must avoid trait objects.
+pub struct HoverProvider<C: LspClient + ?Sized> {
+    client: std::sync::Arc<C>,
 }
 
-impl HoverProvider {
-    pub fn new(client: Box<dyn LspClient>) -> Self {
+impl<C: LspClient + ?Sized> HoverProvider<C> {
+    pub fn new(client: std::sync::Arc<C>) -> Self {
         Self { client }
     }
 
@@ -93,7 +99,15 @@ impl HoverProvider {
                 .and_then(|e| e.to_str())
                 .map(|e| e.to_ascii_lowercase())
                 .as_deref(),
-            Some("rs") | Some("ts") | Some("tsx") | Some("js") | Some("jsx")
+            Some("rs")
+                | Some("ts")
+                | Some("tsx")
+                | Some("mts")
+                | Some("cts")
+                | Some("js")
+                | Some("jsx")
+                | Some("mjs")
+                | Some("cjs")
         )
     }
 
@@ -126,7 +140,8 @@ impl HoverProvider {
 
 /// Parse the LSP `Hover` payload into our local [`Hover`] type.
 fn parse_hover(raw: &Value) -> Result<Hover, HoverError> {
-    // contents can be a string (legacy MarkedString) or { kind, value }
+    // contents can be a string (legacy MarkedString), a MarkupContent
+    // object `{ kind, value }`, or an array of MarkedString[].
     let contents = raw
         .get("contents")
         .ok_or_else(|| HoverError::InvalidResponse("missing 'contents'".to_string()))?;
@@ -140,7 +155,6 @@ fn parse_hover(raw: &Value) -> Result<Hover, HoverError> {
             })?
             .to_string(),
         Value::Array(items) => {
-            // MarkedString[] — concatenate strings.
             let mut buf = String::new();
             for item in items {
                 match item {
@@ -149,6 +163,9 @@ fn parse_hover(raw: &Value) -> Result<Hover, HoverError> {
                         buf.push('\n');
                     }
                     Value::Object(o) => {
+                        // Each entry may be a `{ language, value }`
+                        // MarkedString or a MarkupContent — both expose
+                        // the rendered text in `value`.
                         if let Some(v) = o.get("value").and_then(Value::as_str) {
                             buf.push_str(v);
                             buf.push('\n');
@@ -197,10 +214,11 @@ mod tests {
     use super::*;
     use crate::lsp_client::LspResponse;
     use std::path::PathBuf;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
-    /// Mock LSP client that records the most recent request and returns a
-    /// scripted response.
+    /// Mock LSP client that records the most recent request and returns
+    /// a scripted response. Shared across provider tests via the
+    /// [`MockLspClient::new`] helper.
     pub struct MockLspClient {
         pub name: &'static str,
         pub scripted: Mutex<Option<Result<LspResponse, String>>>,
@@ -233,9 +251,12 @@ mod tests {
     }
 
     impl LspClient for MockLspClient {
+        fn server_name(&self) -> &'static str {
+            self.name
+        }
+
         fn send(&self, request: LspRequest) -> Result<LspResponse, String> {
             self.captured.lock().unwrap().push(request);
-            // Take the scripted response so each call can be different.
             let next = self.scripted.lock().unwrap().take();
             match next {
                 Some(r) => r,
@@ -246,9 +267,6 @@ mod tests {
                     error: None,
                 }),
             }
-        }
-        fn server_name(&self) -> &'static str {
-            self.name
         }
     }
 
@@ -276,22 +294,28 @@ mod tests {
 
     #[test]
     fn hover_supports_common_languages() {
-        let client = MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
             ok_response(json!({"contents": "fn foo()"})),
-        );
-        let p = HoverProvider::new(Box::new(client));
+        ));
+        let p = HoverProvider::new(client);
         assert!(p.supports(Path::new("foo.rs")));
         assert!(p.supports(Path::new("foo.TS")));
         assert!(p.supports(Path::new("foo.tsx")));
+        assert!(p.supports(Path::new("foo.mts")));
+        assert!(p.supports(Path::new("foo.cts")));
+        assert!(p.supports(Path::new("foo.mjs")));
         assert!(!p.supports(Path::new("foo.py")));
         assert!(!p.supports(Path::new("foo")));
     }
 
     #[test]
     fn hover_returns_none_when_server_returns_null() {
-        let client = MockLspClient::new("rust-analyzer", ok_response(Value::Null));
-        let p = HoverProvider::new(Box::new(client));
+        let client = Arc::new(MockLspClient::new(
+            "rust-analyzer",
+            ok_response(Value::Null),
+        ));
+        let p = HoverProvider::new(client);
         let h = p
             .hover("file:///foo.rs", Position { line: 5, character: 3 })
             .unwrap();
@@ -300,13 +324,11 @@ mod tests {
 
     #[test]
     fn hover_parses_string_contents() {
-        let client = MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "rust-analyzer",
-            ok_response(json!({
-                "contents": "fn main() -> ()"
-            })),
-        );
-        let p = HoverProvider::new(Box::new(client));
+            ok_response(json!({"contents": "fn main() -> ()"})),
+        ));
+        let p = HoverProvider::new(client);
         let h = p
             .hover("file:///foo.rs", Position { line: 0, character: 0 })
             .unwrap()
@@ -317,7 +339,7 @@ mod tests {
 
     #[test]
     fn hover_parses_markup_contents_and_range() {
-        let client = MockLspClient::new(
+        let client = Arc::new(MockLspClient::new(
             "tsserver",
             ok_response(json!({
                 "contents": {
@@ -329,8 +351,8 @@ mod tests {
                     "end":   {"line": 1, "character": 5}
                 }
             })),
-        );
-        let p = HoverProvider::new(Box::new(client));
+        ));
+        let p = HoverProvider::new(client);
         let h = p
             .hover("file:///foo.ts", Position { line: 1, character: 3 })
             .unwrap()
@@ -343,37 +365,46 @@ mod tests {
 
     #[test]
     fn hover_propagates_server_error() {
-        let client = MockLspClient::new("rust-analyzer", err_response(-32601, "method not found"));
-        let p = HoverProvider::new(Box::new(client));
+        let client = Arc::new(MockLspClient::new(
+            "rust-analyzer",
+            err_response(-32601, "method not found"),
+        ));
+        let p = HoverProvider::new(client);
         let r = p.hover("file:///foo.rs", Position { line: 0, character: 0 });
         assert!(matches!(r, Err(HoverError::ServerError(_))));
     }
 
     #[test]
     fn hover_surfaces_transport_failure() {
-        let client = MockLspClient::failing("rust-analyzer", "subprocess died");
-        let p = HoverProvider::new(Box::new(client));
+        let client = Arc::new(MockLspClient::failing("rust-analyzer", "subprocess died"));
+        let p = HoverProvider::new(client);
         let r = p.hover("file:///foo.rs", Position { line: 0, character: 0 });
         assert!(matches!(r, Err(HoverError::ServerError(m)) if m == "subprocess died"));
     }
 
     #[test]
     fn hover_rejects_malformed_payload() {
-        let client = MockLspClient::new("rust-analyzer", ok_response(json!({"unrelated": true})));
-        let p = HoverProvider::new(Box::new(client));
+        let client = Arc::new(MockLspClient::new(
+            "rust-analyzer",
+            ok_response(json!({"unrelated": true})),
+        ));
+        let p = HoverProvider::new(client);
         let r = p.hover("file:///foo.rs", Position { line: 0, character: 0 });
         assert!(matches!(r, Err(HoverError::InvalidResponse(_))));
     }
 
     #[test]
     fn hover_request_includes_uri_and_position() {
-        let client = MockLspClient::new("tsserver", ok_response(json!({"contents": "x"})));
-        let p = HoverProvider::new(Box::new(client));
+        let client = Arc::new(MockLspClient::new(
+            "tsserver",
+            ok_response(json!({"contents": "x"})),
+        ));
+        let p = HoverProvider::new(client.clone());
         let _ = p
             .hover("file:///x.ts", Position { line: 7, character: 11 })
             .unwrap();
-        // (we can't downcast back to MockLspClient through trait object,
-        //  but we exercised the path; the captured inspection is in
-        //  integration tests.)
+        let captured = client.captured.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].method, "textDocument/hover");
     }
 }
